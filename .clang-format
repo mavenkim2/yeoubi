@@ -1,0 +1,32 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+BreakBeforeBraces: Custom
+AlwaysBreakTemplateDeclarations: Yes
+ColumnLimit: 95
+AllowShortFunctionsOnASingleLine: All
+AllowShortLoopsOnASingleLine: true
+IndentCaseLabels: true
+SortIncludes: false
+AlignConsecutiveAssignments: Consecutive
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowAllParametersOfDeclarationOnNextLine: true
+ForEachMacros: ['foreach', 'foreach_index']
+AlignConsecutiveMacros: true
+AllowShortCaseLabelsOnASingleLine: true
+AlignOperands: Align
+AccessModifierOffset: -4
+AllowAllArgumentsOnNextLine: false
+
+BraceWrapping:
+  AfterEnum: true
+  AfterStruct: true
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterExternBlock: true
+  AfterUnion: true
+  AfterControlStatement: Always
+  BeforeElse: true
+
+
