@@ -6,7 +6,7 @@ ColumnLimit: 95
 AllowShortFunctionsOnASingleLine: All
 AllowShortLoopsOnASingleLine: true
 IndentCaseLabels: true
-SortIncludes: false
+SortIncludes: true
 AlignConsecutiveAssignments: Consecutive
 AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowAllParametersOfDeclarationOnNextLine: true

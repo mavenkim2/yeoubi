@@ -1,9 +1,13 @@
-#include "device/device.h"
 #include "device/cuda_device.h"
+#include "device/device.h"
+#include <cassert>
 #include <cstdio>
+
+using namespace ybi;
 
 int main(int argc, char **argv)
 {
-    printf("Hello world");
+    BuildBVH();
+
     return 0;
 }

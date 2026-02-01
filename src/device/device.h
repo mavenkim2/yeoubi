@@ -52,16 +52,16 @@ protected:
                                        uint32_t paramCount) = 0;
 };
 
-struct Module
-{
-    string name;
-    string data;
-};
-
-struct Kernel
-{
-    std::string name;
-    ModuleHandle moduleHandle;
-};
+// struct Module
+// {
+//     string name;
+//     string data;
+// };
+//
+// struct Kernel
+// {
+//     std::string name;
+//     ModuleHandle moduleHandle;
+// };
 
 YBI_NAMESPACE_END

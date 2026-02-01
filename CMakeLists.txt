@@ -13,6 +13,7 @@ set (YBI_COMPILE_DEFINITIONS
 include(CheckLanguage)
 check_language(CUDA)
 
+# TODO: check_language for CUDA only works on MSVC?
 if (CMAKE_CUDA_COMPILER)
     find_package(CUDAToolkit REQUIRED)
     enable_language(CUDA)

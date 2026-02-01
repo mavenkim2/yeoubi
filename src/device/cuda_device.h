@@ -1,13 +1,22 @@
 #pragma once
 
-#include <string>
+#include <cassert>
+#include <cuda_runtime.h>
+#include <optix_function_table_definition.h>
 #include <optix_stubs.h>
+#include <string>
 
 YBI_NAMESPACE_BEGIN
 
 #ifdef WITH_OPTIX
 
-static void InitializeOptix()
+struct ClusterAccelerationStructureLimits
+{
+    uint32_t maxTrianglesPerCluster;
+    uint32_t maxVerticesPerCluster;
+};
+
+static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
 {
     optixInit();
     OptixDeviceContextOptions contextOptions = {};
@@ -34,7 +43,76 @@ static void InitializeOptix()
     optixDeviceContextSetLogCallback(optixDeviceContext, contextOptions.logCallbackFunction,
                                      contextOptions.logCallbackData,
                                      contextOptions.logCallbackLevel);
+    return optixDeviceContext;
 }
+
+extern "C" __global__ void Test(uint8_t *indexBuffer, float3 *vertexBuffer,
+                                ClusterAccelerationStructureLimits limits)
+{
+    uint32_t clusterId     = 0;
+    uint32_t triangleCount = 0;
+    uint32_t vertexCount   = 0;
+    assert(triangleCount <= limits.maxTrianglesPerCluster);
+    assert(vertexCount <= limits.maxVerticesPerCluster);
+
+    OptixClusterAccelBuildInputTrianglesArgs args = {};
+    args.clusterId                                = clusterId;
+    args.clusterFlags                             = 0;
+    args.triangleCount                            = triangleCount;
+    args.vertexCount                              = vertexCount;
+    args.positionTruncateBitCount                 = 0;
+    args.indexFormat                              = OPTIX_CLUSTER_ACCEL_INDICES_FORMAT_8BIT;
+    args.indexBuffer                              = (CUdeviceptr)indexBuffer;
+    args.vertexBuffer                             = (CUdeviceptr)vertexBuffer;
+}
+
+static void BuildBVH()
+{
+    enum BVHFlags : int
+    {
+        USE_CLUSTERS = (1u << 0u),
+    };
+    struct BVH
+    {
+        BVHFlags flags;
+    };
+
+    cuInit(0);
+    CUdevice device;
+    cuDeviceGet(&device, 0);
+    CUcontext context;
+    cuDevicePrimaryCtxRetain(&context, device);
+    cuCtxPushCurrent(context);
+
+    OptixDeviceContext optixDeviceContext = InitializeOptix(context);
+    BVH *bvh;
+    OptixAccelBuildOptions options = {};
+
+    // options.operation
+    //
+    //     OPTIX_ASSERT(optixAccelBuild(
+    //         optixDeviceContext, 0, &options, const OptixBuildInput *buildInputs,
+    //         unsigned int numBuildInputs, CUdeviceptr tempBuffer, size_t
+    //         tempBufferSizeInBytes, CUdeviceptr outputBuffer, size_t outputBufferSizeInBytes,
+    //         OptixTraversableHandle *outputHandle, const OptixAccelEmitDesc
+    //         *emittedProperties, unsigned int numEmittedProperties));
+
+#if (OPTIX_VERSION >= 90000)
+    // if (bvh->flags & BVHFlags::USE_CLUSTERS)
+    {
+        ClusterAccelerationStructureLimits limits;
+        optixDeviceContextGetProperty(optixDeviceContext,
+                                      OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES,
+                                      &limits.maxTrianglesPerCluster, sizeof(unsigned int));
+        optixDeviceContextGetProperty(optixDeviceContext,
+                                      OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
+                                      &limits.maxVerticesPerCluster, sizeof(unsigned int));
+    }
+#endif
+
+    cuCtxPopCurrent(&context);
+}
+
 #endif
 
 YBI_NAMESPACE_END
