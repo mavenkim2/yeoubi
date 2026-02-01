@@ -1,5 +1,6 @@
 #pragma once
 
+#include "optix_types.h"
 #include <cassert>
 #include <cuda_runtime.h>
 #include <optix_function_table_definition.h>
@@ -107,6 +108,33 @@ static void BuildBVH()
         optixDeviceContextGetProperty(optixDeviceContext,
                                       OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
                                       &limits.maxVerticesPerCluster, sizeof(unsigned int));
+        printf("limits: %u %u\n", limits.maxVerticesPerCluster, limits.maxTrianglesPerCluster);
+
+        OptixClusterAccelBuildInputTrianglesArgs *args;
+        uint32_t *argsCount;
+        uint32_t *outputSizes;
+        void *tempBuffer;
+        size_t tempBufferSize           = 0;
+        uint32_t numClusters            = 0;
+        uint32_t maxTrianglesPerCluster = 128;
+        uint32_t maxVerticesPerCluster  = 256;
+
+        OptixClusterAccelBuildModeDesc buildModeDesc = {};
+        buildModeDesc.mode                          = OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES;
+        buildModeDesc.getSize.outputSizesBuffer     = CUdeviceptr(outputSizes);
+        buildModeDesc.getSize.tempBuffer            = CUdeviceptr(tempBuffer);
+        buildModeDesc.getSize.tempBufferSizeInBytes = tempBufferSize;
+
+        OptixClusterAccelBuildInput buildInput = {};
+        buildInput.type            = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_CLUSTERS_FROM_TRIANGLES;
+        buildInput.triangles.flags = OPTIX_CLUSTER_ACCEL_BUILD_FLAG_PREFER_FAST_TRACE;
+        buildInput.triangles.maxArgCount            = numClusters;
+        buildInput.triangles.vertexFormat           = OPTIX_VERTEX_FORMAT_FLOAT3;
+        buildInput.triangles.maxTriangleCountPerArg = maxTrianglesPerCluster;
+        buildInput.triangles.maxVertexCountPerArg   = maxVerticesPerCluster;
+
+        optixClusterAccelBuild(optixDeviceContext, 0, &buildModeDesc, &buildInput,
+                               CUdeviceptr(args), CUdeviceptr(argsCount), 0);
     }
 #endif
 
