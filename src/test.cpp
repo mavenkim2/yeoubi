@@ -1,4 +1,4 @@
-#include "device/cuda_device.h"
+#include "device/cuda/cuda_device.h"
 #include "device/device.h"
 #include <cassert>
 #include <cstdio>

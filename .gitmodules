@@ -1,0 +1,3 @@
+[submodule "src/third_party/OpenUSD"]
+	path = src/third_party/OpenUSD
+	url = https://github.com/PixarAnimationStudios/OpenUSD.git

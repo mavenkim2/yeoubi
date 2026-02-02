@@ -87,21 +87,17 @@ static void BuildBVH()
 
     OptixDeviceContext optixDeviceContext = InitializeOptix(context);
     BVH *bvh;
+    OptixAccelBuildOptions options = {};
 
-    // if (bvh->flags &
-    {
-        OptixAccelBuildOptions options       = {};
-        OptixBuildInput input                = {};
-        OptixAccelEmitDesc emittedProperties = {};
-        emittedProperties.type               = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-        // emittedProperties.result             = ? ;
+    // options.operation
+    //
+    //     OPTIX_ASSERT(optixAccelBuild(
+    //         optixDeviceContext, 0, &options, const OptixBuildInput *buildInputs,
+    //         unsigned int numBuildInputs, CUdeviceptr tempBuffer, size_t
+    //         tempBufferSizeInBytes, CUdeviceptr outputBuffer, size_t outputBufferSizeInBytes,
+    //         OptixTraversableHandle *outputHandle, const OptixAccelEmitDesc
+    //         *emittedProperties, unsigned int numEmittedProperties));
 
-        // optixAccelBuild(optixDeviceContext, 0, &options, const OptixBuildInput *buildInputs,
-        //                 unsigned int numBuildInputs, CUdeviceptr tempBuffer,
-        //                 size_t tempBufferSizeInBytes, CUdeviceptr outputBuffer,
-        //                 size_t outputBufferSizeInBytes, OptixTraversableHandle *outputHandle,
-        //                 &emittedProperties, 1);
-    }
 #if (OPTIX_VERSION >= 90000)
     if (bvh->flags & BVHFlags::USE_CLUSTERS)
     {
