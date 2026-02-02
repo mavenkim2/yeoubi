@@ -1,3 +1,4 @@
 build/
 build_clang/
 .clangd
+src/third_party/install

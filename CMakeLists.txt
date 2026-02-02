@@ -1,14 +1,33 @@
 cmake_minimum_required(VERSION 3.10)
 project (yeoubi)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
+message(STATUS "Requested C++ Standard: ${CMAKE_CXX_STANDARD}")
 
 set (YBI_DEPENDENCIES "")
 set (YBI_INCLUDE_DIRECTORIES "")
+set (YBI_THIRD_PARTY_INCLUDE_DIRECTORIES "")
 set (YBI_COMPILE_DEFINITIONS 
     "YBI_NAMESPACE_BEGIN=namespace ybi {"
     "YBI_NAMESPACE_END=}"
 )
+
+# Add third party libraries
+add_subdirectory(src/third_party)
+
+# TODO: what if openusd isn't found?
+list (APPEND YBI_DEPENDENCIES ${OPENUSD_LIBRARIES})
+list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${OPENUSD_INCLUDE_DIRS})
+
+# Platform Specific
+if (WIN32)
+    list (APPEND YBI_COMPILE_DEFINITIONS "NOMINMAX" "WIN32_LEAN_AND_MEAN")
+endif()
+# Platform Specific End
 
 include(CheckLanguage)
 check_language(CUDA)
@@ -33,3 +52,4 @@ add_executable(yeoubi ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp)
 target_link_libraries(yeoubi PRIVATE ${YBI_DEPENDENCIES})
 target_compile_definitions(yeoubi PRIVATE ${YBI_COMPILE_DEFINITIONS})
 target_include_directories(yeoubi PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+target_include_directories(yeoubi SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
