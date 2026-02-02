@@ -9,7 +9,8 @@ using namespace ybi;
 int main(int argc, char **argv)
 {
     // BuildBVH();
-    Test();
+    // TODO: hardcoded
+    Test("C:/Users/maven/workspace/ALab-2.2.0/ALab/entry.usda");
 
     return 0;
 }
