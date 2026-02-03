@@ -10,7 +10,7 @@ int main(int argc, char **argv)
 {
     // BuildBVH();
     // TODO: hardcoded
-    Test("C:/Users/maven/workspace/ALab-2.2.0/ALab/entry.usda");
+    Test();
 
     return 0;
 }

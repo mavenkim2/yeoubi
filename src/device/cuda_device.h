@@ -99,8 +99,8 @@ static void BuildBVH()
         // optixAccelBuild(optixDeviceContext, 0, &options, const OptixBuildInput *buildInputs,
         //                 unsigned int numBuildInputs, CUdeviceptr tempBuffer,
         //                 size_t tempBufferSizeInBytes, CUdeviceptr outputBuffer,
-        //                 size_t outputBufferSizeInBytes, OptixTraversableHandle *outputHandle,
-        //                 &emittedProperties, 1);
+        //                 size_t outputBufferSizeInBytes, OptixTraversableHandle
+        //                 *outputHandle, &emittedProperties, 1);
     }
 #if (OPTIX_VERSION >= 90000)
     if (bvh->flags & BVHFlags::USE_CLUSTERS)

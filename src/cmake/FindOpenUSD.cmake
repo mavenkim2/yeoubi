@@ -7,6 +7,8 @@ if(pxr_FOUND)
     set (OPENUSD_LIBRARIES "")
 
     set(TEMP_PXR_LIBRARY_DIR ${PXR_CMAKE_DIR}/lib)
+    set(OPENUSD_LIBRARY_DIR ${PXR_CMAKE_DIR}/lib)
+
     foreach (LIB ${PXR_LIBRARIES})
         find_library(TEMP_LIB 
             NAMES "usd_${LIB}" "${LIB}" 

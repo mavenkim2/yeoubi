@@ -21,6 +21,9 @@ add_subdirectory(src/third_party)
 if (WITH_USD)
     list (APPEND YBI_DEPENDENCIES ${OPENUSD_LIBRARIES})
     list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${OPENUSD_INCLUDE_DIRS})
+    # TODO IMPORTANT: right now on my local machine I'm just manually setting the 
+    # PATH for the openusd download. handle this for other machines
+    # install(FILES ${OPENUSD_LIBRARIES} DESTINATION ${CMAKE_INSTALL_PREFIX})
 endif()
 
 # OS Specific
@@ -29,11 +32,10 @@ if (WIN32)
 endif()
 # OS Specific End
 
-include(CheckLanguage)
-check_language(CUDA)
-
 # Hardware Specific
 # TODO: check_language for CUDA only works on MSVC?
+include(CheckLanguage)
+check_language(CUDA)
 if (CMAKE_CUDA_COMPILER)
     find_package(CUDAToolkit REQUIRED)
     enable_language(CUDA)
