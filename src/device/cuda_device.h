@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../scene/scene.h"
 #include "optix_types.h"
 #include <cassert>
 #include <cuda_runtime.h>
@@ -47,6 +48,7 @@ static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
     return optixDeviceContext;
 }
 
+// TODO: gpu kernels shouldn't be in the same file as host code
 extern "C" __global__ void Test(uint8_t *indexBuffer, float3 *vertexBuffer,
                                 ClusterAccelerationStructureLimits limits)
 {
@@ -69,15 +71,6 @@ extern "C" __global__ void Test(uint8_t *indexBuffer, float3 *vertexBuffer,
 
 static void BuildBVH()
 {
-    enum BVHFlags : int
-    {
-        USE_CLUSTERS = (1u << 0u),
-    };
-    struct BVH
-    {
-        BVHFlags flags;
-    };
-
     cuInit(0);
     CUdevice device;
     cuDeviceGet(&device, 0);

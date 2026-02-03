@@ -14,6 +14,13 @@ set (YBI_COMPILE_DEFINITIONS
     "YBI_NAMESPACE_BEGIN=namespace ybi {"
     "YBI_NAMESPACE_END=}"
 )
+set (YBI_SOURCE "")
+
+list (APPEND YBI_SOURCE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+)
 
 # Add third party libraries
 add_subdirectory(src/third_party)
@@ -51,7 +58,7 @@ if (CMAKE_CUDA_COMPILER)
 endif()
 # Hardware Specific End
 
-add_executable(yeoubi ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp)
+add_executable(yeoubi ${YBI_SOURCE})
 
 target_compile_definitions(yeoubi PRIVATE ${YBI_COMPILE_DEFINITIONS})
 target_include_directories(yeoubi PRIVATE ${YBI_INCLUDE_DIRECTORIES})
