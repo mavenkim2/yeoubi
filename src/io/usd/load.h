@@ -2,6 +2,7 @@
 
 YBI_NAMESPACE_BEGIN
 
-void Test();
+struct Scene;
+void Test(Scene *scene);
 
 YBI_NAMESPACE_END

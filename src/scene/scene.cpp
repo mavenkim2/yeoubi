@@ -3,6 +3,10 @@
 
 YBI_NAMESPACE_BEGIN
 
-Mesh::Mesh(float3 *positions, int *indices) : positions(positions), indices(indices) {}
+BVH::BVH() : flags(BVHFlags(0)) {}
+Mesh::Mesh(float3 *positions, int *indices, uint32_t numVertices, uint32_t numIndices)
+    : positions(positions), indices(indices), numVertices(numVertices), numIndices(numIndices)
+{
+}
 
 YBI_NAMESPACE_END

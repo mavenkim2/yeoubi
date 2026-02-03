@@ -15,14 +15,18 @@ enum BVHFlags : int
 struct BVH
 {
     BVHFlags flags;
+
+    BVH();
 };
 
 struct Mesh
 {
-    float3 *positions;
-    int *indices;
+    const float3 *positions;
+    const int *indices;
+    uint32_t numVertices;
+    uint32_t numIndices;
 
-    Mesh(float3 *positions, int *indices);
+    Mesh(float3 *positions, int *indices, uint32_t numVertices, uint32_t numIndices);
 };
 
 struct Scene

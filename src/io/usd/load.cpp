@@ -13,7 +13,7 @@
 
 YBI_NAMESPACE_BEGIN
 
-void Test()
+void Test(Scene *scene)
 {
     std::string filePath = "C:/Users/maven/workspace/ALab-2.2.0/ALab/entry.usda";
 
@@ -91,8 +91,7 @@ void Test()
         }
     }
 
-    Scene scene;
-    scene.meshes.reserve(meshes.size());
+    scene->meshes.reserve(meshes.size());
     for (pxr::UsdGeomMesh &mesh : meshes)
     {
         pxr::VtVec3fArray positions;
@@ -178,7 +177,8 @@ void Test()
             }
         }
 
-        scene.meshes.push_back(Mesh(finalPositions, finalIndices));
+        scene->meshes.push_back(
+            Mesh(finalPositions, finalIndices, positions.size(), 3 * numTriangles));
     }
 }
 

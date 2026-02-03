@@ -10,7 +10,18 @@ int main(int argc, char **argv)
 {
     // BuildBVH();
     // TODO: hardcoded
-    Test();
+
+    Scene scene;
+    Test(&scene);
+
+    CUDADevice device;
+
+    for (Mesh &mesh : scene.meshes)
+    {
+        BuildBVH(&device, &scene.bvh, &mesh);
+    }
+
+    printf("bvh size: %zi\n", device.bvhTotalAllocated);
 
     return 0;
 }
