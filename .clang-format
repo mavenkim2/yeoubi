@@ -16,6 +16,8 @@ AllowShortCaseLabelsOnASingleLine: true
 AlignOperands: Align
 AccessModifierOffset: -4
 AllowAllArgumentsOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
 
 BraceWrapping:
   AfterEnum: true

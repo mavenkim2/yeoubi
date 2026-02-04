@@ -1,7 +1,10 @@
 #pragma once
 
 #include "../scene/scene.h"
+#include "../util/base.h"
 #include "../util/float3.h"
+#include "cuda.h"
+#include "cuda_runtime_api.h"
 #include "optix_types.h"
 #include <cassert>
 #include <cstring>
@@ -19,9 +22,15 @@ YBI_NAMESPACE_BEGIN
         CUresult result = statement;                                                          \
         if (result != CUDA_SUCCESS)                                                           \
         {                                                                                     \
-            const char *name;                                                                 \
-            cuGetErrorString(result, &name);                                                  \
-            printf("CUDA Error: %s in %s (%s:%d)", name, #statement, __FILE__, __LINE__);     \
+            const char *str, *name;                                                           \
+            cuGetErrorString(result, &str);                                                   \
+            cuGetErrorName(result, &name);                                                    \
+            printf("CUDA Error (%s): %s in %s (%s:%d)\n",                                     \
+                   name,                                                                      \
+                   str,                                                                       \
+                   #statement,                                                                \
+                   __FILE__,                                                                  \
+                   __LINE__);                                                                 \
             assert(false);                                                                    \
         }                                                                                     \
     }
@@ -36,7 +45,7 @@ YBI_NAMESPACE_BEGIN
         if (result != OPTIX_SUCCESS)                                                          \
         {                                                                                     \
             const char *name = optixGetErrorString(result);                                   \
-            printf("Optix Error: %s in %s (%s:%d)", name, #statement, __FILE__, __LINE__);    \
+            printf("Optix Error: %s in %s (%s:%d)\n", name, #statement, __FILE__, __LINE__);  \
             assert(false);                                                                    \
         }                                                                                     \
     }
@@ -51,35 +60,36 @@ static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
 {
     OPTIX_ASSERT(optixInit());
     OptixDeviceContextOptions contextOptions = {};
-    contextOptions.logCallbackFunction       = [](unsigned int level, const char *tag,
-                                            const char *message, void *cbdata) {
-        std::string type = {};
+    contextOptions.logCallbackFunction =
+        [](unsigned int level, const char *tag, const char *message, void *cbdata) {
+            std::string type = {};
 
-        switch (level)
-        {
-            case 1: type = "Fatal Error"; break;
-            case 2: type = "Error"; break;
-            case 3: type = "Warning"; break;
-            case 4: type = "Status"; break;
-            default: break;
-        }
+            switch (level)
+            {
+                case 1: type = "Fatal Error"; break;
+                case 2: type = "Error"; break;
+                case 3: type = "Warning"; break;
+                case 4: type = "Status"; break;
+                default: break;
+            }
 
-        // Print("Optix %S: %s\n", type, message);
-    };
+            // Print("Optix %S: %s\n", type, message);
+        };
     contextOptions.logCallbackLevel = 4;
     contextOptions.validationMode   = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
 
     OptixDeviceContext optixDeviceContext;
     OPTIX_ASSERT(optixDeviceContextCreate(cudaContext, &contextOptions, &optixDeviceContext));
-    OPTIX_ASSERT(optixDeviceContextSetLogCallback(
-        optixDeviceContext, contextOptions.logCallbackFunction, contextOptions.logCallbackData,
-        contextOptions.logCallbackLevel));
+    OPTIX_ASSERT(optixDeviceContextSetLogCallback(optixDeviceContext,
+                                                  contextOptions.logCallbackFunction,
+                                                  contextOptions.logCallbackData,
+                                                  contextOptions.logCallbackLevel));
     return optixDeviceContext;
 }
 
 // TODO: gpu kernels shouldn't be in the same file as host code
-extern "C" __global__ void Test(uint8_t *indexBuffer, float3 *vertexBuffer,
-                                ClusterAccelerationStructureLimits limits)
+extern "C" __global__ void
+Test(uint8_t *indexBuffer, float3 *vertexBuffer, ClusterAccelerationStructureLimits limits)
 {
     uint32_t clusterId     = 0;
     uint32_t triangleCount = 0;
@@ -168,7 +178,8 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
                 assert(0);
             }
 
-            memcpy(hostVertices + step * numVertices, mesh->positions + step * numVertices,
+            memcpy(hostVertices + step * numVertices,
+                   mesh->positions + step * numVertices,
                    sizeof(float3) * numVertices);
         }
         CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices, vertexSize));
@@ -190,34 +201,97 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
         triangleArray.flags                         = &flags;
         triangleArray.numSbtRecords                 = 1;
 
-        OptixAccelEmitDesc emittedProperties = {};
-        emittedProperties.type               = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-
         OptixAccelBufferSizes sizes = {};
-        OPTIX_ASSERT(optixAccelComputeMemoryUsage(cudaDevice->optixDeviceContext, &options,
-                                                  &input, 1, &sizes));
+        OPTIX_ASSERT(optixAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                                  &options,
+                                                  &input,
+                                                  1,
+                                                  &sizes));
 
-        printf("sizes: %zi %zi %zi\n", sizes.outputSizeInBytes, sizes.tempSizeInBytes,
-               sizes.tempUpdateSizeInBytes);
+        // printf("sizes: %zi %zi %zi, %i %i \n",
+        //        sizes.outputSizeInBytes,
+        //        sizes.tempSizeInBytes,
+        //        sizes.tempUpdateSizeInBytes,
+        //        numVertices,
+        //        numIndices);
         cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
 
-        // optixAccelBuild(optixDeviceContext, 0, &options, const OptixBuildInput *buildInputs,
-        //                 unsigned int numBuildInputs, CUdeviceptr tempBuffer,
-        //                 size_t tempBufferSizeInBytes, CUdeviceptr outputBuffer,
-        //                 size_t outputBufferSizeInBytes, OptixTraversableHandle
-        //                 *outputHandle, &emittedProperties, 1);
+        // Build BVH
+        bool useCompaction = options.buildFlags & OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
+        void *tempBuffer   = cudaDevice->Alloc(
+            AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)));
+        void *outputBuffer = cudaDevice->Alloc(sizes.outputSizeInBytes);
+
+        uint64_t compactedSizeAddress =
+            AlignUp(CUdeviceptr(tempBuffer) + sizes.tempSizeInBytes, sizeof(uint64_t));
+        OptixAccelEmitDesc emittedProperties = {};
+        emittedProperties.type               = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+        emittedProperties.result             = CUdeviceptr(compactedSizeAddress);
+        OptixTraversableHandle outputHandle;
+        OPTIX_ASSERT(optixAccelBuild(cudaDevice->optixDeviceContext,
+                                     0,
+                                     &options,
+                                     &input,
+                                     1,
+                                     CUdeviceptr(tempBuffer),
+                                     sizes.tempSizeInBytes,
+                                     CUdeviceptr(outputBuffer),
+                                     sizes.outputSizeInBytes,
+                                     &outputHandle,
+                                     useCompaction ? &emittedProperties : 0,
+                                     useCompaction ? 1 : 0));
+
+        CUDA_ASSERT(cuStreamSynchronize(0));
+
+        if (useCompaction)
+        {
+            uint64_t compactedSize = sizes.outputSizeInBytes;
+            CUDA_ASSERT(cuMemcpyDtoH(&compactedSize,
+                                     CUdeviceptr(compactedSizeAddress),
+                                     sizeof(uint64_t)));
+
+            if (compactedSize < sizes.outputSizeInBytes)
+            {
+                void *compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
+
+                OptixTraversableHandle tempOutputHandle;
+                OPTIX_ASSERT(optixAccelCompact(cudaDevice->optixDeviceContext,
+                                               0,
+                                               outputHandle,
+                                               CUdeviceptr(compactedOutputBuffer),
+                                               compactedSize,
+                                               &tempOutputHandle));
+                CUDA_ASSERT(cuStreamSynchronize(0));
+                outputHandle = tempOutputHandle;
+
+                CUDA_ASSERT(cuMemFree(CUdeviceptr(outputBuffer)));
+                cudaDevice->bvhTotalAllocated -= sizes.outputSizeInBytes;
+                cudaDevice->bvhTotalAllocated += compactedSize;
+            }
+        }
+
+        CUDA_ASSERT(cuMemFree(CUdeviceptr(tempBuffer)));
+        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
+        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
+
+        // Compact BVH
+        free(hostVertices);
     }
 
 #if (OPTIX_VERSION >= 90000)
     if (bvh->flags & BVHFlags::USE_CLUSTERS)
     {
         ClusterAccelerationStructureLimits limits;
-        OPTIX_ASSERT(optixDeviceContextGetProperty(
-            cudaDevice->optixDeviceContext, OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES,
-            &limits.maxTrianglesPerCluster, sizeof(unsigned int)));
-        OPTIX_ASSERT(optixDeviceContextGetProperty(
-            cudaDevice->optixDeviceContext, OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
-            &limits.maxVerticesPerCluster, sizeof(unsigned int)));
+        OPTIX_ASSERT(
+            optixDeviceContextGetProperty(cudaDevice->optixDeviceContext,
+                                          OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES,
+                                          &limits.maxTrianglesPerCluster,
+                                          sizeof(unsigned int)));
+        OPTIX_ASSERT(
+            optixDeviceContextGetProperty(cudaDevice->optixDeviceContext,
+                                          OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
+                                          &limits.maxVerticesPerCluster,
+                                          sizeof(unsigned int)));
         printf("limits: %u %u\n", limits.maxVerticesPerCluster, limits.maxTrianglesPerCluster);
 
         OptixClusterAccelBuildInputTrianglesArgs *args;
@@ -243,9 +317,13 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
         buildInput.triangles.maxTriangleCountPerArg = maxTrianglesPerCluster;
         buildInput.triangles.maxVertexCountPerArg   = maxVerticesPerCluster;
 
-        OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext, 0, &buildModeDesc,
-                                            &buildInput, CUdeviceptr(args),
-                                            CUdeviceptr(argsCount), 0));
+        OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
+                                            0,
+                                            &buildModeDesc,
+                                            &buildInput,
+                                            CUdeviceptr(args),
+                                            CUdeviceptr(argsCount),
+                                            0));
     }
 #else
     if (bvh->flags & BVHFlags::USE_CLUSTERS)

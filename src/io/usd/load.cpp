@@ -113,11 +113,35 @@ void Test(Scene *scene)
             printf("%s\n", scheme.GetText());
         }
 
-        bool success = mesh.GetPointsAttr().Get(&positions);
+        bool success = mesh.GetPointsAttr().Get(&positions, 0.0);
         assert(success);
-        success = mesh.GetFaceVertexIndicesAttr().Get(&faceIndices);
+
+        // if (mesh.GetPointsAttr().ValueMightBeTimeVarying())
+        // {
+        //     std::vector<double> timeSamples;
+        //
+        //     if (mesh.GetPointsAttr().GetTimeSamples(&timeSamples))
+        //     {
+        //         for (double time : timeSamples)
+        //         {
+        //             pxr::VtVec3fArray p;
+        //             mesh.GetPointsAttr().Get(&p, time);
+        //             printf("time: %f, p: %f %f %f %f %f %f\n",
+        //                    time,
+        //                    positions[0][0],
+        //                    positions[0][1],
+        //                    positions[0][2],
+        //                    p[0][0],
+        //                    p[0][1],
+        //                    p[0][2]);
+        //         }
+        //     }
+        // }
+        // printf("\n");
+
+        success = mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, 0.0);
         assert(success);
-        success = mesh.GetFaceVertexCountsAttr().Get(&faceCounts);
+        success = mesh.GetFaceVertexCountsAttr().Get(&faceCounts, 0.0);
         assert(success);
 
         bool constantFaceCount = true;
@@ -142,8 +166,10 @@ void Test(Scene *scene)
                 numTriangles++;
             }
         }
-        float3 *finalPositions = (float3 *)malloc(sizeof(float3) * positions.size());
-        int *finalIndices      = (int *)malloc(sizeof(int) * 3 * numTriangles);
+        size_t positionSize    = sizeof(float3) * positions.size();
+        float3 *finalPositions = (float3 *)malloc(positionSize);
+        memcpy(finalPositions, positions.data(), positionSize);
+        int *finalIndices = (int *)malloc(sizeof(int) * 3 * numTriangles);
 
         int inputOffset = 0;
         int finalOffset = 0;
@@ -151,9 +177,12 @@ void Test(Scene *scene)
         {
             if (faceCount == 3)
             {
-                finalIndices[finalOffset++] = faceIndices[inputOffset++];
-                finalIndices[finalOffset++] = faceIndices[inputOffset++];
-                finalIndices[finalOffset++] = faceIndices[inputOffset++];
+                for (int i = 0; i < 3; i++)
+                {
+                    int index = faceIndices[inputOffset++];
+                    assert(index < positions.size());
+                    finalIndices[finalOffset++] = index;
+                }
             }
             else if (faceCount == 4)
             {
@@ -161,7 +190,9 @@ void Test(Scene *scene)
                 int tempIndices[4];
                 for (int i = 0; i < 4; i++)
                 {
-                    tempIndices[i] = faceIndices[inputOffset++];
+                    int index = faceIndices[inputOffset++];
+                    assert(index < positions.size());
+                    tempIndices[i] = index;
                 }
                 finalIndices[finalOffset++] = tempIndices[0];
                 finalIndices[finalOffset++] = tempIndices[1];
