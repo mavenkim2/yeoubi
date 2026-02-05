@@ -32,6 +32,7 @@ struct BVH
 
 struct Mesh
 {
+    // TODO: do I want to handle static flat arrays differently???
     const float3 *positions;
     const int *indices;
     uint32_t numVertices;
@@ -42,17 +43,24 @@ struct Mesh
 
 struct Curves
 {
+    const float3 *positions;
+
     // num_offsets = num_curves + 1
     int *curveVertexOffsets;
     int numCurves;
+    int numVertices;
 
     int curveFlags;
+
+    Curves() = default;
+    Curves(float3 *positions, int *curveVertexOffsets, int numVertices, int numCurves);
 };
 
 struct Scene
 {
     BVH bvh;
     std::vector<Mesh> meshes;
+    std::vector<Curves> curves;
     Device *device;
 };
 

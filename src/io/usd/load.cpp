@@ -3,6 +3,8 @@
 #include "../../util/float3.h"
 #include "pxr/usd/usdGeom/subset.h"
 #include "pxr/usd/usdShade/shader.h"
+#include <algorithm>
+#include <limits>
 #include <pxr/base/vt/types.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
@@ -39,7 +41,7 @@ struct USDTraversalState
         }                                                                                     \
     }
 
-static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve)
+static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurve)
 {
     size_t numCurves = curve.GetCurveCount(0.0);
 
@@ -56,6 +58,91 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve)
     USD_ASSERT(curve.GetBasisAttr().Get(&basisToken, 0.0));
     USD_ASSERT(curve.GetTypeAttr().Get(&typeToken, 0.0));
     USD_ASSERT(curve.GetWrapAttr().Get(&wrapToken, 0.0));
+
+#if 0
+    std::vector<float> test;
+    std::vector<int> indices;
+    test.reserve(points.size() * 3);
+
+    int index = 0;
+    for (auto &point : points)
+    {
+        test.push_back(point[0]);
+        test.push_back(point[1]);
+        test.push_back(point[2]);
+        indices.push_back(index++);
+    }
+
+    std::sort(indices.begin(), indices.end(), [&](size_t i, size_t j) {
+        return test[i] < test[j];
+    });
+    std::sort(test.begin(), test.end());
+
+    float prevFloat = test[0];
+    int numUnique   = 1;
+    for (int floatIndex = 1; floatIndex < test.size(); floatIndex++)
+    {
+        float currentFloat = test[floatIndex];
+        if (prevFloat != currentFloat)
+        {
+            numUnique++;
+            prevFloat = currentFloat;
+        }
+    }
+
+    int step    = 1024;
+    int numBits = 0;
+    for (int i = 0; i < indices.size(); i += 3 * step)
+    {
+        int minIndex = std::numeric_limits<int>::max();
+        int maxIndex = std::numeric_limits<int>::min();
+        for (int j = i; j < i + 3 * step; j++)
+        {
+            minIndex = indices[j] < minIndex ? indices[j] : minIndex;
+            maxIndex = indices[j] > maxIndex ? indices[j] : maxIndex;
+        }
+        int delta = maxIndex - minIndex;
+        int r     = 0;
+        int x     = delta;
+
+        // We check ranges and shift x to narrow down the highest bit
+        if (x >= 0x10000)
+        {
+            x >>= 16;
+            r += 16;
+        }
+        if (x >= 0x100)
+        {
+            x >>= 8;
+            r += 8;
+        }
+        if (x >= 0x10)
+        {
+            x >>= 4;
+            r += 4;
+        }
+        if (x >= 0x4)
+        {
+            x >>= 2;
+            r += 2;
+        }
+        if (x >= 0x2)
+        {
+            r += 1;
+        }
+
+        r++;
+        numBits += 3 * step * r;
+        // printf("test delta %i r %i, %i %i\n", delta, r, minIndex, maxIndex);
+        // float delta = test[i + step - 1] - test[i];
+
+        // uint32_t u;
+        // memcpy(&u, &delta, sizeof(float));
+        // printf("delta: %u, %f\n", u, delta);
+    }
+    printf("num bytes: %i\n", numBits / 8);
+    printf("num unique: %i, total: %i\n", numUnique, test.size());
+#endif
 
     std::vector<pxr::UsdGeomSubset> subsets = pxr::UsdGeomSubset::GetAllGeomSubsets(curve);
     if (subsets.size())
@@ -76,14 +163,13 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve)
     }
 
     int totalNumVertices = 0;
-    int *curveOffsets    = (int *)malloc(numCurves + 1);
+
+    // TODO: really need to get rid of this
+    float3 *positions    = (float3 *)malloc(sizeof(float3) * (points.size() + 1));
+    int *curveOffsets    = (int *)malloc(sizeof(int) * (numCurves + 1));
     int curveOffsetIndex = 0;
 
-    for (int i = 0; i < 10; i++)
-    {
-        printf("points: %f %f %f\n", points[i][0], points[i][1], points[i][2]);
-    }
-
+    memcpy(positions, points.data(), sizeof(points[0]) * points.size());
     for (int curveVertexCount : curveVertexCounts)
     {
         curveOffsets[curveOffsetIndex++] = totalNumVertices;
@@ -93,6 +179,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve)
     curveOffsets[curveOffsetIndex] = totalNumVertices;
     assert(totalNumVertices == points.size());
 
+    outCurve       = Curves(positions, curveOffsets, points.size(), numCurves);
     int curveFlags = 0;
 
     if (typeToken == "cubic")
@@ -316,9 +403,11 @@ void Test(Scene *scene)
         }
     }
 
+    scene->curves.resize(basisCurves.size());
+    int curveIndex = 0;
     for (pxr::UsdGeomBasisCurves &curve : basisCurves)
     {
-        ProcessUSDBasisCurve(curve);
+        ProcessUSDBasisCurve(curve, scene->curves[curveIndex++]);
     }
 
     scene->meshes.reserve(meshes.size());

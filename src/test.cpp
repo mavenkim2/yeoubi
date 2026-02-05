@@ -19,11 +19,13 @@ int main(int argc, char **argv)
 
     uint32_t totalNumTriangles = 0;
     auto start                 = std::chrono::high_resolution_clock::now();
-    for (Mesh &mesh : scene.meshes)
-    {
-        // BuildBVH(&device, &scene.bvh, &mesh);
-        totalNumTriangles += mesh.numIndices / 3;
-    }
+    BuildBVH(&device, &scene);
+
+    // for (Mesh &mesh : scene.meshes)
+    // {
+    //     // BuildBVH(&device, &scene.bvh, &mesh);
+    //     totalNumTriangles += mesh.numIndices / 3;
+    // }
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> elapsed = end - start;
 

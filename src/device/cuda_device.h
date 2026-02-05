@@ -139,14 +139,14 @@ void *CUDADevice::Alloc(size_t size)
 }
 
 // TODO: handle the case where cuda is enabled but optix isn't
-void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
+void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
 {
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
 
-    // if (bvh->flags &
+    for (Mesh &mesh : scene->meshes)
     {
-        const uint32_t numVertices = mesh->numVertices;
-        const uint32_t numIndices  = mesh->numIndices;
+        const uint32_t numVertices = mesh.numVertices;
+        const uint32_t numIndices  = mesh.numIndices;
         uint32_t numMotionKeys     = 1;
 
         OptixAccelBuildOptions options = {};
@@ -179,11 +179,11 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
             }
 
             memcpy(hostVertices + step * numVertices,
-                   mesh->positions + step * numVertices,
+                   mesh.positions + step * numVertices,
                    sizeof(float3) * numVertices);
         }
         CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices, vertexSize));
-        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh->indices, indexSize));
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh.indices, indexSize));
 
         unsigned int flags    = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
         OptixBuildInput input = {};
@@ -208,12 +208,6 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
                                                   1,
                                                   &sizes));
 
-        // printf("sizes: %zi %zi %zi, %i %i \n",
-        //        sizes.outputSizeInBytes,
-        //        sizes.tempSizeInBytes,
-        //        sizes.tempUpdateSizeInBytes,
-        //        numVertices,
-        //        numIndices);
         cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
 
         // Build BVH
@@ -278,6 +272,87 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
         free(hostVertices);
     }
 
+    for (Curves &curve : scene->curves)
+    {
+        uint32_t numMotionKeys = 1;
+
+        OptixAccelBuildOptions options = {};
+        options.buildFlags =
+            OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+        options.operation               = OPTIX_BUILD_OPERATION_BUILD;
+        options.motionOptions.numKeys   = numMotionKeys;
+        options.motionOptions.flags     = 0;
+        options.motionOptions.timeBegin = 0.f;
+        options.motionOptions.timeEnd   = 1.f;
+
+        std::vector<CUdeviceptr> vertexBuffers;
+        std::vector<CUdeviceptr> widthBuffers;
+        vertexBuffers.reserve(numMotionKeys);
+
+#if 0
+        size_t vertexSize      = sizeof(float3) * numVertices * numMotionKeys;
+        size_t indexSize       = sizeof(int) * numIndices;
+        float3 *hostVertices   = (float3 *)malloc(vertexSize);
+        float3 *deviceVertices = (float3 *)cudaDevice->Alloc(vertexSize);
+        int *deviceIndices     = (int *)cudaDevice->Alloc(indexSize);
+
+        for (uint32_t step = 0; step < numMotionKeys; step++)
+        {
+            CUdeviceptr dst = (CUdeviceptr)(deviceVertices + step * numVertices);
+            vertexBuffers.push_back(dst);
+
+            // TODO IMPORTANT: handle all motion blur data properly
+            if (step > 0)
+            {
+                assert(0);
+            }
+
+            memcpy(hostVertices + step * numVertices,
+                   curve.positions + step * numVertices,
+                   sizeof(float3) * numVertices);
+        }
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices, vertexSize));
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh->indices, indexSize));
+#endif
+
+        int totalNumSegments = curve.numVertices - 3 * curve.numCurves;
+        unsigned int flags   = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
+
+        OptixBuildInput input                 = {};
+        input.type                            = OPTIX_BUILD_INPUT_TYPE_CURVES;
+        OptixBuildInputCurveArray &curveArray = input.curveArray;
+        curveArray                            = {};
+        curveArray.curveType                  = OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE;
+        curveArray.numPrimitives              = totalNumSegments;
+        curveArray.vertexBuffers              = vertexBuffers.data();
+        curveArray.numVertices                = curve.numVertices;
+        curveArray.vertexStrideInBytes        = 0; // sizeof(float4);
+
+        curveArray.widthBuffers         = widthBuffers.data();
+        curveArray.widthStrideInBytes   = 0;
+        curveArray.indexBuffer          = 0; // CUdeviceptr(deviceIndices);
+        curveArray.indexStrideInBytes   = 0;
+        curveArray.indexStrideInBytes   = 0;
+        curveArray.flag                 = flags;
+        curveArray.primitiveIndexOffset = 0;
+        curveArray.endcapFlags          = OPTIX_CURVE_ENDCAP_DEFAULT;
+
+        OptixAccelBufferSizes sizes = {};
+        OPTIX_ASSERT(optixAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                                  &options,
+                                                  &input,
+                                                  1,
+                                                  &sizes));
+        printf("sizes: %zi %zi %zi, num segments: %i\n",
+               sizes.outputSizeInBytes,
+               sizes.tempSizeInBytes,
+               sizes.tempUpdateSizeInBytes,
+               totalNumSegments);
+
+        cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
+    }
+
+#if 0
 #if (OPTIX_VERSION >= 90000)
     if (bvh->flags & BVHFlags::USE_CLUSTERS)
     {
@@ -330,6 +405,7 @@ void BuildBVH(CUDADevice *cudaDevice, BVH *bvh, Mesh *mesh)
     {
         assert(0 && "Cluster Acceleration Structures are not supported. Please update OptiX.");
     }
+#endif
 #endif
 
     CUDA_ASSERT(cuCtxPopCurrent(0));
