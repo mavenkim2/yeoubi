@@ -1,6 +1,7 @@
 #include "load.h"
 #include "../../scene/scene.h"
 #include "../../util/float3.h"
+#include "pxr/usd/usdGeom/subset.h"
 #include "pxr/usd/usdShade/shader.h"
 #include <pxr/base/vt/types.h>
 #include <pxr/usd/usd/prim.h>
@@ -28,7 +29,7 @@ struct USDTraversalState
 {
 };
 
-#define USD_SUCCESS(expr)                                                                     \
+#define USD_ASSERT(expr)                                                                      \
     {                                                                                         \
         bool result = expr;                                                                   \
         if (!result)                                                                          \
@@ -37,6 +38,88 @@ struct USDTraversalState
             assert(false);                                                                    \
         }                                                                                     \
     }
+
+static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve)
+{
+    size_t numCurves = curve.GetCurveCount(0.0);
+
+    pxr::VtIntArray curveVertexCounts;
+    pxr::VtVec3fArray points;
+    pxr::VtFloatArray widths;
+    pxr::TfToken basisToken;
+    pxr::TfToken typeToken;
+    pxr::TfToken wrapToken;
+
+    USD_ASSERT(curve.GetCurveVertexCountsAttr().Get(&curveVertexCounts, 0.0));
+    USD_ASSERT(curve.GetPointsAttr().Get(&points, 0.0));
+    USD_ASSERT(curve.GetWidthsAttr().Get(&widths, 0.0));
+    USD_ASSERT(curve.GetBasisAttr().Get(&basisToken, 0.0));
+    USD_ASSERT(curve.GetTypeAttr().Get(&typeToken, 0.0));
+    USD_ASSERT(curve.GetWrapAttr().Get(&wrapToken, 0.0));
+
+    std::vector<pxr::UsdGeomSubset> subsets = pxr::UsdGeomSubset::GetAllGeomSubsets(curve);
+    if (subsets.size())
+    {
+        printf("has subsets\n");
+    }
+
+    printf("curve: %s %s %s\n",
+           basisToken.GetText(),
+           typeToken.GetText(),
+           wrapToken.GetText());
+
+    int vStep = 1;
+
+    if (basisToken.GetString() == "bezier")
+    {
+        vStep = 3;
+    }
+
+    int totalNumVertices = 0;
+    int *curveOffsets    = (int *)malloc(numCurves + 1);
+    int curveOffsetIndex = 0;
+
+    for (int i = 0; i < 10; i++)
+    {
+        printf("points: %f %f %f\n", points[i][0], points[i][1], points[i][2]);
+    }
+
+    for (int curveVertexCount : curveVertexCounts)
+    {
+        curveOffsets[curveOffsetIndex++] = totalNumVertices;
+        totalNumVertices += curveVertexCount;
+    }
+
+    curveOffsets[curveOffsetIndex] = totalNumVertices;
+    assert(totalNumVertices == points.size());
+
+    int curveFlags = 0;
+
+    if (typeToken == "cubic")
+    {
+        curveFlags |= CurveFlags::CURVE_FLAGS_CUBIC;
+    }
+    else
+    {
+        assert(typeToken == "linear");
+        curveFlags |= CurveFlags::CURVE_FLAGS_LINEAR;
+    }
+
+    if (curve.GetNormalsAttr().HasValue())
+    {
+        pxr::VtVec3fArray normals;
+
+        USD_ASSERT(curve.GetNormalsAttr().Get(&normals, 0.0));
+        printf("normal %f %f %f\n", normals[0][0], normals[0][1], normals[0][2]);
+        curveFlags |= CurveFlags::CURVE_FLAGS_RIBBON;
+    }
+    else
+    {
+        curveFlags |= CurveFlags::CURVE_FLAGS_TUBE;
+    }
+
+    printf("basis: %zi %zi %s\n", numCurves, points.size(), basisToken.GetText());
+}
 
 void Test(Scene *scene)
 {
@@ -63,6 +146,8 @@ void Test(Scene *scene)
     printf("start: %f, end: %f, fps: %f, tcps: %f\n", startTimeCode, endTimeCode, fps, tcps);
 
     std::vector<pxr::UsdGeomMesh> meshes;
+    std::vector<pxr::UsdGeomBasisCurves> basisCurves;
+
     pxr::Usd_PrimFlagsConjunction filterFlags =
         pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
 
@@ -137,14 +222,7 @@ void Test(Scene *scene)
         }
         else if (prim.IsA<pxr::UsdGeomBasisCurves>())
         {
-            // printf("curves\n");
-
-            pxr::UsdGeomBasisCurves basisCurves(prim);
-            size_t numCurves = basisCurves.GetCurveCount(0.0);
-
-            pxr::VtVec3fArray points;
-            basisCurves.GetPointsAttr().Get(&points, 0.0);
-            printf("basis: %zi %zi\n", numCurves, points.size());
+            basisCurves.push_back(pxr::UsdGeomBasisCurves(prim));
         }
         else if (prim.IsA<pxr::UsdGeomNurbsCurves>())
         {
@@ -236,6 +314,11 @@ void Test(Scene *scene)
         {
             printf("type: %s\n", prim.GetTypeName().GetString().c_str());
         }
+    }
+
+    for (pxr::UsdGeomBasisCurves &curve : basisCurves)
+    {
+        ProcessUSDBasisCurve(curve);
     }
 
     scene->meshes.reserve(meshes.size());
