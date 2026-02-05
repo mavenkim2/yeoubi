@@ -1,21 +1,46 @@
 #include "load.h"
 #include "../../scene/scene.h"
 #include "../../util/float3.h"
-#include "pxr/base/vt/types.h"
+#include "pxr/usd/usdShade/shader.h"
+#include <pxr/base/vt/types.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usd/relationship.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usd/variantSets.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
+#include <pxr/usd/usdGeom/camera.h>
+#include <pxr/usd/usdGeom/curves.h>
+#include <pxr/usd/usdGeom/hermiteCurves.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/nurbsCurves.h>
+#include <pxr/usd/usdGeom/pointInstancer.h>
+#include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdRender/settings.h>
+#include <pxr/usd/usdShade/material.h>
 #include <vector>
 
 YBI_NAMESPACE_BEGIN
 
+struct USDTraversalState
+{
+};
+
+#define USD_SUCCESS(expr)                                                                     \
+    {                                                                                         \
+        bool result = expr;                                                                   \
+        if (!result)                                                                          \
+        {                                                                                     \
+            printf("USD Error in %s (%s:%d)\n", #expr, __FILE__, __LINE__);                   \
+            assert(false);                                                                    \
+        }                                                                                     \
+    }
+
 void Test(Scene *scene)
 {
-    std::string filePath = "C:/Users/maven/workspace/ALab-2.2.0/ALab/entry.usda";
+    std::string filePath = "C:/Users/maven/Downloads/ALab-2.2.0/ALab/entry.usda";
 
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
 
@@ -38,15 +63,43 @@ void Test(Scene *scene)
     printf("start: %f, end: %f, fps: %f, tcps: %f\n", startTimeCode, endTimeCode, fps, tcps);
 
     std::vector<pxr::UsdGeomMesh> meshes;
+    pxr::Usd_PrimFlagsConjunction filterFlags =
+        pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
 
-    for (pxr::UsdPrim prim : stage->Traverse())
+    // if (defined_prims_only)
+    // {
+    //     filter_flags &= pxr::UsdPrimIsDefined;
+    // }
+
+    pxr::Usd_PrimFlagsPredicate filterPredicate(filterFlags);
+
+    // if (!params_.support_scene_instancing)
+    // {
+    // filterPredicate = pxr::UsdTraverseInstanceProxiesfilterPredicate);
+    // }
+
+    // pxr::UsdPrim root = stage->GetPrototypes();
+
+    for (pxr::UsdPrim prim : stage->Traverse(filterPredicate))
     {
-        if (prim.IsA<pxr::UsdGeomMesh>())
+        pxr::UsdVariantSets variantSets = prim.GetVariantSets();
+        for (const std::string &setNames : variantSets.GetNames())
+        {
+            printf("variants: %s\n", setNames.c_str());
+            printf("type: %s\n", prim.GetTypeName().GetString().c_str());
+        }
+
+        if (prim.IsInstance())
+        {
+            pxr::UsdPrim proto = prim.GetPrototype();
+        }
+        else if (prim.IsA<pxr::UsdGeomMesh>())
         {
             meshes.push_back(pxr::UsdGeomMesh(prim));
 #if 0
             std::vector<double> timeSamples;
             pxr::UsdAttribute pointsAttr = mesh.GetPointsAttr();
+            pointsAttr
             if (mesh.GetVelocitiesAttr().IsValid())
             {
                 pxr::VtVec3fArray velocities;
@@ -79,15 +132,109 @@ void Test(Scene *scene)
         }
         else if (prim.IsA<pxr::UsdGeomXform>())
         {
+            pxr::UsdGeomXform xform(prim);
             // printf("xform\n");
         }
         else if (prim.IsA<pxr::UsdGeomBasisCurves>())
         {
             // printf("curves\n");
+
+            pxr::UsdGeomBasisCurves basisCurves(prim);
+            size_t numCurves = basisCurves.GetCurveCount(0.0);
+
+            pxr::VtVec3fArray points;
+            basisCurves.GetPointsAttr().Get(&points, 0.0);
+            printf("basis: %zi %zi\n", numCurves, points.size());
+        }
+        else if (prim.IsA<pxr::UsdGeomNurbsCurves>())
+        {
+            pxr::UsdGeomNurbsCurves nurbsCurves(prim);
+            size_t numCurves = nurbsCurves.GetCurveCount(0.0);
+            // printf("nurbs: %zi\n", numCurves);
+
+            // pxr::VtVec3fArray points;
+            // nurbsCurves.GetPointsAttr().Get(&points, 0.0);
+
+            // for (auto point : points)
+            // {
+            //     printf("%f %f %f\n", point[0], point[1], point[2]);
+            // }
+            // nurbsCurves.GetOrderAttr();
+            // nurbsCurves.GetKnotsAttr();
+            // nurbsCurves.GetRangesAttr();
+            // nurbsCurves.GetPointWeightsAttr();
+        }
+        else if (prim.IsA<pxr::UsdGeomHermiteCurves>())
+        {
+            printf("hermite\n");
+        }
+        else if (prim.IsA<pxr::UsdGeomCurves>())
+        {
+            printf("curve\n");
+        }
+        else if (prim.IsA<pxr::UsdGeomCamera>())
+        {
+            pxr::UsdGeomCamera camera(prim);
+            double shutterOpen, shutterClose;
+
+            // if (camera.GetShutterOpenAttr().ValueMightBeTimeVarying() ||
+            //     camera.GetShutterCloseAttr().ValueMightBeTimeVarying())
+            {
+                camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
+                camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
+                printf("open: %f close: %f\n", shutterOpen, shutterClose);
+            }
+        }
+        else if (prim.IsA<pxr::UsdRenderSettings>())
+        {
+            pxr::UsdRenderSettings settings(prim);
+        }
+        else if (prim.IsA<pxr::UsdShadeMaterial>())
+        {
+            pxr::UsdShadeMaterial material(prim);
+        }
+        else if (prim.IsA<pxr::UsdShadeShader>())
+        {
+            pxr::UsdShadeShader shader(prim);
+        }
+        else if (prim.IsA<pxr::UsdGeomPointInstancer>())
+        {
+#if 0
+            pxr::SdfPathVector targets;
+            pxr::UsdGeomPointInstancer pointInstancer(prim);
+            pxr::UsdRelationship rel = pointInstancer.GetPrototypesRel();
+            USD_SUCCESS(rel.GetTargets(&targets));
+
+            // for (pxr::SdfPath path : targets)
+            // {
+            //     printf("path: %s\n", path.GetText());
+            // }
+
+            pxr::UsdAttribute protoIndicesAttr = pointInstancer.GetProtoIndicesAttr();
+
+            pxr::VtIntArray protoIndices;
+            USD_SUCCESS(protoIndicesAttr.Get(&protoIndices));
+
+            for (int i : protoIndices)
+            {
+            }
+
+            // pointInstancer.GetPrototypesRel();
+            // pointInstancer.GetPositionsAttr
+#endif
+        }
+        else if (prim.IsA<pxr::UsdGeomScope>())
+        {
+            pxr::UsdGeomScope scope(prim);
+
+            if (prim.GetName().GetString() == "alfro_body_main")
+            {
+                printf("alfro\n");
+            }
         }
         else
         {
-            // printf("type: %s\n", prim.GetTypeName().GetString().c_str());
+            printf("type: %s\n", prim.GetTypeName().GetString().c_str());
         }
     }
 
@@ -120,7 +267,7 @@ void Test(Scene *scene)
         // {
         //     std::vector<double> timeSamples;
         //
-        //     if (mesh.GetPointsAttr().GetTimeSamples(&timeSamples))
+        //     if (mesh.GetPointsAttr.GetTimeSamplesInInterval(&timeSamples))
         //     {
         //         for (double time : timeSamples)
         //         {
