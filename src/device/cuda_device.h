@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../scene/scene.h"
+#include "../util/array.h"
 #include "../util/base.h"
 #include "../util/float3.h"
 #include "cuda.h"
@@ -227,8 +228,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         options.motionOptions.timeBegin = 0.f;
         options.motionOptions.timeEnd   = 1.f;
 
-        std::vector<CUdeviceptr> vertexBuffers;
-        vertexBuffers.reserve(numMotionKeys);
+        Array<CUdeviceptr> vertexBuffers(numMotionKeys);
 
         size_t vertexSize      = sizeof(float3) * numVertices * numMotionKeys;
         size_t indexSize       = sizeof(int) * numIndices;
@@ -238,8 +238,8 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
 
         for (uint32_t step = 0; step < numMotionKeys; step++)
         {
-            CUdeviceptr dst = (CUdeviceptr)(deviceVertices + step * numVertices);
-            vertexBuffers.push_back(dst);
+            CUdeviceptr dst     = (CUdeviceptr)(deviceVertices + step * numVertices);
+            vertexBuffers[step] = dst;
 
             // TODO IMPORTANT: handle all motion blur data properly
             if (step > 0)
@@ -295,6 +295,11 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         std::vector<CUdeviceptr> widthBuffers;
         vertexBuffers.reserve(numMotionKeys);
 
+        // boilerplate wise what am i missing?
+        // my own vector implementation / allocator implementation
+        // my own math library
+        //
+
 #if 0
         size_t vertexSize      = sizeof(float3) * numVertices * numMotionKeys;
         size_t indexSize       = sizeof(int) * numIndices;
@@ -337,7 +342,6 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         curveArray.widthBuffers         = widthBuffers.data();
         curveArray.widthStrideInBytes   = 0;
         curveArray.indexBuffer          = 0; // CUdeviceptr(deviceIndices);
-        curveArray.indexStrideInBytes   = 0;
         curveArray.indexStrideInBytes   = 0;
         curveArray.flag                 = flags;
         curveArray.primitiveIndexOffset = 0;
