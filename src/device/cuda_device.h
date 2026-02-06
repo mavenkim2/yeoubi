@@ -138,6 +138,75 @@ void *CUDADevice::Alloc(size_t size)
     return (void *)ptr;
 }
 
+static void BuildOptixBVH(CUDADevice *cudaDevice,
+                          OptixAccelBuildOptions buildOptions,
+                          OptixBuildInput buildInput)
+{
+    OptixAccelBufferSizes sizes = {};
+    OPTIX_ASSERT(optixAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                              &buildOptions,
+                                              &buildInput,
+                                              1,
+                                              &sizes));
+
+    cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
+
+    // Build BVH
+    bool useCompaction = buildOptions.buildFlags & OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
+    void *tempBuffer =
+        cudaDevice->Alloc(AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)));
+    void *outputBuffer = cudaDevice->Alloc(sizes.outputSizeInBytes);
+
+    uint64_t compactedSizeAddress =
+        AlignUp(CUdeviceptr(tempBuffer) + sizes.tempSizeInBytes, sizeof(uint64_t));
+    OptixAccelEmitDesc emittedProperties = {};
+    emittedProperties.type               = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
+    emittedProperties.result             = CUdeviceptr(compactedSizeAddress);
+    OptixTraversableHandle outputHandle;
+    OPTIX_ASSERT(optixAccelBuild(cudaDevice->optixDeviceContext,
+                                 0,
+                                 &buildOptions,
+                                 &buildInput,
+                                 1,
+                                 CUdeviceptr(tempBuffer),
+                                 sizes.tempSizeInBytes,
+                                 CUdeviceptr(outputBuffer),
+                                 sizes.outputSizeInBytes,
+                                 &outputHandle,
+                                 useCompaction ? &emittedProperties : 0,
+                                 useCompaction ? 1 : 0));
+
+    CUDA_ASSERT(cuStreamSynchronize(0));
+
+    if (useCompaction)
+    {
+        uint64_t compactedSize = sizes.outputSizeInBytes;
+        CUDA_ASSERT(
+            cuMemcpyDtoH(&compactedSize, CUdeviceptr(compactedSizeAddress), sizeof(uint64_t)));
+
+        if (compactedSize < sizes.outputSizeInBytes)
+        {
+            void *compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
+
+            OptixTraversableHandle tempOutputHandle;
+            OPTIX_ASSERT(optixAccelCompact(cudaDevice->optixDeviceContext,
+                                           0,
+                                           outputHandle,
+                                           CUdeviceptr(compactedOutputBuffer),
+                                           compactedSize,
+                                           &tempOutputHandle));
+            CUDA_ASSERT(cuStreamSynchronize(0));
+            outputHandle = tempOutputHandle;
+
+            CUDA_ASSERT(cuMemFree(CUdeviceptr(outputBuffer)));
+            cudaDevice->bvhTotalAllocated -= sizes.outputSizeInBytes;
+            cudaDevice->bvhTotalAllocated += compactedSize;
+        }
+    }
+
+    CUDA_ASSERT(cuMemFree(CUdeviceptr(tempBuffer)));
+}
+
 // TODO: handle the case where cuda is enabled but optix isn't
 void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
 {
@@ -201,70 +270,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         triangleArray.flags                         = &flags;
         triangleArray.numSbtRecords                 = 1;
 
-        OptixAccelBufferSizes sizes = {};
-        OPTIX_ASSERT(optixAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
-                                                  &options,
-                                                  &input,
-                                                  1,
-                                                  &sizes));
-
-        cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
-
-        // Build BVH
-        bool useCompaction = options.buildFlags & OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
-        void *tempBuffer   = cudaDevice->Alloc(
-            AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)));
-        void *outputBuffer = cudaDevice->Alloc(sizes.outputSizeInBytes);
-
-        uint64_t compactedSizeAddress =
-            AlignUp(CUdeviceptr(tempBuffer) + sizes.tempSizeInBytes, sizeof(uint64_t));
-        OptixAccelEmitDesc emittedProperties = {};
-        emittedProperties.type               = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-        emittedProperties.result             = CUdeviceptr(compactedSizeAddress);
-        OptixTraversableHandle outputHandle;
-        OPTIX_ASSERT(optixAccelBuild(cudaDevice->optixDeviceContext,
-                                     0,
-                                     &options,
-                                     &input,
-                                     1,
-                                     CUdeviceptr(tempBuffer),
-                                     sizes.tempSizeInBytes,
-                                     CUdeviceptr(outputBuffer),
-                                     sizes.outputSizeInBytes,
-                                     &outputHandle,
-                                     useCompaction ? &emittedProperties : 0,
-                                     useCompaction ? 1 : 0));
-
-        CUDA_ASSERT(cuStreamSynchronize(0));
-
-        if (useCompaction)
-        {
-            uint64_t compactedSize = sizes.outputSizeInBytes;
-            CUDA_ASSERT(cuMemcpyDtoH(&compactedSize,
-                                     CUdeviceptr(compactedSizeAddress),
-                                     sizeof(uint64_t)));
-
-            if (compactedSize < sizes.outputSizeInBytes)
-            {
-                void *compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
-
-                OptixTraversableHandle tempOutputHandle;
-                OPTIX_ASSERT(optixAccelCompact(cudaDevice->optixDeviceContext,
-                                               0,
-                                               outputHandle,
-                                               CUdeviceptr(compactedOutputBuffer),
-                                               compactedSize,
-                                               &tempOutputHandle));
-                CUDA_ASSERT(cuStreamSynchronize(0));
-                outputHandle = tempOutputHandle;
-
-                CUDA_ASSERT(cuMemFree(CUdeviceptr(outputBuffer)));
-                cudaDevice->bvhTotalAllocated -= sizes.outputSizeInBytes;
-                cudaDevice->bvhTotalAllocated += compactedSize;
-            }
-        }
-
-        CUDA_ASSERT(cuMemFree(CUdeviceptr(tempBuffer)));
+        BuildOptixBVH(cudaDevice, options, input);
         CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
         CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
 
