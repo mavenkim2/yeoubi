@@ -21,4 +21,9 @@ struct float3
     }
 };
 
+__forceinline float3 make_float3(const float x, const float y, const float z)
+{
+    return {x, y, z};
+}
+
 YBI_NAMESPACE_END

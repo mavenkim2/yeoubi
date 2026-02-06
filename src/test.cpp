@@ -18,7 +18,7 @@ int main(int argc, char **argv)
     CUDADevice device;
 
     uint32_t totalNumTriangles = 0;
-    auto start                 = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
     BuildBVH(&device, &scene);
 
     // for (Mesh &mesh : scene.meshes)

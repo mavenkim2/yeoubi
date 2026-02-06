@@ -1,8 +1,7 @@
 #include "load.h"
-#include "../../scene/scene.h"
-#include "../../util/float3.h"
-#include "pxr/usd/usdGeom/subset.h"
-#include "pxr/usd/usdShade/shader.h"
+#include "scene/scene.h"
+#include "util/float3.h"
+#include "vector_functions.h"
 #include <algorithm>
 #include <limits>
 #include <pxr/base/vt/types.h>
@@ -20,10 +19,12 @@
 #include <pxr/usd/usdGeom/nurbsCurves.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/scope.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/usd/usdShade/material.h>
-#include <vector>
+#include <pxr/usd/usdShade/shader.h>
+#include <utility>
 
 YBI_NAMESPACE_BEGIN
 
@@ -31,14 +32,14 @@ struct USDTraversalState
 {
 };
 
-#define USD_ASSERT(expr)                                                                      \
-    {                                                                                         \
-        bool result = expr;                                                                   \
-        if (!result)                                                                          \
-        {                                                                                     \
-            printf("USD Error in %s (%s:%d)\n", #expr, __FILE__, __LINE__);                   \
-            assert(false);                                                                    \
-        }                                                                                     \
+#define USD_ASSERT(expr) \
+    { \
+        bool result = expr; \
+        if (!result) \
+        { \
+            printf("USD Error in %s (%s:%d)\n", #expr, __FILE__, __LINE__); \
+            assert(false); \
+        } \
     }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurve)
@@ -150,10 +151,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurv
         printf("has subsets\n");
     }
 
-    printf("curve: %s %s %s\n",
-           basisToken.GetText(),
-           typeToken.GetText(),
-           wrapToken.GetText());
+    printf("curve: %s %s %s\n", basisToken.GetText(), typeToken.GetText(), wrapToken.GetText());
 
     int vStep = 1;
 
@@ -165,8 +163,9 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurv
     int totalNumVertices = 0;
 
     // TODO: really need to get rid of this
-    float3 *positions    = (float3 *)malloc(sizeof(float3) * (points.size() + 1));
-    int *curveOffsets    = (int *)malloc(sizeof(int) * (numCurves + 1));
+    // Array<float3> positions
+    float3 *positions = (float3 *)malloc(sizeof(float3) * (points.size() + 1));
+    int *curveOffsets = (int *)malloc(sizeof(int) * (numCurves + 1));
     int curveOffsetIndex = 0;
 
     memcpy(positions, points.data(), sizeof(points[0]) * points.size());
@@ -179,7 +178,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurv
     curveOffsets[curveOffsetIndex] = totalNumVertices;
     assert(totalNumVertices == points.size());
 
-    outCurve       = Curves(positions, curveOffsets, points.size(), numCurves);
+    outCurve = Curves(positions, curveOffsets, points.size(), numCurves);
     int curveFlags = 0;
 
     if (typeToken == "cubic")
@@ -224,10 +223,10 @@ void Test(Scene *scene)
     {
     }
 
-    double startTimeCode     = stage->GetStartTimeCode();
-    double endTimeCode       = stage->GetEndTimeCode();
-    double fps               = stage->GetFramesPerSecond();
-    double tcps              = stage->GetTimeCodesPerSecond();
+    double startTimeCode = stage->GetStartTimeCode();
+    double endTimeCode = stage->GetEndTimeCode();
+    double fps = stage->GetFramesPerSecond();
+    double tcps = stage->GetTimeCodesPerSecond();
     double timeCodesPerFrame = tcps / fps;
 
     printf("start: %f, end: %f, fps: %f, tcps: %f\n", startTimeCode, endTimeCode, fps, tcps);
@@ -464,7 +463,7 @@ void Test(Scene *scene)
         assert(success);
 
         bool constantFaceCount = true;
-        int numTriangles       = 0;
+        int numTriangles = 0;
 
         for (int faceCount : faceCounts)
         {
@@ -485,10 +484,9 @@ void Test(Scene *scene)
                 numTriangles++;
             }
         }
-        size_t positionSize    = sizeof(float3) * positions.size();
-        float3 *finalPositions = (float3 *)malloc(positionSize);
-        memcpy(finalPositions, positions.data(), positionSize);
-        int *finalIndices = (int *)malloc(sizeof(int) * 3 * numTriangles);
+
+        Array<float3> finalPositions(positions);
+        Array<int> finalIndices(3 * numTriangles);
 
         int inputOffset = 0;
         int finalOffset = 0;
@@ -527,8 +525,7 @@ void Test(Scene *scene)
             }
         }
 
-        scene->meshes.push_back(
-            Mesh(finalPositions, finalIndices, positions.size(), 3 * numTriangles));
+        scene->meshes.emplace_back(std::move(finalPositions), std::move(finalIndices));
     }
 }
 
