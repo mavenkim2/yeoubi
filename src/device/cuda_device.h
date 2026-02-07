@@ -9,7 +9,6 @@
 #include "util/float3.h"
 
 #include <cassert>
-#include <cstring>
 #include <cuda_runtime.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
@@ -298,10 +297,20 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         Array<CUdeviceptr> vertexBuffers(numMotionKeys);
         Array<CUdeviceptr> widthBuffers(numMotionKeys);
 
-        // boilerplate wise what am i missing?
-        // my own vector implementation / allocator implementation
-        // my own math library
-        //
+        size_t totalNumSegments = curve.GetNumSegments();
+        Array<uint32_t> indexBuffer(totalNumSegments);
+
+        for (size_t curveIndex = 0, bufferIndex = 0; curveIndex < curve.GetNumCurves();
+             curveIndex++)
+        {
+            int segmentStart = curve.GetCurveKeyStart(curveIndex);
+            int numSegments = curve.GetCurveNumSegments(curveIndex);
+            for (uint32_t segmentIndex = segmentStart; segmentIndex < segmentStart + numSegments;
+                 segmentIndex++, bufferIndex++)
+            {
+                indexBuffer[bufferIndex] = segmentIndex;
+            }
+        }
 
 #if 0
         size_t vertexSize      = sizeof(float3) * numVertices * numMotionKeys;
@@ -329,7 +338,6 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh->indices, indexSize));
 #endif
 
-        int totalNumSegments = curve.numVertices - 3 * curve.numCurves;
         unsigned int flags = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
 
         OptixBuildInput input = {};
@@ -339,7 +347,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         curveArray.curveType = OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE;
         curveArray.numPrimitives = totalNumSegments;
         curveArray.vertexBuffers = vertexBuffers.data();
-        curveArray.numVertices = curve.numVertices;
+        curveArray.numVertices = curve.GetNumVertices();
         curveArray.vertexStrideInBytes = 0; // sizeof(float4);
 
         curveArray.widthBuffers = widthBuffers.data();
@@ -353,7 +361,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         OptixAccelBufferSizes sizes = {};
         OPTIX_ASSERT(optixAccelComputeMemoryUsage(
             cudaDevice->optixDeviceContext, &options, &input, 1, &sizes));
-        printf("sizes: %zi %zi %zi, num segments: %i\n",
+        printf("sizes: %zi %zi %zi, num segments: %zi\n",
                sizes.outputSizeInBytes,
                sizes.tempSizeInBytes,
                sizes.tempUpdateSizeInBytes,

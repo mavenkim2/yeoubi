@@ -10,10 +10,48 @@ Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx)
 {
 }
 
-Curves::Curves(float3 *positions, int *curveVertexOffsets, int numVertices, int numCurves)
-    : positions(positions), curveVertexOffsets(curveVertexOffsets), numVertices(numVertices),
-      numCurves(numCurves)
+Curves::Curves(Array<float3> &&positions, Array<int> &&curveVertexOffsets)
+    : positions(std::move(positions)), curveVertexOffsets(std::move(curveVertexOffsets))
 {
+}
+
+size_t Curves::GetNumVertices() const
+{
+    return positions.size();
+}
+
+size_t Curves::GetNumCurves() const
+{
+    return curveVertexOffsets.size();
+}
+
+size_t Curves::GetNumSegments() const
+{
+    return positions.size() - 3 * GetNumCurves();
+}
+
+int Curves::GetCurveKeyStart(size_t curveIndex) const
+{
+    return curveVertexOffsets[curveIndex];
+}
+
+int Curves::GetCurveNumSegments(size_t curveIndex) const
+{
+    uint32_t start = curveVertexOffsets[curveIndex];
+    uint32_t count = curveIndex == curveVertexOffsets.size() - 1
+                         ? positions.size()
+                         : curveVertexOffsets[curveIndex + 1];
+    count -= start;
+    assert(count >= 4);
+    return count - 3;
+}
+
+void Curves::GetCurveRange(uint32_t index, uint32_t &start, uint32_t &count) const
+{
+    start = curveVertexOffsets[index];
+    count =
+        index == curveVertexOffsets.size() - 1 ? positions.size() : curveVertexOffsets[index + 1];
+    count -= start;
 }
 
 YBI_NAMESPACE_END

@@ -42,7 +42,7 @@ struct USDTraversalState
         } \
     }
 
-static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurve)
+static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 {
     size_t numCurves = curve.GetCurveCount(0.0);
 
@@ -163,22 +163,19 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Curves &outCurv
     int totalNumVertices = 0;
 
     // TODO: really need to get rid of this
-    // Array<float3> positions
-    float3 *positions = (float3 *)malloc(sizeof(float3) * (points.size() + 1));
-    int *curveOffsets = (int *)malloc(sizeof(int) * (numCurves + 1));
+    Array<float3> positions(points);
+    Array<int> curveOffsets(numCurves);
     int curveOffsetIndex = 0;
 
-    memcpy(positions, points.data(), sizeof(points[0]) * points.size());
     for (int curveVertexCount : curveVertexCounts)
     {
         curveOffsets[curveOffsetIndex++] = totalNumVertices;
         totalNumVertices += curveVertexCount;
     }
 
-    curveOffsets[curveOffsetIndex] = totalNumVertices;
     assert(totalNumVertices == points.size());
+    scene->curves.emplace_back(std::move(positions), std::move(curveOffsets));
 
-    outCurve = Curves(positions, curveOffsets, points.size(), numCurves);
     int curveFlags = 0;
 
     if (typeToken == "cubic")
@@ -402,11 +399,11 @@ void Test(Scene *scene)
         }
     }
 
-    scene->curves.resize(basisCurves.size());
+    scene->curves.reserve(basisCurves.size());
     int curveIndex = 0;
     for (pxr::UsdGeomBasisCurves &curve : basisCurves)
     {
-        ProcessUSDBasisCurve(curve, scene->curves[curveIndex++]);
+        ProcessUSDBasisCurve(curve, scene);
     }
 
     scene->meshes.reserve(meshes.size());
