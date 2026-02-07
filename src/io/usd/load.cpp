@@ -3,6 +3,7 @@
 #include "util/float3.h"
 #include "vector_functions.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <pxr/base/vt/types.h>
 #include <pxr/usd/usd/prim.h>
@@ -60,80 +61,235 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     USD_ASSERT(curve.GetTypeAttr().Get(&typeToken, 0.0));
     USD_ASSERT(curve.GetWrapAttr().Get(&wrapToken, 0.0));
 
+    uint32_t offset = 0;
+    uint32_t curveIndex = 0;
+
 #if 0
-    std::vector<float> test;
-    std::vector<int> indices;
-    test.reserve(points.size() * 3);
+    for (auto count : curveVertexCounts)
+    {
+        printf("curve: %u\n", curveIndex++);
+        float minF[3];
+        float maxF[3];
+        uint32_t expMin[3];
+        uint32_t expMax[3];
+        for (int i = 0; i < 3; i++)
+        {
+            minF[i] = std::numeric_limits<float>::infinity();
+            maxF[i] = -std::numeric_limits<float>::infinity();
+
+            expMin[i] = 512;
+            expMax[i] = 0u;
+        }
+        for (uint32_t i = offset; i < offset + count; i++)
+        {
+            auto point = points[i];
+
+            for (int j = 0; j < 3; j++)
+            {
+                minF[j] = std::min(minF[j], point[j]);
+                maxF[j] = std::max(maxF[j], point[j]);
+
+                uint32_t test;
+                memcpy(&test, &point[j], sizeof(float));
+
+                uint32_t exponent = (test >> 23) & 0x7f;
+                if (exponent == 0)
+                {
+                    printf("0 exp: %f %f %f\n", point[0], point[1], point[2]);
+                }
+                expMin[j] = std::min(expMin[j], exponent);
+                expMax[j] = std::max(expMax[j], exponent);
+            }
+        }
+
+        for (uint32_t i = offset; i < offset + count; i++)
+        {
+            auto point = points[i];
+
+            printf("point: %f %f %f\n", point[0], point[1], point[2]);
+        }
+
+        for (int j = 0; j < 3; j++)
+        {
+            float delta = maxF[j] - minF[j];
+            int expDelta = expMax[j] - expMin[j];
+
+            int test;
+            memcpy(&test, &delta, sizeof(float));
+
+            printf("exponents: %i %i %i\n", expMin[j], expMax[j], expDelta);
+            printf("test delta: floats %u %f %f\n", test, maxF[j], delta);
+        }
+        offset += count;
+    }
+#endif
+
+    std::vector<float> testX;
+    std::vector<float> testY;
+    std::vector<float> testZ;
+
+    std::vector<int> indicesX;
+    std::vector<int> indicesY;
+    std::vector<int> indicesZ;
 
     int index = 0;
+
     for (auto &point : points)
     {
-        test.push_back(point[0]);
-        test.push_back(point[1]);
-        test.push_back(point[2]);
-        indices.push_back(index++);
+        testX.push_back(point[0]);
+        testY.push_back(point[1]);
+        testZ.push_back(point[2]);
+
+        indicesX.push_back(index);
+        indicesY.push_back(index);
+        indicesZ.push_back(index);
+        index++;
     }
 
-    std::sort(indices.begin(), indices.end(), [&](size_t i, size_t j) {
-        return test[i] < test[j];
-    });
-    std::sort(test.begin(), test.end());
+    std::sort(
+        indicesX.begin(), indicesX.end(), [&](size_t i, size_t j) { return testX[i] < testX[j]; });
+    std::sort(
+        indicesY.begin(), indicesY.end(), [&](size_t i, size_t j) { return testY[i] < testY[j]; });
+    std::sort(
+        indicesZ.begin(), indicesZ.end(), [&](size_t i, size_t j) { return testZ[i] < testZ[j]; });
 
-    float prevFloat = test[0];
-    int numUnique   = 1;
-    for (int floatIndex = 1; floatIndex < test.size(); floatIndex++)
+    std::sort(testX.begin(), testX.end());
+    std::sort(testY.begin(), testY.end());
+    std::sort(testZ.begin(), testZ.end());
+
+    int numUnique = 0;
+    std::vector<int> mappingX(testX.size());
+    std::vector<int> mappingY(testY.size());
+    std::vector<int> mappingZ(testZ.size());
+
+    for (int j = 0; j < 3; j++)
     {
-        float currentFloat = test[floatIndex];
-        if (prevFloat != currentFloat)
+        auto &test = j == 0 ? testX : (j == 1 ? testY : testZ);
+        auto &indices = j == 0 ? indicesX : (j == 1 ? indicesY : indicesZ);
+        auto &mapping = j == 0 ? mappingX : (j == 1 ? mappingY : mappingZ);
+
+        int numDuplicated = 0;
+
+        for (int floatIndex = 0; floatIndex < test.size(); floatIndex++)
         {
-            numUnique++;
-            prevFloat = currentFloat;
+            mapping[indices[floatIndex]] = floatIndex;
         }
+
+        int temp = -1;
+        float prevFloat = std::nanf("0");
+        for (int floatIndex = 0; floatIndex < test.size(); floatIndex++)
+        {
+            float currentFloat = test[floatIndex];
+            if (prevFloat != currentFloat)
+            {
+                prevFloat = currentFloat;
+                temp++;
+            }
+            else
+            {
+                numDuplicated++;
+            }
+
+            mapping[indices[floatIndex]] = temp;
+            test[temp] = currentFloat;
+
+            // int val = indices[mapping[floatIndex]];
+            // if (val < numDuplicated)
+            // {
+            //     printf("abort: %i %i\n", numDuplicated, val);
+            // }
+            // test[temp] = currentFloat;
+            // indices[mapping[floatIndex]] -= numDuplicated;
+            // indices[mapping[floatIndex]] = temp;
+            // printf("test : %i %i %i, check: %f %f\n",
+            //        indices[mapping[floatIndex]],
+            //        mapping[floatIndex],
+            //        val,
+            //        test[indices[mapping[floatIndex]]],
+            //        currentFloat);
+            // indices.push_back(index);
+        }
+        // test[temp] = prevFloat;
+        numUnique += temp;
     }
 
-    int step    = 1024;
+    int step = 128;
     int numBits = 0;
-    for (int i = 0; i < indices.size(); i += 3 * step)
+    for (int axis = 0; axis < 3; axis++)
     {
-        int minIndex = std::numeric_limits<int>::max();
-        int maxIndex = std::numeric_limits<int>::min();
-        for (int j = i; j < i + 3 * step; j++)
-        {
-            minIndex = indices[j] < minIndex ? indices[j] : minIndex;
-            maxIndex = indices[j] > maxIndex ? indices[j] : maxIndex;
-        }
-        int delta = maxIndex - minIndex;
-        int r     = 0;
-        int x     = delta;
+        auto &indices = axis == 0 ? indicesX : (axis == 1 ? indicesY : indicesZ);
+        auto &mapping = axis == 0 ? mappingX : (axis == 1 ? mappingY : mappingZ);
+        auto &test = axis == 0 ? testX : (axis == 1 ? testY : testZ);
 
-        // We check ranges and shift x to narrow down the highest bit
-        if (x >= 0x10000)
-        {
-            x >>= 16;
-            r += 16;
-        }
-        if (x >= 0x100)
-        {
-            x >>= 8;
-            r += 8;
-        }
-        if (x >= 0x10)
-        {
-            x >>= 4;
-            r += 4;
-        }
-        if (x >= 0x4)
-        {
-            x >>= 2;
-            r += 2;
-        }
-        if (x >= 0x2)
-        {
-            r += 1;
-        }
+        int curveOffset = 0;
+        int curveIndex = 0;
 
-        r++;
-        numBits += 3 * step * r;
+        for (int curveCount : curveVertexCounts)
+        {
+            // printf("curve: %i\n", curveIndex++);
+            int minIndex = std::numeric_limits<int>::infinity();
+            int maxIndex = 0;
+
+            float minF = std::numeric_limits<float>::infinity();
+            float maxF = -std::numeric_limits<float>::infinity();
+
+            for (int j = curveOffset; j < curveOffset + curveCount; j++)
+            {
+                // if (indices[j] == 0)
+                {
+                    if (test[mapping[j]] != points[j][axis])
+                    {
+                        printf("aborot\n");
+                    }
+                }
+                minIndex = mapping[j] < minIndex ? mapping[j] : minIndex;
+                maxIndex = mapping[j] > maxIndex ? mapping[j] : maxIndex;
+
+                minF = std::min(points[j][axis], minF);
+                maxF = std::max(points[j][axis], maxF);
+            }
+            {
+                int delta = maxIndex - minIndex;
+                // printf("min: %f, max: %f, check: %f %f\n",
+                //        test[minIndex],
+                //        test[maxIndex],
+                //        minF,
+                //        maxF);
+                // printf("axis: %i, delta %i\n", axis, delta);
+                int r = 0;
+                int x = delta;
+
+                // We check ranges and shift x to narrow down the highest bit
+                if (x >= 0x10000)
+                {
+                    x >>= 16;
+                    r += 16;
+                }
+                if (x >= 0x100)
+                {
+                    x >>= 8;
+                    r += 8;
+                }
+                if (x >= 0x10)
+                {
+                    x >>= 4;
+                    r += 4;
+                }
+                if (x >= 0x4)
+                {
+                    x >>= 2;
+                    r += 2;
+                }
+                if (x >= 0x2)
+                {
+                    r += 1;
+                }
+
+                r++;
+                numBits += curveCount * r;
+            }
+            curveOffset += curveCount;
+        }
         // printf("test delta %i r %i, %i %i\n", delta, r, minIndex, maxIndex);
         // float delta = test[i + step - 1] - test[i];
 
@@ -141,9 +297,8 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
         // memcpy(&u, &delta, sizeof(float));
         // printf("delta: %u, %f\n", u, delta);
     }
-    printf("num bytes: %i\n", numBits / 8);
-    printf("num unique: %i, total: %i\n", numUnique, test.size());
-#endif
+    printf("num bytes: %i, uncompressed: %i\n", numUnique * 4 + numBits / 8, 12 * points.size());
+    printf("num unique: %i, total: %i\n", numUnique, points.size());
 
     std::vector<pxr::UsdGeomSubset> subsets = pxr::UsdGeomSubset::GetAllGeomSubsets(curve);
     if (subsets.size())
