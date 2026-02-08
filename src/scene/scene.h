@@ -47,6 +47,7 @@ struct Curves
 {
 private:
     Array<float3> positions;
+    Array<float> widths;
     // num_offsets = num_curves + 1
     Array<int> curveVertexOffsets;
     int curveFlags;
@@ -56,13 +57,16 @@ public:
     ~Curves() = default;
     Curves(Curves &&other) = default;
 
-    Curves(Array<float3> &&positions, Array<int> &&curveVertexOffsets);
+    Curves(Array<float3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets);
     size_t GetNumVertices() const;
     size_t GetNumCurves() const;
     size_t GetNumSegments() const;
     int GetCurveKeyStart(size_t curveIndex) const;
     int GetCurveNumSegments(size_t curveIndex) const;
     void GetCurveRange(uint32_t index, uint32_t &start, uint32_t &count) const;
+
+    const Array<float3> &GetVertices() const;
+    const Array<float> &GetWidths() const;
 };
 
 struct Scene

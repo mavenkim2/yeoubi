@@ -68,18 +68,6 @@ static pxr::UsdShadeMaterial GetPrimMaterial(pxr::UsdPrim &prim,
         // printf("Prim %s has no material bound.\n", prim.GetPath().GetText());
     }
 
-    if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
-    {
-        pxr::TfToken token;
-        if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
-        {
-        }
-        else
-        {
-            printf("material is not a usdpreviewsurface\n");
-            assert(0);
-        }
-    }
     return material;
 }
 
@@ -109,6 +97,47 @@ static int AddMaterialToMap(std::unordered_map<std::string, int> &materialMap,
         }
     }
     return materialIndex;
+}
+
+// NOTE: For shade inputs that most likely have a single UsdUVTexture
+static pxr::UsdShadeShader HandleExpectedUVTexture(const pxr::UsdShadeInput &input)
+{
+    pxr::TfToken token;
+
+    auto sources = input.GetConnectedSources();
+    pxr::UsdShadeShader shader;
+
+    if (sources.size() == 1)
+    {
+        pxr::UsdPrim sourcePrim = sources[0].source.GetPrim();
+        if (sourcePrim.IsA<pxr::UsdShadeShader>())
+        {
+            pxr::UsdShadeShader connectedShader(sourcePrim);
+            pxr::TfToken newTok;
+            connectedShader.GetShaderId(&newTok);
+            if (newTok == pxr::TfToken("UsdUVTexture"))
+            {
+                shader = connectedShader;
+            }
+            else
+            {
+                printf("Expected UsdUvTexture, other cases not handled yet\n");
+                assert(0);
+            }
+        }
+        else
+        {
+            printf("Expected UsdShadeShader, other cases not handled yet. Type name is: %s\n",
+                   sourcePrim.GetTypeName().GetText());
+            assert(0);
+        }
+    }
+    else
+    {
+        printf("Expected one source, other cases not handled yet\n");
+        assert(0);
+    }
+    return shader;
 }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
@@ -249,8 +278,8 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 
     int totalNumVertices = 0;
 
-    // TODO: really need to get rid of this
     Array<float3> positions(points);
+    Array<float> curveWidths(widths);
     Array<int> curveOffsets(numCurves);
     int curveOffsetIndex = 0;
 
@@ -261,7 +290,8 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     }
 
     assert(totalNumVertices == points.size());
-    scene->curves.emplace_back(std::move(positions), std::move(curveOffsets));
+    scene->curves.emplace_back(
+        std::move(positions), std::move(curveWidths), std::move(curveOffsets));
 
     int curveFlags = 0;
 
@@ -450,10 +480,6 @@ void Test(Scene *scene)
         {
             pxr::UsdRenderSettings settings(prim);
         }
-        else if (prim.IsA<pxr::UsdShadeMaterial>())
-        {
-            pxr::UsdShadeMaterial material(prim);
-        }
         else if (prim.IsA<pxr::UsdShadeShader>())
         {
             pxr::UsdShadeShader shader(prim);
@@ -551,6 +577,35 @@ void Test(Scene *scene)
     }
 
     printf("num materials: %zi\n", materials.size());
+
+    for (pxr::UsdShadeMaterial &material : materials)
+    {
+        if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
+        {
+            pxr::TfToken token;
+            if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
+            {
+                if (pxr::UsdShadeInput diffuseInput =
+                        shader.GetInput(pxr::TfToken("diffuseColor")))
+                {
+                    // pxr::UsdShadeShader uvTextureShader = HandleExpectedUVTexture(diffuseInput);
+                }
+                if (pxr::UsdShadeInput normalInput = shader.GetInput(pxr::TfToken("normal")))
+                {
+                    pxr::UsdShadeShader uvTextureShader = HandleExpectedUVTexture(normalInput);
+
+                    if (uvTextureShader)
+                    {
+                    }
+                }
+            }
+            else
+            {
+                printf("material is not a usdpreviewsurface\n");
+                assert(0);
+            }
+        }
+    }
 
     // Process geometry
     for (pxr::UsdGeomBasisCurves &curve : basisCurves)

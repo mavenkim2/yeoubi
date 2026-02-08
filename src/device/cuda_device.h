@@ -312,31 +312,40 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
             }
         }
 
-#if 0
-        size_t vertexSize      = sizeof(float3) * numVertices * numMotionKeys;
-        size_t indexSize       = sizeof(int) * numIndices;
-        float3 *hostVertices   = (float3 *)malloc(vertexSize);
+        uint32_t numVertices = curve.GetNumVertices();
+        uint32_t totalNumVertices = numVertices * numMotionKeys;
+        Array<float3> hostVertices(totalNumVertices);
+        Array<float> hostWidths(totalNumVertices);
+
+        size_t vertexSize = sizeof(float3) * totalNumVertices;
+        size_t indexSize = sizeof(int) * totalNumSegments;
+
         float3 *deviceVertices = (float3 *)cudaDevice->Alloc(vertexSize);
-        int *deviceIndices     = (int *)cudaDevice->Alloc(indexSize);
+        int *deviceIndices = (int *)cudaDevice->Alloc(indexSize);
+        float *deviceWidths = (float *)cudaDevice->Alloc(sizeof(float) * totalNumVertices);
 
         for (uint32_t step = 0; step < numMotionKeys; step++)
         {
             CUdeviceptr dst = (CUdeviceptr)(deviceVertices + step * numVertices);
-            vertexBuffers.push_back(dst);
+            vertexBuffers[step] = dst;
 
-            // TODO IMPORTANT: handle all motion blur data properly
-            if (step > 0)
-            {
-                assert(0);
-            }
+            dst = (CUdeviceptr)(deviceWidths + step * numVertices);
+            widthBuffers[step] = dst;
 
-            memcpy(hostVertices + step * numVertices,
-                   curve.positions + step * numVertices,
+            const Array<float3> &positions = curve.GetVertices();
+            const Array<float> &widths = curve.GetWidths();
+            memcpy(hostVertices.data() + step * numVertices,
+                   positions.data(),
                    sizeof(float3) * numVertices);
+            memcpy(hostWidths.data() + step * numVertices,
+                   widths.data(),
+                   sizeof(float) * numVertices);
         }
-        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices, vertexSize));
-        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh->indices, indexSize));
-#endif
+
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices.data(), vertexSize));
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), indexBuffer.data(), indexSize));
+        CUDA_ASSERT(cuMemcpyHtoD(
+            CUdeviceptr(deviceWidths), hostWidths.data(), sizeof(float) * totalNumVertices));
 
         unsigned int flags = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
 
@@ -348,26 +357,20 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         curveArray.numPrimitives = totalNumSegments;
         curveArray.vertexBuffers = vertexBuffers.data();
         curveArray.numVertices = curve.GetNumVertices();
-        curveArray.vertexStrideInBytes = 0; // sizeof(float4);
+        curveArray.vertexStrideInBytes = 0;
 
         curveArray.widthBuffers = widthBuffers.data();
         curveArray.widthStrideInBytes = 0;
-        curveArray.indexBuffer = 0; // CUdeviceptr(deviceIndices);
+        curveArray.indexBuffer = CUdeviceptr(deviceIndices);
         curveArray.indexStrideInBytes = 0;
         curveArray.flag = flags;
         curveArray.primitiveIndexOffset = 0;
         curveArray.endcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT;
 
-        OptixAccelBufferSizes sizes = {};
-        OPTIX_ASSERT(optixAccelComputeMemoryUsage(
-            cudaDevice->optixDeviceContext, &options, &input, 1, &sizes));
-        printf("sizes: %zi %zi %zi, num segments: %zi\n",
-               sizes.outputSizeInBytes,
-               sizes.tempSizeInBytes,
-               sizes.tempUpdateSizeInBytes,
-               totalNumSegments);
-
-        cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
+        BuildOptixBVH(cudaDevice, options, input);
+        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
+        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
+        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceWidths)));
     }
 
 #if 0

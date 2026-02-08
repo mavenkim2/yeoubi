@@ -10,8 +10,9 @@ Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx)
 {
 }
 
-Curves::Curves(Array<float3> &&positions, Array<int> &&curveVertexOffsets)
-    : positions(std::move(positions)), curveVertexOffsets(std::move(curveVertexOffsets))
+Curves::Curves(Array<float3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets)
+    : positions(std::move(positions)), widths(std::move(widths)),
+      curveVertexOffsets(std::move(curveVertexOffsets))
 {
 }
 
@@ -52,6 +53,16 @@ void Curves::GetCurveRange(uint32_t index, uint32_t &start, uint32_t &count) con
     count =
         index == curveVertexOffsets.size() - 1 ? positions.size() : curveVertexOffsets[index + 1];
     count -= start;
+}
+
+const Array<float3> &Curves::GetVertices() const
+{
+    return positions;
+}
+
+const Array<float> &Curves::GetWidths() const
+{
+    return widths;
 }
 
 YBI_NAMESPACE_END
