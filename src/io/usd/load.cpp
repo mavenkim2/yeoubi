@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <pxr/base/vt/types.h>
+#include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/relationship.h>
@@ -19,13 +20,19 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/nurbsCurves.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
+#include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
+#include <pxr/usd/usdVol/volume.h>
+#include <unordered_map>
 #include <utility>
+
+#include <immintrin.h>
 
 YBI_NAMESPACE_BEGIN
 
@@ -42,6 +49,67 @@ struct USDTraversalState
             assert(false); \
         } \
     }
+
+static pxr::UsdShadeMaterial GetPrimMaterial(pxr::UsdPrim &prim,
+                                             pxr::TfToken token = pxr::UsdShadeTokens->full)
+{
+    pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
+    // TODO: set this as an option
+    pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(token);
+
+    if (material)
+    {
+        // printf("Prim %s is bound to material: %s\n",
+        //        prim.GetPath().GetText(),
+        //        material.GetPath().GetText());
+    }
+    else
+    {
+        // printf("Prim %s has no material bound.\n", prim.GetPath().GetText());
+    }
+
+    if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
+    {
+        pxr::TfToken token;
+        if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
+        {
+        }
+        else
+        {
+            printf("material is not a usdpreviewsurface\n");
+            assert(0);
+        }
+    }
+    return material;
+}
+
+static int AddMaterialToMap(std::unordered_map<std::string, int> &materialMap,
+                            std::vector<pxr::UsdShadeMaterial> &materials,
+                            const pxr::UsdShadeMaterial &material)
+{
+    int materialIndex = -1;
+    if (material)
+    {
+        pxr::SdfPath sdfPath = material.GetPath();
+        if (!sdfPath.IsEmpty())
+        {
+            std::string path = sdfPath.GetString();
+
+            auto found = materialMap.find(path);
+            if (found == materialMap.end())
+            {
+                materialIndex = static_cast<int>(materials.size());
+                materialMap.emplace(path, materialIndex);
+                materials.push_back(material);
+            }
+            else
+            {
+                materialIndex = found->second;
+            }
+        }
+    }
+    return materialIndex;
+}
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 {
@@ -65,13 +133,17 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     uint32_t curveIndex = 0;
 
 #if 0
+    uint32_t numBits = 0;
     for (auto count : curveVertexCounts)
     {
-        printf("curve: %u\n", curveIndex++);
+        numBits += 32 * 3;
+
         float minF[3];
         float maxF[3];
         uint32_t expMin[3];
         uint32_t expMax[3];
+        uint32_t mantissaMin[3];
+        uint32_t mantissaMax[3];
         for (int i = 0; i < 3; i++)
         {
             minF[i] = std::numeric_limits<float>::infinity();
@@ -79,6 +151,9 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 
             expMin[i] = 512;
             expMax[i] = 0u;
+
+            mantissaMin[i] = ~0u;
+            mantissaMax[i] = 0;
         }
         for (uint32_t i = offset; i < offset + count; i++)
         {
@@ -92,213 +167,70 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
                 uint32_t test;
                 memcpy(&test, &point[j], sizeof(float));
 
-                uint32_t exponent = (test >> 23) & 0x7f;
+                uint32_t exponent = (test >> 23) & 0xff;
+                uint32_t mantissa = test & 0x7fffff;
                 if (exponent == 0)
                 {
-                    printf("0 exp: %f %f %f\n", point[0], point[1], point[2]);
+                    // printf("0 exp: %f %f %f, %u\n", point[0], point[1], point[2], test);
                 }
                 expMin[j] = std::min(expMin[j], exponent);
                 expMax[j] = std::max(expMax[j], exponent);
+
+                mantissaMin[j] = std::min(mantissaMin[j], mantissa);
+                mantissaMax[j] = std::max(mantissaMax[j], mantissa);
             }
         }
 
-        for (uint32_t i = offset; i < offset + count; i++)
+        if (numCurves == 3689911)
         {
-            auto point = points[i];
-
-            printf("point: %f %f %f\n", point[0], point[1], point[2]);
+            printf("curve: %u\n", curveIndex++);
+            for (uint32_t i = offset; i < offset + count; i++)
+            {
+                auto point = points[i];
+                printf("point: %f %f %f\n", point[0], point[1], point[2]);
+            }
         }
 
+        numBits += 8 * 3 + 23 * 3;
         for (int j = 0; j < 3; j++)
         {
             float delta = maxF[j] - minF[j];
             int expDelta = expMax[j] - expMin[j];
+            int mantissaDelta = mantissaMax[j] - mantissaMin[j];
+
+            int numExpBits, numMantissaBits;
+            if (expDelta == 0)
+            {
+                numExpBits = 0;
+            }
+            else
+            {
+                _BitScanReverse((unsigned long *)&numExpBits, expDelta);
+                numExpBits++;
+            }
+
+            if (mantissaDelta == 0)
+            {
+                numMantissaBits = 0;
+            }
+            else
+            {
+                _BitScanReverse((unsigned long *)&numMantissaBits, mantissaDelta);
+                numMantissaBits++;
+            }
+            numBits += count * (numExpBits + numMantissaBits);
 
             int test;
             memcpy(&test, &delta, sizeof(float));
 
-            printf("exponents: %i %i %i\n", expMin[j], expMax[j], expDelta);
-            printf("test delta: floats %u %f %f\n", test, maxF[j], delta);
+            // printf("exponents: %i %i %i\n", expMin[j], expMax[j], expDelta);
+            // printf("mant: %i %i %i\n", mantissaMin[j], mantissaMax[j], mantissaDelta);
+            // printf("test delta: floats %u %f %f\n", test, maxF[j], delta);
         }
         offset += count;
     }
+    printf("uncompressed: %i, compressed: %i\n", points.size() * 12, numBits / 8);
 #endif
-
-    std::vector<float> testX;
-    std::vector<float> testY;
-    std::vector<float> testZ;
-
-    std::vector<int> indicesX;
-    std::vector<int> indicesY;
-    std::vector<int> indicesZ;
-
-    int index = 0;
-
-    for (auto &point : points)
-    {
-        testX.push_back(point[0]);
-        testY.push_back(point[1]);
-        testZ.push_back(point[2]);
-
-        indicesX.push_back(index);
-        indicesY.push_back(index);
-        indicesZ.push_back(index);
-        index++;
-    }
-
-    std::sort(
-        indicesX.begin(), indicesX.end(), [&](size_t i, size_t j) { return testX[i] < testX[j]; });
-    std::sort(
-        indicesY.begin(), indicesY.end(), [&](size_t i, size_t j) { return testY[i] < testY[j]; });
-    std::sort(
-        indicesZ.begin(), indicesZ.end(), [&](size_t i, size_t j) { return testZ[i] < testZ[j]; });
-
-    std::sort(testX.begin(), testX.end());
-    std::sort(testY.begin(), testY.end());
-    std::sort(testZ.begin(), testZ.end());
-
-    int numUnique = 0;
-    std::vector<int> mappingX(testX.size());
-    std::vector<int> mappingY(testY.size());
-    std::vector<int> mappingZ(testZ.size());
-
-    for (int j = 0; j < 3; j++)
-    {
-        auto &test = j == 0 ? testX : (j == 1 ? testY : testZ);
-        auto &indices = j == 0 ? indicesX : (j == 1 ? indicesY : indicesZ);
-        auto &mapping = j == 0 ? mappingX : (j == 1 ? mappingY : mappingZ);
-
-        int numDuplicated = 0;
-
-        for (int floatIndex = 0; floatIndex < test.size(); floatIndex++)
-        {
-            mapping[indices[floatIndex]] = floatIndex;
-        }
-
-        int temp = -1;
-        float prevFloat = std::nanf("0");
-        for (int floatIndex = 0; floatIndex < test.size(); floatIndex++)
-        {
-            float currentFloat = test[floatIndex];
-            if (prevFloat != currentFloat)
-            {
-                prevFloat = currentFloat;
-                temp++;
-            }
-            else
-            {
-                numDuplicated++;
-            }
-
-            mapping[indices[floatIndex]] = temp;
-            test[temp] = currentFloat;
-
-            // int val = indices[mapping[floatIndex]];
-            // if (val < numDuplicated)
-            // {
-            //     printf("abort: %i %i\n", numDuplicated, val);
-            // }
-            // test[temp] = currentFloat;
-            // indices[mapping[floatIndex]] -= numDuplicated;
-            // indices[mapping[floatIndex]] = temp;
-            // printf("test : %i %i %i, check: %f %f\n",
-            //        indices[mapping[floatIndex]],
-            //        mapping[floatIndex],
-            //        val,
-            //        test[indices[mapping[floatIndex]]],
-            //        currentFloat);
-            // indices.push_back(index);
-        }
-        // test[temp] = prevFloat;
-        numUnique += temp;
-    }
-
-    int step = 128;
-    int numBits = 0;
-    for (int axis = 0; axis < 3; axis++)
-    {
-        auto &indices = axis == 0 ? indicesX : (axis == 1 ? indicesY : indicesZ);
-        auto &mapping = axis == 0 ? mappingX : (axis == 1 ? mappingY : mappingZ);
-        auto &test = axis == 0 ? testX : (axis == 1 ? testY : testZ);
-
-        int curveOffset = 0;
-        int curveIndex = 0;
-
-        for (int curveCount : curveVertexCounts)
-        {
-            // printf("curve: %i\n", curveIndex++);
-            int minIndex = std::numeric_limits<int>::infinity();
-            int maxIndex = 0;
-
-            float minF = std::numeric_limits<float>::infinity();
-            float maxF = -std::numeric_limits<float>::infinity();
-
-            for (int j = curveOffset; j < curveOffset + curveCount; j++)
-            {
-                // if (indices[j] == 0)
-                {
-                    if (test[mapping[j]] != points[j][axis])
-                    {
-                        printf("aborot\n");
-                    }
-                }
-                minIndex = mapping[j] < minIndex ? mapping[j] : minIndex;
-                maxIndex = mapping[j] > maxIndex ? mapping[j] : maxIndex;
-
-                minF = std::min(points[j][axis], minF);
-                maxF = std::max(points[j][axis], maxF);
-            }
-            {
-                int delta = maxIndex - minIndex;
-                // printf("min: %f, max: %f, check: %f %f\n",
-                //        test[minIndex],
-                //        test[maxIndex],
-                //        minF,
-                //        maxF);
-                // printf("axis: %i, delta %i\n", axis, delta);
-                int r = 0;
-                int x = delta;
-
-                // We check ranges and shift x to narrow down the highest bit
-                if (x >= 0x10000)
-                {
-                    x >>= 16;
-                    r += 16;
-                }
-                if (x >= 0x100)
-                {
-                    x >>= 8;
-                    r += 8;
-                }
-                if (x >= 0x10)
-                {
-                    x >>= 4;
-                    r += 4;
-                }
-                if (x >= 0x4)
-                {
-                    x >>= 2;
-                    r += 2;
-                }
-                if (x >= 0x2)
-                {
-                    r += 1;
-                }
-
-                r++;
-                numBits += curveCount * r;
-            }
-            curveOffset += curveCount;
-        }
-        // printf("test delta %i r %i, %i %i\n", delta, r, minIndex, maxIndex);
-        // float delta = test[i + step - 1] - test[i];
-
-        // uint32_t u;
-        // memcpy(&u, &delta, sizeof(float));
-        // printf("delta: %u, %f\n", u, delta);
-    }
-    printf("num bytes: %i, uncompressed: %i\n", numUnique * 4 + numBits / 8, 12 * points.size());
-    printf("num unique: %i, total: %i\n", numUnique, points.size());
 
     std::vector<pxr::UsdGeomSubset> subsets = pxr::UsdGeomSubset::GetAllGeomSubsets(curve);
     if (subsets.size())
@@ -405,12 +337,25 @@ void Test(Scene *scene)
 
     for (pxr::UsdPrim prim : stage->Traverse(filterPredicate))
     {
+#if 0
+        pxr::UsdGeomPrimvarsAPI pvApi(prim);
+
+        std::vector<pxr::UsdGeomPrimvar> primvars = pvApi.GetPrimvarsWithValues();
+        for (const pxr::UsdGeomPrimvar &pv : primvars)
+        {
+            const pxr::SdfValueTypeName pvType = pv.GetTypeName();
+            const pxr::TfToken pvName =
+                pxr::UsdGeomPrimvar::StripPrimvarsName(pv.GetPrimvarName());
+            printf("pv name: %s\n", pvName.GetText(), pvType.GetAsToken().GetText());
+        }
+
         pxr::UsdVariantSets variantSets = prim.GetVariantSets();
         for (const std::string &setNames : variantSets.GetNames())
         {
             printf("variants: %s\n", setNames.c_str());
             printf("type: %s\n", prim.GetTypeName().GetString().c_str());
         }
+#endif
 
         if (prim.IsInstance())
         {
@@ -512,6 +457,23 @@ void Test(Scene *scene)
         else if (prim.IsA<pxr::UsdShadeShader>())
         {
             pxr::UsdShadeShader shader(prim);
+            std::vector<pxr::UsdShadeInput> inputs = shader.GetInputs();
+            for (pxr::UsdShadeInput &input : inputs)
+            {
+                // printf("help: %s %s\n",
+                //        input.GetFullName().GetText(),
+                //        input.GetTypeName().GetAsToken().GetText());
+            }
+
+            pxr::TfToken shaderId;
+            if (shader.GetShaderId(&shaderId))
+            {
+                // printf("help: %s\n", shaderId.GetText());
+            }
+            else
+            {
+                // printf("no worky\n");
+            }
         }
         else if (prim.IsA<pxr::UsdGeomPointInstancer>())
         {
@@ -542,20 +504,55 @@ void Test(Scene *scene)
         else if (prim.IsA<pxr::UsdGeomScope>())
         {
             pxr::UsdGeomScope scope(prim);
-
-            if (prim.GetName().GetString() == "alfro_body_main")
-            {
-                printf("alfro\n");
-            }
+        }
+        else if (prim.IsA<pxr::UsdVolVolume>())
+        {
+            pxr::UsdVolVolume volume(prim);
+            pxr::TfToken fieldPath;
+            volume.GetFieldPath(fieldPath);
+            printf("volume: %s\n", fieldPath.GetText());
         }
         else
         {
-            printf("type: %s\n", prim.GetTypeName().GetString().c_str());
+            // printf("type: %s\n", prim.GetTypeName().GetString().c_str());
         }
     }
 
     scene->curves.reserve(basisCurves.size());
+
+    std::unordered_map<std::string, int> materialMap;
+    std::vector<pxr::UsdShadeMaterial> materials;
+
+    Array<int> curveMaterialIndices(basisCurves.size());
+
+    // Handle materials
     int curveIndex = 0;
+    for (pxr::UsdGeomBasisCurves &curve : basisCurves)
+    {
+        pxr::UsdShadeMaterial material = GetPrimMaterial(curve.GetPrim());
+        int materialIndex = AddMaterialToMap(materialMap, materials, material);
+        curveMaterialIndices[curveIndex++] = materialIndex;
+    }
+
+    for (pxr::UsdGeomMesh &mesh : meshes)
+    {
+        const std::vector<pxr::UsdGeomSubset> subsets =
+            pxr::UsdGeomSubset::GetAllGeomSubsets(mesh);
+
+        if (subsets.size())
+        {
+            printf("subsets not handled yet\n");
+        }
+        else
+        {
+            pxr::UsdShadeMaterial material = GetPrimMaterial(mesh.GetPrim());
+            int materialIndex = AddMaterialToMap(materialMap, materials, material);
+        }
+    }
+
+    printf("num materials: %zi\n", materials.size());
+
+    // Process geometry
     for (pxr::UsdGeomBasisCurves &curve : basisCurves)
     {
         ProcessUSDBasisCurve(curve, scene);
