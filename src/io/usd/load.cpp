@@ -1,10 +1,14 @@
-#include "load.h"
+#include "io/usd/load.h"
 #include "scene/scene.h"
 #include "util/float3.h"
-#include "vector_functions.h"
+#include "util/float3x4.h"
+#include "util/float4.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <pxr/base/gf/matrix4f.h>
+#include <pxr/base/gf/vec4f.h>
 #include <pxr/base/vt/types.h>
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/prim.h>
@@ -321,6 +325,79 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     printf("basis: %zi %zi %s\n", numCurves, points.size(), basisToken.GetText());
 }
 
+static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
+                                     Scene *scene,
+                                     std::unordered_map<std::string, int> &instanceMap,
+                                     pxr::UsdTimeCode time = 0.0)
+{
+    pxr::VtIntArray protoIndices;
+    pxr::VtVec3fArray positions;
+    pxr::VtQuatfArray orientations;
+    pxr::VtVec3fArray scales;
+    pxr::SdfPathVector prototypePaths;
+
+    USD_ASSERT(pointInstancer.GetProtoIndicesAttr().Get(&protoIndices, time));
+    USD_ASSERT(pointInstancer.GetPositionsAttr().Get(&positions, time));
+    USD_ASSERT(pointInstancer.GetPrototypesRel().GetTargets(&prototypePaths));
+
+    pxr::UsdAttribute orientationsAttr = pointInstancer.GetOrientationsfAttr();
+    pxr::UsdAttribute scaleAttr = pointInstancer.GetScalesAttr();
+
+    if (orientationsAttr.HasValue())
+    {
+        printf("has orientations\n");
+        orientationsAttr.Get(&orientations, time);
+    }
+    if (scaleAttr.HasValue())
+    {
+        scaleAttr.Get(&scales, time);
+    }
+
+    Array<float3x4> affineTransforms(protoIndices.size());
+    Array<int> objectIDs(protoIndices.size());
+
+    for (size_t index = 0; index < protoIndices.size(); index++)
+    {
+        int objectID = 0;
+        int instanceIndex = protoIndices[index];
+
+        pxr::GfMatrix4f transform;
+        transform.SetIdentity();
+
+        if (!scales.empty())
+        {
+            transform.SetScale(scales[index]);
+        }
+        if (!orientations.empty())
+        {
+            transform.SetRotate(orientations[index]);
+        }
+        transform.SetTranslateOnly(positions[index]);
+
+        // pxr::SdfPath sdfPath = protoIndices[instanceIndex];
+        // auto found = instanceMap.find(sdfPath.GetString());
+        // assert(found != instanceMap.end());
+
+        // NOTE: OpenUSD uses left to right multiplication. Tranpose to get right
+        // to left.
+        pxr::GfMatrix4f transposeMatrix = transform.GetTranspose();
+        pxr::GfVec4f row0 = transposeMatrix.GetRow(0);
+        pxr::GfVec4f row1 = transposeMatrix.GetRow(1);
+        pxr::GfVec4f row2 = transposeMatrix.GetRow(2);
+
+        float4 r0 = make_float4(row0[0], row0[1], row0[2], row0[3]);
+        float4 r1 = make_float4(row1[0], row1[1], row1[2], row1[3]);
+        float4 r2 = make_float4(row2[0], row2[1], row2[2], row2[3]);
+
+        float3x4 affineMatrix(r0, r1, r2);
+
+        affineTransforms[index] = affineMatrix;
+        objectIDs[index] = objectID;
+    }
+
+    scene->instancesArray.emplace_back(std::move(affineTransforms), std::move(objectIDs));
+}
+
 void Test(Scene *scene)
 {
     std::string filePath = "C:/Users/maven/Downloads/ALab-2.2.0/ALab/entry.usda";
@@ -347,6 +424,7 @@ void Test(Scene *scene)
 
     std::vector<pxr::UsdGeomMesh> meshes;
     std::vector<pxr::UsdGeomBasisCurves> basisCurves;
+    std::vector<pxr::UsdGeomPointInstancer> pointInstancers;
 
     pxr::Usd_PrimFlagsConjunction filterFlags =
         pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
@@ -364,6 +442,17 @@ void Test(Scene *scene)
     // }
 
     // pxr::UsdPrim root = stage->GetPrototypes();
+
+    pxr::UsdRenderSettings settings = pxr::UsdRenderSettings::GetStageRenderSettings(stage);
+    if (settings)
+    {
+        printf("found\n");
+        float shutterOpen, shutterClose;
+        if (settings.GetPrim().GetAttribute(pxr::TfToken("shutter:open")).Get(&shutterOpen))
+        {
+            printf("Global Render Shutter Open: %f\n", shutterOpen);
+        }
+    }
 
     for (pxr::UsdPrim prim : stage->Traverse(filterPredicate))
     {
@@ -390,6 +479,11 @@ void Test(Scene *scene)
         if (prim.IsInstance())
         {
             pxr::UsdPrim proto = prim.GetPrototype();
+        }
+        else if (prim.IsA<pxr::UsdGeomPointInstancer>())
+        {
+            pxr::UsdGeomPointInstancer pointInstancer(prim);
+            pointInstancers.push_back(pointInstancer);
         }
         else if (prim.IsA<pxr::UsdGeomMesh>())
         {
@@ -476,10 +570,6 @@ void Test(Scene *scene)
                 printf("open: %f close: %f\n", shutterOpen, shutterClose);
             }
         }
-        else if (prim.IsA<pxr::UsdRenderSettings>())
-        {
-            pxr::UsdRenderSettings settings(prim);
-        }
         else if (prim.IsA<pxr::UsdShadeShader>())
         {
             pxr::UsdShadeShader shader(prim);
@@ -500,32 +590,6 @@ void Test(Scene *scene)
             {
                 // printf("no worky\n");
             }
-        }
-        else if (prim.IsA<pxr::UsdGeomPointInstancer>())
-        {
-#if 0
-            pxr::SdfPathVector targets;
-            pxr::UsdGeomPointInstancer pointInstancer(prim);
-            pxr::UsdRelationship rel = pointInstancer.GetPrototypesRel();
-            USD_SUCCESS(rel.GetTargets(&targets));
-
-            // for (pxr::SdfPath path : targets)
-            // {
-            //     printf("path: %s\n", path.GetText());
-            // }
-
-            pxr::UsdAttribute protoIndicesAttr = pointInstancer.GetProtoIndicesAttr();
-
-            pxr::VtIntArray protoIndices;
-            USD_SUCCESS(protoIndicesAttr.Get(&protoIndices));
-
-            for (int i : protoIndices)
-            {
-            }
-
-            // pointInstancer.GetPrototypesRel();
-            // pointInstancer.GetPositionsAttr
-#endif
         }
         else if (prim.IsA<pxr::UsdGeomScope>())
         {
@@ -730,6 +794,13 @@ void Test(Scene *scene)
         }
 
         scene->meshes.emplace_back(std::move(finalPositions), std::move(finalIndices));
+    }
+
+    std::unordered_map<std::string, int> pathGeomIndexMap;
+    for (pxr::UsdGeomPointInstancer &pointInstancer : pointInstancers)
+    {
+        ProcessUSDPointInstancer(pointInstancer, scene, pathGeomIndexMap);
+        printf("num\n");
     }
 }
 

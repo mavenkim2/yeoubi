@@ -148,9 +148,9 @@ void *CUDADevice::Alloc(size_t size)
     return (void *)ptr;
 }
 
-static void BuildOptixBVH(CUDADevice *cudaDevice,
-                          OptixAccelBuildOptions buildOptions,
-                          OptixBuildInput buildInput)
+static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
+                                            OptixAccelBuildOptions buildOptions,
+                                            OptixBuildInput buildInput)
 {
     OptixAccelBufferSizes sizes = {};
     OPTIX_ASSERT(optixAccelComputeMemoryUsage(
@@ -212,6 +212,7 @@ static void BuildOptixBVH(CUDADevice *cudaDevice,
     }
 
     CUDA_ASSERT(cuMemFree(CUdeviceptr(tempBuffer)));
+    return outputHandle;
 }
 
 // TODO: handle the case where cuda is enabled but optix isn't
@@ -300,8 +301,8 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         size_t totalNumSegments = curve.GetNumSegments();
         Array<uint32_t> indexBuffer(totalNumSegments);
 
-        for (size_t curveIndex = 0, bufferIndex = 0; curveIndex < curve.GetNumCurves();
-             curveIndex++)
+        size_t bufferIndex = 0;
+        for (size_t curveIndex = 0; curveIndex < curve.GetNumCurves(); curveIndex++)
         {
             int segmentStart = curve.GetCurveKeyStart(curveIndex);
             int numSegments = curve.GetCurveNumSegments(curveIndex);

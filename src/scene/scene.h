@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util/array.h"
+#include "util/float3x4.h"
 #include <vector>
 
 YBI_NAMESPACE_BEGIN
@@ -69,6 +70,20 @@ public:
     const Array<float> &GetWidths() const;
 };
 
+struct Instances
+{
+private:
+    Array<float3x4> affineTransforms;
+    Array<int> objectIDs;
+
+public:
+    Instances() = default;
+    ~Instances() = default;
+    Instances(Instances &&other) = default;
+
+    Instances(Array<float3x4> &&affineTransforms, Array<int> &&objectIDs);
+};
+
 struct Scene
 {
     BVH bvh;
@@ -76,6 +91,7 @@ struct Scene
     // Array<Curves> curves;
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
+    std::vector<Instances> instancesArray;
     Device *device;
 
     Scene() = default;
