@@ -28,6 +28,7 @@
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/xform.h>
+#include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -58,6 +59,63 @@ struct USDTraversalState
     std::vector<pxr::UsdPrim> instances;
 };
 
+struct USDPrototypeRanges
+{
+    size_t meshStart;
+    size_t meshEnd;
+
+    size_t curveStart;
+    size_t curveEnd;
+
+    size_t instanceStart;
+    size_t instanceEnd;
+
+    size_t pointInstancerStart;
+    size_t pointInstancerEnd;
+
+    void StartRange(USDTraversalState &state)
+    {
+        meshStart = state.meshes.size();
+        curveStart = state.basisCurves.size();
+        instanceStart = state.instances.size();
+        pointInstancerStart = state.pointInstancers.size();
+    }
+
+    void EndRange(USDTraversalState &state)
+    {
+        meshEnd = state.meshes.size();
+        curveEnd = state.basisCurves.size();
+        instanceEnd = state.instances.size();
+        pointInstancerEnd = state.pointInstancers.size();
+    }
+
+    size_t GetNumMeshes() const
+    {
+        return meshEnd - meshStart;
+    }
+
+    size_t GetNumCurves() const
+    {
+        return curveEnd - curveStart;
+    }
+
+    size_t GetNumInstances() const
+    {
+        return instanceEnd - instanceStart;
+    }
+
+    size_t GetNumPointInstancers() const
+    {
+        return pointInstancerEnd - pointInstancerStart;
+    }
+
+    bool CanMergeWithChild() const
+    {
+        return GetNumMeshes() == 0 && GetNumCurves() == 0 && GetNumInstances() == 1 &&
+               GetNumPointInstancers() == 0;
+    }
+};
+
 static void TraversePrim(pxr::UsdPrim &root,
                          USDTraversalState &state,
                          pxr::Usd_PrimFlagsPredicate filterPredicate)
@@ -86,11 +144,6 @@ static void TraversePrim(pxr::UsdPrim &root,
         else if (prim.IsA<pxr::UsdGeomMesh>())
         {
             state.meshes.push_back(pxr::UsdGeomMesh(prim));
-        }
-        else if (prim.IsA<pxr::UsdGeomXform>())
-        {
-            pxr::UsdGeomXform xform(prim);
-            // printf("xform\n");
         }
         else if (prim.IsA<pxr::UsdGeomBasisCurves>())
         {
@@ -447,7 +500,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 
 static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
                                      Scene *scene,
-                                     std::unordered_map<std::string, int> &instanceMap,
+                                     std::unordered_map<std::string, int> &pathObjectIDMap,
                                      pxr::UsdTimeCode time = 0.0)
 {
     pxr::VtIntArray protoIndices;
@@ -579,8 +632,9 @@ void Test(Scene *scene)
 
     scene->curves.reserve(state.basisCurves.size());
 
-    std::unordered_map<std::string, int> pathGeomIndexMap;
+    std::unordered_map<std::string, int> pathObjectIDMap;
     std::vector<pxr::UsdPrim> prototypes;
+    Array<USDPrototypeRanges> prototypeRanges;
 
     // Assumes no more than 32 levels of nested instancing. Used to prevent circular references.
     int depth = 0;
@@ -599,11 +653,11 @@ void Test(Scene *scene)
             pxr::UsdPrim &instancePrim = state.instances[instanceIndex];
             pxr::UsdPrim proto = instancePrim.GetPrototype();
             std::string pathString = proto.GetPath().GetString();
-            auto found = pathGeomIndexMap.find(pathString);
-            if (found == pathGeomIndexMap.end())
+            auto found = pathObjectIDMap.find(pathString);
+            if (found == pathObjectIDMap.end())
             {
                 int index = static_cast<int>(prototypes.size());
-                pathGeomIndexMap.emplace(pathString, index);
+                pathObjectIDMap.emplace(pathString, index);
                 prototypes.push_back(proto);
             }
         }
@@ -617,11 +671,11 @@ void Test(Scene *scene)
             for (pxr::SdfPath &path : prototypePaths)
             {
                 std::string pathString = path.GetString();
-                auto found = pathGeomIndexMap.find(pathString);
-                if (found == pathGeomIndexMap.end())
+                auto found = pathObjectIDMap.find(pathString);
+                if (found == pathObjectIDMap.end())
                 {
                     int index = static_cast<int>(prototypes.size());
-                    pathGeomIndexMap.emplace(pathString, index);
+                    pathObjectIDMap.emplace(pathString, index);
 
                     pxr::UsdPrim proto = stage->GetPrimAtPath(path);
                     prototypes.push_back(proto);
@@ -632,21 +686,78 @@ void Test(Scene *scene)
         // Prepare for next pass
         instanceStart = state.instances.size();
         pointInstancerStart = state.pointInstancers.size();
+        prototypeRanges.Resize(prototypes.size());
 
         for (size_t protoIndex = prototypeStart; protoIndex < prototypes.size(); protoIndex++)
         {
             pxr::UsdPrim &proto = prototypes[protoIndex];
+            USDPrototypeRanges &ranges = prototypeRanges[protoIndex];
+
+            ranges.StartRange(state);
             TraversePrim(proto, state, filterPredicate);
+            ranges.EndRange(state);
         }
     }
 
-    for (pxr::UsdGeomPointInstancer &pointInstancer : state.pointInstancers)
+    assert(prototypes.size() == prototypeRanges.size());
+
+    Array<int> objectIDRemap(prototypes.size());
+    std::vector<pxr::UsdPrim> compactedPrototypes;
+    compactedPrototypes.reserve(prototypes.size());
+
+    pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode(0.0));
+    for (size_t prototypeIndex = 0; prototypeIndex < prototypes.size(); prototypeIndex++)
     {
-        ProcessUSDPointInstancer(pointInstancer, scene, pathGeomIndexMap);
+        pxr::UsdPrim &prototype = prototypes[prototypeIndex];
+        USDPrototypeRanges &ranges = prototypeRanges[prototypeIndex];
+
+        pxr::GfMatrix4d localToWorldTransform = xformCache.GetLocalToWorldTransform(prototype);
+
+        for (int r = 0; r < 4; r++)
+        {
+            for (int c = 0; c < 4; c++)
+            {
+                printf("%f ", localToWorldTransform[r][c]);
+            }
+        }
+        printf("\n");
+
+        if (ranges.CanMergeWithChild())
+        {
+            pxr::UsdPrim &instance = state.instances[ranges.instanceStart];
+            std::string pathString = instance.GetPrototype().GetPath().GetString();
+            auto found = pathObjectIDMap.find(pathString);
+            assert(found != pathObjectIDMap.end());
+
+            objectIDRemap[prototypeIndex] = -1;
+            // numCompactedPrototypes;
+            continue;
+        }
+        else
+        {
+            objectIDRemap[prototypeIndex] = compactedPrototypes.size();
+            compactedPrototypes.push_back(prototype);
+        }
     }
 
     std::unordered_map<std::string, int> materialMap;
     std::vector<pxr::UsdShadeMaterial> materials;
+
+    for (pxr::UsdPrim &instancePrim : state.instances)
+    {
+        pxr::UsdPrim proto = instancePrim.GetPrototype();
+        std::string pathString = proto.GetPath().GetString();
+        auto found = pathObjectIDMap.find(pathString);
+        assert(found != pathObjectIDMap.end());
+
+        int objectID = found->second;
+        pxr::GfMatrix4d localToWorldTransform = xformCache.GetLocalToWorldTransform(instancePrim);
+    }
+
+    for (pxr::UsdGeomPointInstancer &pointInstancer : state.pointInstancers)
+    {
+        ProcessUSDPointInstancer(pointInstancer, scene, pathObjectIDMap);
+    }
 
     Array<int> curveMaterialIndices(state.basisCurves.size());
 
@@ -673,6 +784,7 @@ void Test(Scene *scene)
             pxr::UsdShadeMaterial material = GetPrimMaterial(mesh.GetPrim());
             int materialIndex = AddMaterialToMap(materialMap, materials, material);
         }
+        // mesh.GetLocalTransformation()
     }
 
     printf("num materials: %zi\n", materials.size());
