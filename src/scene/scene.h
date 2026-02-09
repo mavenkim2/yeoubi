@@ -87,8 +87,6 @@ public:
 struct Scene
 {
     BVH bvh;
-    // Array<Mesh> meshes;
-    // Array<Curves> curves;
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
     std::vector<Instances> instancesArray;

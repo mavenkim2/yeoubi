@@ -40,10 +40,6 @@
 
 YBI_NAMESPACE_BEGIN
 
-struct USDTraversalState
-{
-};
-
 #define USD_ASSERT(expr) \
     { \
         bool result = expr; \
@@ -53,6 +49,130 @@ struct USDTraversalState
             assert(false); \
         } \
     }
+
+struct USDTraversalState
+{
+    std::vector<pxr::UsdGeomMesh> meshes;
+    std::vector<pxr::UsdGeomBasisCurves> basisCurves;
+    std::vector<pxr::UsdGeomPointInstancer> pointInstancers;
+    std::vector<pxr::UsdPrim> instances;
+};
+
+static void TraversePrim(pxr::UsdPrim &root,
+                         USDTraversalState &state,
+                         pxr::Usd_PrimFlagsPredicate filterPredicate)
+{
+    const uint32_t stackMax = 1024;
+    uint32_t stackTop = 0;
+    pxr::UsdPrim stack[stackMax];
+    stack[stackTop++] = root;
+
+    while (stackTop)
+    {
+        uint32_t stackIndex = --stackTop;
+        pxr::UsdPrim prim = stack[stackIndex];
+
+        bool pushChildren = true;
+        if (prim.IsInstance())
+        {
+            state.instances.push_back(prim);
+        }
+        else if (prim.IsA<pxr::UsdGeomPointInstancer>())
+        {
+            pxr::UsdGeomPointInstancer pointInstancer(prim);
+            state.pointInstancers.push_back(pointInstancer);
+            pushChildren = false;
+        }
+        else if (prim.IsA<pxr::UsdGeomMesh>())
+        {
+            state.meshes.push_back(pxr::UsdGeomMesh(prim));
+        }
+        else if (prim.IsA<pxr::UsdGeomXform>())
+        {
+            pxr::UsdGeomXform xform(prim);
+            // printf("xform\n");
+        }
+        else if (prim.IsA<pxr::UsdGeomBasisCurves>())
+        {
+            state.basisCurves.push_back(pxr::UsdGeomBasisCurves(prim));
+        }
+        else if (prim.IsA<pxr::UsdGeomNurbsCurves>())
+        {
+            pxr::UsdGeomNurbsCurves nurbsCurves(prim);
+            size_t numCurves = nurbsCurves.GetCurveCount(0.0);
+        }
+        else if (prim.IsA<pxr::UsdGeomHermiteCurves>())
+        {
+            printf("hermite\n");
+        }
+        else if (prim.IsA<pxr::UsdGeomCurves>())
+        {
+            printf("curve\n");
+        }
+        else if (prim.IsA<pxr::UsdGeomCamera>())
+        {
+            pxr::UsdGeomCamera camera(prim);
+            double shutterOpen, shutterClose;
+
+            // if (camera.GetShutterOpenAttr().ValueMightBeTimeVarying() ||
+            //     camera.GetShutterCloseAttr().ValueMightBeTimeVarying())
+            {
+                camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
+                camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
+                printf("open: %f close: %f\n", shutterOpen, shutterClose);
+            }
+        }
+        else if (prim.IsA<pxr::UsdShadeShader>())
+        {
+            pxr::UsdShadeShader shader(prim);
+            std::vector<pxr::UsdShadeInput> inputs = shader.GetInputs();
+            for (pxr::UsdShadeInput &input : inputs)
+            {
+                // printf("help: %s %s\n",
+                //        input.GetFullName().GetText(),
+                //        input.GetTypeName().GetAsToken().GetText());
+            }
+
+            pxr::TfToken shaderId;
+            if (shader.GetShaderId(&shaderId))
+            {
+                // printf("help: %s\n", shaderId.GetText());
+            }
+            else
+            {
+            }
+        }
+        else if (prim.IsA<pxr::UsdGeomScope>())
+        {
+            pxr::UsdGeomScope scope(prim);
+        }
+        else if (prim.IsA<pxr::UsdVolVolume>())
+        {
+            pxr::UsdVolVolume volume(prim);
+            pxr::TfToken fieldPath;
+            volume.GetFieldPath(fieldPath);
+            printf("volume: %s\n", fieldPath.GetText());
+        }
+        else
+        {
+            // printf("type: %s\n", prim.GetTypeName().GetString().c_str());
+        }
+
+        if (pushChildren)
+        {
+            pxr::UsdPrimSiblingRange range = prim.GetFilteredChildren(filterPredicate);
+            for (pxr::UsdPrim &prim : range)
+            {
+                if (stackTop >= stackMax)
+                {
+                    printf("help: %i %i\n", stackTop, stackMax);
+                }
+                assert(stackTop < stackMax);
+                stack[stackTop++] = prim;
+            }
+        }
+    }
+}
 
 static pxr::UsdShadeMaterial GetPrimMaterial(pxr::UsdPrim &prim,
                                              pxr::TfToken token = pxr::UsdShadeTokens->full)
@@ -356,6 +476,16 @@ static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
     Array<float3x4> affineTransforms(protoIndices.size());
     Array<int> objectIDs(protoIndices.size());
 
+    for (pxr::SdfPath &path : prototypePaths)
+    {
+        printf("%s\n", path.GetText());
+    }
+    // so whwat's the idea?
+
+    // 1. get all prototype paths, for all types of instances
+    // 2. load the prototypes, with whatever data they have
+    // 3.
+
     for (size_t index = 0; index < protoIndices.size(); index++)
     {
         int objectID = 0;
@@ -376,6 +506,11 @@ static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
 
         // pxr::SdfPath sdfPath = protoIndices[instanceIndex];
         // auto found = instanceMap.find(sdfPath.GetString());
+        //
+        // if (found == instanceMap.end())
+        // {
+        //     printf("not found\n");
+        // }
         // assert(found != instanceMap.end());
 
         // NOTE: OpenUSD uses left to right multiplication. Tranpose to get right
@@ -422,26 +557,10 @@ void Test(Scene *scene)
 
     printf("start: %f, end: %f, fps: %f, tcps: %f\n", startTimeCode, endTimeCode, fps, tcps);
 
-    std::vector<pxr::UsdGeomMesh> meshes;
-    std::vector<pxr::UsdGeomBasisCurves> basisCurves;
-    std::vector<pxr::UsdGeomPointInstancer> pointInstancers;
-
     pxr::Usd_PrimFlagsConjunction filterFlags =
         pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
 
-    // if (defined_prims_only)
-    // {
-    //     filter_flags &= pxr::UsdPrimIsDefined;
-    // }
-
     pxr::Usd_PrimFlagsPredicate filterPredicate(filterFlags);
-
-    // if (!params_.support_scene_instancing)
-    // {
-    // filterPredicate = pxr::UsdTraverseInstanceProxiesfilterPredicate);
-    // }
-
-    // pxr::UsdPrim root = stage->GetPrototypes();
 
     pxr::UsdRenderSettings settings = pxr::UsdRenderSettings::GetStageRenderSettings(stage);
     if (settings)
@@ -454,177 +573,93 @@ void Test(Scene *scene)
         }
     }
 
-    for (pxr::UsdPrim prim : stage->Traverse(filterPredicate))
+    USDTraversalState state;
+    pxr::UsdPrim root = stage->GetPseudoRoot();
+    TraversePrim(root, state, filterPredicate);
+
+    scene->curves.reserve(state.basisCurves.size());
+
+    std::unordered_map<std::string, int> pathGeomIndexMap;
+    std::vector<pxr::UsdPrim> prototypes;
+
+    // Assumes no more than 32 levels of nested instancing. Used to prevent circular references.
+    int depth = 0;
+    const int maxDepth = 32;
+    size_t instanceStart = 0;
+    size_t pointInstancerStart = 0;
+    while (depth++ < maxDepth && (instanceStart < state.instances.size() ||
+                                  pointInstancerStart < state.pointInstancers.size()))
     {
-#if 0
-        pxr::UsdGeomPrimvarsAPI pvApi(prim);
+        size_t prototypeStart = prototypes.size();
 
-        std::vector<pxr::UsdGeomPrimvar> primvars = pvApi.GetPrimvarsWithValues();
-        for (const pxr::UsdGeomPrimvar &pv : primvars)
+        // Collect all prototypes
+        for (size_t instanceIndex = instanceStart; instanceIndex < state.instances.size();
+             instanceIndex++)
         {
-            const pxr::SdfValueTypeName pvType = pv.GetTypeName();
-            const pxr::TfToken pvName =
-                pxr::UsdGeomPrimvar::StripPrimvarsName(pv.GetPrimvarName());
-            printf("pv name: %s\n", pvName.GetText(), pvType.GetAsToken().GetText());
-        }
-
-        pxr::UsdVariantSets variantSets = prim.GetVariantSets();
-        for (const std::string &setNames : variantSets.GetNames())
-        {
-            printf("variants: %s\n", setNames.c_str());
-            printf("type: %s\n", prim.GetTypeName().GetString().c_str());
-        }
-#endif
-
-        if (prim.IsInstance())
-        {
-            pxr::UsdPrim proto = prim.GetPrototype();
-        }
-        else if (prim.IsA<pxr::UsdGeomPointInstancer>())
-        {
-            pxr::UsdGeomPointInstancer pointInstancer(prim);
-            pointInstancers.push_back(pointInstancer);
-        }
-        else if (prim.IsA<pxr::UsdGeomMesh>())
-        {
-            meshes.push_back(pxr::UsdGeomMesh(prim));
-#if 0
-            std::vector<double> timeSamples;
-            pxr::UsdAttribute pointsAttr = mesh.GetPointsAttr();
-            pointsAttr
-            if (mesh.GetVelocitiesAttr().IsValid())
+            pxr::UsdPrim &instancePrim = state.instances[instanceIndex];
+            pxr::UsdPrim proto = instancePrim.GetPrototype();
+            std::string pathString = proto.GetPath().GetString();
+            auto found = pathGeomIndexMap.find(pathString);
+            if (found == pathGeomIndexMap.end())
             {
-                pxr::VtVec3fArray velocities;
-                if (mesh.GetVelocitiesAttr().Get(&velocities))
+                int index = static_cast<int>(prototypes.size());
+                pathGeomIndexMap.emplace(pathString, index);
+                prototypes.push_back(proto);
+            }
+        }
+        for (size_t instanceIndex = pointInstancerStart;
+             instanceIndex < state.pointInstancers.size();
+             instanceIndex++)
+        {
+            pxr::UsdGeomPointInstancer &pointInstancer = state.pointInstancers[instanceIndex];
+            pxr::SdfPathVector prototypePaths;
+            USD_ASSERT(pointInstancer.GetPrototypesRel().GetTargets(&prototypePaths));
+            for (pxr::SdfPath &path : prototypePaths)
+            {
+                std::string pathString = path.GetString();
+                auto found = pathGeomIndexMap.find(pathString);
+                if (found == pathGeomIndexMap.end())
                 {
-                }
-                else
-                {
-                    // printf("no v?\n");
+                    int index = static_cast<int>(prototypes.size());
+                    pathGeomIndexMap.emplace(pathString, index);
+
+                    pxr::UsdPrim proto = stage->GetPrimAtPath(path);
+                    prototypes.push_back(proto);
                 }
             }
-            if (pointsAttr.ValueMightBeTimeVarying())
-            {
-                if (pointsAttr.GetTimeSamples(&timeSamples))
-                {
-                    for (double time : timeSamples)
-                    {
-                        pxr::VtVec3fArray positions;
-                        pointsAttr.Get(&positions, time);
-                        printf("time: %f, p: %f %f %f\n", time, positions[0][0],
-                               positions[0][1], positions[0][2]);
-                    }
-                }
-                break;
-            }
-            // if (mesh.GetFaceVertexCountsAttr().ValueMightBeTimeVarying())
-            {
-            }
-#endif
         }
-        else if (prim.IsA<pxr::UsdGeomXform>())
-        {
-            pxr::UsdGeomXform xform(prim);
-            // printf("xform\n");
-        }
-        else if (prim.IsA<pxr::UsdGeomBasisCurves>())
-        {
-            basisCurves.push_back(pxr::UsdGeomBasisCurves(prim));
-        }
-        else if (prim.IsA<pxr::UsdGeomNurbsCurves>())
-        {
-            pxr::UsdGeomNurbsCurves nurbsCurves(prim);
-            size_t numCurves = nurbsCurves.GetCurveCount(0.0);
-            // printf("nurbs: %zi\n", numCurves);
 
-            // pxr::VtVec3fArray points;
-            // nurbsCurves.GetPointsAttr().Get(&points, 0.0);
+        // Prepare for next pass
+        instanceStart = state.instances.size();
+        pointInstancerStart = state.pointInstancers.size();
 
-            // for (auto point : points)
-            // {
-            //     printf("%f %f %f\n", point[0], point[1], point[2]);
-            // }
-            // nurbsCurves.GetOrderAttr();
-            // nurbsCurves.GetKnotsAttr();
-            // nurbsCurves.GetRangesAttr();
-            // nurbsCurves.GetPointWeightsAttr();
-        }
-        else if (prim.IsA<pxr::UsdGeomHermiteCurves>())
+        for (size_t protoIndex = prototypeStart; protoIndex < prototypes.size(); protoIndex++)
         {
-            printf("hermite\n");
-        }
-        else if (prim.IsA<pxr::UsdGeomCurves>())
-        {
-            printf("curve\n");
-        }
-        else if (prim.IsA<pxr::UsdGeomCamera>())
-        {
-            pxr::UsdGeomCamera camera(prim);
-            double shutterOpen, shutterClose;
-
-            // if (camera.GetShutterOpenAttr().ValueMightBeTimeVarying() ||
-            //     camera.GetShutterCloseAttr().ValueMightBeTimeVarying())
-            {
-                camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
-                camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
-                printf("open: %f close: %f\n", shutterOpen, shutterClose);
-            }
-        }
-        else if (prim.IsA<pxr::UsdShadeShader>())
-        {
-            pxr::UsdShadeShader shader(prim);
-            std::vector<pxr::UsdShadeInput> inputs = shader.GetInputs();
-            for (pxr::UsdShadeInput &input : inputs)
-            {
-                // printf("help: %s %s\n",
-                //        input.GetFullName().GetText(),
-                //        input.GetTypeName().GetAsToken().GetText());
-            }
-
-            pxr::TfToken shaderId;
-            if (shader.GetShaderId(&shaderId))
-            {
-                // printf("help: %s\n", shaderId.GetText());
-            }
-            else
-            {
-                // printf("no worky\n");
-            }
-        }
-        else if (prim.IsA<pxr::UsdGeomScope>())
-        {
-            pxr::UsdGeomScope scope(prim);
-        }
-        else if (prim.IsA<pxr::UsdVolVolume>())
-        {
-            pxr::UsdVolVolume volume(prim);
-            pxr::TfToken fieldPath;
-            volume.GetFieldPath(fieldPath);
-            printf("volume: %s\n", fieldPath.GetText());
-        }
-        else
-        {
-            // printf("type: %s\n", prim.GetTypeName().GetString().c_str());
+            pxr::UsdPrim &proto = prototypes[protoIndex];
+            TraversePrim(proto, state, filterPredicate);
         }
     }
 
-    scene->curves.reserve(basisCurves.size());
+    for (pxr::UsdGeomPointInstancer &pointInstancer : state.pointInstancers)
+    {
+        ProcessUSDPointInstancer(pointInstancer, scene, pathGeomIndexMap);
+    }
 
     std::unordered_map<std::string, int> materialMap;
     std::vector<pxr::UsdShadeMaterial> materials;
 
-    Array<int> curveMaterialIndices(basisCurves.size());
+    Array<int> curveMaterialIndices(state.basisCurves.size());
 
     // Handle materials
     int curveIndex = 0;
-    for (pxr::UsdGeomBasisCurves &curve : basisCurves)
+    for (pxr::UsdGeomBasisCurves &curve : state.basisCurves)
     {
         pxr::UsdShadeMaterial material = GetPrimMaterial(curve.GetPrim());
         int materialIndex = AddMaterialToMap(materialMap, materials, material);
         curveMaterialIndices[curveIndex++] = materialIndex;
     }
 
-    for (pxr::UsdGeomMesh &mesh : meshes)
+    for (pxr::UsdGeomMesh &mesh : state.meshes)
     {
         const std::vector<pxr::UsdGeomSubset> subsets =
             pxr::UsdGeomSubset::GetAllGeomSubsets(mesh);
@@ -672,13 +707,13 @@ void Test(Scene *scene)
     }
 
     // Process geometry
-    for (pxr::UsdGeomBasisCurves &curve : basisCurves)
+    for (pxr::UsdGeomBasisCurves &curve : state.basisCurves)
     {
         ProcessUSDBasisCurve(curve, scene);
     }
 
-    scene->meshes.reserve(meshes.size());
-    for (pxr::UsdGeomMesh &mesh : meshes)
+    scene->meshes.reserve(state.meshes.size());
+    for (pxr::UsdGeomMesh &mesh : state.meshes)
     {
         pxr::VtVec3fArray positions;
         pxr::VtIntArray faceIndices;
@@ -794,13 +829,6 @@ void Test(Scene *scene)
         }
 
         scene->meshes.emplace_back(std::move(finalPositions), std::move(finalIndices));
-    }
-
-    std::unordered_map<std::string, int> pathGeomIndexMap;
-    for (pxr::UsdGeomPointInstancer &pointInstancer : pointInstancers)
-    {
-        ProcessUSDPointInstancer(pointInstancer, scene, pathGeomIndexMap);
-        printf("num\n");
     }
 }
 
