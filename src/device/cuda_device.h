@@ -149,62 +149,6 @@ void *CUDADevice::Alloc(size_t size)
     return (void *)ptr;
 }
 
-static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
-                                                  MemoryArena &arena,
-                                                  Mesh &mesh,
-                                                  uint32_t numMotionKeys)
-{
-    const uint32_t numVertices = mesh.positions.size();
-    const uint32_t numIndices = mesh.indices.size();
-
-    MemoryView<CUdeviceptr> vertexBuffers = arena.PushArray<CUdeviceptr>(numMotionKeys);
-    MemoryView<float3> hostVertices = arena.PushArray<float3>(numVertices * numMotionKeys);
-
-    size_t vertexSize = sizeof(float3) * numVertices * numMotionKeys;
-    size_t indexSize = sizeof(int) * numIndices;
-    float3 *deviceVertices = (float3 *)cudaDevice->Alloc(vertexSize);
-    int *deviceIndices = (int *)cudaDevice->Alloc(indexSize);
-
-    for (uint32_t step = 0; step < numMotionKeys; step++)
-    {
-        CUdeviceptr dst = (CUdeviceptr)(deviceVertices + step * numVertices);
-        vertexBuffers[step] = dst;
-
-        // TODO IMPORTANT: handle all motion blur data properly
-        if (step > 0)
-        {
-            assert(0);
-        }
-
-        memcpy(hostVertices.data() + step * numVertices,
-               mesh.positions.data() + step * numVertices,
-               sizeof(float3) * numVertices);
-    }
-    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices.data(), vertexSize));
-    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh.indices.data(), indexSize));
-
-    unsigned int flags = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
-    OptixBuildInput input = {};
-    input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    OptixBuildInputTriangleArray &triangleArray = input.triangleArray;
-    triangleArray = {};
-    triangleArray.vertexBuffers = vertexBuffers.data();
-    triangleArray.numVertices = numVertices;
-    triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    triangleArray.vertexStrideInBytes = 0;
-    triangleArray.indexBuffer = CUdeviceptr(deviceIndices);
-    triangleArray.numIndexTriplets = numIndices / 3;
-    triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    triangleArray.indexStrideInBytes = 0;
-    triangleArray.flags = &flags;
-    triangleArray.numSbtRecords = 1;
-
-    // BuildOptixBVH(cudaDevice, options, input);
-    // CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
-    // CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
-    return input;
-}
-
 static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
                                             OptixAccelBuildOptions buildOptions,
                                             OptixBuildInput buildInput)
@@ -217,12 +161,12 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
 
     // Build BVH
     bool useCompaction = buildOptions.buildFlags & OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
-    void *tempBuffer =
-        cudaDevice->Alloc(AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)));
+    void *tempBuffer = cudaDevice->Alloc(
+        util::AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)));
     void *outputBuffer = cudaDevice->Alloc(sizes.outputSizeInBytes);
 
     uint64_t compactedSizeAddress =
-        AlignUp(CUdeviceptr(tempBuffer) + sizes.tempSizeInBytes, sizeof(uint64_t));
+        util::AlignUp(CUdeviceptr(tempBuffer) + sizes.tempSizeInBytes, sizeof(uint64_t));
     OptixAccelEmitDesc emittedProperties = {};
     emittedProperties.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
     emittedProperties.result = CUdeviceptr(compactedSizeAddress);
@@ -272,10 +216,87 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
     return outputHandle;
 }
 
+static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
+                                                  MemoryArena &arena,
+                                                  Mesh &mesh,
+                                                  uint32_t numMotionKeys,
+                                                  OptixAccelBuildOptions &options)
+{
+    const uint32_t numVertices = mesh.positions.size();
+    const uint32_t numIndices = mesh.indices.size();
+
+    MemoryView<CUdeviceptr> vertexBuffers = arena.PushArray<CUdeviceptr>(numMotionKeys);
+    MemoryView<float3> hostVertices = arena.PushArray<float3>(numVertices * numMotionKeys);
+
+    size_t vertexSize = sizeof(float3) * numVertices * numMotionKeys;
+    size_t indexSize = sizeof(int) * numIndices;
+    float3 *deviceVertices = (float3 *)cudaDevice->Alloc(vertexSize);
+    int *deviceIndices = (int *)cudaDevice->Alloc(indexSize);
+
+    for (uint32_t step = 0; step < numMotionKeys; step++)
+    {
+        CUdeviceptr dst = (CUdeviceptr)(deviceVertices + step * numVertices);
+        vertexBuffers[step] = dst;
+
+        // TODO IMPORTANT: handle all motion blur data properly
+        if (step > 0)
+        {
+            assert(0);
+        }
+
+        memcpy(hostVertices.data() + step * numVertices,
+               mesh.positions.data() + step * numVertices,
+               sizeof(float3) * numVertices);
+    }
+    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices.data(), vertexSize));
+    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh.indices.data(), indexSize));
+
+    unsigned int flags = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
+    OptixBuildInput input = {};
+    input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+    OptixBuildInputTriangleArray &triangleArray = input.triangleArray;
+    triangleArray = {};
+    triangleArray.vertexBuffers = vertexBuffers.data();
+    triangleArray.numVertices = numVertices;
+    triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    triangleArray.vertexStrideInBytes = 0;
+    triangleArray.indexBuffer = CUdeviceptr(deviceIndices);
+    triangleArray.numIndexTriplets = numIndices / 3;
+    triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+    triangleArray.indexStrideInBytes = 0;
+    triangleArray.flags = &flags;
+    triangleArray.numSbtRecords = 1;
+
+    BuildOptixBVH(cudaDevice, options, input);
+    CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
+    CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
+    return input;
+}
+
 // TODO: handle the case where cuda is enabled but optix isn't
 void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
 {
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
+
+    MemoryArena memoryArena;
+    for (Mesh &mesh : scene->meshes)
+    {
+        uint32_t numMotionKeys = 1;
+
+        OptixAccelBuildOptions options = {};
+        options.buildFlags =
+            OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+        options.operation = OPTIX_BUILD_OPERATION_BUILD;
+        options.motionOptions.numKeys = numMotionKeys;
+        options.motionOptions.flags = 0;
+        options.motionOptions.timeBegin = 0.f;
+        options.motionOptions.timeEnd = 1.f;
+
+        OptixBuildInput buildInput =
+            GetOptiXTriangleBuildInput(cudaDevice, memoryArena, mesh, numMotionKeys, options);
+
+        memoryArena.Clear();
+    }
 
     for (Curves &curve : scene->curves)
     {
@@ -301,7 +322,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         {
             int segmentStart = curve.GetCurveKeyStart(curveIndex);
             int numSegments = curve.GetCurveNumSegments(curveIndex);
-            for (uint32_t segmentIndex = segmentStart; segmentIndex < segmentStart + numSegments;
+            for (int segmentIndex = segmentStart; segmentIndex < segmentStart + numSegments;
                  segmentIndex++, bufferIndex++)
             {
                 indexBuffer[bufferIndex] = segmentIndex;
@@ -369,9 +390,9 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceWidths)));
     }
 
+#if 0
     Array<OptixBuildInput> optixBuildInputs;
 
-    MemoryArena memoryArena;
 
     for (int collectionIndex = 0; collectionIndex < scene->primitiveCollections.size();
          collectionIndex++)
@@ -416,6 +437,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
             // buildInputs
         }
     }
+#endif
 
 #if 0
 #if (OPTIX_VERSION >= 90000)

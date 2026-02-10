@@ -1,3 +1,5 @@
+#pragma once
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +11,8 @@
 #include <unistd.h>
 #endif
 
+#include "util/aligned_malloc.h"
+#include "util/base.h"
 #include "util/memory_view.h"
 
 #define ARENA_RESERVE_SIZE (64ll * 1024ll * 1024ll)
@@ -16,9 +20,22 @@
 
 YBI_NAMESPACE_BEGIN
 
+inline size_t GetPageSize()
+{
+#if defined(_WIN32)
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return (size_t)si.dwPageSize;
+#else
+    return (size_t)sysconf(_SC_PAGESIZE);
+#endif
+}
+
 class MemoryArena
 {
 private:
+    MemoryArena *current;
+    MemoryArena *prev;
     uint8_t *base;
     size_t used;
     size_t committed;
@@ -27,10 +44,11 @@ private:
     size_t commitSize;
 
 public:
-    explicit MemoryArena()
+    explicit MemoryArena(size_t requestedReserveSize = ARENA_RESERVE_SIZE)
     {
-        reserveSize = ARENA_RESERVE_SIZE;
-        commitSize = ARENA_COMMIT_SIZE;
+        size_t pageSize = GetPageSize();
+        reserveSize = util::AlignUp(requestedReserveSize, pageSize);
+        commitSize = util::AlignUp(ARENA_COMMIT_SIZE, pageSize);
 
         assert(reserveSize % commitSize == 0 &&
                "Reserve size should be multiple of commit size.\n");
@@ -38,24 +56,45 @@ public:
 #if defined(_WIN32)
         base = (uint8_t *)VirtualAlloc(nullptr, reserveSize, MEM_RESERVE, PAGE_NOACCESS);
 #else
-        m_base =
-            (uint8_t *)mmap(nullptr, m_reserveSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base =
+            (uint8_t *)mmap(nullptr, reserveSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #endif
         used = 0;
         committed = 0;
+        prev = nullptr;
+        current = this;
+
+        assert(base != nullptr && "Virtual Memory Reservation Failed");
     }
 
     ~MemoryArena()
     {
+        if (current && current != this)
+        {
+            MemoryArena *curr = current;
+            while (curr != this)
+            {
+                MemoryArena *toDelete = curr;
+                curr = curr->prev;
+                toDelete->prev = nullptr;
+                toDelete->~MemoryArena();
+                util::AlignedFree(toDelete);
+            }
+        }
         if (base)
         {
 #if defined(_WIN32)
             VirtualFree(base, 0, MEM_RELEASE);
 #else
-            munmap(m_base, m_reserveSize);
+            munmap(base, reserveSize);
 #endif
         }
     }
+
+    MemoryArena(const MemoryArena &) = delete;
+    MemoryArena &operator=(const MemoryArena &) = delete;
+    MemoryArena(MemoryArena &&) = delete;
+    MemoryArena &operator=(MemoryArena &&) = delete;
 
     template <typename T>
     MemoryView<T> Push()
@@ -68,32 +107,59 @@ public:
     {
         size_t bytesNeeded = count * sizeof(T);
 
-        size_t alignedUsed = (used + alignment - 1) & ~(alignment - 1);
+        size_t alignedUsed = util::AlignUp(current->used, current->alignment);
         size_t newUsed = alignedUsed + bytesNeeded;
 
-        assert(newUsed <= reserveSize && "Arena out of address space!");
-
-        if (newUsed > committed)
+        if (newUsed > current->reserveSize)
         {
-            size_t commitTarget = (newUsed + commitSize - 1) & ~(commitSize - 1);
-            size_t commitSize = commitTarget - committed;
+            size_t newBlockSize = current->reserveSize;
+            if (bytesNeeded > current->reserveSize)
+            {
+                newBlockSize = bytesNeeded;
+            }
 
-#if defined(_WIN32)
-            VirtualAlloc(base + committed, commitSize, MEM_COMMIT, PAGE_READWRITE);
-#else
-            mprotect(m_base + m_committed, commitSize, PROT_READ | PROT_WRITE);
-#endif
-            committed = commitTarget;
+            void *newPtr = util::AlignedAlloc(sizeof(MemoryArena), 8);
+            MemoryArena *newArena = new (newPtr) MemoryArena(newBlockSize);
+            newArena->prev = current;
+            current = newArena;
+
+            alignedUsed = 0;
+            newUsed = bytesNeeded;
         }
 
-        T *dest = (T *)(base + alignedUsed);
+        if (newUsed > current->committed)
+        {
+            size_t commitTarget = util::AlignUp(newUsed, current->commitSize);
+            size_t commitRequestSize = commitTarget - current->committed;
 
-        used = newUsed;
+#if defined(_WIN32)
+            VirtualAlloc(
+                current->base + current->committed, commitRequestSize, MEM_COMMIT, PAGE_READWRITE);
+#else
+            mprotect(
+                current->base + current->committed, commitRequestSize, PROT_READ | PROT_WRITE);
+#endif
+            current->committed = commitTarget;
+        }
+
+        T *dest = (T *)(current->base + alignedUsed);
+
+        current->used = newUsed;
         return {dest, count};
     }
-
     void Clear()
     {
+        MemoryArena *curr = current;
+        while (curr != this)
+        {
+            MemoryArena *toDelete = curr;
+            curr = curr->prev;
+            toDelete->prev = nullptr;
+            toDelete->~MemoryArena();
+            util::AlignedFree(toDelete);
+            delete toDelete;
+        }
+        current = this;
         used = 0;
     }
 };
