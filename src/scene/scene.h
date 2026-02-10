@@ -14,6 +14,7 @@ enum PrimitiveType : int
     PRIMITIVE_TYPE_TRIANGLES,
     PRIMITIVE_TYPE_CURVES,
     PRIMITIVE_TYPE_INSTANCES,
+    PRIMITIVE_TYPE_MAX,
 };
 
 enum BVHFlags : int
@@ -93,6 +94,8 @@ public:
 
 struct Primitive
 {
+    PrimitiveType primitiveType;
+    int index;
 };
 
 struct CollectionRange

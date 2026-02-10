@@ -23,6 +23,8 @@ list (APPEND YBI_SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
 )
 
+# Compiler specific
+
 # Add third party libraries
 add_subdirectory(src/third_party)
 
@@ -54,7 +56,7 @@ if (CMAKE_CUDA_COMPILER)
     find_package(OptiX)
     if (OPTIX_FOUND)
         list (APPEND YBI_COMPILE_DEFINITIONS WITH_OPTIX OPTIX_VERSION=${OPTIX_VERSION})
-        list (APPEND YBI_INCLUDE_DIRECTORIES "${OPTIX_INCLUDE_DIR}")
+        list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES "${OPTIX_INCLUDE_DIR}")
     endif()
 endif()
 # Hardware Specific End
