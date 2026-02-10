@@ -2,14 +2,15 @@
 
 #include "cuda.h"
 #include "cuda_runtime_api.h"
+#include "device/cuda_device_memory_arena.h"
 #include "optix_types.h"
 #include "scene/scene.h"
 #include "util/array.h"
+#include "util/assert.h"
 #include "util/base.h"
 #include "util/float3.h"
-#include "util/memory_arena.h"
+#include "util/host_memory_arena.h"
 
-#include <cassert>
 #include <cuda_runtime.h>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
@@ -18,7 +19,7 @@
 YBI_NAMESPACE_BEGIN
 
 #ifdef WITH_CUDA
-
+#ifdef YBI_DEBUG
 #define CUDA_ASSERT(statement) \
     { \
         CUresult result = statement; \
@@ -27,19 +28,23 @@ YBI_NAMESPACE_BEGIN
             const char *str, *name; \
             cuGetErrorString(result, &str); \
             cuGetErrorName(result, &name); \
-            printf("CUDA Error (%s): %s in %s (%s:%d)\n", \
-                   name, \
-                   str, \
-                   #statement, \
-                   __FILE__, \
-                   __LINE__); \
-            assert(false); \
+            fprintf(stderr, \
+                    "CUDA Error (%s): %s in %s (%s:%d)\n", \
+                    name, \
+                    str, \
+                    #statement, \
+                    __FILE__, \
+                    __LINE__); \
+            BREAK_IN_DEBUGGER(); \
         } \
     }
 
+#else
+#define CUDA_ASSERT(statement) statement
 #endif
 
 #ifdef WITH_OPTIX
+#ifdef YBI_DEBUG
 
 #define OPTIX_ASSERT(statement) \
     { \
@@ -47,10 +52,14 @@ YBI_NAMESPACE_BEGIN
         if (result != OPTIX_SUCCESS) \
         { \
             const char *name = optixGetErrorString(result); \
-            printf("Optix Error: %s in %s (%s:%d)\n", name, #statement, __FILE__, __LINE__); \
-            assert(false); \
+            fprintf( \
+                stderr, "Optix Error: %s in %s (%s:%d)\n", name, #statement, __FILE__, __LINE__); \
+            BREAK_IN_DEBUGGER(); \
         } \
     }
+#else
+#define OPTIX_ASSERT(statement) statement
+#endif
 
 struct ClusterAccelerationStructureLimits
 {
@@ -105,8 +114,8 @@ Test(uint8_t *indexBuffer, float3 *vertexBuffer, ClusterAccelerationStructureLim
     uint32_t clusterId = 0;
     uint32_t triangleCount = 0;
     uint32_t vertexCount = 0;
-    assert(triangleCount <= limits.maxTrianglesPerCluster);
-    assert(vertexCount <= limits.maxVerticesPerCluster);
+    ASSERT(triangleCount <= limits.maxTrianglesPerCluster);
+    ASSERT(vertexCount <= limits.maxVerticesPerCluster);
 
     OptixClusterAccelBuildInputTrianglesArgs args = {};
     args.clusterId = clusterId;
@@ -127,7 +136,8 @@ struct CUDADevice
     size_t bvhTotalAllocated;
 
     CUDADevice();
-    void *Alloc(size_t size);
+
+    DeviceMemoryView<uint8_t> Alloc(size_t size);
 };
 
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated()
@@ -140,16 +150,18 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated()
     optixDeviceContext = InitializeOptix(cudaContext);
 }
 
-void *CUDADevice::Alloc(size_t size)
+DeviceMemoryView<uint8_t> CUDADevice::Alloc(size_t size)
 {
-    assert(size != 0);
+    ASSERT(size != 0);
     totalAllocated += size;
     CUdeviceptr ptr;
     CUDA_ASSERT(cuMemAlloc(&ptr, size));
-    return (void *)ptr;
+
+    return {(uint8_t *)ptr, size};
 }
 
 static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
+                                            CUDAMemoryArena &deviceArena,
                                             OptixAccelBuildOptions buildOptions,
                                             OptixBuildInput buildInput)
 {
@@ -161,12 +173,15 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
 
     // Build BVH
     bool useCompaction = buildOptions.buildFlags & OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
-    void *tempBuffer = cudaDevice->Alloc(
+    DeviceMemoryView<uint8_t> tempBuffer = deviceArena.PushBytes(
         util::AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)));
-    void *outputBuffer = cudaDevice->Alloc(sizes.outputSizeInBytes);
+
+    DeviceMemoryView<uint8_t> outputBuffer = useCompaction
+                                                 ? deviceArena.PushBytes(sizes.outputSizeInBytes)
+                                                 : cudaDevice->Alloc(sizes.outputSizeInBytes);
 
     uint64_t compactedSizeAddress =
-        util::AlignUp(CUdeviceptr(tempBuffer) + sizes.tempSizeInBytes, sizeof(uint64_t));
+        util::AlignUp(CUdeviceptr(tempBuffer.data()) + sizes.tempSizeInBytes, sizeof(uint64_t));
     OptixAccelEmitDesc emittedProperties = {};
     emittedProperties.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
     emittedProperties.result = CUdeviceptr(compactedSizeAddress);
@@ -176,9 +191,9 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
                                  &buildOptions,
                                  &buildInput,
                                  1,
-                                 CUdeviceptr(tempBuffer),
+                                 CUdeviceptr(tempBuffer.data()),
                                  sizes.tempSizeInBytes,
-                                 CUdeviceptr(outputBuffer),
+                                 CUdeviceptr(outputBuffer.data()),
                                  sizes.outputSizeInBytes,
                                  &outputHandle,
                                  useCompaction ? &emittedProperties : 0,
@@ -194,30 +209,29 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
 
         if (compactedSize < sizes.outputSizeInBytes)
         {
-            void *compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
+            DeviceMemoryView<uint8_t> compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
 
             OptixTraversableHandle tempOutputHandle;
             OPTIX_ASSERT(optixAccelCompact(cudaDevice->optixDeviceContext,
                                            0,
                                            outputHandle,
-                                           CUdeviceptr(compactedOutputBuffer),
+                                           CUdeviceptr(compactedOutputBuffer.data()),
                                            compactedSize,
                                            &tempOutputHandle));
             CUDA_ASSERT(cuStreamSynchronize(0));
             outputHandle = tempOutputHandle;
 
-            CUDA_ASSERT(cuMemFree(CUdeviceptr(outputBuffer)));
             cudaDevice->bvhTotalAllocated -= sizes.outputSizeInBytes;
             cudaDevice->bvhTotalAllocated += compactedSize;
         }
     }
 
-    CUDA_ASSERT(cuMemFree(CUdeviceptr(tempBuffer)));
     return outputHandle;
 }
 
 static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
-                                                  MemoryArena &arena,
+                                                  HostMemoryArena &hostArena,
+                                                  CUDAMemoryArena &deviceArena,
                                                   Mesh &mesh,
                                                   uint32_t numMotionKeys,
                                                   OptixAccelBuildOptions &options)
@@ -225,31 +239,25 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     const uint32_t numVertices = mesh.positions.size();
     const uint32_t numIndices = mesh.indices.size();
 
-    MemoryView<CUdeviceptr> vertexBuffers = arena.PushArray<CUdeviceptr>(numMotionKeys);
-    MemoryView<float3> hostVertices = arena.PushArray<float3>(numVertices * numMotionKeys);
+    MemoryView<CUdeviceptr> vertexBuffers = hostArena.PushArray<CUdeviceptr>(numMotionKeys);
+    MemoryView<float3> hostVertices = hostArena.PushArray<float3>(numVertices * numMotionKeys);
 
-    size_t vertexSize = sizeof(float3) * numVertices * numMotionKeys;
-    size_t indexSize = sizeof(int) * numIndices;
-    float3 *deviceVertices = (float3 *)cudaDevice->Alloc(vertexSize);
-    int *deviceIndices = (int *)cudaDevice->Alloc(indexSize);
+    DeviceMemoryView<float3> deviceVertices =
+        deviceArena.PushArray<float3>(numVertices * numMotionKeys);
+    DeviceMemoryView<int> deviceIndices = deviceArena.PushArray<int>(numIndices);
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
     {
-        CUdeviceptr dst = (CUdeviceptr)(deviceVertices + step * numVertices);
+        CUdeviceptr dst = (CUdeviceptr)((deviceVertices + step * numVertices).data());
         vertexBuffers[step] = dst;
 
-        // TODO IMPORTANT: handle all motion blur data properly
-        if (step > 0)
-        {
-            assert(0);
-        }
-
-        memcpy(hostVertices.data() + step * numVertices,
-               mesh.positions.data() + step * numVertices,
-               sizeof(float3) * numVertices);
+        util::Copy(
+            hostVertices + step * numVertices, mesh.positions + step * numVertices, numVertices);
     }
-    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceVertices), hostVertices.data(), vertexSize));
-    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceIndices), mesh.indices.data(), indexSize));
+    CUDA_ASSERT(cuMemcpyHtoD(
+        CUdeviceptr(deviceVertices.data()), hostVertices.data(), deviceVertices.numBytes()));
+    CUDA_ASSERT(cuMemcpyHtoD(
+        CUdeviceptr(deviceIndices.data()), mesh.indices.data(), deviceIndices.numBytes()));
 
     unsigned int flags = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
     OptixBuildInput input = {};
@@ -260,16 +268,14 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     triangleArray.numVertices = numVertices;
     triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
     triangleArray.vertexStrideInBytes = 0;
-    triangleArray.indexBuffer = CUdeviceptr(deviceIndices);
+    triangleArray.indexBuffer = CUdeviceptr(deviceIndices.data());
     triangleArray.numIndexTriplets = numIndices / 3;
     triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangleArray.indexStrideInBytes = 0;
     triangleArray.flags = &flags;
     triangleArray.numSbtRecords = 1;
 
-    BuildOptixBVH(cudaDevice, options, input);
-    CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
-    CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
+    BuildOptixBVH(cudaDevice, deviceArena, options, input);
     return input;
 }
 
@@ -278,7 +284,9 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
 {
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
 
-    MemoryArena memoryArena;
+    HostMemoryArena hostArena;
+    CUDAMemoryArena deviceArena;
+
     for (Mesh &mesh : scene->meshes)
     {
         uint32_t numMotionKeys = 1;
@@ -292,12 +300,14 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         options.motionOptions.timeBegin = 0.f;
         options.motionOptions.timeEnd = 1.f;
 
-        OptixBuildInput buildInput =
-            GetOptiXTriangleBuildInput(cudaDevice, memoryArena, mesh, numMotionKeys, options);
+        OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
+            cudaDevice, hostArena, deviceArena, mesh, numMotionKeys, options);
 
-        memoryArena.Clear();
+        hostArena.Clear();
+        deviceArena.Clear();
     }
 
+#if 0
     for (Curves &curve : scene->curves)
     {
         uint32_t numMotionKeys = 1;
@@ -385,10 +395,8 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         curveArray.endcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT;
 
         BuildOptixBVH(cudaDevice, options, input);
-        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceVertices)));
-        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceIndices)));
-        CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceWidths)));
     }
+#endif
 
 #if 0
     Array<OptixBuildInput> optixBuildInputs;
@@ -488,16 +496,14 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
                                             0));
     }
 #else
-    if (bvh->flags & BVHFlags::USE_CLUSTERS)
-    {
-        assert(0 && "Cluster Acceleration Structures are not supported. Please update OptiX.");
-    }
+    ERROR(bvh->flags & BVHFlags::USE_CLUSTERS, "Cluster Acceleration Structures are not supported. Please update OptiX.");
 #endif
 #endif
 
     CUDA_ASSERT(cuCtxPopCurrent(0));
 }
 
+#endif
 #endif
 
 YBI_NAMESPACE_END

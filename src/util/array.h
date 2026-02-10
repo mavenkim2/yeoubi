@@ -1,7 +1,8 @@
 #pragma once
 
 #include "aligned_malloc.h"
-#include <assert.h>
+#include "util/assert.h"
+#include "util/memory_view.h"
 #include <type_traits>
 
 YBI_NAMESPACE_BEGIN
@@ -80,7 +81,7 @@ public:
         {
             size_t newCapacity = newSize;
             T *newBuffer = AllocateAligned(newCapacity);
-            assert(newBuffer);
+            ASSERT(newBuffer);
 
             if (m_data)
             {
@@ -100,7 +101,7 @@ public:
         if (newCapacity > m_capacity)
         {
             T *newBuffer = AllocateAligned(newCapacity);
-            assert(newBuffer);
+            ASSERT(newBuffer);
 
             if (m_data)
             {
@@ -115,12 +116,12 @@ public:
 
     T &operator[](size_t index)
     {
-        assert(index < m_size);
+        ASSERT(index < m_size);
         return m_data[index];
     }
     const T &operator[](size_t index) const
     {
-        assert(index < m_size);
+        ASSERT(index < m_size);
         return m_data[index];
     }
     T *data()
@@ -155,15 +156,24 @@ public:
     {
         return m_data + m_size;
     }
+    MemoryView<T> operator+(size_t offset) const
+    {
+        ASSERT(offset <= m_size);
+
+        MemoryView<T> result;
+        result.ptr = m_data + offset;
+        result.count = m_size - offset;
+        return result;
+    }
 
 private:
     // TODO: investigate performance
     T *AllocateAligned(size_t n)
     {
-        assert(n != 0);
+        ASSERT(n != 0);
         void *ptr = nullptr;
         ptr = util::AlignedAlloc(sizeof(T) * n, alignment);
-        assert(ptr);
+        ASSERT(ptr);
         return static_cast<T *>(ptr);
     }
 

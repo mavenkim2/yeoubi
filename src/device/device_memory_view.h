@@ -6,32 +6,13 @@
 YBI_NAMESPACE_BEGIN
 
 template <typename T>
-struct MemoryView
+struct DeviceMemoryView
 {
     using value_type = T;
 
     T *ptr = nullptr;
     size_t count = 0;
 
-    T &operator[](size_t index)
-    {
-        ASSERT(index < count);
-        return ptr[index];
-    }
-    T &operator[](size_t index) const
-    {
-        ASSERT(index < count);
-        return ptr[index];
-    }
-
-    T *begin() const
-    {
-        return ptr;
-    }
-    T *end() const
-    {
-        return ptr + count;
-    }
     T *data() const
     {
         return ptr;
@@ -48,17 +29,16 @@ struct MemoryView
     {
         return count * sizeof(T);
     }
-
-    MemoryView<T> operator+(size_t offset) const
+    DeviceMemoryView<T> operator+(size_t offset) const
     {
         ASSERT(offset <= count);
 
-        MemoryView<T> result;
+        DeviceMemoryView<T> result;
         result.ptr = ptr + offset;
         result.count = count - offset;
         return result;
     }
-    MemoryView<T> &operator+=(size_t offset)
+    DeviceMemoryView<T> &operator+=(size_t offset)
     {
         ASSERT(offset <= count);
         ptr += offset;

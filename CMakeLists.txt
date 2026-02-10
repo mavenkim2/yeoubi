@@ -22,6 +22,9 @@ list (APPEND YBI_SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
 )
+list (APPEND YBI_COMPILE_DEFINITIONS 
+    $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>)
+
 
 # Compiler specific
 
