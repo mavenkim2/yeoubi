@@ -9,6 +9,13 @@ YBI_NAMESPACE_BEGIN
 struct float3;
 struct Device;
 
+enum PrimitiveType : int
+{
+    PRIMITIVE_TYPE_TRIANGLES,
+    PRIMITIVE_TYPE_CURVES,
+    PRIMITIVE_TYPE_INSTANCES,
+};
+
 enum BVHFlags : int
 {
     USE_CLUSTERS = (1u << 0u),
@@ -84,16 +91,56 @@ public:
     Instances(Array<float3x4> &&affineTransforms, Array<int> &&objectIDs);
 };
 
+struct Primitive
+{
+};
+
+struct CollectionRange
+{
+    Primitive *_begin;
+    Primitive *_end;
+
+    Primitive *begin() const
+    {
+        return _begin;
+    }
+    Primitive *end() const
+    {
+        return _end;
+    }
+};
+
+struct ConstCollectionRange
+{
+    const Primitive *_begin;
+    const Primitive *_end;
+
+    const Primitive *begin() const
+    {
+        return _begin;
+    }
+    const Primitive *end() const
+    {
+        return _end;
+    }
+};
+
 struct Scene
 {
     BVH bvh;
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
     std::vector<Instances> instancesArray;
+
+    Array<Primitive> primitives;
+    Array<int> primitiveCollections;
     Device *device;
 
     Scene() = default;
     ~Scene() = default;
+
+    int GetNumPrimitives(int collectionIndex) const;
+    ConstCollectionRange GetPrimitivesInCollection(int collectionIndex) const;
 };
 
 YBI_NAMESPACE_END

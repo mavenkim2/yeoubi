@@ -71,4 +71,22 @@ Instances::Instances(Array<float3x4> &&affineTransforms, Array<int> &&objectIDs)
 {
 }
 
+int Scene::GetNumPrimitives(int collectionIndex) const
+{
+    return primitiveCollections[collectionIndex + 1] - primitiveCollections[collectionIndex];
+}
+
+ConstCollectionRange Scene::GetPrimitivesInCollection(int collectionIndex) const
+{
+    if (collectionIndex < 0 || collectionIndex >= (int)primitiveCollections.size() - 1)
+    {
+        return {nullptr, nullptr};
+    }
+
+    int startOffset = primitiveCollections[collectionIndex];
+    int endOffset = primitiveCollections[collectionIndex + 1];
+
+    return {&primitives[startOffset], &primitives[endOffset]};
+}
+
 YBI_NAMESPACE_END

@@ -227,6 +227,20 @@ static void TraversePrim(pxr::UsdPrim &root,
     }
 }
 
+static float3x4 ConvertAffineTransform(pxr::GfMatrix4d &transform)
+{
+    pxr::GfMatrix4d transposeMatrix = transform.GetTranspose();
+    pxr::GfVec4d row0 = transposeMatrix.GetRow(0);
+    pxr::GfVec4d row1 = transposeMatrix.GetRow(1);
+    pxr::GfVec4d row2 = transposeMatrix.GetRow(2);
+
+    float4 r0 = make_float4(row0[0], row0[1], row0[2], row0[3]);
+    float4 r1 = make_float4(row1[0], row1[1], row1[2], row1[3]);
+    float4 r2 = make_float4(row2[0], row2[1], row2[2], row2[3]);
+
+    return float3x4(r0, r1, r2);
+}
+
 static pxr::UsdShadeMaterial GetPrimMaterial(pxr::UsdPrim &prim,
                                              pxr::TfToken token = pxr::UsdShadeTokens->full)
 {
@@ -544,7 +558,7 @@ static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
         int objectID = 0;
         int instanceIndex = protoIndices[index];
 
-        pxr::GfMatrix4f transform;
+        pxr::GfMatrix4d transform;
         transform.SetIdentity();
 
         if (!scales.empty())
@@ -568,18 +582,7 @@ static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
 
         // NOTE: OpenUSD uses left to right multiplication. Tranpose to get right
         // to left.
-        pxr::GfMatrix4f transposeMatrix = transform.GetTranspose();
-        pxr::GfVec4f row0 = transposeMatrix.GetRow(0);
-        pxr::GfVec4f row1 = transposeMatrix.GetRow(1);
-        pxr::GfVec4f row2 = transposeMatrix.GetRow(2);
-
-        float4 r0 = make_float4(row0[0], row0[1], row0[2], row0[3]);
-        float4 r1 = make_float4(row1[0], row1[1], row1[2], row1[3]);
-        float4 r2 = make_float4(row2[0], row2[1], row2[2], row2[3]);
-
-        float3x4 affineMatrix(r0, r1, r2);
-
-        affineTransforms[index] = affineMatrix;
+        affineTransforms[index] = ConvertAffineTransform(transform);
         objectIDs[index] = objectID;
     }
 
@@ -701,47 +704,14 @@ void Test(Scene *scene)
 
     assert(prototypes.size() == prototypeRanges.size());
 
-    Array<int> objectIDRemap(prototypes.size());
-    std::vector<pxr::UsdPrim> compactedPrototypes;
-    compactedPrototypes.reserve(prototypes.size());
-
     pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode(0.0));
-    for (size_t prototypeIndex = 0; prototypeIndex < prototypes.size(); prototypeIndex++)
-    {
-        pxr::UsdPrim &prototype = prototypes[prototypeIndex];
-        USDPrototypeRanges &ranges = prototypeRanges[prototypeIndex];
-
-        pxr::GfMatrix4d localToWorldTransform = xformCache.GetLocalToWorldTransform(prototype);
-
-        for (int r = 0; r < 4; r++)
-        {
-            for (int c = 0; c < 4; c++)
-            {
-                printf("%f ", localToWorldTransform[r][c]);
-            }
-        }
-        printf("\n");
-
-        if (ranges.CanMergeWithChild())
-        {
-            pxr::UsdPrim &instance = state.instances[ranges.instanceStart];
-            std::string pathString = instance.GetPrototype().GetPath().GetString();
-            auto found = pathObjectIDMap.find(pathString);
-            assert(found != pathObjectIDMap.end());
-
-            objectIDRemap[prototypeIndex] = -1;
-            // numCompactedPrototypes;
-            continue;
-        }
-        else
-        {
-            objectIDRemap[prototypeIndex] = compactedPrototypes.size();
-            compactedPrototypes.push_back(prototype);
-        }
-    }
 
     std::unordered_map<std::string, int> materialMap;
     std::vector<pxr::UsdShadeMaterial> materials;
+
+    uint32_t numInstances = 0;
+
+    Array<float3x4> affineTransforms;
 
     for (pxr::UsdPrim &instancePrim : state.instances)
     {
@@ -751,7 +721,29 @@ void Test(Scene *scene)
         assert(found != pathObjectIDMap.end());
 
         int objectID = found->second;
+        USDPrototypeRanges &ranges = prototypeRanges[objectID];
+        assert(prototypes[objectID].GetPath().GetString() == pathString);
+        if (prototypes[objectID].GetPath().GetString() != pathString)
+        {
+            printf("not equal\n");
+        }
+
         pxr::GfMatrix4d localToWorldTransform = xformCache.GetLocalToWorldTransform(instancePrim);
+        if (ranges.CanMergeWithChild())
+        {
+            pxr::UsdPrim &instance = state.instances[ranges.instanceStart];
+            std::string pathString = instance.GetPrototype().GetPath().GetString();
+            auto found = pathObjectIDMap.find(pathString);
+            assert(found != pathObjectIDMap.end());
+
+            pxr::GfMatrix4d childToLocalTransform = xformCache.GetLocalToWorldTransform(instance);
+            pxr::GfMatrix4d childToWorldTransform = childToLocalTransform * localToWorldTransform;
+
+            affineTransforms[numInstances++] = ConvertAffineTransform(childToWorldTransform);
+        }
+        else
+        {
+        }
     }
 
     for (pxr::UsdGeomPointInstancer &pointInstancer : state.pointInstancers)

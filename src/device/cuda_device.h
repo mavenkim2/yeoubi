@@ -374,6 +374,16 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         CUDA_ASSERT(cuMemFree(CUdeviceptr(deviceWidths)));
     }
 
+    for (int collectionIndex = 0; collectionIndex < scene->primitiveCollections.size();
+         collectionIndex++)
+    {
+        int numPrimitive = scene->GetNumPrimitives(collectionIndex);
+
+        for (const Primitive &primitive : scene->GetPrimitivesInCollection(collectionIndex))
+        {
+        }
+    }
+
 #if 0
 #if (OPTIX_VERSION >= 90000)
     if (bvh->flags & BVHFlags::USE_CLUSTERS)
