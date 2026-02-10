@@ -18,6 +18,8 @@ int main(int argc, char **argv)
     CUDADevice device;
 
     uint32_t totalNumTriangles = 0;
+
+    printf("bvh start\n");
     auto start = std::chrono::high_resolution_clock::now();
     BuildBVH(&device, &scene);
 
@@ -27,6 +29,7 @@ int main(int argc, char **argv)
     //     totalNumTriangles += mesh.numIndices / 3;
     // }
     auto end = std::chrono::high_resolution_clock::now();
+    printf("bvh end\n");
     std::chrono::duration<double, std::milli> elapsed = end - start;
 
     printf("time elapsed: %f\n", elapsed.count());

@@ -13,7 +13,7 @@ __forceinline size_t AlignUp(size_t val, size_t align)
 }
 
 template <typename Dest, typename Src>
-__forceinline void Copy(Dest dst, Src src, size_t count)
+__forceinline void Copy(Dest &dst, const Src &src, size_t count)
 {
     using DestT = typename Dest::value_type;
     using SrcT = typename Src::value_type;

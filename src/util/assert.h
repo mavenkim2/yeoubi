@@ -36,20 +36,22 @@
         } \
     } while (0)
 
-#define ERROR(expr, msg) \
+#define ERROR(expr, msg, ...) \
     do \
     { \
         if (!(expr)) \
         { \
-            LOG_ERROR_INTERNAL("FATAL ERROR", expr, msg); \
+            LOG_ERROR_INTERNAL("FATAL ERROR", expr, ""); \
+            fprintf(stderr, msg, ##__VA_ARGS__); \
             BREAK_IN_DEBUGGER(); \
         } \
     } while (0)
 
-#define LOGFATAL(msg) \
+#define LOGFATAL(msg, ...) \
     do \
     { \
-        fprintf(stderr, "[%s] %s:%d\n%s", "FATAL ERROR", __FILE__, __LINE__, #msg); \
+        fprintf(stderr, "[%s] %s:%d\n", "FATAL ERROR", __FILE__, __LINE__); \
+        fprintf(stderr, msg, ##__VA_ARGS__); \
         BREAK_IN_DEBUGGER(); \
     } while (0)
 

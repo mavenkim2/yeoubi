@@ -4,6 +4,7 @@
 
 #include "cuda.h"
 #include "cuda_runtime_api.h"
+#include "device/cuda_assert.h"
 #include "device/device_memory_view.h"
 #include "util/memory_arena.h"
 
@@ -17,7 +18,7 @@ struct CUDAMemoryProvider
     static uint8_t *Reserve(size_t size)
     {
         CUdeviceptr dptr;
-        cuMemAddressReserve(&dptr, size, 0, 0, 0);
+        CUDA_ASSERT(cuMemAddressReserve(&dptr, size, 0, 0, 0));
         return (uint8_t *)dptr;
     }
 
@@ -29,19 +30,19 @@ struct CUDAMemoryProvider
         prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         prop.location.id = 0;
 
-        cuMemCreate(&handle, size, &prop, 0);
-        cuMemMap((CUdeviceptr)ptr, size, 0, handle, 0);
+        CUDA_ASSERT(cuMemCreate(&handle, size, &prop, 0));
+        CUDA_ASSERT(cuMemMap((CUdeviceptr)ptr, size, 0, handle, 0));
         CUmemAccessDesc access = {};
         access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         access.location.id = 0;
         access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        cuMemSetAccess((CUdeviceptr)ptr, size, &access, 1);
+        CUDA_ASSERT(cuMemSetAccess((CUdeviceptr)ptr, size, &access, 1));
     }
 
     static void Free(uint8_t *ptr, size_t size)
     {
-        cuMemUnmap((CUdeviceptr)ptr, size);
-        cuMemAddressFree((CUdeviceptr)ptr, size);
+        CUDA_ASSERT(cuMemUnmap((CUdeviceptr)ptr, size));
+        CUDA_ASSERT(cuMemAddressFree((CUdeviceptr)ptr, size));
     }
 
     static size_t GetPageSize()

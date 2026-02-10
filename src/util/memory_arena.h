@@ -35,7 +35,6 @@ public:
         reserveSize = util::AlignUp(requestedReserveSize, pageSize);
         commitSize = util::AlignUp(ARENA_COMMIT_SIZE, pageSize);
 
-        ERROR(reserveSize % commitSize == 0, "Reserve size should be multiple of commit size.\n");
         alignment = 16;
 
         base = Provider::Reserve(reserveSize);
@@ -78,17 +77,13 @@ public:
         return PushArray(1);
     }
 
-    ViewType<uint8_t> PushBytes(size_t numBytes)
-    {
-        return PushArray<uint8_t>(numBytes);
-    }
-
     template <typename T>
-    ViewType<T> PushArray(size_t count)
+    ViewType<T> PushArray(size_t count, size_t alignment = 0)
     {
+        alignment = alignment == 0 ? current->alignment : alignment;
         size_t bytesNeeded = count * sizeof(T);
 
-        size_t alignedUsed = util::AlignUp(current->used, current->alignment);
+        size_t alignedUsed = util::AlignUp(current->used, alignment);
         size_t newUsed = alignedUsed + bytesNeeded;
 
         if (newUsed > current->reserveSize)
@@ -110,7 +105,8 @@ public:
 
         if (newUsed > current->committed)
         {
-            size_t commitTarget = util::AlignUp(newUsed, current->commitSize);
+            size_t commitTarget =
+                std::min(util::AlignUp(newUsed, current->commitSize), current->reserveSize);
             size_t commitRequestSize = commitTarget - current->committed;
 
             Provider::Commit(current->base + current->committed, commitRequestSize);
@@ -132,7 +128,6 @@ public:
             toDelete->prev = nullptr;
             toDelete->~MemoryArena();
             util::AlignedFree(toDelete);
-            delete toDelete;
         }
         current = this;
         used = 0;

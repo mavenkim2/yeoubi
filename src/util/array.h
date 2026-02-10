@@ -23,10 +23,10 @@ struct has_data_and_size<
 template <typename T, size_t alignment = 16>
 class Array
 {
-    using value_type = T;
     static_assert((alignment & (alignment - 1)) == 0, "Alignment must be a power of 2");
 
 public:
+    using value_type = T;
     Array() : m_data(nullptr), m_size(0), m_capacity(0) {}
     explicit Array(size_t requestedSize) : m_data(nullptr), m_size(0), m_capacity(0)
     {
