@@ -1,6 +1,7 @@
 #include "device/cuda_device.h"
 #include "device/device.h"
 #include "io/usd/load.h"
+#include "scene/subdivision.h"
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -11,6 +12,8 @@ int main(int argc, char **argv)
 {
     // BuildBVH();
     // TODO: hardcoded
+
+    Subdivision();
 
     Scene scene;
     Test(&scene);
