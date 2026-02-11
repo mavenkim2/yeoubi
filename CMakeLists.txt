@@ -20,6 +20,7 @@ list (APPEND YBI_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/src)
 list (APPEND YBI_SOURCE 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
 )
 list (APPEND YBI_COMPILE_DEFINITIONS 
@@ -27,6 +28,9 @@ list (APPEND YBI_COMPILE_DEFINITIONS
 
 
 # Compiler specific
+if (MSVC)
+    add_compile_definitions(_USE_MATH_DEFINES)
+endif()
 
 # Add third party libraries
 add_subdirectory(src/third_party)

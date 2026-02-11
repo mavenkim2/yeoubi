@@ -43,7 +43,7 @@ public:
         prev = nullptr;
         current = this;
 
-        ERROR(base != nullptr, "Virtual Memory Reservation Failed");
+        YBI_ERROR(base != nullptr, "Virtual Memory Reservation Failed");
     }
 
     ~MemoryArena()

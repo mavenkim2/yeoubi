@@ -16,7 +16,7 @@
 #define LOG_ERROR_INTERNAL(type, expr, message) \
     fprintf(stderr, "[%s] %s:%d\nEXPR: %s\n%s", type, __FILE__, __LINE__, #expr, message)
 
-#define ASSERT(expr) \
+#define YBI_ASSERT(expr) \
     do \
     { \
         if (!(expr)) \
@@ -26,7 +26,7 @@
         } \
     } while (0)
 
-#define CHECK(expr, msg) \
+#define YBI_CHECK(expr, msg) \
     do \
     { \
         if (!(expr)) \
@@ -36,7 +36,7 @@
         } \
     } while (0)
 
-#define ERROR(expr, msg, ...) \
+#define YBI_ERROR(expr, msg, ...) \
     do \
     { \
         if (!(expr)) \
@@ -47,7 +47,7 @@
         } \
     } while (0)
 
-#define LOGFATAL(msg, ...) \
+#define YBI_LOGFATAL(msg, ...) \
     do \
     { \
         fprintf(stderr, "[%s] %s:%d\n", "FATAL ERROR", __FILE__, __LINE__); \
@@ -56,7 +56,12 @@
     } while (0)
 
 #else
-#define ASSERT(expr) ((void)(0))
-#define CHECK(expr, msg) ((void)expr)
-#define ERROR(expr, msg) ((void)(0))
+#define YBI_ASSERT(expr) ((void)(0))
+#define YBI_CHECK(expr, msg) ((void)(expr), (void)(msg))
+#if defined(_MSC_VER)
+#define YBI_ERROR(expr, msg, ...) __noop(expr, msg)
+#else
+#define YBI_ERROR(expr, msg, ...) ((void)(expr), (void)(msg))
+#endif
+#define YBI_LOGFATAL(msg, ...) ((void)(0))
 #endif

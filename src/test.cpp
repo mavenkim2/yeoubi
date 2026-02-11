@@ -2,6 +2,7 @@
 #include "device/device.h"
 #include "io/usd/load.h"
 #include "scene/subdivision.h"
+#include "scene/subdivision_mesh.h"
 #include <cassert>
 #include <chrono>
 #include <cstdio>
@@ -13,10 +14,16 @@ int main(int argc, char **argv)
     // BuildBVH();
     // TODO: hardcoded
 
-    Subdivision();
+    // SubdivisionMesh mesh;
+    // Subdivision(mesh);
 
     Scene scene;
     Test(&scene);
+
+    for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
+    {
+        Subdivision(mesh);
+    }
 
     CUDADevice device;
 

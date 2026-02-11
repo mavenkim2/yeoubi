@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene/subdivision_mesh.h"
 #include "util/array.h"
 #include "util/float3x4.h"
 #include <vector>
@@ -134,6 +135,7 @@ struct Scene
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
     std::vector<Instances> instancesArray;
+    std::vector<SubdivisionMesh> subdivisionMeshes;
 
     Array<Primitive> primitives;
     Array<int> primitiveCollections;

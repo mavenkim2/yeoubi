@@ -15,12 +15,12 @@ struct MemoryView
 
     T &operator[](size_t index)
     {
-        ASSERT(index < count);
+        YBI_ASSERT(index < count);
         return ptr[index];
     }
     T &operator[](size_t index) const
     {
-        ASSERT(index < count);
+        YBI_ASSERT(index < count);
         return ptr[index];
     }
 
@@ -51,7 +51,7 @@ struct MemoryView
 
     MemoryView<T> operator+(size_t offset) const
     {
-        ASSERT(offset <= count);
+        YBI_ASSERT(offset <= count);
 
         MemoryView<T> result;
         result.ptr = ptr + offset;
@@ -60,7 +60,7 @@ struct MemoryView
     }
     MemoryView<T> &operator+=(size_t offset)
     {
-        ASSERT(offset <= count);
+        YBI_ASSERT(offset <= count);
         ptr += offset;
         count -= offset;
         return *this;

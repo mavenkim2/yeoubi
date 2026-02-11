@@ -1,6 +1,6 @@
 #pragma once
 
-#include "aligned_malloc.h"
+#include "util/aligned_malloc.h"
 #include "util/assert.h"
 #include "util/memory_view.h"
 #include <type_traits>
@@ -81,7 +81,7 @@ public:
         {
             size_t newCapacity = newSize;
             T *newBuffer = AllocateAligned(newCapacity);
-            ASSERT(newBuffer);
+            YBI_ASSERT(newBuffer);
 
             if (m_data)
             {
@@ -101,7 +101,7 @@ public:
         if (newCapacity > m_capacity)
         {
             T *newBuffer = AllocateAligned(newCapacity);
-            ASSERT(newBuffer);
+            YBI_ASSERT(newBuffer);
 
             if (m_data)
             {
@@ -116,12 +116,12 @@ public:
 
     T &operator[](size_t index)
     {
-        ASSERT(index < m_size);
+        YBI_ASSERT(index < m_size);
         return m_data[index];
     }
     const T &operator[](size_t index) const
     {
-        ASSERT(index < m_size);
+        YBI_ASSERT(index < m_size);
         return m_data[index];
     }
     T *data()
@@ -158,7 +158,7 @@ public:
     }
     MemoryView<T> operator+(size_t offset) const
     {
-        ASSERT(offset <= m_size);
+        YBI_ASSERT(offset <= m_size);
 
         MemoryView<T> result;
         result.ptr = m_data + offset;
@@ -170,10 +170,10 @@ private:
     // TODO: investigate performance
     T *AllocateAligned(size_t n)
     {
-        ASSERT(n != 0);
+        YBI_ASSERT(n != 0);
         void *ptr = nullptr;
         ptr = util::AlignedAlloc(sizeof(T) * n, alignment);
-        ASSERT(ptr);
+        YBI_ASSERT(ptr);
         return static_cast<T *>(ptr);
     }
 

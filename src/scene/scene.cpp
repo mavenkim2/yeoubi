@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "util/assert.h"
 #include "util/float3.h"
 
 YBI_NAMESPACE_BEGIN
@@ -43,7 +44,7 @@ int Curves::GetCurveNumSegments(size_t curveIndex) const
                          ? positions.size()
                          : curveVertexOffsets[curveIndex + 1];
     count -= start;
-    assert(count >= 4);
+    YBI_ASSERT(count >= 4);
     return count - 3;
 }
 

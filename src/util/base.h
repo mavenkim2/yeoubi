@@ -19,8 +19,8 @@ __forceinline void Copy(Dest &dst, const Src &src, size_t count)
     using SrcT = typename Src::value_type;
     static_assert(std::is_same_v<DestT, SrcT>, "Can only copy to and from the same type.\n");
 
-    ASSERT(dst.size() >= count);
-    ASSERT(src.size() >= count);
+    YBI_ASSERT(dst.size() >= count);
+    YBI_ASSERT(src.size() >= count);
 
     memcpy(dst.data(), src.data(), sizeof(DestT) * count);
 }

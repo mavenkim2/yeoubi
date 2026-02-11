@@ -1,5 +1,6 @@
 #include "io/usd/load.h"
 #include "scene/scene.h"
+#include "util/assert.h"
 #include "util/float3.h"
 #include "util/float3x4.h"
 #include "util/float4.h"
@@ -47,7 +48,7 @@ YBI_NAMESPACE_BEGIN
         if (!result) \
         { \
             printf("USD Error in %s (%s:%d)\n", #expr, __FILE__, __LINE__); \
-            assert(false); \
+            YBI_ASSERT(false); \
         } \
     }
 
@@ -220,7 +221,7 @@ static void TraversePrim(pxr::UsdPrim &root,
                 {
                     printf("help: %i %i\n", stackTop, stackMax);
                 }
-                assert(stackTop < stackMax);
+                YBI_ASSERT(stackTop < stackMax);
                 stack[stackTop++] = prim;
             }
         }
@@ -313,22 +314,114 @@ static pxr::UsdShadeShader HandleExpectedUVTexture(const pxr::UsdShadeInput &inp
             else
             {
                 printf("Expected UsdUvTexture, other cases not handled yet\n");
-                assert(0);
+                YBI_ASSERT(0);
             }
         }
         else
         {
             printf("Expected UsdShadeShader, other cases not handled yet. Type name is: %s\n",
                    sourcePrim.GetTypeName().GetText());
-            assert(0);
+            YBI_ASSERT(0);
         }
     }
     else
     {
         printf("Expected one source, other cases not handled yet\n");
-        assert(0);
+        YBI_ASSERT(0);
     }
     return shader;
+}
+
+static void ProcessPrimvars() {}
+
+static void
+ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode timeCode = 0.0)
+{
+    pxr::VtVec3fArray positions;
+    pxr::VtIntArray faceIndices;
+    pxr::VtIntArray faceCounts;
+    pxr::TfToken interpolationBoundary;
+    pxr::TfToken fvLinearInterpolation;
+
+    pxr::VtIntArray cornerIndices;
+    pxr::VtFloatArray cornerSharpnesses;
+    pxr::VtIntArray creaseIndices;
+    pxr::VtIntArray creaseLengths;
+    pxr::VtFloatArray creaseSharpnesses;
+
+    USD_ASSERT(mesh.GetPointsAttr().Get(&positions, timeCode));
+    USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, timeCode));
+    USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode));
+
+    USD_ASSERT(mesh.GetInterpolateBoundaryAttr().Get(&interpolationBoundary, timeCode));
+    USD_ASSERT(mesh.GetFaceVaryingLinearInterpolationAttr().Get(&fvLinearInterpolation, timeCode));
+
+    mesh.GetCornerIndicesAttr().Get(&cornerIndices, timeCode);
+    mesh.GetCornerSharpnessesAttr().Get(&cornerSharpnesses, timeCode);
+    mesh.GetCreaseIndicesAttr().Get(&creaseIndices, timeCode);
+    mesh.GetCreaseLengthsAttr().Get(&creaseLengths, timeCode);
+    mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses, timeCode);
+
+    Array<float3> positionsArray(positions);
+    Array<int> faceIndicesArray(faceIndices);
+    Array<int> faceCountsArray(faceCounts);
+
+    BoundaryInterpolation interpolation = BOUNDARY_INTERPOLATION_EDGE_AND_CORNER;
+    if (interpolationBoundary == "none")
+    {
+        interpolation = BOUNDARY_INTERPOLATION_NONE;
+    }
+    else if (interpolationBoundary == "edgeOnly")
+    {
+        interpolation = BOUNDARY_INTERPOLATION_EDGE;
+    }
+    else if (interpolationBoundary == "edgeAndCorner")
+    {
+        interpolation = BOUNDARY_INTERPOLATION_EDGE_AND_CORNER;
+    }
+
+    FVarLinearInterpolation fvarLinear = FVAR_LINEAR_CORNERS_ONLY;
+    if (fvLinearInterpolation == "none")
+    {
+        fvarLinear = FVAR_LINEAR_NONE;
+    }
+    else if (fvLinearInterpolation == "cornersOnly")
+    {
+        fvarLinear = FVAR_LINEAR_CORNERS_ONLY;
+    }
+    else if (fvLinearInterpolation == "cornersPlus1")
+    {
+        fvarLinear = FVAR_LINEAR_CORNERS_PLUS1;
+    }
+    else if (fvLinearInterpolation == "cornersPlus2")
+    {
+        fvarLinear = FVAR_LINEAR_CORNERS_PLUS2;
+    }
+    else if (fvLinearInterpolation == "boundaries")
+    {
+        fvarLinear = FVAR_LINEAR_BOUNDARIES;
+    }
+    else if (fvLinearInterpolation == "all")
+    {
+        fvarLinear = FVAR_LINEAR_ALL;
+    }
+
+    Array<int> cornerIndicesArray(cornerIndices);
+    Array<float> cornerSharpnessesArray(cornerSharpnesses);
+    Array<int> creaseIndicesArray(creaseIndices);
+    Array<int> creaseLengthsArray(creaseLengths);
+    Array<float> creaseSharpnessesArray(creaseSharpnesses);
+
+    scene->subdivisionMeshes.emplace_back(std::move(positionsArray),
+                                          std::move(faceIndicesArray),
+                                          std::move(faceCountsArray),
+                                          std::move(cornerIndicesArray),
+                                          std::move(cornerSharpnessesArray),
+                                          std::move(creaseIndicesArray),
+                                          std::move(creaseLengthsArray),
+                                          std::move(creaseSharpnessesArray),
+                                          interpolation,
+                                          fvarLinear);
 }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
@@ -480,7 +573,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
         totalNumVertices += curveVertexCount;
     }
 
-    assert(totalNumVertices == points.size());
+    YBI_ASSERT(totalNumVertices == points.size());
     scene->curves.emplace_back(
         std::move(positions), std::move(curveWidths), std::move(curveOffsets));
 
@@ -492,7 +585,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     }
     else
     {
-        assert(typeToken == "linear");
+        YBI_ASSERT(typeToken == "linear");
         curveFlags |= CurveFlags::CURVE_FLAGS_LINEAR;
     }
 
@@ -578,7 +671,7 @@ static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
         // {
         //     printf("not found\n");
         // }
-        // assert(found != instanceMap.end());
+        // YBI_ASSERT(found != instanceMap.end());
 
         // NOTE: OpenUSD uses left to right multiplication. Tranpose to get right
         // to left.
@@ -702,7 +795,7 @@ void Test(Scene *scene)
         }
     }
 
-    assert(prototypes.size() == prototypeRanges.size());
+    YBI_ASSERT(prototypes.size() == prototypeRanges.size());
 
     pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode(0.0));
 
@@ -718,11 +811,11 @@ void Test(Scene *scene)
         pxr::UsdPrim proto = instancePrim.GetPrototype();
         std::string pathString = proto.GetPath().GetString();
         auto found = pathObjectIDMap.find(pathString);
-        assert(found != pathObjectIDMap.end());
+        YBI_ASSERT(found != pathObjectIDMap.end());
 
         int objectID = found->second;
         USDPrototypeRanges &ranges = prototypeRanges[objectID];
-        assert(prototypes[objectID].GetPath().GetString() == pathString);
+        YBI_ASSERT(prototypes[objectID].GetPath().GetString() == pathString);
         if (prototypes[objectID].GetPath().GetString() != pathString)
         {
             printf("not equal\n");
@@ -734,7 +827,7 @@ void Test(Scene *scene)
             pxr::UsdPrim &instance = state.instances[ranges.instanceStart];
             std::string pathString = instance.GetPrototype().GetPath().GetString();
             auto found = pathObjectIDMap.find(pathString);
-            assert(found != pathObjectIDMap.end());
+            YBI_ASSERT(found != pathObjectIDMap.end());
 
             pxr::GfMatrix4d childToLocalTransform = xformCache.GetLocalToWorldTransform(instance);
             pxr::GfMatrix4d childToWorldTransform = childToLocalTransform * localToWorldTransform;
@@ -805,7 +898,7 @@ void Test(Scene *scene)
             else
             {
                 printf("material is not a usdpreviewsurface\n");
-                assert(0);
+                YBI_ASSERT(0);
             }
         }
     }
@@ -827,7 +920,8 @@ void Test(Scene *scene)
         mesh.GetSubdivisionSchemeAttr().Get(&scheme);
         if (scheme == pxr::UsdGeomTokens->catmullClark)
         {
-            // printf("cat\n");
+            ProcessCatmullClarkMesh(mesh, scene);
+            continue;
         }
         else if (scheme == pxr::UsdGeomTokens->none)
         {
@@ -838,36 +932,9 @@ void Test(Scene *scene)
             printf("%s\n", scheme.GetText());
         }
 
-        bool success = mesh.GetPointsAttr().Get(&positions, 0.0);
-        assert(success);
-
-        // if (mesh.GetPointsAttr().ValueMightBeTimeVarying())
-        // {
-        //     std::vector<double> timeSamples;
-        //
-        //     if (mesh.GetPointsAttr.GetTimeSamplesInInterval(&timeSamples))
-        //     {
-        //         for (double time : timeSamples)
-        //         {
-        //             pxr::VtVec3fArray p;
-        //             mesh.GetPointsAttr().Get(&p, time);
-        //             printf("time: %f, p: %f %f %f %f %f %f\n",
-        //                    time,
-        //                    positions[0][0],
-        //                    positions[0][1],
-        //                    positions[0][2],
-        //                    p[0][0],
-        //                    p[0][1],
-        //                    p[0][2]);
-        //         }
-        //     }
-        // }
-        // printf("\n");
-
-        success = mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, 0.0);
-        assert(success);
-        success = mesh.GetFaceVertexCountsAttr().Get(&faceCounts, 0.0);
-        assert(success);
+        USD_ASSERT(mesh.GetPointsAttr().Get(&positions, 0.0));
+        USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, 0.0));
+        USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, 0.0));
 
         bool constantFaceCount = true;
         int numTriangles = 0;
@@ -883,7 +950,7 @@ void Test(Scene *scene)
                 else
                 {
                     printf("n-gon found\n");
-                    assert(0);
+                    YBI_ASSERT(0);
                 }
             }
             else
@@ -904,7 +971,7 @@ void Test(Scene *scene)
                 for (int i = 0; i < 3; i++)
                 {
                     int index = faceIndices[inputOffset++];
-                    assert(index < positions.size());
+                    YBI_ASSERT(index < positions.size());
                     finalIndices[finalOffset++] = index;
                 }
             }
@@ -915,7 +982,7 @@ void Test(Scene *scene)
                 for (int i = 0; i < 4; i++)
                 {
                     int index = faceIndices[inputOffset++];
-                    assert(index < positions.size());
+                    YBI_ASSERT(index < positions.size());
                     tempIndices[i] = index;
                 }
                 finalIndices[finalOffset++] = tempIndices[0];
@@ -928,7 +995,7 @@ void Test(Scene *scene)
             }
             else
             {
-                assert(0);
+                YBI_ASSERT(0);
             }
         }
 

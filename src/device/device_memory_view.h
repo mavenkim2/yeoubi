@@ -31,7 +31,7 @@ struct DeviceMemoryView
     }
     DeviceMemoryView<T> operator+(size_t offset) const
     {
-        ASSERT(offset <= count);
+        YBI_ASSERT(offset <= count);
 
         DeviceMemoryView<T> result;
         result.ptr = ptr + offset;
@@ -40,7 +40,7 @@ struct DeviceMemoryView
     }
     DeviceMemoryView<T> &operator+=(size_t offset)
     {
-        ASSERT(offset <= count);
+        YBI_ASSERT(offset <= count);
         ptr += offset;
         count -= offset;
         return *this;

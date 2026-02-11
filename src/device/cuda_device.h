@@ -76,8 +76,8 @@ Test(uint8_t *indexBuffer, float3 *vertexBuffer, ClusterAccelerationStructureLim
     uint32_t clusterId = 0;
     uint32_t triangleCount = 0;
     uint32_t vertexCount = 0;
-    ASSERT(triangleCount <= limits.maxTrianglesPerCluster);
-    ASSERT(vertexCount <= limits.maxVerticesPerCluster);
+    YBI_ASSERT(triangleCount <= limits.maxTrianglesPerCluster);
+    YBI_ASSERT(vertexCount <= limits.maxVerticesPerCluster);
 
     OptixClusterAccelBuildInputTrianglesArgs args = {};
     args.clusterId = clusterId;
@@ -116,7 +116,7 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated()
 template <typename T>
 DeviceMemoryView<T> CUDADevice::Alloc(size_t count)
 {
-    ASSERT(count != 0);
+    YBI_ASSERT(count != 0);
     size_t size = sizeof(T) * count;
     totalAllocated += size;
     CUdeviceptr ptr;
@@ -462,7 +462,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
                                             0));
     }
 #else
-    ERROR(bvh->flags & BVHFlags::USE_CLUSTERS, "Cluster Acceleration Structures are not supported. Please update OptiX.");
+    YBI_ERROR(bvh->flags & BVHFlags::USE_CLUSTERS, "Cluster Acceleration Structures are not supported. Please update OptiX.");
 #endif
 #endif
 
