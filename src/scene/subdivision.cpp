@@ -30,6 +30,56 @@ struct OsdVertex
     }
 };
 
+static OpenSubdiv::Sdc::Options::VtxBoundaryInterpolation ToOsdVtxBoundary(BoundaryInterpolation r)
+{
+    switch (r)
+    {
+        case BOUNDARY_INTERPOLATION_NONE:
+            return Sdc::Options::VTX_BOUNDARY_NONE;
+        case BOUNDARY_INTERPOLATION_EDGE:
+            return Sdc::Options::VTX_BOUNDARY_EDGE_ONLY;
+        case BOUNDARY_INTERPOLATION_EDGE_AND_CORNER:
+            return Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER;
+        default:
+            return Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER;
+    }
+}
+
+static OpenSubdiv::Sdc::Options::FVarLinearInterpolation ToOsdFVarLinear(FVarLinearInterpolation f)
+{
+    switch (f)
+    {
+        case FVAR_LINEAR_NONE:
+            return Sdc::Options::FVAR_LINEAR_NONE;
+        case FVAR_LINEAR_CORNERS_ONLY:
+            return Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
+        case FVAR_LINEAR_CORNERS_PLUS1:
+            return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
+        case FVAR_LINEAR_CORNERS_PLUS2:
+            return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS2;
+        case FVAR_LINEAR_BOUNDARIES:
+            return Sdc::Options::FVAR_LINEAR_BOUNDARIES;
+        case FVAR_LINEAR_ALL:
+            return Sdc::Options::FVAR_LINEAR_ALL;
+        default:
+            return Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
+    }
+}
+
+template <typename T>
+static void InterpolateValues(MemoryView<T> &view, const Far::TopologyRefiner *refiner)
+{
+    const int numLevels = refiner->GetNumLevels();
+    T *src = view.data();
+
+    for (int level = 1; level < numLevels; level++)
+    {
+        T *dst = src + ref->GetLevel(level - 1).GetNumVertices();
+        Far::PrimvarRefiner(*refiner).Interpolate(level, src, dst);
+        src = dst;
+    }
+}
+
 void Subdivision(const SubdivisionMesh &mesh, int refineLevel)
 {
     using TopologyDescriptor = Far::TopologyDescriptor;
@@ -49,51 +99,8 @@ void Subdivision(const SubdivisionMesh &mesh, int refineLevel)
 
     Sdc::SchemeType scheme = Sdc::SCHEME_CATMARK;
     Sdc::Options options;
-
-    OpenSubdiv::Sdc::Options::VtxBoundaryInterpolation osdBoundary;
-    switch (mesh.interpolationRule)
-    {
-        case BOUNDARY_INTERPOLATION_NONE:
-            osdBoundary = Sdc::Options::VTX_BOUNDARY_NONE;
-            break;
-        case BOUNDARY_INTERPOLATION_EDGE:
-            osdBoundary = Sdc::Options::VTX_BOUNDARY_EDGE_ONLY;
-            break;
-        case BOUNDARY_INTERPOLATION_EDGE_AND_CORNER:
-            osdBoundary = Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER;
-            break;
-        default:
-            osdBoundary = Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER;
-            break;
-    }
-    options.SetVtxBoundaryInterpolation(osdBoundary);
-
-    OpenSubdiv::Sdc::Options::FVarLinearInterpolation osdFVarLinear;
-    switch (mesh.fvarLinearInterpolation)
-    {
-        case FVAR_LINEAR_NONE:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_NONE;
-            break;
-        case FVAR_LINEAR_CORNERS_ONLY:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
-            break;
-        case FVAR_LINEAR_CORNERS_PLUS1:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
-            break;
-        case FVAR_LINEAR_CORNERS_PLUS2:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_CORNERS_PLUS2;
-            break;
-        case FVAR_LINEAR_BOUNDARIES:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_BOUNDARIES;
-            break;
-        case FVAR_LINEAR_ALL:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_ALL;
-            break;
-        default:
-            osdFVarLinear = Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
-            break;
-    }
-    options.SetFVarLinearInterpolation(osdFVarLinear);
+    options.SetVtxBoundaryInterpolation(ToOsdVtxBoundary(mesh.interpolationRule));
+    options.SetFVarLinearInterpolation(ToOsdFVarLinear(mesh.fvarLinearInterpolation));
 
     Far::TopologyRefiner *refiner = Far::TopologyRefinerFactory<TopologyDescriptor>::Create(
         desc, Far::TopologyRefinerFactory<TopologyDescriptor>::Options(scheme, options));

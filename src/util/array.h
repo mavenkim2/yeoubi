@@ -114,6 +114,14 @@ public:
         }
     }
 
+    template <typename... Args>
+    void EmplaceBack(Args&&... args)
+    {
+        YBI_ASSERT(m_size < m_capacity);
+        ::new (m_data + m_size) T(std::forward<Args>(args)...);
+        m_size++;
+    }
+
     T &operator[](size_t index)
     {
         YBI_ASSERT(index < m_size);

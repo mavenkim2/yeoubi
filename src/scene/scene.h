@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene/attributes.h"
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
 #include "util/float3x4.h"
@@ -139,6 +140,8 @@ struct Scene
 
     Array<Primitive> primitives;
     Array<int> primitiveCollections;
+
+    Array<Attributes> attributes;
     Device *device;
 
     Scene() = default;

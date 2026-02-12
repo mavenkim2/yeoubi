@@ -1,4 +1,5 @@
 #include "io/usd/load.h"
+#include "scene/attributes.h"
 #include "scene/scene.h"
 #include "util/assert.h"
 #include "util/float3.h"
@@ -11,7 +12,9 @@
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/base/vt/types.h>
+#include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
+#include <pxr/usd/sdf/valueTypeName.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/relationship.h>
@@ -332,7 +335,184 @@ static pxr::UsdShadeShader HandleExpectedUVTexture(const pxr::UsdShadeInput &inp
     return shader;
 }
 
-static void ProcessPrimvars() {}
+static PrimvarInterpolation ConvertPrimvarInterpolation(pxr::TfToken &token)
+{
+    if (token == "constant")
+    {
+        return PrimvarInterpolation::Constant;
+    }
+    if (token == "uniform")
+    {
+        return PrimvarInterpolation::Uniform;
+    }
+    if (token == "vertex")
+    {
+        return PrimvarInterpolation::Vertex;
+    }
+    if (token == "varying")
+    {
+        return PrimvarInterpolation::Varying;
+    }
+    if (token == "faceVarying")
+    {
+        return PrimvarInterpolation::FaceVarying;
+    }
+    return PrimvarInterpolation::Unknown;
+}
+
+static AttributeType ConvertPrimvarTypeName(pxr::SdfValueTypeName type)
+{
+    if (type == pxr::SdfValueTypeNames->FloatArray)
+    {
+        return AttributeType::Float;
+    }
+    if (type == pxr::SdfValueTypeNames->Double)
+    {
+        return AttributeType::Float;
+    }
+    if (type == pxr::SdfValueTypeNames->UCharArray)
+    {
+        return AttributeType::Int8;
+    }
+    if (type == pxr::SdfValueTypeNames->IntArray)
+    {
+        return AttributeType::Int;
+    }
+    if (type == pxr::SdfValueTypeNames->Float2Array)
+    {
+        return AttributeType::Float2;
+    }
+    if (type == pxr::SdfValueTypeNames->TexCoord2dArray)
+    {
+        return AttributeType::Float2;
+    }
+    if (type == pxr::SdfValueTypeNames->TexCoord2fArray)
+    {
+        return AttributeType::Float2;
+    }
+    if (type == pxr::SdfValueTypeNames->TexCoord2hArray)
+    {
+        return AttributeType::Float2;
+    }
+    if (type == pxr::SdfValueTypeNames->TexCoord3dArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->TexCoord3fArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->TexCoord3hArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Float3Array)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Point3fArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Point3dArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Point3hArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Normal3fArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Normal3dArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Normal3hArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Vector3fArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Vector3hArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Vector3dArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Color3fArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Color3hArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Color3dArray)
+    {
+        return AttributeType::Float3;
+    }
+    if (type == pxr::SdfValueTypeNames->Color4fArray)
+    {
+        return AttributeType::Float4;
+    }
+    if (type == pxr::SdfValueTypeNames->Color4hArray)
+    {
+        return AttributeType::Float4;
+    }
+    if (type == pxr::SdfValueTypeNames->Color4dArray)
+    {
+        return AttributeType::Float4;
+    }
+    if (type == pxr::SdfValueTypeNames->BoolArray)
+    {
+        return AttributeType::Bool;
+    }
+    if (type == pxr::SdfValueTypeNames->QuatfArray)
+    {
+        return AttributeType::Quaternion;
+    }
+    if (type == pxr::SdfValueTypeNames->QuatdArray)
+    {
+        return AttributeType::Quaternion;
+    }
+    if (type == pxr::SdfValueTypeNames->QuathArray)
+    {
+        return AttributeType::Quaternion;
+    }
+    YBI_LOGFATAL("Unsupported primvar type: %s", type.GetAsToken().GetText());
+    return AttributeType::Unknown;
+}
+
+static void ProcessPrimvars(pxr::UsdPrim prim, pxr::UsdTimeCode timeCode, Scene *scene)
+{
+    pxr::UsdGeomPrimvarsAPI primvarsAPI(prim);
+    size_t attributeStart = scene->attributes.size();
+    for (const pxr::UsdGeomPrimvar &primVar : primvarsAPI.GetPrimvars())
+    {
+        pxr::VtValue values;
+        if (primVar.HasValue())
+        {
+            USD_ASSERT(primVar.ComputeFlattened(&values, timeCode));
+            pxr::TfToken interpolationToken = primVar.GetInterpolation();
+            PrimvarInterpolation interpolation = ConvertPrimvarInterpolation(interpolationToken);
+
+            pxr::SdfValueTypeName typeName = primVar.GetTypeName();
+            AttributeType attrType = ConvertPrimvarTypeName(typeName);
+
+            pxr::TfToken name = pxr::UsdGeomPrimvar::StripPrimvarsName(primVar.GetName());
+
+            // scene->attributes.EmplaceBack(, attrType, interpolation);
+        }
+    }
+    size_t attributeEnd = scene->attributes.size();
+}
 
 static void
 ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode timeCode = 0.0)
@@ -361,6 +541,9 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     mesh.GetCreaseIndicesAttr().Get(&creaseIndices, timeCode);
     mesh.GetCreaseLengthsAttr().Get(&creaseLengths, timeCode);
     mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses, timeCode);
+
+    pxr::UsdPrim prim = mesh.GetPrim();
+    ProcessPrimvars(prim, timeCode, scene);
 
     Array<float3> positionsArray(positions);
     Array<int> faceIndicesArray(faceIndices);
