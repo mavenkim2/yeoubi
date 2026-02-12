@@ -507,6 +507,10 @@ static void ProcessPrimvars(pxr::UsdPrim prim, pxr::UsdTimeCode timeCode, Scene 
             AttributeType attrType = ConvertPrimvarTypeName(typeName);
 
             pxr::TfToken name = pxr::UsdGeomPrimvar::StripPrimvarsName(primVar.GetName());
+            printf("name: %s, typeName: %s, interp: %s\n",
+                   name.GetText(),
+                   typeName.GetAsToken().GetText(),
+                   interpolationToken.GetText());
 
             // scene->attributes.EmplaceBack(, attrType, interpolation);
         }
@@ -520,8 +524,11 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     pxr::VtVec3fArray positions;
     pxr::VtIntArray faceIndices;
     pxr::VtIntArray faceCounts;
+    pxr::VtVec3fArray normals;
+
     pxr::TfToken interpolationBoundary;
     pxr::TfToken fvLinearInterpolation;
+    pxr::TfToken triangleSubdivisionRule;
 
     pxr::VtIntArray cornerIndices;
     pxr::VtFloatArray cornerSharpnesses;
@@ -532,7 +539,15 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     USD_ASSERT(mesh.GetPointsAttr().Get(&positions, timeCode));
     USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, timeCode));
     USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode));
+    if (mesh.GetNormalsAttr().Get(&normals, timeCode))
+    {
+        for (auto n : normals)
+        {
+            printf("help: %f %f %f\n", n[0], n[1], n[2]);
+        }
+    }
 
+    USD_ASSERT(mesh.GetTriangleSubdivisionRuleAttr().Get(&triangleSubdivisionRule, timeCode));
     USD_ASSERT(mesh.GetInterpolateBoundaryAttr().Get(&interpolationBoundary, timeCode));
     USD_ASSERT(mesh.GetFaceVaryingLinearInterpolationAttr().Get(&fvLinearInterpolation, timeCode));
 

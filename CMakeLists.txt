@@ -22,6 +22,7 @@ list (APPEND YBI_SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
 )
 list (APPEND YBI_COMPILE_DEFINITIONS 
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>)

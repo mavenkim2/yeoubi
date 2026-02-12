@@ -141,7 +141,7 @@ struct Scene
     Array<Primitive> primitives;
     Array<int> primitiveCollections;
 
-    Array<Attributes> attributes;
+    Array<Attribute> attributes;
     Device *device;
 
     Scene() = default;

@@ -29,13 +29,13 @@ enum class AttributeType
     Unknown
 };
 
-struct Attributes
+struct Attribute
 {
     MemoryView<uint8_t> data;
     AttributeType type;
     PrimvarInterpolation interpolation;
 
-    Attributes(MemoryView<uint8_t> data, AttributeType type, PrimvarInterpolation interpolation);
+    Attribute(MemoryView<uint8_t> data, AttributeType type, PrimvarInterpolation interpolation);
 };
 
 YBI_NAMESPACE_END
