@@ -22,7 +22,7 @@ int main(int argc, char **argv)
 
     for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
     {
-        Subdivision(mesh);
+        Subdivision(&scene, mesh);
     }
 
     CUDADevice device;

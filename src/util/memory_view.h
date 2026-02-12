@@ -1,7 +1,7 @@
 #pragma once
 
 #include "util/assert.h"
-#include <cstddef>
+#include <cstdint>
 
 YBI_NAMESPACE_BEGIN
 
@@ -64,6 +64,14 @@ struct MemoryView
         ptr += offset;
         count -= offset;
         return *this;
+    }
+
+    MemoryView<uint8_t> CastToBytes() const
+    {
+        MemoryView<uint8_t> view;
+        view.ptr = (uint8_t *)ptr;
+        view.count = numBytes();
+        return view;
     }
 };
 

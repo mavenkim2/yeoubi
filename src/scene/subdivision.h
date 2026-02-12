@@ -6,6 +6,8 @@
 
 YBI_NAMESPACE_BEGIN
 
+struct Scene;
+
 struct SubdivisionResult
 {
     std::shared_ptr<OpenSubdiv::Far::TopologyRefiner> refiner;
@@ -20,7 +22,7 @@ struct MicropolygonMesh
     Array<int> indices;
 };
 
-void Subdivision(const SubdivisionMesh &mesh, int refineLevel = 1);
+void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel = 1);
 MicropolygonMesh CreateMicropolygons(const SubdivisionResult &subdivisionResult,
                                      const SubdivisionMesh &controlMesh,
                                      int edgeRateU,

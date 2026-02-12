@@ -38,6 +38,9 @@ struct SubdivisionMesh
     Array<int> creaseLengths;
     Array<float> creaseSharpnesses;
 
+    size_t attributeStart;
+    size_t attributeEnd;
+
     SubdivisionMesh() = default;
     SubdivisionMesh(
         Array<float3> &&vertices,
@@ -48,14 +51,16 @@ struct SubdivisionMesh
         Array<int> &&creaseIndices,
         Array<int> &&creaseLengths,
         Array<float> &&creaseSharpnesses,
+        size_t attributeStart,
+        size_t attributeEnd,
         BoundaryInterpolation interpolationRule = BOUNDARY_INTERPOLATION_EDGE_AND_CORNER,
         FVarLinearInterpolation fvarLinearInterpolation = FVAR_LINEAR_CORNERS_ONLY)
         : vertices(std::move(vertices)), indices(std::move(indices)),
           vertsPerFace(std::move(vertsPerFace)), interpolationRule(interpolationRule),
-          fvarLinearInterpolation(fvarLinearInterpolation),
-          cornerIndices(std::move(cornerIndices)), cornerSharpnesses(std::move(cornerSharpnesses)),
-          creaseIndices(std::move(creaseIndices)), creaseLengths(std::move(creaseLengths)),
-          creaseSharpnesses(std::move(creaseSharpnesses))
+          fvarLinearInterpolation(fvarLinearInterpolation), attributeStart(attributeStart),
+          attributeEnd(attributeEnd), cornerIndices(std::move(cornerIndices)),
+          cornerSharpnesses(std::move(cornerSharpnesses)), creaseIndices(std::move(creaseIndices)),
+          creaseLengths(std::move(creaseLengths)), creaseSharpnesses(std::move(creaseSharpnesses))
     {
     }
 };

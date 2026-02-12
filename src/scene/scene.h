@@ -4,6 +4,7 @@
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
 #include "util/float3x4.h"
+#include "util/host_memory_arena.h"
 #include <vector>
 
 YBI_NAMESPACE_BEGIN
@@ -141,6 +142,7 @@ struct Scene
     Array<Primitive> primitives;
     Array<int> primitiveCollections;
 
+    // HostMemoryArena arena;
     Array<Attribute> attributes;
     Device *device;
 

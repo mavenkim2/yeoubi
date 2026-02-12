@@ -1,7 +1,9 @@
 #include "io/usd/load.h"
+#include "pxr/base/gf/vec2f.h"
 #include "scene/attributes.h"
 #include "scene/scene.h"
 #include "util/assert.h"
+// #include "util/float2.h"
 #include "util/float3.h"
 #include "util/float3x4.h"
 #include "util/float4.h"
@@ -374,7 +376,7 @@ static AttributeType ConvertPrimvarTypeName(pxr::SdfValueTypeName type)
     {
         return AttributeType::Int8;
     }
-    if (type == pxr::SdfValueTypeNames->IntArray)
+    if (type == pxr::SdfValueTypeNames->IntArray || type == pxr::SdfValueTypeNames->Int)
     {
         return AttributeType::Int;
     }
@@ -470,7 +472,7 @@ static AttributeType ConvertPrimvarTypeName(pxr::SdfValueTypeName type)
     {
         return AttributeType::Float4;
     }
-    if (type == pxr::SdfValueTypeNames->BoolArray)
+    if (type == pxr::SdfValueTypeNames->BoolArray || type == pxr::SdfValueTypeNames->Bool)
     {
         return AttributeType::Bool;
     }
@@ -486,19 +488,40 @@ static AttributeType ConvertPrimvarTypeName(pxr::SdfValueTypeName type)
     {
         return AttributeType::Quaternion;
     }
+    if (type == pxr::SdfValueTypeNames->Token)
+    {
+        return AttributeType::Unknown;
+    }
     YBI_LOGFATAL("Unsupported primvar type: %s", type.GetAsToken().GetText());
     return AttributeType::Unknown;
+}
+
+static MemoryView<uint8_t> ConvertPrimvarValues(Scene *scene, const pxr::VtValue &values)
+{
+    if (values.IsHolding<pxr::VtArray<pxr::GfVec2f>>())
+    {
+        pxr::VtArray<pxr::GfVec2f> array = values.Get<pxr::VtArray<pxr::GfVec2f>>();
+        // MemoryView<float2> view = scene->arena.PushArray<float2>(array.size());
+        // memcpy(view.data(), array.data(), array.size() * sizeof(float2));
+        // return view.CastToBytes();
+    }
+    else
+    {
+        YBI_LOGFATAL("Unsupported primvar values type: %s", values.GetTypeName().c_str());
+    }
+
+    return MemoryView<uint8_t>();
 }
 
 static void ProcessPrimvars(pxr::UsdPrim prim, pxr::UsdTimeCode timeCode, Scene *scene)
 {
     pxr::UsdGeomPrimvarsAPI primvarsAPI(prim);
-    size_t attributeStart = scene->attributes.size();
     for (const pxr::UsdGeomPrimvar &primVar : primvarsAPI.GetPrimvars())
     {
         pxr::VtValue values;
         if (primVar.HasValue())
         {
+            bool flattened = primVar.IsIndexed();
             USD_ASSERT(primVar.ComputeFlattened(&values, timeCode));
             pxr::TfToken interpolationToken = primVar.GetInterpolation();
             PrimvarInterpolation interpolation = ConvertPrimvarInterpolation(interpolationToken);
@@ -507,15 +530,18 @@ static void ProcessPrimvars(pxr::UsdPrim prim, pxr::UsdTimeCode timeCode, Scene 
             AttributeType attrType = ConvertPrimvarTypeName(typeName);
 
             pxr::TfToken name = pxr::UsdGeomPrimvar::StripPrimvarsName(primVar.GetName());
-            printf("name: %s, typeName: %s, interp: %s\n",
-                   name.GetText(),
-                   typeName.GetAsToken().GetText(),
-                   interpolationToken.GetText());
 
-            // scene->attributes.EmplaceBack(, attrType, interpolation);
+            if (name == "st")
+            {
+                MemoryView<uint8_t> data = ConvertPrimvarValues(scene, values);
+                scene->attributes.EmplaceBack(data, attrType, interpolation);
+            }
+            // printf("name: %s, typeName: %s, interp: %s\n",
+            //        name.GetText(),
+            //        typeName.GetAsToken().GetText(),
+            //        interpolationToken.GetText());
         }
     }
-    size_t attributeEnd = scene->attributes.size();
 }
 
 static void
@@ -537,13 +563,17 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     pxr::VtFloatArray creaseSharpnesses;
 
     USD_ASSERT(mesh.GetPointsAttr().Get(&positions, timeCode));
+
     USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, timeCode));
     USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode));
+
     if (mesh.GetNormalsAttr().Get(&normals, timeCode))
     {
+        pxr::TfToken normalsInterpToken = mesh.GetNormalsInterpolation();
+        printf("%s\n", normalsInterpToken.GetText());
         for (auto n : normals)
         {
-            printf("help: %f %f %f\n", n[0], n[1], n[2]);
+            // printf("help: %f %f %f\n", n[0], n[1], n[2]);
         }
     }
 
@@ -558,7 +588,9 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses, timeCode);
 
     pxr::UsdPrim prim = mesh.GetPrim();
+    size_t attributeStart = scene->attributes.size();
     ProcessPrimvars(prim, timeCode, scene);
+    size_t attributeEnd = scene->attributes.size();
 
     Array<float3> positionsArray(positions);
     Array<int> faceIndicesArray(faceIndices);
@@ -618,6 +650,8 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           std::move(creaseIndicesArray),
                                           std::move(creaseLengthsArray),
                                           std::move(creaseSharpnessesArray),
+                                          attributeStart,
+                                          attributeEnd,
                                           interpolation,
                                           fvarLinear);
 }
@@ -1107,6 +1141,7 @@ void Test(Scene *scene)
         ProcessUSDBasisCurve(curve, scene);
     }
 
+    int total = 0;
     scene->meshes.reserve(state.meshes.size());
     for (pxr::UsdGeomMesh &mesh : state.meshes)
     {
@@ -1123,6 +1158,7 @@ void Test(Scene *scene)
         }
         else if (scheme == pxr::UsdGeomTokens->none)
         {
+            ProcessPrimvars(mesh.GetPrim(), 0.0, scene);
             // printf("poly\n");
         }
         else
@@ -1199,6 +1235,7 @@ void Test(Scene *scene)
 
         scene->meshes.emplace_back(std::move(finalPositions), std::move(finalIndices));
     }
+    printf("total %i\n", total);
 }
 
 YBI_NAMESPACE_END
