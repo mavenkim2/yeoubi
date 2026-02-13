@@ -561,6 +561,7 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     pxr::VtIntArray creaseIndices;
     pxr::VtIntArray creaseLengths;
     pxr::VtFloatArray creaseSharpnesses;
+    pxr::VtIntArray holeIndices;
 
     USD_ASSERT(mesh.GetPointsAttr().Get(&positions, timeCode));
 
@@ -570,7 +571,6 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     if (mesh.GetNormalsAttr().Get(&normals, timeCode))
     {
         pxr::TfToken normalsInterpToken = mesh.GetNormalsInterpolation();
-        printf("%s\n", normalsInterpToken.GetText());
         for (auto n : normals)
         {
             // printf("help: %f %f %f\n", n[0], n[1], n[2]);
@@ -586,6 +586,7 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     mesh.GetCreaseIndicesAttr().Get(&creaseIndices, timeCode);
     mesh.GetCreaseLengthsAttr().Get(&creaseLengths, timeCode);
     mesh.GetCreaseSharpnessesAttr().Get(&creaseSharpnesses, timeCode);
+    mesh.GetHoleIndicesAttr().Get(&holeIndices, timeCode);
 
     pxr::UsdPrim prim = mesh.GetPrim();
     size_t attributeStart = scene->attributes.size();
@@ -650,6 +651,7 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           std::move(creaseIndicesArray),
                                           std::move(creaseLengthsArray),
                                           std::move(creaseSharpnessesArray),
+                                          std::move(holeIndices),
                                           attributeStart,
                                           attributeEnd,
                                           interpolation,
@@ -969,6 +971,7 @@ void Test(Scene *scene)
     const int maxDepth = 32;
     size_t instanceStart = 0;
     size_t pointInstancerStart = 0;
+#if 0
     while (depth++ < maxDepth && (instanceStart < state.instances.size() ||
                                   pointInstancerStart < state.pointInstancers.size()))
     {
@@ -1031,8 +1034,6 @@ void Test(Scene *scene)
 
     pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode(0.0));
 
-    std::unordered_map<std::string, int> materialMap;
-    std::vector<pxr::UsdShadeMaterial> materials;
 
     uint32_t numInstances = 0;
 
@@ -1070,12 +1071,15 @@ void Test(Scene *scene)
         {
         }
     }
+#endif
 
     for (pxr::UsdGeomPointInstancer &pointInstancer : state.pointInstancers)
     {
         ProcessUSDPointInstancer(pointInstancer, scene, pathObjectIDMap);
     }
 
+    std::unordered_map<std::string, int> materialMap;
+    std::vector<pxr::UsdShadeMaterial> materials;
     Array<int> curveMaterialIndices(state.basisCurves.size());
 
     // Handle materials
@@ -1143,6 +1147,7 @@ void Test(Scene *scene)
 
     int total = 0;
     scene->meshes.reserve(state.meshes.size());
+    scene->attributes.Reserve(state.meshes.size());
     for (pxr::UsdGeomMesh &mesh : state.meshes)
     {
         pxr::VtVec3fArray positions;
@@ -1154,6 +1159,7 @@ void Test(Scene *scene)
         if (scheme == pxr::UsdGeomTokens->catmullClark)
         {
             ProcessCatmullClarkMesh(mesh, scene);
+            total++;
             continue;
         }
         else if (scheme == pxr::UsdGeomTokens->none)
@@ -1235,7 +1241,7 @@ void Test(Scene *scene)
 
         scene->meshes.emplace_back(std::move(finalPositions), std::move(finalIndices));
     }
-    printf("total %i\n", total);
+    printf("num cat clarks: %i\n", total);
 }
 
 YBI_NAMESPACE_END

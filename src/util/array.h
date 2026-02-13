@@ -115,9 +115,12 @@ public:
     }
 
     template <typename... Args>
-    void EmplaceBack(Args&&... args)
+    void EmplaceBack(Args &&...args)
     {
-        YBI_ASSERT(m_size < m_capacity);
+        if (m_size >= m_capacity)
+        {
+            Reserve(m_capacity * 2);
+        }
         ::new (m_data + m_size) T(std::forward<Args>(args)...);
         m_size++;
     }

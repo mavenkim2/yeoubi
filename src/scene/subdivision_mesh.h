@@ -38,6 +38,8 @@ struct SubdivisionMesh
     Array<int> creaseLengths;
     Array<float> creaseSharpnesses;
 
+    Array<int> holeIndices;
+
     size_t attributeStart;
     size_t attributeEnd;
 
@@ -51,6 +53,7 @@ struct SubdivisionMesh
         Array<int> &&creaseIndices,
         Array<int> &&creaseLengths,
         Array<float> &&creaseSharpnesses,
+        Array<int> &&holeIndices,
         size_t attributeStart,
         size_t attributeEnd,
         BoundaryInterpolation interpolationRule = BOUNDARY_INTERPOLATION_EDGE_AND_CORNER,
@@ -60,7 +63,8 @@ struct SubdivisionMesh
           fvarLinearInterpolation(fvarLinearInterpolation), attributeStart(attributeStart),
           attributeEnd(attributeEnd), cornerIndices(std::move(cornerIndices)),
           cornerSharpnesses(std::move(cornerSharpnesses)), creaseIndices(std::move(creaseIndices)),
-          creaseLengths(std::move(creaseLengths)), creaseSharpnesses(std::move(creaseSharpnesses))
+          creaseLengths(std::move(creaseLengths)), creaseSharpnesses(std::move(creaseSharpnesses)),
+          holeIndices(std::move(holeIndices))
     {
     }
 };

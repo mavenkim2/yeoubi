@@ -9,4 +9,12 @@ Attribute::Attribute(MemoryView<uint8_t> data,
 {
 }
 
+Attribute::Attribute(MemoryView<uint8_t> data,
+                     MemoryView<int> indices,
+                     AttributeType type,
+                     PrimvarInterpolation interpolation)
+    : data(data), indices(indices), type(type), interpolation(interpolation)
+{
+}
+
 YBI_NAMESPACE_END

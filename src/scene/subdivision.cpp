@@ -2,10 +2,13 @@
 #include "scene/attributes.h"
 #include "scene/scene.h"
 #include "util/base.h"
+#include "util/float2.h"
 #include "util/host_memory_arena.h"
+#include <opensubdiv/far/patchMap.h>
 #include <opensubdiv/far/patchTable.h>
 #include <opensubdiv/far/patchTableFactory.h>
 #include <opensubdiv/far/primvarRefiner.h>
+#include <opensubdiv/far/ptexIndices.h>
 #include <opensubdiv/far/topologyDescriptor.h>
 #include <opensubdiv/sdc/types.h>
 #include <opensubdiv/version.h>
@@ -16,17 +19,14 @@ YBI_NAMESPACE_BEGIN
 namespace Far = OpenSubdiv::Far;
 namespace Sdc = OpenSubdiv::Sdc;
 
-template <int numFloats>
 struct OsdData
 {
-    float p[numFloats];
+    float *p;
+    int numFloats;
 
     void Clear()
     {
-        for (int i = 0; i < numFloats; i++)
-        {
-            p[i] = 0.f;
-        }
+        memset(p, 0, sizeof(float) * numFloats);
     }
     void AddWithWeight(const OsdData &src, float w)
     {
@@ -73,32 +73,45 @@ static OpenSubdiv::Sdc::Options::FVarLinearInterpolation ToOsdFVarLinear(FVarLin
     }
 }
 
-template <int numFloats, typename T>
-static MemoryView<OsdData<numFloats>> InterpolateVertex(HostMemoryArena &arena,
-                                                        const T &array,
-                                                        const Far::TopologyRefiner *refiner,
-                                                        const Far::PatchTable *patchTable)
+template <typename T>
+static MemoryView<OsdData> InterpolateVertex(HostMemoryArena &arena,
+                                             const T &array,
+                                             AttributeType type,
+                                             const Far::TopologyRefiner *refiner,
+                                             const Far::PatchTable *patchTable)
 {
 
     const int numLevels = refiner->GetNumLevels();
     const int numVertices = refiner->GetNumVerticesTotal();
-    MemoryView<OsdData<numFloats>> view = arena.PushArray<OsdData<numFloats>>(numVertices);
-    assert(numVertices == array.size());
+    const int numLocalPoints = patchTable->GetNumLocalPoints();
 
-    OsdData<numFloats> *src = view.data();
-    memcpy(src, array.data(), sizeof(float) * numFloats * numVertices);
+    YBI_ASSERT(array.size() == refiner->GetLevel(0).GetNumVertices());
+
+    size_t typeSize = AttributeTypeGetSize(type);
+    size_t numFloats = typeSize / sizeof(float);
+    MemoryView<OsdData> view = arena.PushArray<OsdData>(numVertices + numLocalPoints);
+    MemoryView<float> data = arena.PushArray<float>((numVertices + numLocalPoints) * numFloats);
+
+    memcpy(data.data(), array.data(), array.size() * typeSize);
+
+    for (size_t i = 0; i < numVertices + numLocalPoints; i++)
+    {
+        view[i].p = &data[i * numFloats];
+        view[i].numFloats = numFloats;
+    }
+    OsdData *src = view.data();
 
     for (int level = 1; level < numLevels; level++)
     {
-        OsdData<numFloats> *dst = src + refiner->GetLevel(level - 1).GetNumVertices();
+        OsdData *dst = src + refiner->GetLevel(level - 1).GetNumVertices();
         Far::PrimvarRefiner(*refiner).Interpolate(level, src, dst);
         src = dst;
     }
-    patchTable->ComputeLocalPointValues(src, view.data() + numVertices);
+    patchTable->ComputeLocalPointValues(view.data(), view.data() + numVertices);
     return view;
 }
 
-template <int numFloats, typename T>
+template <typename T>
 static void InterpolateVarying(HostMemoryArena &arena,
                                const T &array,
                                const Far::TopologyRefiner *refiner,
@@ -108,23 +121,22 @@ static void InterpolateVarying(HostMemoryArena &arena,
     const int numVerticesTotal = refiner->GetNumFVarValuesTotal(channel);
     const int numLocalPointsTotal = patchTable->GetNumLocalPointsVarying();
 
-    MemoryView<OsdData<numFloats>> view =
-        arena.PushArray<OsdData<3>>(numVerticesTotal + numLocalPointsTotal);
+    MemoryView<OsdData> view = arena.PushArray<OsdData>(numVerticesTotal + numLocalPointsTotal);
 
     const int numLevels = refiner->GetNumLevels();
-    OsdData<numFloats> *src = view.data();
+    OsdData *src = view.data();
 
     for (int level = 1; level < numLevels; level++)
     {
-        OsdData<numFloats> *dst = src + refiner->GetLevel(level - 1).GetNumFVarValues(channel);
+        OsdData *dst = src + refiner->GetLevel(level - 1).GetNumFVarValues(channel);
         Far::PrimvarRefiner(*refiner).InterpolateVarying(level, src, dst);
         src = dst;
     }
     patchTable->ComputeLocalPointValuesVarying(src, view.data() + numVerticesTotal);
 }
 
-template <int numFloats, typename T>
-static void InterpolateFaceVarying(MemoryView<OsdData<numFloats>> &view,
+template <typename T>
+static void InterpolateFaceVarying(MemoryView<OsdData> &view,
                                    const T &array,
                                    const Far::TopologyRefiner *refiner,
                                    const Far::PatchTable *patchTable,
@@ -133,15 +145,37 @@ static void InterpolateFaceVarying(MemoryView<OsdData<numFloats>> &view,
     const int numVerticesTotal = refiner->GetNumFVarValuesTotal(channel);
     const int numLocalPointsTotal = patchTable->GetNumLocalPointsFaceVarying();
     const int numLevels = refiner->GetNumLevels();
-    OsdData<numFloats> *src = view.data();
+    OsdData *src = view.data();
 
     for (int level = 1; level < numLevels; level++)
     {
-        OsdData<numFloats> *dst = src + refiner->GetLevel(level - 1).GetNumFVarValues(channel);
+        OsdData *dst = src + refiner->GetLevel(level - 1).GetNumFVarValues(channel);
         Far::PrimvarRefiner(*refiner).InterpolateFaceVarying(level, src, dst);
         src = dst;
     }
     patchTable->ComputeLocalPointValuesVarying(src, view.data() + numVerticesTotal);
+}
+
+struct LimitSurfaceSample
+{
+    float2 uv;
+    int faceID;
+};
+
+static void GenerateLimitSurfaceSamples(const Far::PatchMap *patchMap,
+                                        const Far::PatchTable *patchTable)
+{
+    // for each face
+    // get the edge rates of each edge
+    // this determines the internal grid
+    // determine the edges (if any) that have different edge rates from their opposites
+
+    for (int patch = 0; patch < patchTable->GetNumPatchesTotal(); patch++)
+    {
+        // const Far::PatchTable::PatchHandle *handle = patchMap->FindPatch(fid);
+        // patchTable->GetPatchVertices()
+    }
+    // patchTable->GetPatchVert
 }
 
 void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
@@ -172,32 +206,105 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
     desc.numFaces = numFaces;
     desc.numVertsPerFace = mesh.vertsPerFace.data();
     desc.vertIndicesPerFace = mesh.indices.data();
+#if 0
     desc.numFVarChannels = numChannels;
     desc.fvarChannels = channels.data();
+#endif
+    desc.numCreases = mesh.creaseSharpnesses.size();
+    desc.creaseWeights = mesh.creaseSharpnesses.data();
+    // TODO: does the spec match?
+    desc.creaseVertexIndexPairs = mesh.creaseIndices.data();
+    desc.numCorners = mesh.cornerSharpnesses.size();
+    desc.cornerWeights = mesh.cornerSharpnesses.data();
+    desc.cornerVertexIndices = mesh.cornerIndices.data();
+    desc.numHoles = mesh.holeIndices.size();
+    desc.holeIndices = mesh.holeIndices.data();
 
     Sdc::SchemeType scheme = Sdc::SCHEME_CATMARK;
     Sdc::Options options;
     options.SetVtxBoundaryInterpolation(ToOsdVtxBoundary(mesh.interpolationRule));
     options.SetFVarLinearInterpolation(ToOsdFVarLinear(mesh.fvarLinearInterpolation));
+    // options.SetCreasingMethod(CreasingMethod c)
+    // options.SetTriangleSubdivision(TriangleSubdivision t)
 
     Far::TopologyRefiner *refiner = Far::TopologyRefinerFactory<TopologyDescriptor>::Create(
         desc, Far::TopologyRefinerFactory<TopologyDescriptor>::Options(scheme, options));
     YBI_ASSERT(refiner);
 
-    Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(refineLevel);
+    Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(1);
     refiner->RefineAdaptive(adaptiveOptions);
 
-    bool hasCreasesOrCorners = bool(mesh.cornerIndices.size()) || bool(mesh.creaseIndices.size());
+    bool hasCreasesOrCorners = bool(desc.numCreases) || bool(desc.numCorners);
     Far::PatchTableFactory::Options patchOptions(refineLevel);
     patchOptions.endCapType = Far::PatchTableFactory::Options::ENDCAP_GREGORY_BASIS;
     patchOptions.useInfSharpPatch = hasCreasesOrCorners;
     patchOptions.generateFVarLegacyLinearPatches = false;
 
     const Far::PatchTable *patchTable = Far::PatchTableFactory::Create(*refiner, patchOptions);
+    Far::PatchMap patchMap(*patchTable);
     YBI_ASSERT(patchTable);
 
-    MemoryView<OsdData<3>> positions =
-        InterpolateVertex<3>(arena, mesh.vertices, refiner, patchTable);
+    Far::PtexIndices ptexIndices(*refiner);
+    const int numPtexFaces = ptexIndices.GetNumFaces();
+    MemoryView<OsdData> positions =
+        InterpolateVertex(arena, mesh.vertices, AttributeType::Float3, refiner, patchTable);
+
+    const Far::TopologyLevel &level0 = refiner->GetLevel(0);
+    const Far::TopologyLevel &level1 = refiner->GetLevel(1);
+
+    printf("total: %i\n", refiner->GetNumVerticesTotal());
+    if (numPtexFaces != numFaces)
+    {
+        for (int i = 0; i < numFaces; i++)
+        {
+            int numChildFaces = i == numFaces - 1 ? numPtexFaces : ptexIndices.GetFaceId(i + 1);
+            numChildFaces -= ptexIndices.GetFaceId(i);
+            if (numChildFaces != 1)
+            {
+                Far::ConstIndexArray indices = level0.GetFaceChildFaces(i);
+                printf("parent face: %i\n", i);
+                for (int j : level0.GetFaceVertices(i))
+                {
+                    printf("%i ", j);
+                    for (int axis = 0; axis < 3; axis++)
+                    {
+                        printf("%f ", positions[j].p[axis]);
+                    }
+                    printf(", ");
+                }
+
+                printf("\n");
+                for (int indexIndex = 0; indexIndex < indices.size(); indexIndex++)
+                {
+                    auto *handle =
+                        patchMap.FindPatch(ptexIndices.GetFaceId(i) + indexIndex, 0.f, 0.f);
+                    const auto &cvIndices = patchTable->GetPatchVertices(*handle);
+                    int childFace = indices[indexIndex];
+                    printf("child face: %i, ", childFace);
+                    for (int j : cvIndices)
+                    {
+                        printf("%i ", j - level0.GetNumVertices());
+                    }
+                    for (int j : level1.GetFaceVertices(childFace))
+                    {
+                        printf("%i ", j);
+                        for (int axis = 0; axis < 3; axis++)
+                        {
+                            printf("%f ", positions[j + level0.GetNumVertices()].p[axis]);
+                            // printf("%f ", positions[j].p[axis]);
+                        }
+                        printf(", ");
+                    }
+                    printf("\n");
+                }
+                // Calculate edge rates on quads only
+            }
+        }
+    }
+
+    GenerateLimitSurfaceSamples(&patchMap, patchTable);
+
+#if 0
 
     MemoryView<const Attribute *> vertexAttributes =
         arena.PushArray<const Attribute *>(mesh.attributeEnd - mesh.attributeStart);
@@ -227,50 +334,6 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
     // CALL_INTERPOLATE(Varying, InterpolateVarying, varyingAttributes, numVaryingAttributes);
     // CALL_INTERPOLATE(
     //     FaceVarying, InterpolateFaceVarying, faceVaryingAttributes, numFaceVaryingAttributes);
-
-#if 0
-
-
-    pt->ComputeLocalPointValues(src, verts.data() + numVerticesTotal);
-
-    const size_t numPatchesTotal = pt->GetNumPatchesTotal();
-    result.limitPositions.Resize(numPatchesTotal);
-
-    const int numArrays = pt->GetNumPatchArrays();
-    int globalPatchIndex = 0;
-    std::vector<float> wP;
-
-    for (int array = 0; array < numArrays; array++)
-    {
-        const int numPatchesInArray = pt->GetNumPatches(array);
-        const int numCVsPerPatch = pt->GetPatchArrayDescriptor(array).GetNumControlVertices();
-        wP.resize(numCVsPerPatch);
-
-        for (int patch = 0; patch < numPatchesInArray; patch++)
-        {
-            Far::PatchTable::PatchHandle handle;
-            handle.arrayIndex = array;
-            handle.patchIndex = globalPatchIndex;
-            handle.vertIndex = patch * numCVsPerPatch;
-
-            pt->EvaluateBasis(handle, 0.5f, 0.5f, wP.data());
-
-            Far::ConstIndexArray cvs = pt->GetPatchVertices(array, patch);
-            float x = 0.f, y = 0.f, z = 0.f;
-            for (int cv = 0; cv < cvs.size(); cv++)
-            {
-                int idx = cvs[cv];
-                float w = wP[cv];
-                const OsdVertex &v = verts[idx];
-                x += w * v.p[0];
-                y += w * v.p[1];
-                z += w * v.p[2];
-            }
-            result.limitPositions[globalPatchIndex] = make_float3(x, y, z);
-            ++globalPatchIndex;
-        }
-    }
-
 #endif
 }
 

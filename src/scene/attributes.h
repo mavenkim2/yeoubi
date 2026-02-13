@@ -64,12 +64,16 @@ inline size_t AttributeTypeGetSize(AttributeType type)
 
 struct Attribute
 {
-    MemoryView<int> indices;
     MemoryView<uint8_t> data;
+    MemoryView<int> indices;
     AttributeType type;
     PrimvarInterpolation interpolation;
 
     Attribute(MemoryView<uint8_t> data, AttributeType type, PrimvarInterpolation interpolation);
+    Attribute(MemoryView<uint8_t> data,
+              MemoryView<int> indices,
+              AttributeType type,
+              PrimvarInterpolation interpolation);
 };
 
 YBI_NAMESPACE_END
