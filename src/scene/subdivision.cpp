@@ -1,9 +1,11 @@
 #include "scene/subdivision.h"
 #include "scene/attributes.h"
 #include "scene/scene.h"
+#include "util/assert.h"
 #include "util/base.h"
 #include "util/float2.h"
 #include "util/host_memory_arena.h"
+#include <algorithm>
 #include <opensubdiv/far/patchMap.h>
 #include <opensubdiv/far/patchTable.h>
 #include <opensubdiv/far/patchTableFactory.h>
@@ -19,21 +21,18 @@ YBI_NAMESPACE_BEGIN
 namespace Far = OpenSubdiv::Far;
 namespace Sdc = OpenSubdiv::Sdc;
 
+template <typename T>
 struct OsdData
 {
-    float *p;
-    int numFloats;
+    T value;
 
     void Clear()
     {
-        memset(p, 0, sizeof(float) * numFloats);
+        memset(&value, 0, sizeof(T));
     }
     void AddWithWeight(const OsdData &src, float w)
     {
-        for (int i = 0; i < numFloats; i++)
-        {
-            p[i] += w * src.p[i];
-        }
+        value += w * src.value;
     }
 };
 
@@ -178,6 +177,116 @@ static void GenerateLimitSurfaceSamples(const Far::PatchMap *patchMap,
     // patchTable->GetPatchVert
 }
 
+namespace DiagSplit
+{
+
+static const int NON_UNIFORM = -1;
+static const float2 CORNER_TO_UV[4] = {
+    make_float2(0, 0),
+    make_float2(1, 0),
+    make_float2(1, 1),
+    make_float2(0, 1),
+};
+static const float2 UV_DELTA[4] = {
+    make_float2(1, 0),
+    make_float2(0, 1),
+    make_float2(-1, 0),
+    make_float2(0, -1),
+};
+
+struct DiagSplitParams
+{
+    const Far::PatchMap *patchMap;
+    const Far::PatchTable *patchTable;
+    const MemoryView<OsdData<float3>> positions;
+    int N;   // number of times to sample edge in T()
+    float R; // vertex pixel spacing goal
+};
+
+struct SubPatch
+{
+    float3 corners[4];
+};
+
+static void EvaluatePosition() {}
+
+static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 &uvEnd, int edge)
+{
+    const int N = params.N;
+    float R = params.R;
+    const int splitThreshold = 0;
+
+    int fid = 0;
+    int axis = edge & 1;
+
+    float3 prev;
+
+    YBI_ASSERT(N > 1);
+
+    float maxLi = 0.f;
+
+    for (int i = 1; i < N; i++)
+    {
+        float2 uv = lerp(uvStart, uvEnd, float(i) / (N - 1));
+
+        const Far::PatchTable::PatchHandle *handle = params.patchMap->FindPatch(fid, uv.x, uv.y);
+        auto cvIndices = params.patchTable->GetPatchVertices(*handle);
+
+        float pWeights[20];
+        params.patchTable->EvaluateBasis(*handle, uv.x, uv.y, pWeights);
+        float3 p = make_float3(0.f);
+        for (int cv = 0; cv < cvIndices.size(); cv++)
+        {
+            p += params.positions[cvIndices[cv]].value * pWeights[cv];
+        }
+
+        maxLi = std::max(maxLi, length(p - prev));
+        prev = p;
+    }
+
+    int tMin = 0.f;
+    int tMax = (int)ceilf(N * maxLi / R);
+
+    if (tMax - tMin >= splitThreshold)
+    {
+        return DiagSplit::NON_UNIFORM;
+    }
+    return tMax;
+}
+
+static void PartitionEdge(const DiagSplitParams &params,
+                          float start,
+                          float end,
+                          int edge,
+                          int edgeFactor,
+                          int &t0,
+                          int &t1)
+{
+    float2 uvStart;
+    float2 uvEnd;
+
+    if (edgeFactor == NON_UNIFORM)
+    {
+        float2 uv = (uvStart + uvEnd) / 2.f;
+
+        t0 = T(params, uvStart, uv, edge);
+        t1 = T(params, uv, uvEnd, edge);
+    }
+    else
+    {
+        t0 = (int)floorf(edgeFactor / 2.f);
+        t1 = edgeFactor - t0;
+
+        float2 uv = lerp(uvStart, uvEnd, float(t0) / edgeFactor);
+    }
+}
+
+static void Split() {}
+
+} // namespace DiagSplit
+
+// https://techmatt.github.io/pdfs/diagSplit.pdf
+
 void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
 {
     using TopologyDescriptor = Far::TopologyDescriptor;
@@ -249,60 +358,45 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
     MemoryView<OsdData> positions =
         InterpolateVertex(arena, mesh.vertices, AttributeType::Float3, refiner, patchTable);
 
+#if 0
     const Far::TopologyLevel &level0 = refiner->GetLevel(0);
     const Far::TopologyLevel &level1 = refiner->GetLevel(1);
 
-    printf("total: %i\n", refiner->GetNumVerticesTotal());
-    if (numPtexFaces != numFaces)
+    // Print vertex positions of quadrilaterals created by quadrangulating non-quad faces.
+    // Ordinary quadrilateral faces in the control cage are skipped.
+    const int level0VertexOffset = level0.GetNumVertices();
+    for (int i = 0; i < numFaces; i++)
     {
-        for (int i = 0; i < numFaces; i++)
-        {
-            int numChildFaces = i == numFaces - 1 ? numPtexFaces : ptexIndices.GetFaceId(i + 1);
-            numChildFaces -= ptexIndices.GetFaceId(i);
-            if (numChildFaces != 1)
-            {
-                Far::ConstIndexArray indices = level0.GetFaceChildFaces(i);
-                printf("parent face: %i\n", i);
-                for (int j : level0.GetFaceVertices(i))
-                {
-                    printf("%i ", j);
-                    for (int axis = 0; axis < 3; axis++)
-                    {
-                        printf("%f ", positions[j].p[axis]);
-                    }
-                    printf(", ");
-                }
+        Far::ConstIndexArray faceVerts = level0.GetFaceVertices(i);
+        if (faceVerts.size() == 4)
+            continue;
 
-                printf("\n");
-                for (int indexIndex = 0; indexIndex < indices.size(); indexIndex++)
-                {
-                    auto *handle =
-                        patchMap.FindPatch(ptexIndices.GetFaceId(i) + indexIndex, 0.f, 0.f);
-                    const auto &cvIndices = patchTable->GetPatchVertices(*handle);
-                    int childFace = indices[indexIndex];
-                    printf("child face: %i, ", childFace);
-                    for (int j : cvIndices)
-                    {
-                        printf("%i ", j - level0.GetNumVertices());
-                    }
-                    for (int j : level1.GetFaceVertices(childFace))
-                    {
-                        printf("%i ", j);
-                        for (int axis = 0; axis < 3; axis++)
-                        {
-                            printf("%f ", positions[j + level0.GetNumVertices()].p[axis]);
-                            // printf("%f ", positions[j].p[axis]);
-                        }
-                        printf(", ");
-                    }
-                    printf("\n");
-                }
-                // Calculate edge rates on quads only
+        Far::ConstIndexArray childFaces = level0.GetFaceChildFaces(i);
+        printf("face %d (%d-gon) -> %d quads:\n",
+               i, static_cast<int>(faceVerts.size()), static_cast<int>(childFaces.size()));
+        printf("  control verts:");
+        for (int j = 0; j < faceVerts.size(); j++)
+        {
+            const float *p = positions[faceVerts[j]].p;
+            printf(" (%.4f, %.4f, %.4f)", p[0], p[1], p[2]);
+        }
+        printf("\n");
+
+        for (int j = 0; j < childFaces.size(); j++)
+        {
+            Far::ConstIndexArray quadVerts = level1.GetFaceVertices(childFaces[j]);
+            printf("  quad %d:", j);
+            for (int k = 0; k < quadVerts.size(); k++)
+            {
+                const float *p = positions[quadVerts[k] + level0VertexOffset].p;
+                printf(" (%.4f, %.4f, %.4f)", p[0], p[1], p[2]);
             }
+            printf("\n");
         }
     }
 
     GenerateLimitSurfaceSamples(&patchMap, patchTable);
+#endif
 
 #if 0
 
