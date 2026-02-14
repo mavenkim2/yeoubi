@@ -18,7 +18,7 @@ int main(int argc, char **argv)
     // Subdivision(mesh);
 
     CUDADevice device;
-    CreateGridClusterTemplates(&device);
+    device.CreateGridClusterTemplates();
 
     Scene scene;
     Test(&scene);
