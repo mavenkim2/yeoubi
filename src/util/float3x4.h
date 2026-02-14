@@ -7,7 +7,11 @@ YBI_NAMESPACE_BEGIN
 // NOTE: row major, multiplication order right to left
 struct float3x4
 {
-    float m[3][4];
+    union
+    {
+        float m[3][4];
+        float4 rows[3];
+    };
 
     float3x4() = default;
     float3x4(float m00,
@@ -54,5 +58,10 @@ struct float3x4
         }
     }
 };
+
+__forceinline float3 mul(const float3x4 &m, const float4 &p)
+{
+    return make_float3(dot(m.rows[0], p), dot(m.rows[1], p), dot(m.rows[2], p));
+}
 
 YBI_NAMESPACE_END

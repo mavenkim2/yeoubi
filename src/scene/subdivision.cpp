@@ -4,6 +4,7 @@
 #include "util/assert.h"
 #include "util/base.h"
 #include "util/float2.h"
+#include "util/float4x4.h"
 #include "util/host_memory_arena.h"
 #include <algorithm>
 #include <opensubdiv/far/patchMap.h>
@@ -198,8 +199,11 @@ struct DiagSplitParams
     const Far::PatchTable *patchTable;
     const MemoryView<OsdData<float3>> positions;
     int N;   // number of times to sample edge in T()
-    float R; // vertex pixel spacing goal
+    float R; // vertex pixel spacing goal (in pixels)
     int splitThreshold;
+    float4x4 viewProj; // row-major world/camera -> clip. ToScreen uses this to project to pixels.
+    int viewportWidth;
+    int viewportHeight;
 };
 
 struct SubPatch
@@ -242,6 +246,19 @@ static float3 EvaluatePosition(const DiagSplitParams &params, int fid, float2 uv
     return p;
 }
 
+static float2 ToScreen(const DiagSplitParams &params, const float3 &p)
+{
+    float4 clip = mul(params.viewProj, make_float4(p.x, p.y, p.z, 1.f));
+    if (clip.w <= 0.f)
+        return make_float2(0.f);
+    float invW = 1.f / clip.w;
+    float ndcX = clip.x * invW;
+    float ndcY = clip.y * invW;
+    float sx = (ndcX * 0.5f + 0.5f) * (float)params.viewportWidth;
+    float sy = (1.f - (ndcY * 0.5f + 0.5f)) * (float)params.viewportHeight;
+    return make_float2(sx, sy);
+}
+
 static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 &uvEnd, int fid)
 {
     const int N = params.N;
@@ -252,17 +269,19 @@ static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 
     float maxLi = 0.f;
     float sumLi = 0.f;
 
-    float3 prev = EvaluatePosition(params, fid, uvStart);
+    float3 pPrev = EvaluatePosition(params, fid, uvStart);
+    float2 screenPrev = ToScreen(params, pPrev);
 
     for (int i = 1; i < N; i++)
     {
         float2 uv = lerp(uvStart, uvEnd, float(i) / (N - 1));
         float3 p = EvaluatePosition(params, fid, uv);
-
-        float Li = length(p - prev);
+        float2 screenP = ToScreen(params, p);
+        float Li = length(screenP - screenPrev);
         sumLi += Li;
         maxLi = std::max(maxLi, Li);
-        prev = p;
+        pPrev = p;
+        screenPrev = screenP;
     }
 
     int tMin = (int)ceilf(sumLi / R);
@@ -348,6 +367,37 @@ static void Split(const DiagSplitParams &params, SubPatch &patch)
             newPatch1.edgeRates[2] = edgeOppT0;
             newPatch1.edgeRates[3] = patch.edgeRates[prev];
 
+            printf("Split face %d -> newPatch0 corners (uv): (%.4f,%.4f) (%.4f,%.4f) (%.4f,%.4f) "
+                   "(%.4f,%.4f) edgeRates: %d %d %d %d\n",
+                   patch.ptexFace,
+                   newPatch0.parametricCorners[0].x,
+                   newPatch0.parametricCorners[0].y,
+                   newPatch0.parametricCorners[1].x,
+                   newPatch0.parametricCorners[1].y,
+                   newPatch0.parametricCorners[2].x,
+                   newPatch0.parametricCorners[2].y,
+                   newPatch0.parametricCorners[3].x,
+                   newPatch0.parametricCorners[3].y,
+                   newPatch0.edgeRates[0],
+                   newPatch0.edgeRates[1],
+                   newPatch0.edgeRates[2],
+                   newPatch0.edgeRates[3]);
+            printf("Split face %d -> newPatch1 corners (uv): (%.4f,%.4f) (%.4f,%.4f) (%.4f,%.4f) "
+                   "(%.4f,%.4f) edgeRates: %d %d %d %d\n",
+                   patch.ptexFace,
+                   newPatch1.parametricCorners[0].x,
+                   newPatch1.parametricCorners[0].y,
+                   newPatch1.parametricCorners[1].x,
+                   newPatch1.parametricCorners[1].y,
+                   newPatch1.parametricCorners[2].x,
+                   newPatch1.parametricCorners[2].y,
+                   newPatch1.parametricCorners[3].x,
+                   newPatch1.parametricCorners[3].y,
+                   newPatch1.edgeRates[0],
+                   newPatch1.edgeRates[1],
+                   newPatch1.edgeRates[2],
+                   newPatch1.edgeRates[3]);
+
             Split(params, newPatch0);
             Split(params, newPatch1);
 
@@ -431,7 +481,17 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
 
     if (numPtexFaces == numFaces)
     {
-        DiagSplit::DiagSplitParams params = {&patchMap, patchTable, positions, 3, 1.f, 1};
+        DiagSplit::DiagSplitParams params = {
+            &patchMap,
+            patchTable,
+            positions,
+            3,
+            1.f,
+            1,
+            float4x4::Identity(),
+            1024,
+            1024,
+        };
 
         for (int face = 0; face < numFaces; face++)
         {
