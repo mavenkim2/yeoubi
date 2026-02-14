@@ -125,6 +125,18 @@ public:
         m_size++;
     }
 
+    T &Last()
+    {
+        YBI_ASSERT(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
+    const T &Last() const
+    {
+        YBI_ASSERT(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
     T &operator[](size_t index)
     {
         YBI_ASSERT(index < m_size);

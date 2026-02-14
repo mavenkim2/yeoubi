@@ -212,6 +212,7 @@ struct SubPatch
     int edgeRates[4];
     int ptexFace;
 
+    SubPatch() = default;
     SubPatch(int face) : ptexFace(face)
     {
         edgeRates[0] = DiagSplit::NON_UNIFORM;
@@ -307,6 +308,7 @@ static float2 PartitionEdge(const DiagSplitParams &params,
 
         t0 = T(params, uvStart, uv, fid);
         t1 = T(params, uv, uvEnd, fid);
+
         return uv;
     }
     else
@@ -319,9 +321,11 @@ static float2 PartitionEdge(const DiagSplitParams &params,
     }
 }
 
-static void Split(const DiagSplitParams &params, SubPatch &patch)
+static void
+Split(const DiagSplitParams &params, Array<DiagSplit::SubPatch> &patches, int patchIndex)
 {
     const int numFaceVertices = 4;
+    DiagSplit::SubPatch &patch = patches[patchIndex];
     for (int edge = 0; edge < numFaceVertices; edge++)
     {
         if (patch.edgeRates[edge] == DiagSplit::NON_UNIFORM)
@@ -345,7 +349,8 @@ static void Split(const DiagSplitParams &params, SubPatch &patch)
             float2 uvMidOpp = PartitionEdge(
                 params, patch.ptexFace, uvStart, uvEnd, edgeFactor, edgeOppT0, edgeOppT1);
 
-            SubPatch newPatch0(patch.ptexFace);
+            SubPatch newPatch0;
+            newPatch0.ptexFace = patch.ptexFace;
             newPatch0.parametricCorners[0] = patch.parametricCorners[edge];
             newPatch0.parametricCorners[1] = uvMid;
             newPatch0.parametricCorners[2] = uvMidOpp;
@@ -355,53 +360,58 @@ static void Split(const DiagSplitParams &params, SubPatch &patch)
             newPatch0.edgeRates[2] = edgeOppT1;
             newPatch0.edgeRates[3] = patch.edgeRates[prev];
 
-            SubPatch newPatch1(patch.ptexFace);
+            patches.EmplaceBack();
+            int newPatchIndex = patches.size() - 1;
+            SubPatch &newPatch1 = patches.Last();
             newPatch1.ptexFace = patch.ptexFace;
             newPatch1.parametricCorners[0] = uvMid;
             newPatch1.parametricCorners[1] = patch.parametricCorners[next];
-            newPatch1.parametricCorners[2] = patch.parametricCorners[opp];
-            newPatch1.parametricCorners[3] = uvMidOpp;
+            newPatch1.parametricCorners[2] = uvMidOpp;
+            newPatch1.parametricCorners[3] = patch.parametricCorners[prev];
             newPatch1.edgeRates[0] = edgeT1;
             newPatch1.edgeRates[1] = patch.edgeRates[next];
             newPatch1.edgeRates[2] = edgeOppT0;
-            newPatch1.edgeRates[3] = patch.edgeRates[prev];
+            newPatch1.edgeRates[3] = patch.edgeRates[opp];
 
-            printf("Split face %d -> newPatch0 corners (uv): (%.4f,%.4f) (%.4f,%.4f) (%.4f,%.4f) "
-                   "(%.4f,%.4f) edgeRates: %d %d %d %d\n",
-                   patch.ptexFace,
-                   newPatch0.parametricCorners[0].x,
-                   newPatch0.parametricCorners[0].y,
-                   newPatch0.parametricCorners[1].x,
-                   newPatch0.parametricCorners[1].y,
-                   newPatch0.parametricCorners[2].x,
-                   newPatch0.parametricCorners[2].y,
-                   newPatch0.parametricCorners[3].x,
-                   newPatch0.parametricCorners[3].y,
-                   newPatch0.edgeRates[0],
-                   newPatch0.edgeRates[1],
-                   newPatch0.edgeRates[2],
-                   newPatch0.edgeRates[3]);
-            printf("Split face %d -> newPatch1 corners (uv): (%.4f,%.4f) (%.4f,%.4f) (%.4f,%.4f) "
-                   "(%.4f,%.4f) edgeRates: %d %d %d %d\n",
-                   patch.ptexFace,
-                   newPatch1.parametricCorners[0].x,
-                   newPatch1.parametricCorners[0].y,
-                   newPatch1.parametricCorners[1].x,
-                   newPatch1.parametricCorners[1].y,
-                   newPatch1.parametricCorners[2].x,
-                   newPatch1.parametricCorners[2].y,
-                   newPatch1.parametricCorners[3].x,
-                   newPatch1.parametricCorners[3].y,
-                   newPatch1.edgeRates[0],
-                   newPatch1.edgeRates[1],
-                   newPatch1.edgeRates[2],
-                   newPatch1.edgeRates[3]);
+            patches[patchIndex] = newPatch0;
 
-            Split(params, newPatch0);
-            Split(params, newPatch1);
+            Split(params, patches, patchIndex);
+            Split(params, patches, newPatchIndex);
 
             break;
         }
+    }
+}
+
+// static int GetGridIndex(int u, int v, int start, int edgeRateU, int edgeRateV) const
+// {
+//     int gridIndex = gridIndexStart + v * (edgeRateU - 1) + u;
+//     YBI_ASSERT(gridIndex < gridIndexStart + Max(1, (edgeU - 1)) * Max(1, (edgeV - 1)));
+//     return gridIndex;
+// }
+
+static void Dice(const DiagSplitParams &params, Array<SubPatch> &patches)
+{
+    for (SubPatch &patch : patches)
+    {
+        // interior grid
+        int rateU = std::max(patch.edgeRates[0], patch.edgeRates[2]);
+        int rateV = std::max(patch.edgeRates[1], patch.edgeRates[3]);
+
+        int uEnd = rateU - 1;
+
+        for (int vStep = 0; vStep < rateV - 1; vStep++)
+        {
+            for (int uStep = 0; uStep < rateU - 1; uStep++)
+            {
+                // float2 uv(scale[0] * (uStep + 1), scale[1] * (vStep + 1));
+                // float3 pos = EvaluatePosition(params, patch.ptexFace, uv);
+
+                // int index = patch->GetGridIndex(uStep, vStep);
+                // outputMesh->normals[index] = normal;
+                // outputMesh->vertices[index] = pos;
+            }
+        };
     }
 }
 
@@ -478,25 +488,38 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
     MemoryView<OsdData<float3>> positions =
         InterpolateVertex<float3>(arena, mesh.vertices, refiner, patchTable);
 
+    Array<DiagSplit::SubPatch> patches(numFaces);
+    float4x4 clipFromWorld = mul(scene->camera.clipFromCamera, scene->camera.cameraFromWorld);
+    DiagSplit::DiagSplitParams params = {&patchMap,
+                                         patchTable,
+                                         positions,
+                                         3,
+                                         1.f,
+                                         1,
+                                         clipFromWorld,
+                                         scene->camera.viewportWidth,
+                                         scene->camera.viewportHeight};
+
     if (numPtexFaces == numFaces)
     {
-        float4x4 clipFromWorld = mul(scene->camera.clipFromCamera, scene->camera.cameraFromWorld);
-        DiagSplit::DiagSplitParams params = {&patchMap,
-                                             patchTable,
-                                             positions,
-                                             3,
-                                             1.f,
-                                             1,
-                                             clipFromWorld,
-                                             scene->camera.viewportWidth,
-                                             scene->camera.viewportHeight};
-
         for (int face = 0; face < numFaces; face++)
         {
-            DiagSplit::SubPatch patch(face);
-            DiagSplit::Split(params, patch);
+            patches.EmplaceBack(face);
+            int newPatchIndex = patches.size() - 1;
+            DiagSplit::SubPatch &patch = patches.Last();
+            for (int edge = 0; edge < 4; edge++)
+            {
+                int rate = DiagSplit::T(params,
+                                        patch.parametricCorners[edge],
+                                        patch.parametricCorners[DiagSplit::Next(edge, 4)],
+                                        face);
+                patch.edgeRates[edge] = rate;
+            }
+            DiagSplit::Split(params, patches, newPatchIndex);
         }
     }
+
+    DiagSplit::Dice(params, patches);
 
 #if 0
 

@@ -5,6 +5,7 @@
 #include "device/cuda_assert.h"
 #include "device/cuda_device_memory_arena.h"
 #include "optix_types.h"
+#include "scene/micropolygon_mesh.h"
 #include "scene/scene.h"
 #include "util/array.h"
 #include "util/assert.h"
@@ -101,6 +102,7 @@ struct CUDADevice
 
     template <typename T>
     DeviceMemoryView<T> Alloc(size_t size);
+    bool SupportsGrids() const;
 };
 
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated()
@@ -123,6 +125,55 @@ DeviceMemoryView<T> CUDADevice::Alloc(size_t count)
     CUDA_ASSERT(cuMemAlloc(&ptr, size));
 
     return {(T *)ptr, count};
+}
+
+bool CUDADevice::SupportsGrids() const
+{
+#if (OPTIX_VERSION >= 90000)
+    return true;
+#else
+    return false;
+#endif
+}
+
+static void CreateGridClusterTemplates(CUDADevice *device)
+{
+#if (OPTIX_VERSION >= 90000)
+    const int minDim = 2;
+    const int maxDim = 8;
+    const int widthDim = maxDim - minDim + 1;
+
+    unsigned int maxEdges;
+    OPTIX_ASSERT(
+        optixDeviceContextGetProperty(device->optixDeviceContext,
+                                      OPTIX_DEVICE_PROPERTY_LIMIT_MAX_STRUCTURED_GRID_RESOLUTION,
+                                      &maxEdges,
+                                      sizeof(unsigned int)));
+    printf("max edge: %i\n", maxEdges);
+
+    OptixClusterAccelBuildModeDesc desc = {};
+    desc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_IMPLICIT_DESTINATIONS;
+    // desc.implicitDest.tempBufferSizeInBytes
+
+    OptixClusterAccelBuildInput input = {};
+    input.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_TEMPLATES_FROM_GRIDS;
+    input.grids.flags = OPTIX_CLUSTER_ACCEL_BUILD_FLAG_PREFER_FAST_TRACE;
+    input.grids.maxArgCount = widthDim * widthDim;
+    input.grids.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+    input.grids.maxSbtIndexValue = 0;
+    input.grids.maxWidth = maxDim;
+    input.grids.maxHeight = maxDim;
+
+    // OptixClusterAccelBuildInputGridArgs help;
+    //
+    // OPTIX_ASSERT(optixClusterAccelBuild(device->optixDeviceContext,
+    //                                     0,
+    //                                     &desc,
+    //                                     &input,
+    //                                     CUdeviceptr argsArray,
+    //                                     CUdeviceptr argsCount,
+    //                                     unsigned int argsStrideInBytes));
+#endif
 }
 
 static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
@@ -363,6 +414,58 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         hostArena.Clear();
         deviceArena.Clear();
     }
+
+#if 0
+    for (MicropolygonMesh &mesh : scene->micropolygonMeshes)
+    {
+        // ClusterAccelerationStructureLimits limits;
+        // OPTIX_ASSERT(
+        //     optixDeviceContextGetProperty(cudaDevice->optixDeviceContext,
+        //                                   OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES,
+        //                                   &limits.maxTrianglesPerCluster,
+        //                                   sizeof(unsigned int)));
+        // OPTIX_ASSERT(
+        //     optixDeviceContextGetProperty(cudaDevice->optixDeviceContext,
+        //                                   OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
+        //                                   &limits.maxVerticesPerCluster,
+        //                                   sizeof(unsigned int)));
+        // printf("limits: %u %u\n", limits.maxVerticesPerCluster, limits.maxTrianglesPerCluster);
+
+        OptixClusterAccelBuildInputTrianglesArgs *args;
+        uint32_t *argsCount;
+        uint32_t *outputSizes;
+        void *tempBuffer;
+        size_t tempBufferSize = 0;
+        uint32_t numClusters = 0;
+        uint32_t maxTrianglesPerCluster = 128;
+        uint32_t maxVerticesPerCluster = 256;
+
+        OptixClusterAccelBuildModeDesc buildModeDesc = {};
+        buildModeDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES;
+        buildModeDesc.getSize.outputSizesBuffer = CUdeviceptr(outputSizes);
+        buildModeDesc.getSize.tempBuffer = CUdeviceptr(tempBuffer);
+        buildModeDesc.getSize.tempBufferSizeInBytes = tempBufferSize;
+
+        OptixClusterAccelBuildInput buildInput = {};
+        buildInput.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_CLUSTERS_FROM_TRIANGLES;
+        buildInput.triangles.flags = OPTIX_CLUSTER_ACCEL_BUILD_FLAG_PREFER_FAST_TRACE;
+        buildInput.triangles.maxArgCount = numClusters;
+        buildInput.triangles.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+        buildInput.triangles.maxTriangleCountPerArg = maxTrianglesPerCluster;
+        buildInput.triangles.maxVertexCountPerArg = maxVerticesPerCluster;
+
+        OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
+                                            0,
+                                            &buildModeDesc,
+                                            &buildInput,
+                                            CUdeviceptr(args),
+                                            CUdeviceptr(argsCount),
+                                            0));
+    }
+#else
+    YBI_ERROR(scene->micropolygonMeshes.size() == 0,
+              "Direct rendering of micropolygon meshes are not supported on this hardware.");
+#endif
 
 #if 0
     Array<OptixBuildInput> optixBuildInputs;

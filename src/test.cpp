@@ -17,6 +17,9 @@ int main(int argc, char **argv)
     // SubdivisionMesh mesh;
     // Subdivision(mesh);
 
+    CUDADevice device;
+    CreateGridClusterTemplates(&device);
+
     Scene scene;
     Test(&scene);
 
@@ -25,7 +28,6 @@ int main(int argc, char **argv)
         Subdivision(&scene, mesh);
     }
 
-    CUDADevice device;
 
     uint32_t totalNumTriangles = 0;
 

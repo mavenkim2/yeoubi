@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene/attributes.h"
+#include "scene/micropolygon_mesh.h"
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
 #include "util/float3x4.h"
@@ -146,6 +147,9 @@ struct Scene
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
     std::vector<Instances> instancesArray;
+    std::vector<MicropolygonMesh> micropolygonMeshes;
+
+    // TODO: these are tessellated and displaced to either Mesh or Micropolygon Mesh
     std::vector<SubdivisionMesh> subdivisionMeshes;
 
     Array<Primitive> primitives;
