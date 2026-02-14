@@ -249,7 +249,7 @@ static float3 EvaluatePosition(const DiagSplitParams &params, int fid, float2 uv
 static float2 ToScreen(const DiagSplitParams &params, const float3 &p)
 {
     float4 clip = mul(params.viewProj, make_float4(p.x, p.y, p.z, 1.f));
-    if (clip.w <= 0.f)
+    if (abs(clip.w) < 1e-6f)
         return make_float2(0.f);
     float invW = 1.f / clip.w;
     float ndcX = clip.x * invW;
@@ -269,8 +269,8 @@ static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 
     float maxLi = 0.f;
     float sumLi = 0.f;
 
-    float3 pPrev = EvaluatePosition(params, fid, uvStart);
-    float2 screenPrev = ToScreen(params, pPrev);
+    float3 pStart = EvaluatePosition(params, fid, uvStart);
+    float2 screenPrev = ToScreen(params, pStart);
 
     for (int i = 1; i < N; i++)
     {
@@ -280,7 +280,6 @@ static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 
         float Li = length(screenP - screenPrev);
         sumLi += Li;
         maxLi = std::max(maxLi, Li);
-        pPrev = p;
         screenPrev = screenP;
     }
 
@@ -481,17 +480,16 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
 
     if (numPtexFaces == numFaces)
     {
-        DiagSplit::DiagSplitParams params = {
-            &patchMap,
-            patchTable,
-            positions,
-            3,
-            1.f,
-            1,
-            float4x4::Identity(),
-            1024,
-            1024,
-        };
+        float4x4 clipFromWorld = mul(scene->camera.clipFromCamera, scene->camera.cameraFromWorld);
+        DiagSplit::DiagSplitParams params = {&patchMap,
+                                             patchTable,
+                                             positions,
+                                             3,
+                                             1.f,
+                                             1,
+                                             clipFromWorld,
+                                             scene->camera.viewportWidth,
+                                             scene->camera.viewportHeight};
 
         for (int face = 0; face < numFaces; face++)
         {

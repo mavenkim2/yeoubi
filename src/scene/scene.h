@@ -4,6 +4,7 @@
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
 #include "util/float3x4.h"
+#include "util/float4x4.h"
 #include "util/host_memory_arena.h"
 #include <vector>
 
@@ -131,6 +132,14 @@ struct ConstCollectionRange
     }
 };
 
+struct Camera
+{
+    int viewportWidth;
+    int viewportHeight;
+    float4x4 cameraFromWorld;
+    float4x4 clipFromCamera;
+};
+
 struct Scene
 {
     BVH bvh;
@@ -145,6 +154,7 @@ struct Scene
     // HostMemoryArena arena;
     Array<Attribute> attributes;
     Device *device;
+    Camera camera;
 
     Scene() = default;
     ~Scene() = default;

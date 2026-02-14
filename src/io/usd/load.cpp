@@ -7,10 +7,13 @@
 #include "util/float3.h"
 #include "util/float3x4.h"
 #include "util/float4.h"
+#include "util/float4x4.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <pxr/base/gf/frustum.h>
+#include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/base/vt/types.h>
@@ -63,6 +66,8 @@ struct USDTraversalState
     std::vector<pxr::UsdGeomBasisCurves> basisCurves;
     std::vector<pxr::UsdGeomPointInstancer> pointInstancers;
     std::vector<pxr::UsdPrim> instances;
+
+    std::vector<pxr::UsdGeomCamera> cameras;
 };
 
 struct USDPrototypeRanges
@@ -171,15 +176,7 @@ static void TraversePrim(pxr::UsdPrim &root,
         else if (prim.IsA<pxr::UsdGeomCamera>())
         {
             pxr::UsdGeomCamera camera(prim);
-            double shutterOpen, shutterClose;
-
-            // if (camera.GetShutterOpenAttr().ValueMightBeTimeVarying() ||
-            //     camera.GetShutterCloseAttr().ValueMightBeTimeVarying())
-            {
-                camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
-                camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
-                printf("open: %f close: %f\n", shutterOpen, shutterClose);
-            }
+            state.cameras.push_back(camera);
         }
         else if (prim.IsA<pxr::UsdShadeShader>())
         {
@@ -961,6 +958,46 @@ void Test(Scene *scene)
     TraversePrim(root, state, filterPredicate);
 
     scene->curves.reserve(state.basisCurves.size());
+
+    if (state.cameras.size())
+    {
+        pxr::UsdGeomCamera &camera = state.cameras[0];
+        const pxr::UsdTimeCode timeCode(0.0);
+        pxr::GfCamera gfCam = camera.GetCamera(timeCode);
+        pxr::GfFrustum frustum = gfCam.GetFrustum();
+        pxr::GfMatrix4d viewM = frustum.ComputeViewMatrix().GetTranspose();
+        pxr::GfMatrix4d projM = frustum.ComputeProjectionMatrix().GetTranspose();
+
+        Camera &uc = scene->camera;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                uc.cameraFromWorld.m[i][j] = static_cast<float>(viewM[i][j]);
+                uc.clipFromCamera.m[i][j] = static_cast<float>(projM[i][j]);
+
+                printf("%f ", projM[i][j]);
+            }
+        }
+
+        uc.viewportWidth = 1920;
+        uc.viewportHeight = 1080;
+        if (settings)
+        {
+            pxr::GfVec2i resolution;
+            if (settings.GetResolutionAttr().Get(&resolution))
+            {
+                uc.viewportWidth = resolution[0];
+                uc.viewportHeight = resolution[1];
+                printf("resolution: %i %i\n", resolution[0], resolution[1]);
+            }
+        }
+
+        double shutterOpen, shutterClose;
+        camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
+        camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
+        printf("open: %f close: %f\n", shutterOpen, shutterClose);
+    }
 
     std::unordered_map<std::string, int> pathObjectIDMap;
     std::vector<pxr::UsdPrim> prototypes;

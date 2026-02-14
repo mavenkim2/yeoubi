@@ -69,9 +69,24 @@ struct float4x4
     }
 };
 
+__forceinline float4x4 mul(const float4x4 &a, const float4x4 &b)
+{
+    float4x4 c;
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            c.m[i][j] = a.m[i][0] * b.m[0][j] + a.m[i][1] * b.m[1][j] + a.m[i][2] * b.m[2][j] +
+                        a.m[i][3] * b.m[3][j];
+        }
+    }
+    return c;
+}
+
 __forceinline float4 mul(const float4x4 &mat, const float4 &p)
 {
-    return make_float4(dot(mat.rows[0], p), dot(mat.rows[1], p), dot(mat.rows[2], p), dot(mat.rows[3], p));
+    return make_float4(
+        dot(mat.rows[0], p), dot(mat.rows[1], p), dot(mat.rows[2], p), dot(mat.rows[3], p));
 }
 
 YBI_NAMESPACE_END
