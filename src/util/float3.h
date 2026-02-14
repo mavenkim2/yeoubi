@@ -62,6 +62,11 @@ __forceinline float3 operator*(const float3 &a, const float b)
     return {a.x * b, a.y * b, a.z * b};
 }
 
+__forceinline float3 operator*(float a, const float3 &b)
+{
+    return b * a;
+}
+
 __forceinline float3 operator/(const float3 &a, const float3 &b)
 {
     return {a.x / b.x, a.y / b.y, a.z / b.z};

@@ -32,7 +32,7 @@ struct OsdData
     }
     void AddWithWeight(const OsdData &src, float w)
     {
-        value += w * src.value;
+        value += src.value * w;
     }
 };
 
@@ -72,12 +72,11 @@ static OpenSubdiv::Sdc::Options::FVarLinearInterpolation ToOsdFVarLinear(FVarLin
     }
 }
 
-template <typename T>
-static MemoryView<OsdData> InterpolateVertex(HostMemoryArena &arena,
-                                             const T &array,
-                                             AttributeType type,
-                                             const Far::TopologyRefiner *refiner,
-                                             const Far::PatchTable *patchTable)
+template <typename DataType, typename T>
+static MemoryView<OsdData<DataType>> InterpolateVertex(HostMemoryArena &arena,
+                                                       const T &array,
+                                                       const Far::TopologyRefiner *refiner,
+                                                       const Far::PatchTable *patchTable)
 {
 
     const int numLevels = refiner->GetNumLevels();
@@ -86,23 +85,19 @@ static MemoryView<OsdData> InterpolateVertex(HostMemoryArena &arena,
 
     YBI_ASSERT(array.size() == refiner->GetLevel(0).GetNumVertices());
 
-    size_t typeSize = AttributeTypeGetSize(type);
+    size_t typeSize = sizeof(DataType);
     size_t numFloats = typeSize / sizeof(float);
-    MemoryView<OsdData> view = arena.PushArray<OsdData>(numVertices + numLocalPoints);
-    MemoryView<float> data = arena.PushArray<float>((numVertices + numLocalPoints) * numFloats);
 
-    memcpy(data.data(), array.data(), array.size() * typeSize);
+    MemoryView<OsdData<DataType>> view =
+        arena.PushArray<OsdData<DataType>>(numVertices + numLocalPoints);
 
-    for (size_t i = 0; i < numVertices + numLocalPoints; i++)
-    {
-        view[i].p = &data[i * numFloats];
-        view[i].numFloats = numFloats;
-    }
-    OsdData *src = view.data();
+    memcpy(view.data(), array.data(), array.size() * typeSize);
+
+    OsdData<DataType> *src = view.data();
 
     for (int level = 1; level < numLevels; level++)
     {
-        OsdData *dst = src + refiner->GetLevel(level - 1).GetNumVertices();
+        OsdData<DataType> *dst = src + refiner->GetLevel(level - 1).GetNumVertices();
         Far::PrimvarRefiner(*refiner).Interpolate(level, src, dst);
         src = dst;
     }
@@ -110,6 +105,7 @@ static MemoryView<OsdData> InterpolateVertex(HostMemoryArena &arena,
     return view;
 }
 
+#if 0
 template <typename T>
 static void InterpolateVarying(HostMemoryArena &arena,
                                const T &array,
@@ -154,6 +150,7 @@ static void InterpolateFaceVarying(MemoryView<OsdData> &view,
     }
     patchTable->ComputeLocalPointValuesVarying(src, view.data() + numVerticesTotal);
 }
+#endif
 
 struct LimitSurfaceSample
 {
@@ -177,6 +174,7 @@ static void GenerateLimitSurfaceSamples(const Far::PatchMap *patchMap,
     // patchTable->GetPatchVert
 }
 
+// https://techmatt.github.io/pdfs/diagSplit.pdf
 namespace DiagSplit
 {
 
@@ -201,76 +199,97 @@ struct DiagSplitParams
     const MemoryView<OsdData<float3>> positions;
     int N;   // number of times to sample edge in T()
     float R; // vertex pixel spacing goal
+    int splitThreshold;
 };
 
 struct SubPatch
 {
-    float3 corners[4];
+    float2 parametricCorners[4];
+    int edgeRates[4];
+    int ptexFace;
+
+    SubPatch(int face) : ptexFace(face)
+    {
+        edgeRates[0] = DiagSplit::NON_UNIFORM;
+        edgeRates[1] = DiagSplit::NON_UNIFORM;
+        edgeRates[2] = DiagSplit::NON_UNIFORM;
+        edgeRates[3] = DiagSplit::NON_UNIFORM;
+
+        parametricCorners[0] = make_float2(0.f, 0.f);
+        parametricCorners[1] = make_float2(1.f, 0.f);
+        parametricCorners[2] = make_float2(1.f, 1.f);
+        parametricCorners[3] = make_float2(0.f, 1.f);
+    }
 };
 
-static void EvaluatePosition() {}
+__forceinline static int Next(int edge, int numFaceVertices)
+{
+    return (edge + 1) % numFaceVertices;
+}
 
-static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 &uvEnd, int edge)
+static float3 EvaluatePosition(const DiagSplitParams &params, int fid, float2 uv)
+{
+    const Far::PatchTable::PatchHandle *handle = params.patchMap->FindPatch(fid, uv.x, uv.y);
+    auto cvIndices = params.patchTable->GetPatchVertices(*handle);
+
+    float pWeights[20];
+    params.patchTable->EvaluateBasis(*handle, uv.x, uv.y, pWeights);
+    float3 p = make_float3(0.f);
+    for (int cv = 0; cv < cvIndices.size(); cv++)
+    {
+        p += params.positions[cvIndices[cv]].value * pWeights[cv];
+    }
+    return p;
+}
+
+static int T(const DiagSplitParams &params, const float2 &uvStart, const float2 &uvEnd, int fid)
 {
     const int N = params.N;
-    float R = params.R;
-    const int splitThreshold = 0;
-
-    int fid = 0;
-    int axis = edge & 1;
-
-    float3 prev;
+    const float R = params.R;
 
     YBI_ASSERT(N > 1);
 
     float maxLi = 0.f;
+    float sumLi = 0.f;
+
+    float3 prev = EvaluatePosition(params, fid, uvStart);
 
     for (int i = 1; i < N; i++)
     {
         float2 uv = lerp(uvStart, uvEnd, float(i) / (N - 1));
+        float3 p = EvaluatePosition(params, fid, uv);
 
-        const Far::PatchTable::PatchHandle *handle = params.patchMap->FindPatch(fid, uv.x, uv.y);
-        auto cvIndices = params.patchTable->GetPatchVertices(*handle);
-
-        float pWeights[20];
-        params.patchTable->EvaluateBasis(*handle, uv.x, uv.y, pWeights);
-        float3 p = make_float3(0.f);
-        for (int cv = 0; cv < cvIndices.size(); cv++)
-        {
-            p += params.positions[cvIndices[cv]].value * pWeights[cv];
-        }
-
-        maxLi = std::max(maxLi, length(p - prev));
+        float Li = length(p - prev);
+        sumLi += Li;
+        maxLi = std::max(maxLi, Li);
         prev = p;
     }
 
-    int tMin = 0.f;
-    int tMax = (int)ceilf(N * maxLi / R);
+    int tMin = (int)ceilf(sumLi / R);
+    int tMax = (int)ceilf((N - 1) * maxLi / R);
 
-    if (tMax - tMin >= splitThreshold)
+    if (tMax - tMin >= params.splitThreshold)
     {
         return DiagSplit::NON_UNIFORM;
     }
     return tMax;
 }
 
-static void PartitionEdge(const DiagSplitParams &params,
-                          float start,
-                          float end,
-                          int edge,
-                          int edgeFactor,
-                          int &t0,
-                          int &t1)
+static float2 PartitionEdge(const DiagSplitParams &params,
+                            int fid,
+                            float2 uvStart,
+                            float2 uvEnd,
+                            int edgeFactor,
+                            int &t0,
+                            int &t1)
 {
-    float2 uvStart;
-    float2 uvEnd;
-
-    if (edgeFactor == NON_UNIFORM)
+    if (edgeFactor == DiagSplit::NON_UNIFORM)
     {
         float2 uv = (uvStart + uvEnd) / 2.f;
 
-        t0 = T(params, uvStart, uv, edge);
-        t1 = T(params, uv, uvEnd, edge);
+        t0 = T(params, uvStart, uv, fid);
+        t1 = T(params, uv, uvEnd, fid);
+        return uv;
     }
     else
     {
@@ -278,14 +297,66 @@ static void PartitionEdge(const DiagSplitParams &params,
         t1 = edgeFactor - t0;
 
         float2 uv = lerp(uvStart, uvEnd, float(t0) / edgeFactor);
+        return uv;
     }
 }
 
-static void Split() {}
+static void Split(const DiagSplitParams &params, SubPatch &patch)
+{
+    const int numFaceVertices = 4;
+    for (int edge = 0; edge < numFaceVertices; edge++)
+    {
+        if (patch.edgeRates[edge] == DiagSplit::NON_UNIFORM)
+        {
+            int next = Next(edge, numFaceVertices);
+            int opp = Next(edge + 1, numFaceVertices);
+            int prev = Next(edge + 2, numFaceVertices);
+
+            float2 uvStart = patch.parametricCorners[edge];
+            float2 uvEnd = patch.parametricCorners[next];
+            int edgeFactor = patch.edgeRates[edge];
+
+            int edgeT0, edgeT1;
+            float2 uvMid =
+                PartitionEdge(params, patch.ptexFace, uvStart, uvEnd, edgeFactor, edgeT0, edgeT1);
+
+            uvStart = patch.parametricCorners[opp];
+            uvEnd = patch.parametricCorners[prev];
+            edgeFactor = patch.edgeRates[opp];
+            int edgeOppT0, edgeOppT1;
+            float2 uvMidOpp = PartitionEdge(
+                params, patch.ptexFace, uvStart, uvEnd, edgeFactor, edgeOppT0, edgeOppT1);
+
+            SubPatch newPatch0(patch.ptexFace);
+            newPatch0.parametricCorners[0] = patch.parametricCorners[edge];
+            newPatch0.parametricCorners[1] = uvMid;
+            newPatch0.parametricCorners[2] = uvMidOpp;
+            newPatch0.parametricCorners[3] = patch.parametricCorners[prev];
+            newPatch0.edgeRates[0] = edgeT0;
+            newPatch0.edgeRates[1] = patch.edgeRates[next];
+            newPatch0.edgeRates[2] = edgeOppT1;
+            newPatch0.edgeRates[3] = patch.edgeRates[prev];
+
+            SubPatch newPatch1(patch.ptexFace);
+            newPatch1.ptexFace = patch.ptexFace;
+            newPatch1.parametricCorners[0] = uvMid;
+            newPatch1.parametricCorners[1] = patch.parametricCorners[next];
+            newPatch1.parametricCorners[2] = patch.parametricCorners[opp];
+            newPatch1.parametricCorners[3] = uvMidOpp;
+            newPatch1.edgeRates[0] = edgeT1;
+            newPatch1.edgeRates[1] = patch.edgeRates[next];
+            newPatch1.edgeRates[2] = edgeOppT0;
+            newPatch1.edgeRates[3] = patch.edgeRates[prev];
+
+            Split(params, newPatch0);
+            Split(params, newPatch1);
+
+            break;
+        }
+    }
+}
 
 } // namespace DiagSplit
-
-// https://techmatt.github.io/pdfs/diagSplit.pdf
 
 void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
 {
@@ -355,48 +426,19 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
 
     Far::PtexIndices ptexIndices(*refiner);
     const int numPtexFaces = ptexIndices.GetNumFaces();
-    MemoryView<OsdData> positions =
-        InterpolateVertex(arena, mesh.vertices, AttributeType::Float3, refiner, patchTable);
+    MemoryView<OsdData<float3>> positions =
+        InterpolateVertex<float3>(arena, mesh.vertices, refiner, patchTable);
 
-#if 0
-    const Far::TopologyLevel &level0 = refiner->GetLevel(0);
-    const Far::TopologyLevel &level1 = refiner->GetLevel(1);
-
-    // Print vertex positions of quadrilaterals created by quadrangulating non-quad faces.
-    // Ordinary quadrilateral faces in the control cage are skipped.
-    const int level0VertexOffset = level0.GetNumVertices();
-    for (int i = 0; i < numFaces; i++)
+    if (numPtexFaces == numFaces)
     {
-        Far::ConstIndexArray faceVerts = level0.GetFaceVertices(i);
-        if (faceVerts.size() == 4)
-            continue;
+        DiagSplit::DiagSplitParams params = {&patchMap, patchTable, positions, 3, 1.f, 1};
 
-        Far::ConstIndexArray childFaces = level0.GetFaceChildFaces(i);
-        printf("face %d (%d-gon) -> %d quads:\n",
-               i, static_cast<int>(faceVerts.size()), static_cast<int>(childFaces.size()));
-        printf("  control verts:");
-        for (int j = 0; j < faceVerts.size(); j++)
+        for (int face = 0; face < numFaces; face++)
         {
-            const float *p = positions[faceVerts[j]].p;
-            printf(" (%.4f, %.4f, %.4f)", p[0], p[1], p[2]);
-        }
-        printf("\n");
-
-        for (int j = 0; j < childFaces.size(); j++)
-        {
-            Far::ConstIndexArray quadVerts = level1.GetFaceVertices(childFaces[j]);
-            printf("  quad %d:", j);
-            for (int k = 0; k < quadVerts.size(); k++)
-            {
-                const float *p = positions[quadVerts[k] + level0VertexOffset].p;
-                printf(" (%.4f, %.4f, %.4f)", p[0], p[1], p[2]);
-            }
-            printf("\n");
+            DiagSplit::SubPatch patch(face);
+            DiagSplit::Split(params, patch);
         }
     }
-
-    GenerateLimitSurfaceSamples(&patchMap, patchTable);
-#endif
 
 #if 0
 
