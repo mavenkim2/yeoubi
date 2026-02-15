@@ -1,0 +1,7 @@
+YBI_NAMESPACE_BEGIN
+
+void Test()
+{
+}
+
+YBI_NAMESPACE_END
