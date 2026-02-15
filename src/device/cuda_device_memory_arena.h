@@ -10,6 +10,7 @@
 
 YBI_NAMESPACE_BEGIN
 
+template <CUmemLocationType type>
 struct CUDAMemoryProvider
 {
     template <typename T>
@@ -27,7 +28,7 @@ struct CUDAMemoryProvider
         CUmemGenericAllocationHandle handle;
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.type = type;
         prop.location.id = 0;
 
         CUDA_ASSERT(cuMemCreate(&handle, size, &prop, 0));
@@ -64,7 +65,8 @@ struct CUDAMemoryProvider
     }
 };
 
-using CUDAMemoryArena = MemoryArena<CUDAMemoryProvider>;
+using CUDAMemoryArena = MemoryArena<CUDAMemoryProvider<CU_MEM_LOCATION_TYPE_DEVICE>>;
+using CUDAPinnedHostMemoryArena = MemoryArena<CUDAMemoryProvider<CU_MEM_LOCATION_TYPE_HOST>>;
 
 YBI_NAMESPACE_END
 
