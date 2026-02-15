@@ -110,9 +110,7 @@ struct CUDADevice
     void Free(DeviceMemoryView<T> &view);
     bool SupportsGrids() const;
 
-#if (OPTIX_VERSION >= 90000)
     void CreateGridClusterTemplates();
-#endif
 };
 
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated()
@@ -483,52 +481,185 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         deviceArena.Clear();
     }
 
-#if 0
+#if (OPTIX_VERSION >= 90000)
+    const int templateMinDim = 2;
+    const int templateMaxDim = 8;
+    const int templateWidths = templateMaxDim - templateMinDim + 1;
+
     for (MicropolygonMesh &mesh : scene->micropolygonMeshes)
     {
-        // ClusterAccelerationStructureLimits limits;
-        // OPTIX_ASSERT(
-        //     optixDeviceContextGetProperty(cudaDevice->optixDeviceContext,
-        //                                   OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES,
-        //                                   &limits.maxTrianglesPerCluster,
-        //                                   sizeof(unsigned int)));
-        // OPTIX_ASSERT(
-        //     optixDeviceContextGetProperty(cudaDevice->optixDeviceContext,
-        //                                   OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
-        //                                   &limits.maxVerticesPerCluster,
-        //                                   sizeof(unsigned int)));
-        // printf("limits: %u %u\n", limits.maxVerticesPerCluster, limits.maxTrianglesPerCluster);
+        if (cudaDevice->gridClusterTemplateOutputHandles.data() == nullptr ||
+            cudaDevice->gridClusterTemplateOutputHandles.size() == 0)
+            continue;
 
-        OptixClusterAccelBuildInputTrianglesArgs *args;
-        uint32_t *argsCount;
-        uint32_t *outputSizes;
-        void *tempBuffer;
-        size_t tempBufferSize = 0;
-        uint32_t numClusters = 0;
-        uint32_t maxTrianglesPerCluster = 128;
-        uint32_t maxVerticesPerCluster = 256;
+        const size_t numPositions = mesh.positions.size();
+        if (numPositions == 0 || mesh.grids.size() == 0)
+            continue;
 
-        OptixClusterAccelBuildModeDesc buildModeDesc = {};
-        buildModeDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES;
-        buildModeDesc.getSize.outputSizesBuffer = CUdeviceptr(outputSizes);
-        buildModeDesc.getSize.tempBuffer = CUdeviceptr(tempBuffer);
-        buildModeDesc.getSize.tempBufferSizeInBytes = tempBufferSize;
+        MemoryView<float3> hostGridVertices = hostArena.PushArray<float3>(numPositions);
+        DeviceMemoryView<float3> deviceGridVertices = deviceArena.PushArray<float3>(numPositions);
 
-        OptixClusterAccelBuildInput buildInput = {};
-        buildInput.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_CLUSTERS_FROM_TRIANGLES;
-        buildInput.triangles.flags = OPTIX_CLUSTER_ACCEL_BUILD_FLAG_PREFER_FAST_TRACE;
-        buildInput.triangles.maxArgCount = numClusters;
-        buildInput.triangles.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-        buildInput.triangles.maxTriangleCountPerArg = maxTrianglesPerCluster;
-        buildInput.triangles.maxVertexCountPerArg = maxVerticesPerCluster;
+        size_t numBuildGrids = 0;
+        for (size_t gridIdx = 0; gridIdx < mesh.grids.size(); gridIdx++)
+        {
+            const Grid &grid = mesh.grids[gridIdx];
+            int w = grid.width;
+            int h = grid.height;
+            if (w < templateMinDim || w > templateMaxDim || h < templateMinDim ||
+                h > templateMaxDim)
+                continue;
+            numBuildGrids++;
+        }
+        if (numBuildGrids == 0)
+        {
+            hostArena.Clear();
+            deviceArena.Clear();
+            continue;
+        }
+
+        MemoryView<OptixClusterAccelBuildInputTemplatesArgs> hostTemplateArgs =
+            hostArena.PushArray<OptixClusterAccelBuildInputTemplatesArgs>(numBuildGrids);
+        size_t buildGridIdx = 0;
+        size_t totalNumVertices = 0;
+
+        for (size_t gridIdx = 0; gridIdx < mesh.grids.size(); gridIdx++)
+        {
+            const Grid &grid = mesh.grids[gridIdx];
+            int w = grid.width;
+            int h = grid.height;
+            if (w < templateMinDim || w > templateMaxDim || h < templateMinDim ||
+                h > templateMaxDim)
+                continue;
+
+            const int templateIndex = (w - templateMinDim) * templateWidths + (h - templateMinDim);
+            const OptixTraversableHandle templateHandle =
+                cudaDevice->gridClusterTemplateOutputHandles.data()[templateIndex];
+
+            const int numVertices = (w + 1) * (h + 1);
+            const int startVertex = grid.gridIndexStart;
+            YBI_ASSERT(startVertex >= 0 &&
+                       (size_t)(startVertex + numVertices) <= mesh.positions.size());
+
+            memcpy(hostGridVertices.data() + totalNumVertices,
+                   mesh.positions.data() + startVertex,
+                   (size_t)numVertices * sizeof(float3));
+
+            const CUdeviceptr vertexBufferPtr =
+                (CUdeviceptr)deviceGridVertices.data() + totalNumVertices * sizeof(float3);
+
+            OptixClusterAccelBuildInputTemplatesArgs &templateArgs =
+                hostTemplateArgs[buildGridIdx];
+            templateArgs = {};
+            templateArgs.clusterTemplate = templateHandle;
+            templateArgs.clusterIdOffset = 0;
+            templateArgs.vertexBuffer = vertexBufferPtr;
+            buildGridIdx++;
+            totalNumVertices += (size_t)numVertices;
+        }
+
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceGridVertices.data()),
+                                 hostGridVertices.data(),
+                                 totalNumVertices * sizeof(float3)));
+
+        DeviceMemoryView<OptixClusterAccelBuildInputTemplatesArgs> deviceTemplateArgs =
+            deviceArena.PushArray<OptixClusterAccelBuildInputTemplatesArgs>(numBuildGrids);
+        CUDA_ASSERT(
+            cuMemcpyHtoD(CUdeviceptr(deviceTemplateArgs.data()),
+                         hostTemplateArgs.data(),
+                         numBuildGrids * sizeof(OptixClusterAccelBuildInputTemplatesArgs)));
+
+        DeviceMemoryView<uint32_t> deviceArgsCount = deviceArena.PushArray<uint32_t>(1);
+        const uint32_t argsCountVal = (uint32_t)numBuildGrids;
+        CUDA_ASSERT(
+            cuMemcpyHtoD(CUdeviceptr(deviceArgsCount.data()), &argsCountVal, sizeof(uint32_t)));
+
+        const unsigned int maxTrianglesPerCluster = 128;
+        const unsigned int maxVerticesPerCluster = 128;
+
+        OptixClusterAccelBuildInput clusterInput = {};
+        clusterInput.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_CLUSTERS_FROM_TEMPLATES;
+        clusterInput.triangles.flags = OPTIX_CLUSTER_ACCEL_BUILD_FLAG_PREFER_FAST_TRACE;
+        clusterInput.triangles.maxArgCount = (unsigned int)numBuildGrids;
+        clusterInput.triangles.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+        clusterInput.triangles.maxTriangleCountPerArg = maxTrianglesPerCluster;
+        clusterInput.triangles.maxVertexCountPerArg = maxVerticesPerCluster;
+
+        OptixAccelBufferSizes getSizeBufferSizes = {};
+        OPTIX_ASSERT(optixClusterAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                                         OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES,
+                                                         &clusterInput,
+                                                         &getSizeBufferSizes));
+
+        OptixAccelBufferSizes explicitBufferSizes = {};
+        OPTIX_ASSERT(optixClusterAccelComputeMemoryUsage(
+            cudaDevice->optixDeviceContext,
+            OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS,
+            &clusterInput,
+            &explicitBufferSizes));
+
+        const size_t tempSizeInBytes =
+            std::max(getSizeBufferSizes.tempSizeInBytes, explicitBufferSizes.tempSizeInBytes);
+        DeviceMemoryView<size_t> deviceOutputSizes = deviceArena.PushArray<size_t>(numBuildGrids);
+        DeviceMemoryView<char> temp = deviceArena.PushArray<char>(tempSizeInBytes);
+
+        OptixClusterAccelBuildModeDesc getSizeDesc = {};
+        getSizeDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES;
+        getSizeDesc.getSize.outputSizesBuffer = CUdeviceptr(deviceOutputSizes.data());
+        getSizeDesc.getSize.tempBuffer = CUdeviceptr(temp.data());
+        getSizeDesc.getSize.tempBufferSizeInBytes = getSizeBufferSizes.tempSizeInBytes;
 
         OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
                                             0,
-                                            &buildModeDesc,
-                                            &buildInput,
-                                            CUdeviceptr(args),
-                                            CUdeviceptr(argsCount),
-                                            0));
+                                            &getSizeDesc,
+                                            &clusterInput,
+                                            CUdeviceptr(deviceTemplateArgs.data()),
+                                            CUdeviceptr(deviceArgsCount.data()),
+                                            sizeof(OptixClusterAccelBuildInputTemplatesArgs)));
+
+        CUDA_ASSERT(cuStreamSynchronize(0));
+
+        MemoryView<size_t> hostOutputSizes = hostArena.PushArray<size_t>(numBuildGrids);
+        CUDA_ASSERT(cuMemcpyDtoH(hostOutputSizes.data(),
+                                 CUdeviceptr(deviceOutputSizes.data()),
+                                 numBuildGrids * sizeof(size_t)));
+
+        size_t totalOutputSize = 0;
+        MemoryView<size_t> hostOffsets = hostArena.PushArray<size_t>(numBuildGrids);
+        for (size_t i = 0; i < numBuildGrids; i++)
+        {
+            hostOffsets[i] = totalOutputSize;
+            totalOutputSize += hostOutputSizes[i];
+        }
+
+        YBI_ASSERT(totalOutputSize != 0);
+
+        DeviceMemoryView<char> explicitOutput = deviceArena.PushArray<char>(totalOutputSize);
+        DeviceMemoryView<size_t> deviceOutputOffsets =
+            deviceArena.PushArray<size_t>(numBuildGrids);
+        CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceOutputOffsets.data()),
+                                 hostOffsets.data(),
+                                 numBuildGrids * sizeof(size_t)));
+
+        OptixClusterAccelBuildModeDesc explicitDesc = {};
+        explicitDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS;
+        explicitDesc.explicitDest.tempBuffer = CUdeviceptr(temp.data());
+        explicitDesc.explicitDest.tempBufferSizeInBytes = explicitBufferSizes.tempSizeInBytes;
+        explicitDesc.explicitDest.outputBuffer = CUdeviceptr(explicitOutput.data());
+        explicitDesc.explicitDest.outputOffsetsBuffer = CUdeviceptr(deviceOutputOffsets.data());
+        explicitDesc.explicitDest.outputSizesBuffer = CUdeviceptr(deviceOutputSizes.data());
+
+        OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
+                                            0,
+                                            &explicitDesc,
+                                            &clusterInput,
+                                            CUdeviceptr(deviceTemplateArgs.data()),
+                                            CUdeviceptr(deviceArgsCount.data()),
+                                            sizeof(OptixClusterAccelBuildInputTemplatesArgs)));
+
+        CUDA_ASSERT(cuStreamSynchronize(0));
+
+        hostArena.Clear();
+        deviceArena.Clear();
     }
 #else
     YBI_ERROR(scene->micropolygonMeshes.size() == 0,
