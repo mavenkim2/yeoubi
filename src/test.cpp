@@ -1,6 +1,7 @@
 #include "device/cuda_device.h"
 #include "device/device.h"
 #include "io/usd/load.h"
+#include "scene/clusterizer.h"
 #include "scene/subdivision.h"
 #include "scene/subdivision_mesh.h"
 #include <cassert>
@@ -27,7 +28,6 @@ int main(int argc, char **argv)
     {
         Subdivision(&scene, mesh);
     }
-
 
     uint32_t totalNumTriangles = 0;
 

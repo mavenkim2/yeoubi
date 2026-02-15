@@ -11,3 +11,12 @@ if (USD_ROOT)
         set (OPENUSD_LIBRARY_DIR ${OPENUSD_LIBRARY_DIR} PARENT_SCOPE)
     endif()
 endif()
+
+add_subdirectory(meshoptimizer)
+
+if (TARGET meshoptimizer)
+    set (MESHOPTIMIZER_FOUND ON PARENT_SCOPE)
+    set(MESHOPTIMIZER_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/meshoptimizer/src" PARENT_SCOPE)
+    set(MESHOPTIMIZER_LIBRARY meshoptimizer PARENT_SCOPE)
+    message(STATUS "Found meshoptimizer target!")
+endif()
