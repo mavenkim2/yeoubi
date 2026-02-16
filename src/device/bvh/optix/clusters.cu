@@ -3,15 +3,23 @@
 #include "device/cuda_device.h"
 #include "optix_types.h"
 #include "scene/clusterizer.h"
+#include <algorithm>
 #include <cuda.h>
 
 YBI_NAMESPACE_BEGIN
 
-void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
-                           HostMemoryArena &hostArena,
-                           const Mesh &mesh,
-                           const MeshletClustersResult &clusterResult,
-                           size_t &totalOutputSizeOut)
+__global__ void
+ComputeCLASTotalSize(const uint32_t *sizes, uint32_t numClusters, uint32_t *totalSizeOut);
+__global__ void ComputeCLASDestAddresses(const uint32_t *sizes,
+                                         uint32_t numClusters,
+                                         uint64_t baseAddr,
+                                         uint64_t *destAddresses);
+
+void BuildMeshCLAS(CUDADevice *cudaDevice,
+                   HostMemoryArena &hostArena,
+                   const Mesh &mesh,
+                   const MeshletClustersResult &clusterResult,
+                   size_t &totalOutputSizeOut)
 {
     const size_t meshletCount = clusterResult.meshletCount;
     const uint32_t vertexCount = static_cast<uint32_t>(mesh.positions.size());
@@ -98,8 +106,17 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
                                                      &buildInput,
                                                      &getSizeBufferSizes));
 
-    DeviceMemoryView<uint8_t> temp = deviceArena.PushArray<uint8_t>(
-        getSizeBufferSizes.tempSizeInBytes, OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT);
+    OptixAccelBufferSizes explicitBufferSizes = {};
+    OPTIX_ASSERT(
+        optixClusterAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                            OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS,
+                                            &buildInput,
+                                            &explicitBufferSizes));
+
+    const size_t tempSizeInBytes =
+        std::max(getSizeBufferSizes.tempSizeInBytes, explicitBufferSizes.tempSizeInBytes);
+    DeviceMemoryView<uint8_t> temp =
+        deviceArena.PushArray<uint8_t>(tempSizeInBytes, OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT);
     DeviceMemoryView<uint32_t> deviceOutputSizes = deviceArena.PushArray<uint32_t>(meshletCount);
 
     DeviceMemoryView<uint32_t> deviceArgsCount = deviceArena.PushArray<uint32_t>(1);
@@ -121,19 +138,46 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
                                         CUdeviceptr(buildArgs.data()),
                                         CUdeviceptr(deviceArgsCount.data()),
                                         sizeof(OptixClusterAccelBuildInputTrianglesArgs)));
+
+    DeviceMemoryView<uint32_t> totalCLASSize = deviceArena.PushArray<uint32_t>(1);
+    ComputeCLASTotalSize<<<1, 1>>>(
+        deviceOutputSizes.data(), static_cast<uint32_t>(meshletCount), totalCLASSize.data());
+
+    uint32_t totalSize = 0;
+    CUDA_ASSERT(cuMemcpyDtoH(&totalSize, CUdeviceptr(totalCLASSize.data()), sizeof(uint32_t)));
     CUDA_ASSERT(cuStreamSynchronize(0));
 
-    MemoryView<uint32_t> hostOutputSizes = hostArena.PushArray<uint32_t>(meshletCount);
-    CUDA_ASSERT(cuMemcpyDtoH(hostOutputSizes.data(),
-                             CUdeviceptr(deviceOutputSizes.data()),
-                             meshletCount * sizeof(uint32_t)));
+    YBI_ASSERT(totalSize);
 
-    totalOutputSizeOut = 0;
-    for (size_t i = 0; i < meshletCount; i++)
-    {
-        totalOutputSizeOut += hostOutputSizes[i];
-    }
-    cudaDevice->bvhTotalAllocated += totalOutputSizeOut;
+    DeviceMemoryView<uint8_t> outputBuffer = cudaDevice->Alloc<uint8_t>(totalSize);
+    const CUdeviceptr baseAddr = CUdeviceptr(outputBuffer.data());
+
+    DeviceMemoryView<uint64_t> deviceDestAddresses = deviceArena.PushArray<uint64_t>(meshletCount);
+    ComputeCLASDestAddresses<<<1, 1>>>(deviceOutputSizes.data(),
+                                       static_cast<uint32_t>(meshletCount),
+                                       baseAddr,
+                                       deviceDestAddresses.data());
+
+    OptixClusterAccelBuildModeDesc explicitDesc = {};
+    explicitDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS;
+    explicitDesc.explicitDest.tempBuffer = CUdeviceptr(temp.data());
+    explicitDesc.explicitDest.tempBufferSizeInBytes = explicitBufferSizes.tempSizeInBytes;
+    explicitDesc.explicitDest.outputSizesBuffer = CUdeviceptr(deviceOutputSizes.data());
+    explicitDesc.explicitDest.destAddressesBuffer = CUdeviceptr(deviceDestAddresses.data());
+    explicitDesc.explicitDest.destAddressesStrideInBytes = sizeof(uint64_t);
+    explicitDesc.explicitDest.outputHandlesBuffer = CUdeviceptr(deviceDestAddresses.data());
+
+    OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
+                                        0,
+                                        &explicitDesc,
+                                        &buildInput,
+                                        CUdeviceptr(buildArgs.data()),
+                                        CUdeviceptr(deviceArgsCount.data()),
+                                        sizeof(OptixClusterAccelBuildInputTrianglesArgs)));
+    CUDA_ASSERT(cuStreamSynchronize(0));
+
+    cudaDevice->bvhTotalAllocated += totalSize;
+    totalOutputSizeOut = totalSize;
 
     deviceArena.Clear();
 }
@@ -203,6 +247,36 @@ WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
             args.instantiationBoundingBoxLimit = 0;
         }
         __syncthreads();
+    }
+}
+
+__global__ void
+ComputeCLASTotalSize(const uint32_t *sizes, uint32_t numClusters, uint32_t *totalSizeOut)
+{
+    if (threadIdx.x > 0)
+        return;
+
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < numClusters; i++)
+    {
+        total += sizes[i];
+    }
+    *totalSizeOut = total;
+}
+
+__global__ void ComputeCLASDestAddresses(const uint32_t *sizes,
+                                         uint32_t numClusters,
+                                         uint64_t baseAddr,
+                                         uint64_t *destAddresses)
+{
+    if (threadIdx.x > 0)
+        return;
+
+    uint64_t offset = 0;
+    for (uint32_t i = 0; i < numClusters; i++)
+    {
+        destAddresses[i] = baseAddr + offset;
+        offset += sizes[i];
     }
 }
 

@@ -345,8 +345,8 @@ void CUDADevice::BuildBVH(Scene *scene)
         MeshletClustersResult clusterResult = ClusterizeTest(mesh);
         YBI_ASSERT(clusterResult.meshletCount > 0);
         size_t totalOutputSize = 0;
-        BuildMeshCLASGetSizes(this, hostArena, mesh, clusterResult, totalOutputSize);
-        (void)totalOutputSize; /* Phase 2 will use for CLAS allocation. */
+        BuildMeshCLAS(this, hostArena, mesh, clusterResult, totalOutputSize);
+        (void)totalOutputSize;
 #else
         OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
             this, hostArena, *deviceArena, mesh, numMotionKeys, options);

@@ -12,11 +12,11 @@ struct CUDADevice;
 struct MeshletClustersResult;
 struct Mesh;
 
-void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
-                           HostMemoryArena &hostArena,
-                           const Mesh &mesh,
-                           const MeshletClustersResult &clusterResult,
-                           size_t &totalOutputSizeOut);
+void BuildMeshCLAS(CUDADevice *cudaDevice,
+                   HostMemoryArena &hostArena,
+                   const Mesh &mesh,
+                   const MeshletClustersResult &clusterResult,
+                   size_t &totalOutputSizeOut);
 
 struct MeshletDesc
 {
