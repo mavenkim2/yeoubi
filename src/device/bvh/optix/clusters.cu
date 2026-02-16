@@ -8,13 +8,6 @@
 
 YBI_NAMESPACE_BEGIN
 
-__global__ void
-ComputeCLASTotalSize(const uint32_t *sizes, uint32_t numClusters, uint32_t *totalSizeOut);
-__global__ void ComputeCLASDestAddresses(const uint32_t *sizes,
-                                         uint32_t numClusters,
-                                         uint64_t baseAddr,
-                                         uint64_t *destAddresses);
-
 void BuildMeshCLAS(CUDADevice *cudaDevice,
                    HostMemoryArena &hostArena,
                    const Mesh &mesh,
@@ -176,6 +169,93 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                                         sizeof(OptixClusterAccelBuildInputTrianglesArgs)));
     CUDA_ASSERT(cuStreamSynchronize(0));
 
+    // GAS BUILD
+    OptixClusterAccelBuildInput gasBuildInput = {};
+    gasBuildInput.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_GASES_FROM_CLUSTERS;
+    gasBuildInput.clusters.flags = OPTIX_CLUSTER_ACCEL_BUILD_FLAG_PREFER_FAST_TRACE;
+    gasBuildInput.clusters.maxArgCount = 1;
+    gasBuildInput.clusters.maxTotalClusterCount = static_cast<unsigned int>(meshletCount);
+    gasBuildInput.clusters.maxClusterCountPerArg = static_cast<unsigned int>(meshletCount);
+
+    OptixAccelBufferSizes gasGetSizeBufferSizes = {};
+    OPTIX_ASSERT(optixClusterAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                                     OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES,
+                                                     &gasBuildInput,
+                                                     &gasGetSizeBufferSizes));
+
+    OptixAccelBufferSizes gasExplicitBufferSizes = {};
+    OPTIX_ASSERT(
+        optixClusterAccelComputeMemoryUsage(cudaDevice->optixDeviceContext,
+                                            OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS,
+                                            &gasBuildInput,
+                                            &gasExplicitBufferSizes));
+
+    const size_t gasTempSizeInBytes =
+        std::max(gasGetSizeBufferSizes.tempSizeInBytes, gasExplicitBufferSizes.tempSizeInBytes);
+    DeviceMemoryView<uint8_t> gasTemp =
+        deviceArena.PushArray<uint8_t>(gasTempSizeInBytes, OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT);
+    DeviceMemoryView<uint32_t> deviceGASOutputSizes = deviceArena.PushArray<uint32_t>(1);
+
+    DeviceMemoryView<OptixClusterAccelBuildInputClustersArgs> deviceClusterArgs =
+        deviceArena.PushArray<OptixClusterAccelBuildInputClustersArgs>(1);
+    OptixClusterAccelBuildInputClustersArgs hostClusterArgs = {};
+    hostClusterArgs.clusterHandlesBuffer = CUdeviceptr(deviceDestAddresses.data());
+    hostClusterArgs.clusterHandlesCount = static_cast<unsigned int>(meshletCount);
+    hostClusterArgs.clusterHandlesBufferStrideInBytes = sizeof(OptixTraversableHandle);
+    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceClusterArgs.data()),
+                             &hostClusterArgs,
+                             sizeof(OptixClusterAccelBuildInputClustersArgs)));
+
+    DeviceMemoryView<uint32_t> deviceGASArgsCount = deviceArena.PushArray<uint32_t>(1);
+    const uint32_t gasArgsCountVal = 1u;
+    CUDA_ASSERT(
+        cuMemcpyHtoD(CUdeviceptr(deviceGASArgsCount.data()), &gasArgsCountVal, sizeof(uint32_t)));
+
+    OptixClusterAccelBuildModeDesc gasGetSizeDesc = {};
+    gasGetSizeDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_GET_SIZES;
+    gasGetSizeDesc.getSize.outputSizesBuffer = CUdeviceptr(deviceGASOutputSizes.data());
+    gasGetSizeDesc.getSize.outputSizesStrideInBytes = sizeof(uint32_t);
+    gasGetSizeDesc.getSize.tempBuffer = CUdeviceptr(gasTemp.data());
+    gasGetSizeDesc.getSize.tempBufferSizeInBytes = gasGetSizeBufferSizes.tempSizeInBytes;
+
+    OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
+                                        0,
+                                        &gasGetSizeDesc,
+                                        &gasBuildInput,
+                                        CUdeviceptr(deviceClusterArgs.data()),
+                                        CUdeviceptr(deviceGASArgsCount.data()),
+                                        sizeof(OptixClusterAccelBuildInputClustersArgs)));
+
+    uint32_t gasSize = 0;
+    CUDA_ASSERT(
+        cuMemcpyDtoH(&gasSize, CUdeviceptr(deviceGASOutputSizes.data()), sizeof(uint32_t)));
+
+    YBI_ASSERT(gasSize);
+
+    DeviceMemoryView<uint8_t> gasOutputBuffer = cudaDevice->Alloc<uint8_t>(gasSize);
+    const uint64_t gasBaseAddr = reinterpret_cast<uint64_t>(gasOutputBuffer.data());
+    DeviceMemoryView<uint64_t> deviceGASDestAddresses = deviceArena.PushArray<uint64_t>(1);
+    CUDA_ASSERT(
+        cuMemcpyHtoD(CUdeviceptr(deviceGASDestAddresses.data()), &gasBaseAddr, sizeof(uint64_t)));
+
+    OptixClusterAccelBuildModeDesc gasExplicitDesc = {};
+    gasExplicitDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS;
+    gasExplicitDesc.explicitDest.tempBuffer = CUdeviceptr(gasTemp.data());
+    gasExplicitDesc.explicitDest.tempBufferSizeInBytes = gasExplicitBufferSizes.tempSizeInBytes;
+    gasExplicitDesc.explicitDest.outputSizesBuffer = CUdeviceptr(deviceGASOutputSizes.data());
+    gasExplicitDesc.explicitDest.destAddressesBuffer = CUdeviceptr(deviceGASDestAddresses.data());
+    gasExplicitDesc.explicitDest.destAddressesStrideInBytes = sizeof(uint64_t);
+
+    OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
+                                        0,
+                                        &gasExplicitDesc,
+                                        &gasBuildInput,
+                                        CUdeviceptr(deviceClusterArgs.data()),
+                                        CUdeviceptr(deviceGASArgsCount.data()),
+                                        sizeof(OptixClusterAccelBuildInputClustersArgs)));
+    CUDA_ASSERT(cuStreamSynchronize(0));
+
+    cudaDevice->bvhTotalAllocated += gasSize;
     cudaDevice->bvhTotalAllocated += totalSize;
     totalOutputSizeOut = totalSize;
 

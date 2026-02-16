@@ -27,6 +27,14 @@ struct MeshletDesc
 };
 
 extern "C" __global__ void
+ComputeCLASTotalSize(const uint32_t *sizes, uint32_t numClusters, uint32_t *totalSizeOut);
+
+extern "C" __global__ void ComputeCLASDestAddresses(const uint32_t *sizes,
+                                                    uint32_t numClusters,
+                                                    uint64_t baseAddr,
+                                                    uint64_t *destAddresses);
+
+extern "C" __global__ void
 WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
                                 const unsigned int *meshletVertices,
                                 const uint8_t *meshletTriangles,
