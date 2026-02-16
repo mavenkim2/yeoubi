@@ -22,12 +22,17 @@ int main(int argc, char **argv)
     device.CreateGridClusterTemplates();
 
     Scene scene;
-    Test(&scene);
+    LoadUSDScene(&scene);
 
-    for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
+    for (Mesh &mesh : scene.meshes)
     {
-        Subdivision(&scene, mesh);
+        ClusterizeTest(mesh);
     }
+
+    // for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
+    // {
+    //     Subdivision(&scene, mesh);
+    // }
 
     uint32_t totalNumTriangles = 0;
 

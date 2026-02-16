@@ -913,7 +913,7 @@ static void ProcessUSDPointInstancer(pxr::UsdGeomPointInstancer &pointInstancer,
     scene->instancesArray.emplace_back(std::move(affineTransforms), std::move(objectIDs));
 }
 
-void Test(Scene *scene)
+void LoadUSDScene(Scene *scene)
 {
     std::string filePath = "C:/Users/maven/Downloads/ALab-2.2.0/ALab/entry.usda";
 

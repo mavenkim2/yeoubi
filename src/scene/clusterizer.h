@@ -14,7 +14,7 @@ struct MeshletClustersResult
     std::vector<unsigned char> meshletTriangles;
 };
 
-inline MeshletClustersResult Test(const Mesh &mesh)
+inline MeshletClustersResult ClusterizeTest(const Mesh &mesh)
 {
     const size_t indexCount = mesh.indices.size();
     const size_t vertexCount = mesh.positions.size();
@@ -24,7 +24,7 @@ inline MeshletClustersResult Test(const Mesh &mesh)
     }
 
     const size_t maxVertices = 256;
-    const size_t minTriangles = 1;
+    const size_t minTriangles = 64;
     const size_t maxTriangles = 128;
     const float fillWeight = 0.5f;
 
@@ -53,6 +53,7 @@ inline MeshletClustersResult Test(const Mesh &mesh)
                                                        fillWeight);
 
     result.meshlets.resize(result.meshletCount);
+
     return result;
 }
 

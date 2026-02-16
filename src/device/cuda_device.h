@@ -1,10 +1,7 @@
 #pragma once
 
-#include "cuda.h"
-#include "cuda_runtime_api.h"
 #include "device/cuda_assert.h"
 #include "device/cuda_device_memory_arena.h"
-#include "optix_types.h"
 #include "scene/micropolygon_mesh.h"
 #include "scene/scene.h"
 #include "util/aligned_malloc.h"
@@ -14,10 +11,13 @@
 #include "util/float3.h"
 #include "util/host_memory_arena.h"
 
+#include <cuda.h>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include <memory>
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
+#include <optix_types.h>
 #include <string>
 
 YBI_NAMESPACE_BEGIN
@@ -499,7 +499,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         cudaDevice->deviceArena->Clear();
     }
 
-#if (OPTIX_VERSION >= 90000)
+#if 0 //(OPTIX_VERSION >= 90000)
     const int templateMinDim = 2;
     const int templateMaxDim = 8;
     const int templateWidths = templateMaxDim - templateMinDim + 1;

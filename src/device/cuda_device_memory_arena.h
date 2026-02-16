@@ -2,11 +2,11 @@
 
 #ifdef WITH_CUDA
 
-#include "cuda.h"
-#include "cuda_runtime_api.h"
 #include "device/cuda_assert.h"
 #include "device/device_memory_view.h"
 #include "util/memory_arena.h"
+#include <cuda.h>
+#include <cuda_runtime_api.h>
 
 YBI_NAMESPACE_BEGIN
 
