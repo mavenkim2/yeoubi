@@ -1,6 +1,8 @@
 #include "device/bvh/optix/clusters.cuh"
 #include "device/cuda_assert.h"
 #include "device/cuda_device.h"
+#include "optix_types.h"
+#include "scene/clusterizer.h"
 #include <cuda.h>
 
 YBI_NAMESPACE_BEGIN
@@ -24,9 +26,10 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
 
     CUDAMemoryArena &deviceArena = *cudaDevice->deviceArena;
 
-    DeviceMemoryView<float3> devicePositions = deviceArena.PushArray<float3>(vertexCount);
-    CUDA_ASSERT(cuMemcpyHtoD(
-        CUdeviceptr(devicePositions.data()), mesh.positions.data(), vertexCount * sizeof(float3)));
+    DeviceMemoryView<::float3> devicePositions = deviceArena.PushArray<::float3>(vertexCount);
+    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(devicePositions.data()),
+                             mesh.positions.data(),
+                             vertexCount * sizeof(::float3)));
 
     MemoryView<MeshletDesc> hostMeshletDescs = hostArena.PushArray<MeshletDesc>(meshletCount);
     for (size_t i = 0; i < meshletCount; i++)
@@ -36,32 +39,33 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
         hostMeshletDescs[i].vertexCount = clusterResult.meshlets[i].vertex_count;
         hostMeshletDescs[i].triangleCount = clusterResult.meshlets[i].triangle_count;
     }
+
+    const size_t meshletVerticesSize = clusterResult.meshletVertices.size();
+    const size_t meshletTrianglesSize = clusterResult.meshletTriangles.size();
+
     DeviceMemoryView<MeshletDesc> deviceMeshlets =
         deviceArena.PushArray<MeshletDesc>(meshletCount);
+    DeviceMemoryView<unsigned int> deviceMeshletVertices =
+        deviceArena.PushArray<unsigned int>(meshletVerticesSize);
+    DeviceMemoryView<uint8_t> deviceMeshletTriangles =
+        deviceArena.PushArray<uint8_t>(meshletTrianglesSize);
+    DeviceMemoryView<unsigned int> nextVertexOffset = deviceArena.PushArray<unsigned int>(1);
+    DeviceMemoryView<unsigned int> nextIndexOffset = deviceArena.PushArray<unsigned int>(1);
+
     CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceMeshlets.data()),
                              hostMeshletDescs.data(),
                              meshletCount * sizeof(MeshletDesc)));
-
-    const size_t meshletVerticesSize = clusterResult.meshletVertices.size();
-    DeviceMemoryView<unsigned int> deviceMeshletVertices =
-        deviceArena.PushArray<unsigned int>(meshletVerticesSize);
     CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceMeshletVertices.data()),
                              clusterResult.meshletVertices.data(),
                              meshletVerticesSize * sizeof(unsigned int)));
-
-    const size_t meshletTrianglesSize = clusterResult.meshletTriangles.size();
-    DeviceMemoryView<uint8_t> deviceMeshletTriangles =
-        deviceArena.PushArray<uint8_t>(meshletTrianglesSize);
     CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceMeshletTriangles.data()),
                              clusterResult.meshletTriangles.data(),
                              meshletTrianglesSize));
 
-    DeviceMemoryView<unsigned int> nextVertexOffset = deviceArena.PushArray<unsigned int>(1);
-    DeviceMemoryView<unsigned int> nextIndexOffset = deviceArena.PushArray<unsigned int>(1);
     CUDA_ASSERT(cuMemsetD32(CUdeviceptr(nextVertexOffset.data()), 0, 1));
     CUDA_ASSERT(cuMemsetD32(CUdeviceptr(nextIndexOffset.data()), 0, 1));
 
-    DeviceMemoryView<float3> outputVertices = deviceArena.PushArray<float3>(totalVertexBound);
+    DeviceMemoryView<::float3> outputVertices = deviceArena.PushArray<::float3>(totalVertexBound);
     DeviceMemoryView<uint8_t> outputIndices = deviceArena.PushArray<uint8_t>(totalIndexBound);
     DeviceMemoryView<OptixClusterAccelBuildInputTrianglesArgs> buildArgs =
         deviceArena.PushArray<OptixClusterAccelBuildInputTrianglesArgs>(meshletCount);
@@ -77,7 +81,6 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
         outputVertices.data(),
         outputIndices.data(),
         buildArgs.data());
-    CUDA_ASSERT(cuStreamSynchronize(0));
 
     OptixClusterAccelBuildInput buildInput = {};
     buildInput.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_CLUSTERS_FROM_TRIANGLES;
@@ -130,28 +133,36 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
     {
         totalOutputSizeOut += hostOutputSizes[i];
     }
+    printf("size: %llu\n", totalOutputSizeOut);
 }
 
 __global__ void
 WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
                                 const unsigned int *meshletVertices,
                                 const uint8_t *meshletTriangles,
-                                const float3 *sourcePositions,
+                                const ::float3 *sourcePositions,
                                 unsigned int numClusters,
                                 unsigned int *nextVertexOffset,
                                 unsigned int *nextIndexOffset,
-                                float3 *outputVertices,
+                                ::float3 *outputVertices,
                                 uint8_t *outputIndices,
                                 OptixClusterAccelBuildInputTrianglesArgs *buildArgs)
 {
+    __shared__ unsigned int vertexOffset;
+    __shared__ unsigned int indexOffset;
+
     for (uint32_t clusterIdx = blockIdx.x; clusterIdx < numClusters; clusterIdx += gridDim.x)
     {
         const MeshletDesc meshlet = meshlets[clusterIdx];
         const unsigned int vertexCount = meshlet.vertexCount;
         const unsigned int triangleCount = meshlet.triangleCount;
 
-        const unsigned int vertexOffset = atomicAdd(nextVertexOffset, vertexCount);
-        const unsigned int indexOffset = atomicAdd(nextIndexOffset, triangleCount * 3u);
+        if (threadIdx.x == 0)
+        {
+            vertexOffset = atomicAdd(nextVertexOffset, vertexCount);
+            indexOffset = atomicAdd(nextIndexOffset, triangleCount * 3u);
+        }
+        __syncthreads();
 
         for (unsigned int i = threadIdx.x; i < vertexCount; i += blockDim.x)
         {
@@ -189,6 +200,7 @@ WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
             args.opacityMicromapIndexBuffer = 0;
             args.instantiationBoundingBoxLimit = 0;
         }
+        __syncthreads();
     }
 }
 

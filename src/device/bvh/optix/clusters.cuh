@@ -1,7 +1,5 @@
 #pragma once
 
-#include "scene/clusterizer.h"
-#include "scene/scene.h"
 #include "util/host_memory_arena.h"
 #include <cstdint>
 #include <cuda.h>
@@ -11,6 +9,8 @@
 YBI_NAMESPACE_BEGIN
 
 struct CUDADevice;
+struct MeshletClustersResult;
+struct Mesh;
 
 void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
                            HostMemoryArena &hostArena,

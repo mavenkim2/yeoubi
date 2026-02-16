@@ -1,5 +1,6 @@
 #include "device/cuda_device.h"
 #include "device/bvh/optix/clusters.cuh"
+#include "scene/scene.h"
 #include <optix_function_table_definition.h>
 
 YBI_NAMESPACE_BEGIN
@@ -337,7 +338,7 @@ void CUDADevice::BuildBVH(Scene *scene)
         (void)totalOutputSize; /* Phase 2 will use for CLAS allocation. */
 #else
         OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
-            cudaDevice, hostArena, *deviceArena, mesh, numMotionKeys, options);
+            this, hostArena, *deviceArena, mesh, numMotionKeys, options);
 #endif
 
         hostArena.Clear();

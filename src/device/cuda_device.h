@@ -9,7 +9,6 @@
 #include "util/array.h"
 #include "util/assert.h"
 #include "util/base.h"
-#include "util/float3.h"
 #include "util/host_memory_arena.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
