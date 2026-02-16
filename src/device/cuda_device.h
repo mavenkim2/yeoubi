@@ -4,7 +4,6 @@
 #include "device/cuda_device_memory_arena.h"
 #include "scene/clusterizer.h"
 #include "scene/micropolygon_mesh.h"
-#include "scene/scene.h"
 #include "util/aligned_malloc.h"
 #include "util/array.h"
 #include "util/assert.h"
@@ -30,20 +29,33 @@ struct ClusterAccelerationStructureLimits
     uint32_t maxVerticesPerCluster;
 };
 
+struct CUDAMemoryArenaDeleter
+{
+    void operator()(CUDAMemoryArena *p) const
+    {
+        if (p)
+        {
+            p->~CUDAMemoryArena();
+            util::AlignedFree(p);
+        }
+    }
+};
+
 struct CUDADevice
 {
+    CUdevice device;
     CUcontext cudaContext;
     OptixDeviceContext optixDeviceContext;
     size_t totalAllocated;
     size_t bvhTotalAllocated;
-    std::unique_ptr<CUDAMemoryArena> deviceArena;
+    std::unique_ptr<CUDAMemoryArena, CUDAMemoryArenaDeleter> deviceArena;
 
 #if (OPTIX_VERSION >= 90000)
     Array<OptixTraversableHandle> gridClusterTemplateHandles;
 #endif
 
     CUDADevice();
-    ~CUDADevice() = default;
+    ~CUDADevice();
 
     template <typename T>
     DeviceMemoryView<T> Alloc(size_t size);

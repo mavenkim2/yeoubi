@@ -133,7 +133,9 @@ void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
     {
         totalOutputSizeOut += hostOutputSizes[i];
     }
-    printf("size: %llu\n", totalOutputSizeOut);
+    cudaDevice->bvhTotalAllocated += totalOutputSizeOut;
+
+    deviceArena.Clear();
 }
 
 __global__ void

@@ -5,6 +5,7 @@
 #include "device/cuda_assert.h"
 #include "device/device_memory_view.h"
 #include "util/memory_arena.h"
+#include <cstdint>
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
@@ -23,7 +24,7 @@ struct CUDAMemoryProvider
         return (uint8_t *)dptr;
     }
 
-    static void Commit(uint8_t *ptr, size_t size)
+    static void *Commit(uint8_t *ptr, size_t size)
     {
         CUmemGenericAllocationHandle handle;
         CUmemAllocationProp prop = {};
@@ -38,12 +39,18 @@ struct CUDAMemoryProvider
         access.location.id = 0;
         access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
         CUDA_ASSERT(cuMemSetAccess((CUdeviceptr)ptr, size, &access, 1));
+        return (void *)(uintptr_t)handle;
     }
 
-    static void Free(uint8_t *ptr, size_t size)
+    static void
+    Free(uint8_t *base, size_t reserveSize, const ArenaCommit *commits, size_t numCommits)
     {
-        CUDA_ASSERT(cuMemUnmap((CUdeviceptr)ptr, size));
-        CUDA_ASSERT(cuMemAddressFree((CUdeviceptr)ptr, size));
+        for (size_t i = 0; i < numCommits; i++)
+        {
+            CUDA_ASSERT(cuMemUnmap((CUdeviceptr)commits[i].ptr, commits[i].size));
+            CUDA_ASSERT(cuMemRelease((CUmemGenericAllocationHandle)(uintptr_t)commits[i].cookie));
+        }
+        CUDA_ASSERT(cuMemAddressFree((CUdeviceptr)base, reserveSize));
     }
 
     static size_t GetPageSize()

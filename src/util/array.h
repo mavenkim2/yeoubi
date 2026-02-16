@@ -119,7 +119,7 @@ public:
     {
         if (m_size >= m_capacity)
         {
-            Reserve(m_capacity * 2);
+            Reserve(std::max(1llu, m_capacity * 2));
         }
         ::new (m_data + m_size) T(std::forward<Args>(args)...);
         m_size++;

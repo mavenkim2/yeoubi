@@ -24,20 +24,24 @@ struct CPUMemoryProvider
         return (uint8_t *)mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #endif
     }
-    static void Commit(uint8_t *ptr, size_t size)
+    static void *Commit(uint8_t *ptr, size_t size)
     {
 #if defined(_WIN32)
         VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE);
 #else
         mprotect(ptr, size, PROT_READ | PROT_WRITE);
 #endif
+        return nullptr;
     }
-    static void Free(uint8_t *ptr, size_t size)
+    static void
+    Free(uint8_t *base, size_t reserveSize, const ArenaCommit *commits, size_t numCommits)
     {
+        (void)commits;
+        (void)numCommits;
 #if defined(_WIN32)
-        VirtualFree(ptr, 0, MEM_RELEASE);
+        VirtualFree(base, 0, MEM_RELEASE);
 #else
-        munmap(ptr, size);
+        munmap(base, reserveSize);
 #endif
     }
     static size_t GetPageSize()

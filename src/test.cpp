@@ -35,11 +35,11 @@ int main(int argc, char **argv)
     auto start = std::chrono::high_resolution_clock::now();
     device.BuildBVH(&scene);
 
-    // for (Mesh &mesh : scene.meshes)
-    // {
-    //     // BuildBVH(&device, &scene.bvh, &mesh);
-    //     totalNumTriangles += mesh.numIndices / 3;
-    // }
+    for (Mesh &mesh : scene.meshes)
+    {
+        // BuildBVH(&device, &scene.bvh, &mesh);
+        totalNumTriangles += mesh.indices.size() / 3;
+    }
     auto end = std::chrono::high_resolution_clock::now();
     printf("bvh end\n");
     std::chrono::duration<double, std::milli> elapsed = end - start;

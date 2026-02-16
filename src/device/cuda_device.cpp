@@ -1,4 +1,5 @@
 #include "device/cuda_device.h"
+#include "cuda.h"
 #include "device/bvh/optix/clusters.cuh"
 #include "scene/scene.h"
 #include <optix_function_table_definition.h>
@@ -50,7 +51,6 @@ static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
 {
     cuInit(0);
-    CUdevice device;
     cuDeviceGet(&device, 0);
     cuDevicePrimaryCtxRetain(&cudaContext, device);
 
@@ -59,6 +59,17 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
     void *mem = util::AlignedAlloc(sizeof(CUDAMemoryArena), alignof(CUDAMemoryArena));
     YBI_ASSERT(mem != nullptr);
     deviceArena.reset(new (mem) CUDAMemoryArena());
+}
+
+CUDADevice::~CUDADevice()
+{
+    deviceArena.reset();
+    CUDA_ASSERT(cuDevicePrimaryCtxRelease(device));
+
+    if (optixDeviceContext)
+    {
+        OPTIX_ASSERT(optixDeviceContextDestroy(optixDeviceContext));
+    }
 }
 
 template <typename T>
@@ -345,6 +356,7 @@ void CUDADevice::BuildBVH(Scene *scene)
         deviceArena->Clear();
     }
 
+#if 0
     for (Curves &curve : scene->curves)
     {
         uint32_t numMotionKeys = 1;
@@ -433,6 +445,7 @@ void CUDADevice::BuildBVH(Scene *scene)
         hostArena.Clear();
         deviceArena->Clear();
     }
+#endif
 
 #if 0 //(OPTIX_VERSION >= 90000)
     const int templateMinDim = 2;

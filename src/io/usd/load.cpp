@@ -1008,7 +1008,7 @@ void LoadUSDScene(Scene *scene)
     const int maxDepth = 32;
     size_t instanceStart = 0;
     size_t pointInstancerStart = 0;
-#if 0
+
     while (depth++ < maxDepth && (instanceStart < state.instances.size() ||
                                   pointInstancerStart < state.pointInstancers.size()))
     {
@@ -1069,8 +1069,8 @@ void LoadUSDScene(Scene *scene)
 
     YBI_ASSERT(prototypes.size() == prototypeRanges.size());
 
+#if 0
     pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode(0.0));
-
 
     uint32_t numInstances = 0;
 

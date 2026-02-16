@@ -1,16 +1,27 @@
 #pragma once
 
 #include "util/aligned_malloc.h"
+#include "util/array.h"
 #include "util/assert.h"
 #include "util/base.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 #define ARENA_RESERVE_SIZE (64ll * 1024ll * 1024ll)
 #define ARENA_COMMIT_SIZE (64ll * 1024ll)
 
 YBI_NAMESPACE_BEGIN
+
+struct ArenaCommit
+{
+    uint8_t *ptr;
+    size_t size;
+    void *cookie;
+
+    ArenaCommit(uint8_t *ptr, size_t size, void *cookie) : ptr(ptr), size(size), cookie(cookie) {}
+};
 
 template <typename Provider>
 class MemoryArena
@@ -24,6 +35,7 @@ private:
     size_t reserveSize;
     size_t alignment;
     size_t commitSize;
+    Array<ArenaCommit> commits;
 
 public:
     template <typename T>
@@ -59,10 +71,13 @@ public:
                 toDelete->~MemoryArena();
                 util::AlignedFree(toDelete);
             }
+            current = this;
+            used = 0;
         }
         if (base)
         {
-            Provider::Free(base, reserveSize);
+            Provider::Free(base, reserveSize, commits.data(), commits.size());
+            base = nullptr;
         }
     }
 
@@ -109,7 +124,9 @@ public:
                 std::min(util::AlignUp(newUsed, current->commitSize), current->reserveSize);
             size_t commitRequestSize = commitTarget - current->committed;
 
-            Provider::Commit(current->base + current->committed, commitRequestSize);
+            void *cookie = Provider::Commit(current->base + current->committed, commitRequestSize);
+            current->commits.EmplaceBack(
+                current->base + current->committed, commitRequestSize, cookie);
             current->committed = commitTarget;
         }
 
