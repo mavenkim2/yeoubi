@@ -1,7 +1,9 @@
 #pragma once
 
+#include "device/bvh/optix/build_mesh_clas_get_sizes.h"
 #include "device/cuda_assert.h"
 #include "device/cuda_device_memory_arena.h"
+#include "scene/clusterizer.h"
 #include "scene/micropolygon_mesh.h"
 #include "scene/scene.h"
 #include "util/aligned_malloc.h"
@@ -389,7 +391,7 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
 
     for (Mesh &mesh : scene->meshes)
     {
-        uint32_t numMotionKeys = 1;
+        const uint32_t numMotionKeys = 1;
 
         OptixAccelBuildOptions options = {};
         options.buildFlags =
@@ -400,8 +402,16 @@ void BuildBVH(CUDADevice *cudaDevice, Scene *scene)
         options.motionOptions.timeBegin = 0.f;
         options.motionOptions.timeEnd = 1.f;
 
+#if (OPTIX_VERSION >= 90000)
+        MeshletClustersResult clusterResult = ClusterizeTest(mesh);
+        YBI_ASSERT(clusterResult.meshletCount > 0);
+        size_t totalOutputSize = 0;
+        BuildMeshCLASGetSizes(cudaDevice, hostArena, mesh, clusterResult, totalOutputSize);
+        (void)totalOutputSize; /* Phase 2 will use for CLAS allocation. */
+#else
         OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
             cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options);
+#endif
 
         hostArena.Clear();
         cudaDevice->deviceArena->Clear();

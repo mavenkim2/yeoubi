@@ -1,6 +1,8 @@
 #pragma once
 
-#include "util/float3.h"
+#include "scene/clusterizer.h"
+#include "scene/scene.h"
+#include "util/host_memory_arena.h"
 #include <cstdint>
 #include <cuda.h>
 #include <cuda_runtime.h>

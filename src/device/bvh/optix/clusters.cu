@@ -1,4 +1,6 @@
-#include "device/bvh/clusters.cuh"
+#include "device/bvh/optix/clusters.cuh"
+#include "device/cuda_assert.h"
+#include <cuda.h>
 
 YBI_NAMESPACE_BEGIN
 
@@ -23,14 +25,12 @@ WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
         const unsigned int vertexOffset = atomicAdd(nextVertexOffset, vertexCount);
         const unsigned int indexOffset = atomicAdd(nextIndexOffset, triangleCount * 3u);
 
-        /* Copy vertices: meshletVertices[vertexOffset + i] is global index. */
         for (unsigned int i = threadIdx.x; i < vertexCount; i += blockDim.x)
         {
             const unsigned int globalVertexIdx = meshletVertices[meshlet.vertexOffset + i];
             outputVertices[vertexOffset + i] = sourcePositions[globalVertexIdx];
         }
 
-        /* Copy indices: 3 x uint8_t per triangle (local vertex indices). */
         for (unsigned int t = threadIdx.x; t < triangleCount; t += blockDim.x)
         {
             const unsigned int src = meshlet.triangleOffset + t * 3u;
