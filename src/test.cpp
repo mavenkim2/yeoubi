@@ -24,11 +24,6 @@ int main(int argc, char **argv)
     Scene scene;
     LoadUSDScene(&scene);
 
-    for (Mesh &mesh : scene.meshes)
-    {
-        ClusterizeTest(mesh);
-    }
-
     // for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
     // {
     //     Subdivision(&scene, mesh);
@@ -38,7 +33,7 @@ int main(int argc, char **argv)
 
     printf("bvh start\n");
     auto start = std::chrono::high_resolution_clock::now();
-    BuildBVH(&device, &scene);
+    device.BuildBVH(&scene);
 
     // for (Mesh &mesh : scene.meshes)
     // {

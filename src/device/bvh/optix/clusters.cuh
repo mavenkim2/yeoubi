@@ -10,6 +10,14 @@
 
 YBI_NAMESPACE_BEGIN
 
+struct CUDADevice;
+
+void BuildMeshCLASGetSizes(CUDADevice *cudaDevice,
+                           HostMemoryArena &hostArena,
+                           const Mesh &mesh,
+                           const MeshletClustersResult &clusterResult,
+                           size_t &totalOutputSizeOut);
+
 struct MeshletDesc
 {
     unsigned int vertexOffset;
