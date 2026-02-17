@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -46,6 +47,29 @@ struct TessMesh
     std::vector<pxr::GfVec3f> positions;
     std::vector<int> indices;
 };
+
+struct MeshValidationStats
+{
+    int outOfBoundsTriangles = 0;
+    int degenerateIndexTriangles = 0;
+    int degenerateAreaTriangles = 0;
+    int maxVertexTriangleUse = 0;
+    int suspiciousOverusedVertices = 0;
+    int zeroPositionVertices = 0;
+};
+
+struct EvalDebugStats
+{
+    int patchLookupFailures = 0;
+    int fallbackEvaluations = 0;
+    int rawLookupMissesRecovered = 0;
+};
+
+static EvalDebugStats gEvalDebugStats = {};
+static std::vector<std::string> gRecoveredRawMissExamples;
+static const SelectedSubdivMesh *gFallbackSelectedMesh = nullptr;
+static const std::vector<int> *gFallbackCoarseFaceForPtex = nullptr;
+static const std::vector<int> *gFallbackFaceStartOffsets = nullptr;
 
 struct CameraPreset
 {
@@ -187,6 +211,87 @@ static std::vector<OsdData<T>> InterpolateVertex(const std::vector<T> &array,
     return values;
 }
 
+static const Far::PatchTable::PatchHandle *FindPatchHandleRobust(const Far::PatchMap &patchMap,
+                                                                  int ptexFace,
+                                                                  float u,
+                                                                  float v,
+                                                                  float &evalUOut,
+                                                                  float &evalVOut)
+{
+    const float eps = 1e-6f;
+    const float clampedU = std::clamp(u, eps, 1.0f - eps);
+    const float clampedV = std::clamp(v, eps, 1.0f - eps);
+    const std::array<pxr::GfVec2f, 12> candidates = {
+        pxr::GfVec2f(u, v),
+        pxr::GfVec2f(clampedU, clampedV),
+        pxr::GfVec2f(std::clamp(clampedU + eps, eps, 1.0f - eps), clampedV),
+        pxr::GfVec2f(std::clamp(clampedU - eps, eps, 1.0f - eps), clampedV),
+        pxr::GfVec2f(clampedU, std::clamp(clampedV + eps, eps, 1.0f - eps)),
+        pxr::GfVec2f(clampedU, std::clamp(clampedV - eps, eps, 1.0f - eps)),
+        pxr::GfVec2f(std::clamp(clampedU + eps, eps, 1.0f - eps),
+                     std::clamp(clampedV + eps, eps, 1.0f - eps)),
+        pxr::GfVec2f(std::clamp(clampedU + eps, eps, 1.0f - eps),
+                     std::clamp(clampedV - eps, eps, 1.0f - eps)),
+        pxr::GfVec2f(std::clamp(clampedU - eps, eps, 1.0f - eps),
+                     std::clamp(clampedV + eps, eps, 1.0f - eps)),
+        pxr::GfVec2f(std::clamp(clampedU - eps, eps, 1.0f - eps),
+                     std::clamp(clampedV - eps, eps, 1.0f - eps)),
+        pxr::GfVec2f(0.5f, 0.5f),
+        pxr::GfVec2f(0.25f, 0.25f),
+    };
+
+    for (const pxr::GfVec2f &candidate : candidates)
+    {
+        const Far::PatchTable::PatchHandle *handle =
+            patchMap.FindPatch(ptexFace, candidate[0], candidate[1]);
+        if (handle)
+        {
+            evalUOut = candidate[0];
+            evalVOut = candidate[1];
+            return handle;
+        }
+    }
+    evalUOut = clampedU;
+    evalVOut = clampedV;
+    return nullptr;
+}
+
+static pxr::GfVec3f EvaluateCoarseFallbackPosition(int ptexFace, float u, float v)
+{
+    if (!gFallbackSelectedMesh || !gFallbackCoarseFaceForPtex || !gFallbackFaceStartOffsets ||
+        ptexFace < 0 || ptexFace >= int(gFallbackCoarseFaceForPtex->size()))
+    {
+        return pxr::GfVec3f(0.0f);
+    }
+
+    const int coarseFace = (*gFallbackCoarseFaceForPtex)[size_t(ptexFace)];
+    if (coarseFace < 0 || coarseFace >= int(gFallbackSelectedMesh->faceVertexCounts.size()))
+    {
+        return pxr::GfVec3f(0.0f);
+    }
+
+    const int faceVertexCount = gFallbackSelectedMesh->faceVertexCounts[size_t(coarseFace)];
+    if (faceVertexCount != 4)
+    {
+        return pxr::GfVec3f(0.0f);
+    }
+
+    const int faceStart = (*gFallbackFaceStartOffsets)[size_t(coarseFace)];
+    const int i0 = gFallbackSelectedMesh->faceVertexIndices[size_t(faceStart + 0)];
+    const int i1 = gFallbackSelectedMesh->faceVertexIndices[size_t(faceStart + 1)];
+    const int i2 = gFallbackSelectedMesh->faceVertexIndices[size_t(faceStart + 2)];
+    const int i3 = gFallbackSelectedMesh->faceVertexIndices[size_t(faceStart + 3)];
+    const pxr::GfVec3f p0 = gFallbackSelectedMesh->points[size_t(i0)];
+    const pxr::GfVec3f p1 = gFallbackSelectedMesh->points[size_t(i1)];
+    const pxr::GfVec3f p2 = gFallbackSelectedMesh->points[size_t(i2)];
+    const pxr::GfVec3f p3 = gFallbackSelectedMesh->points[size_t(i3)];
+    const float uu = std::clamp(u, 0.0f, 1.0f);
+    const float vv = std::clamp(v, 0.0f, 1.0f);
+    const pxr::GfVec3f bottom = p0 * (1.0f - uu) + p1 * uu;
+    const pxr::GfVec3f top = p3 * (1.0f - uu) + p2 * uu;
+    return bottom * (1.0f - vv) + top * vv;
+}
+
 static pxr::GfVec3f EvaluatePosition(const Far::PatchMap &patchMap,
                                      const Far::PatchTable &patchTable,
                                      const std::vector<OsdData<pxr::GfVec3f>> &positions,
@@ -194,15 +299,49 @@ static pxr::GfVec3f EvaluatePosition(const Far::PatchMap &patchMap,
                                      float u,
                                      float v)
 {
-    const Far::PatchTable::PatchHandle *handle = patchMap.FindPatch(ptexFace, u, v);
+    const Far::PatchTable::PatchHandle *rawHandle = patchMap.FindPatch(ptexFace, u, v);
+    float evalU = 0.0f;
+    float evalV = 0.0f;
+    const Far::PatchTable::PatchHandle *handle =
+        FindPatchHandleRobust(patchMap, ptexFace, u, v, evalU, evalV);
+    if (!rawHandle && handle)
+    {
+        gEvalDebugStats.rawLookupMissesRecovered++;
+        if (gRecoveredRawMissExamples.size() < 16)
+        {
+            char line[256];
+            snprintf(line,
+                     sizeof(line),
+                     "ptex=%d req=(%.6f,%.6f) recovered=(%.6f,%.6f)",
+                     ptexFace,
+                     u,
+                     v,
+                     evalU,
+                     evalV);
+            gRecoveredRawMissExamples.push_back(std::string(line));
+        }
+    }
     if (!handle)
     {
+        gEvalDebugStats.patchLookupFailures++;
+        const pxr::GfVec3f coarseFallback = EvaluateCoarseFallbackPosition(ptexFace, u, v);
+        if (!(fabsf(coarseFallback[0]) < 1e-20f && fabsf(coarseFallback[1]) < 1e-20f &&
+              fabsf(coarseFallback[2]) < 1e-20f))
+        {
+            gEvalDebugStats.fallbackEvaluations++;
+            return coarseFallback;
+        }
+        if (!positions.empty())
+        {
+            gEvalDebugStats.fallbackEvaluations++;
+            return positions[0].value;
+        }
         return pxr::GfVec3f(0.0f);
     }
 
     Far::ConstIndexArray cvIndices = patchTable.GetPatchVertices(*handle);
     std::vector<float> pWeights(size_t(cvIndices.size()));
-    patchTable.EvaluateBasis(*handle, u, v, pWeights.data());
+    patchTable.EvaluateBasis(*handle, evalU, evalV, pWeights.data());
 
     pxr::GfVec3f p(0.0f);
     for (int cv = 0; cv < cvIndices.size(); cv++)
@@ -210,6 +349,185 @@ static pxr::GfVec3f EvaluatePosition(const Far::PatchMap &patchMap,
         p += positions[size_t(cvIndices[cv])].value * pWeights[size_t(cv)];
     }
     return p;
+}
+
+static bool FaceHasPatchCoverage(const Far::PatchMap &patchMap, int ptexFace)
+{
+    const std::array<pxr::GfVec2f, 5> probes = {
+        pxr::GfVec2f(0.5f, 0.5f),
+        pxr::GfVec2f(0.25f, 0.25f),
+        pxr::GfVec2f(0.75f, 0.25f),
+        pxr::GfVec2f(0.25f, 0.75f),
+        pxr::GfVec2f(0.75f, 0.75f)};
+    for (const pxr::GfVec2f &probe : probes)
+    {
+        float evalU = 0.0f;
+        float evalV = 0.0f;
+        if (FindPatchHandleRobust(patchMap, ptexFace, probe[0], probe[1], evalU, evalV))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void PrintNonEvaluableFaceInfo(const Far::PatchMap &patchMap,
+                                      const std::vector<int> &coarseFaceForPtex,
+                                      const SelectedSubdivMesh &selected,
+                                      const char *label)
+{
+    std::unordered_map<int, int> nonEvaluableCountByFaceVertexCount;
+    int totalNonEvaluable = 0;
+    for (size_t ptex = 0; ptex < coarseFaceForPtex.size(); ptex++)
+    {
+        if (FaceHasPatchCoverage(patchMap, int(ptex)))
+        {
+            continue;
+        }
+
+        totalNonEvaluable++;
+        const int coarseFace = coarseFaceForPtex[ptex];
+        int faceVertexCount = -1;
+        if (coarseFace >= 0 && coarseFace < int(selected.faceVertexCounts.size()))
+        {
+            faceVertexCount = selected.faceVertexCounts[size_t(coarseFace)];
+        }
+        nonEvaluableCountByFaceVertexCount[faceVertexCount]++;
+        if (totalNonEvaluable <= 128)
+        {
+            printf("non_evaluable [%s] ptex=%zu coarse_face=%d face_vertex_count=%d\n",
+                   label,
+                   ptex,
+                   coarseFace,
+                   faceVertexCount);
+        }
+    }
+
+    printf("non_evaluable_summary [%s] total=%d\n", label, totalNonEvaluable);
+    for (const auto &entry : nonEvaluableCountByFaceVertexCount)
+    {
+        printf("  non_evaluable_face_vertex_count [%s] count=%d faces=%d\n",
+               label,
+               entry.first,
+               entry.second);
+    }
+}
+
+static void PrintRawPatchLookupProbe(const Far::PatchMap &patchMap,
+                                     int numPtexFaces,
+                                     const char *label)
+{
+    int missCount = 0;
+    int printed = 0;
+    for (int face = 0; face < numPtexFaces; face++)
+    {
+        for (int vStep = 0; vStep <= 8; vStep++)
+        {
+            for (int uStep = 0; uStep <= 8; uStep++)
+            {
+                const float u = float(uStep) / 8.0f;
+                const float v = float(vStep) / 8.0f;
+                const Far::PatchTable::PatchHandle *handle = patchMap.FindPatch(face, u, v);
+                if (!handle)
+                {
+                    missCount++;
+                    if (printed < 24)
+                    {
+                        printf("raw_lookup_miss [%s] ptex=%d uv=(%.3f,%.3f)\n",
+                               label,
+                               face,
+                               u,
+                               v);
+                        printed++;
+                    }
+                }
+            }
+        }
+    }
+    printf("raw_lookup_probe [%s]: misses=%d sampled=%d\n",
+           label,
+           missCount,
+           numPtexFaces * 81);
+}
+
+static bool FaceHasAnyRawPatchCoverageDense(const Far::PatchMap &patchMap, int ptexFace)
+{
+    for (int vStep = 0; vStep <= 8; vStep++)
+    {
+        for (int uStep = 0; uStep <= 8; uStep++)
+        {
+            const float u = float(uStep) / 8.0f;
+            const float v = float(vStep) / 8.0f;
+            if (patchMap.FindPatch(ptexFace, u, v))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static void PrintRawNonEvaluableFaceInfo(const Far::PatchMap &patchMap,
+                                         const std::vector<int> &coarseFaceForPtex,
+                                         const SelectedSubdivMesh &selected,
+                                         const char *label)
+{
+    if (selected.faceVertexCounts.size() > 417)
+    {
+        const int faceVertexCount417 = selected.faceVertexCounts[417];
+        printf("coarse_face_probe [%s] coarse_face=417 face_vertex_count=%d is_triangle=%d\n",
+               label,
+               faceVertexCount417,
+               faceVertexCount417 == 3 ? 1 : 0);
+    }
+
+    std::unordered_map<int, int> nonEvaluableCountByFaceVertexCount;
+    int totalRawNonEvaluable = 0;
+    for (size_t ptex = 0; ptex < coarseFaceForPtex.size(); ptex++)
+    {
+        if (FaceHasAnyRawPatchCoverageDense(patchMap, int(ptex)))
+        {
+            continue;
+        }
+
+        totalRawNonEvaluable++;
+        const int coarseFace = coarseFaceForPtex[ptex];
+        int faceVertexCount = -1;
+        if (coarseFace >= 0 && coarseFace < int(selected.faceVertexCounts.size()))
+        {
+            faceVertexCount = selected.faceVertexCounts[size_t(coarseFace)];
+        }
+        nonEvaluableCountByFaceVertexCount[faceVertexCount]++;
+        printf("raw_non_evaluable [%s] ptex=%zu coarse_face=%d face_vertex_count=%d\n",
+               label,
+               ptex,
+               coarseFace,
+               faceVertexCount);
+    }
+
+    printf("raw_non_evaluable_summary [%s] total=%d\n", label, totalRawNonEvaluable);
+    for (const auto &entry : nonEvaluableCountByFaceVertexCount)
+    {
+        printf("  raw_non_evaluable_face_vertex_count [%s] count=%d faces=%d\n",
+               label,
+               entry.first,
+               entry.second);
+    }
+
+    if (420 < int(coarseFaceForPtex.size()))
+    {
+        const int coarseFace420 = coarseFaceForPtex[420];
+        int faceVertexCount420 = -1;
+        if (coarseFace420 >= 0 && coarseFace420 < int(selected.faceVertexCounts.size()))
+        {
+            faceVertexCount420 = selected.faceVertexCounts[size_t(coarseFace420)];
+        }
+        printf("raw_non_evaluable_probe ptex=420 [%s] coarse_face=%d face_vertex_count=%d has_raw_coverage=%d\n",
+               label,
+               coarseFace420,
+               faceVertexCount420,
+               FaceHasAnyRawPatchCoverageDense(patchMap, 420) ? 1 : 0);
+    }
 }
 
 static pxr::GfVec3f Normalize(const pxr::GfVec3f &v)
@@ -446,14 +764,221 @@ static int GetOrCreateEdgeVertex(const EdgeKey &key,
     return index;
 }
 
+static float TriangleAreaSquared(const pxr::GfVec3f &a, const pxr::GfVec3f &b, const pxr::GfVec3f &c)
+{
+    const pxr::GfVec3f ab = b - a;
+    const pxr::GfVec3f ac = c - a;
+    const pxr::GfVec3f cross = pxr::GfCross(ab, ac);
+    return pxr::GfDot(cross, cross) * 0.25f;
+}
+
+static bool IsTriangleDegenerate(const TessMesh &mesh, int i0, int i1, int i2)
+{
+    if (i0 == i1 || i1 == i2 || i2 == i0)
+    {
+        return true;
+    }
+    if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= int(mesh.positions.size()) || i1 >= int(mesh.positions.size()) ||
+        i2 >= int(mesh.positions.size()))
+    {
+        return true;
+    }
+
+    const float areaSq = TriangleAreaSquared(
+        mesh.positions[size_t(i0)], mesh.positions[size_t(i1)], mesh.positions[size_t(i2)]);
+    return areaSq < 1e-18f;
+}
+
+static MeshValidationStats ValidateMesh(const TessMesh &mesh, const char *label)
+{
+    MeshValidationStats stats = {};
+    if (mesh.positions.empty() || mesh.indices.empty())
+    {
+        return stats;
+    }
+
+    std::vector<int> usage(mesh.positions.size(), 0);
+    for (const pxr::GfVec3f &p : mesh.positions)
+    {
+        if (fabsf(p[0]) < 1e-20f && fabsf(p[1]) < 1e-20f && fabsf(p[2]) < 1e-20f)
+        {
+            stats.zeroPositionVertices++;
+        }
+    }
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+    {
+        const int i0 = mesh.indices[i + 0];
+        const int i1 = mesh.indices[i + 1];
+        const int i2 = mesh.indices[i + 2];
+        const bool outOfBounds = i0 < 0 || i1 < 0 || i2 < 0 || i0 >= int(mesh.positions.size()) ||
+                                 i1 >= int(mesh.positions.size()) || i2 >= int(mesh.positions.size());
+        if (outOfBounds)
+        {
+            stats.outOfBoundsTriangles++;
+            continue;
+        }
+
+        if (i0 == i1 || i1 == i2 || i2 == i0)
+        {
+            stats.degenerateIndexTriangles++;
+            continue;
+        }
+
+        const float areaSq = TriangleAreaSquared(
+            mesh.positions[size_t(i0)], mesh.positions[size_t(i1)], mesh.positions[size_t(i2)]);
+        if (areaSq < 1e-18f)
+        {
+            stats.degenerateAreaTriangles++;
+            continue;
+        }
+
+        usage[size_t(i0)]++;
+        usage[size_t(i1)]++;
+        usage[size_t(i2)]++;
+    }
+
+    long long totalUse = 0;
+    for (int count : usage)
+    {
+        stats.maxVertexTriangleUse = std::max(stats.maxVertexTriangleUse, count);
+        totalUse += count;
+    }
+    const float meanUse = usage.empty() ? 0.0f : float(totalUse) / float(usage.size());
+    for (int count : usage)
+    {
+        if (count > 500 && count > int(meanUse * 50.0f))
+        {
+            stats.suspiciousOverusedVertices++;
+        }
+    }
+
+    printf("Mesh validation [%s]: oob=%d deg_idx=%d deg_area=%d max_use=%d suspicious_use=%d zero_pos=%d\n",
+           label,
+           stats.outOfBoundsTriangles,
+           stats.degenerateIndexTriangles,
+           stats.degenerateAreaTriangles,
+           stats.maxVertexTriangleUse,
+           stats.suspiciousOverusedVertices,
+           stats.zeroPositionVertices);
+    return stats;
+}
+
+static bool CleanupInvalidTriangles(TessMesh &mesh)
+{
+    bool changed = false;
+    std::vector<int> cleaned;
+    cleaned.reserve(mesh.indices.size());
+
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+    {
+        const int i0 = mesh.indices[i + 0];
+        const int i1 = mesh.indices[i + 1];
+        const int i2 = mesh.indices[i + 2];
+        const bool outOfBounds = i0 < 0 || i1 < 0 || i2 < 0 || i0 >= int(mesh.positions.size()) ||
+                                 i1 >= int(mesh.positions.size()) || i2 >= int(mesh.positions.size());
+        if (outOfBounds || IsTriangleDegenerate(mesh, i0, i1, i2))
+        {
+            changed = true;
+            continue;
+        }
+
+        cleaned.push_back(i0);
+        cleaned.push_back(i1);
+        cleaned.push_back(i2);
+    }
+
+    if (changed)
+    {
+        mesh.indices.swap(cleaned);
+    }
+    return changed;
+}
+
+static int FixZeroPositionVertices(TessMesh &mesh)
+{
+    if (mesh.positions.empty() || mesh.indices.empty())
+    {
+        return 0;
+    }
+
+    std::vector<pxr::GfVec3f> sum(mesh.positions.size(), pxr::GfVec3f(0.0f));
+    std::vector<int> count(mesh.positions.size(), 0);
+
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+    {
+        const int idx[3] = {mesh.indices[i + 0], mesh.indices[i + 1], mesh.indices[i + 2]};
+        for (int a = 0; a < 3; a++)
+        {
+            if (idx[a] < 0 || idx[a] >= int(mesh.positions.size()))
+            {
+                continue;
+            }
+            for (int b = 0; b < 3; b++)
+            {
+                if (a == b || idx[b] < 0 || idx[b] >= int(mesh.positions.size()))
+                {
+                    continue;
+                }
+                sum[size_t(idx[a])] += mesh.positions[size_t(idx[b])];
+                count[size_t(idx[a])]++;
+            }
+        }
+    }
+
+    pxr::GfVec3f fallback(0.0f);
+    for (const pxr::GfVec3f &p : mesh.positions)
+    {
+        if (!(fabsf(p[0]) < 1e-20f && fabsf(p[1]) < 1e-20f && fabsf(p[2]) < 1e-20f))
+        {
+            fallback = p;
+            break;
+        }
+    }
+
+    int fixed = 0;
+    for (size_t i = 0; i < mesh.positions.size(); i++)
+    {
+        const pxr::GfVec3f p = mesh.positions[i];
+        const bool isZero = fabsf(p[0]) < 1e-20f && fabsf(p[1]) < 1e-20f && fabsf(p[2]) < 1e-20f;
+        if (!isZero)
+        {
+            continue;
+        }
+
+        if (count[i] > 0)
+        {
+            mesh.positions[i] = sum[i] / float(count[i]);
+            fixed++;
+        }
+        else
+        {
+            mesh.positions[i] = fallback;
+            fixed++;
+        }
+    }
+    return fixed;
+}
+
 static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
                                           const Far::PatchTable &patchTable,
                                           const std::vector<OsdData<pxr::GfVec3f>> &positions,
                                           const std::vector<EdgeAdjacency> &adjacency,
+                                          const std::vector<int> &coarseFaceForPtex,
+                                          const std::vector<int> &faceStartOffsets,
+                                          const SelectedSubdivMesh &selected,
                                           int numPtexFaces,
                                           const CameraPreset &camera,
                                           const AdaptiveSettings &settings)
 {
+    std::vector<bool> faceIsEvaluable(size_t(numPtexFaces), false);
+    for (int face = 0; face < numPtexFaces; face++)
+    {
+        faceIsEvaluable[size_t(face)] = FaceHasPatchCoverage(patchMap, face);
+    }
+    gFallbackSelectedMesh = &selected;
+    gFallbackCoarseFaceForPtex = &coarseFaceForPtex;
+    gFallbackFaceStartOffsets = &faceStartOffsets;
+
     std::unordered_map<EdgeKey, int, EdgeKeyHash> edgeRateCache;
     std::vector<std::array<int, 4>> patchEdgeRates(
         size_t(numPtexFaces), std::array<int, 4>{{1, 1, 1, 1}});
@@ -565,15 +1090,25 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
                 const int i1 = gridIndices[size_t(GridOffset(u + 1, v))];
                 const int i2 = gridIndices[size_t(GridOffset(u + 1, v + 1))];
                 const int i3 = gridIndices[size_t(GridOffset(u, v + 1))];
-                mesh.indices.push_back(i0);
-                mesh.indices.push_back(i1);
-                mesh.indices.push_back(i2);
-                mesh.indices.push_back(i0);
-                mesh.indices.push_back(i2);
-                mesh.indices.push_back(i3);
+                if (!IsTriangleDegenerate(mesh, i0, i1, i2))
+                {
+                    mesh.indices.push_back(i0);
+                    mesh.indices.push_back(i1);
+                    mesh.indices.push_back(i2);
+                }
+                if (!IsTriangleDegenerate(mesh, i0, i2, i3))
+                {
+                    mesh.indices.push_back(i0);
+                    mesh.indices.push_back(i2);
+                    mesh.indices.push_back(i3);
+                }
             }
         }
     }
+
+    gFallbackSelectedMesh = nullptr;
+    gFallbackCoarseFaceForPtex = nullptr;
+    gFallbackFaceStartOffsets = nullptr;
 
     return mesh;
 }
@@ -668,22 +1203,29 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
                                 const char *farOutputName,
                                 const char *nearOutputName)
 {
+    if (selected.faceVertexCounts.size() > 417)
+    {
+        const int faceVertexCount417 = selected.faceVertexCounts[417];
+        printf("process_mesh_probe [%s] coarse_face=417 face_vertex_count=%d is_triangle=%d\n",
+               selected.path.GetString().c_str(),
+               faceVertexCount417,
+               faceVertexCount417 == 3 ? 1 : 0);
+    }
+
     Far::TopologyDescriptor desc = {};
     desc.numVertices = int(selected.points.size());
     desc.numFaces = int(selected.faceVertexCounts.size());
     desc.numVertsPerFace = selected.faceVertexCounts.cdata();
     desc.vertIndicesPerFace = selected.faceVertexIndices.cdata();
-    std::vector<int> creaseVertexPairs;
-    std::vector<float> creaseSharpness;
-    BuildCreasePairs(selected, creaseVertexPairs, creaseSharpness);
-    desc.numCreases = int(creaseSharpness.size());
-    desc.creaseVertexIndexPairs = creaseVertexPairs.empty() ? nullptr : creaseVertexPairs.data();
-    desc.creaseWeights = creaseSharpness.empty() ? nullptr : creaseSharpness.data();
-    desc.numCorners = int(std::min(selected.cornerIndices.size(), selected.cornerSharpnesses.size()));
-    desc.cornerVertexIndices = selected.cornerIndices.cdata();
-    desc.cornerWeights = selected.cornerSharpnesses.cdata();
-    desc.numHoles = int(selected.holeIndices.size());
-    desc.holeIndices = selected.holeIndices.cdata();
+    // Temporary debug mode: disable crease/corner/hole handling to isolate artifacts.
+    desc.numCreases = 0;
+    desc.creaseVertexIndexPairs = nullptr;
+    desc.creaseWeights = nullptr;
+    desc.numCorners = 0;
+    desc.cornerVertexIndices = nullptr;
+    desc.cornerWeights = nullptr;
+    desc.numHoles = 0;
+    desc.holeIndices = nullptr;
 
     const Sdc::SchemeType scheme = Sdc::SCHEME_CATMARK;
     Sdc::Options options;
@@ -711,10 +1253,22 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
     Far::PatchMap patchMap(*patchTable);
     Far::PtexIndices ptexIndices(*refiner);
     const int numPtexFaces = ptexIndices.GetNumFaces();
+    PrintRawPatchLookupProbe(patchMap, numPtexFaces, selected.path.GetString().c_str());
 
     std::vector<int> coarseFaceForPtex;
     std::vector<int> quadrantForPtex;
     BuildPtexMaps(selected, ptexIndices, numPtexFaces, coarseFaceForPtex, quadrantForPtex);
+    std::vector<int> faceStartOffsets(selected.faceVertexCounts.size(), 0);
+    int faceStart = 0;
+    for (size_t face = 0; face < selected.faceVertexCounts.size(); face++)
+    {
+        faceStartOffsets[face] = faceStart;
+        faceStart += selected.faceVertexCounts[face];
+    }
+    PrintNonEvaluableFaceInfo(
+        patchMap, coarseFaceForPtex, selected, selected.path.GetString().c_str());
+    PrintRawNonEvaluableFaceInfo(
+        patchMap, coarseFaceForPtex, selected, selected.path.GetString().c_str());
     const std::vector<EdgeAdjacency> adjacency =
         BuildAdjacency(*refiner, ptexIndices, coarseFaceForPtex, quadrantForPtex);
 
@@ -739,10 +1293,7 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
            controlCagePath.string().c_str(),
            selected.points.size(),
            selected.faceVertexCounts.size());
-    printf("Control-cage features: creaseSegments=%zu corners=%d holes=%d\n",
-           creaseSharpness.size(),
-           desc.numCorners,
-           desc.numHoles);
+    printf("Control-cage features: crease/corner/hole handling disabled for tessellation debug.\n");
 
     UsdCameraInfo usdCameraInfo = {};
     if (GetClosestUsdCameraInfo(stage, selected.points, usdCameraInfo))
@@ -762,8 +1313,59 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
     for (int i = 0; i < 2; i++)
     {
         const CameraPreset &camera = cameras[size_t(i)];
-        const TessMesh tessMesh = TessellateAdaptiveNoSplit(
-            patchMap, *patchTable, refinedPositions, adjacency, numPtexFaces, camera, settings);
+        gEvalDebugStats = {};
+        gRecoveredRawMissExamples.clear();
+        TessMesh tessMesh = TessellateAdaptiveNoSplit(
+            patchMap,
+            *patchTable,
+            refinedPositions,
+            adjacency,
+            coarseFaceForPtex,
+            faceStartOffsets,
+            selected,
+            numPtexFaces,
+            camera,
+            settings);
+        for (int pass = 0; pass < 64; pass++)
+        {
+            const MeshValidationStats stats =
+                ValidateMesh(tessMesh, camera.name);
+            const bool hasCriticalInvalid = stats.outOfBoundsTriangles > 0 ||
+                                            stats.degenerateIndexTriangles > 0 ||
+                                            stats.degenerateAreaTriangles > 0;
+            const bool hasZeroPositions = stats.zeroPositionVertices > 0;
+            if (!hasCriticalInvalid && !hasZeroPositions)
+            {
+                break;
+            }
+
+            bool changed = false;
+            if (hasCriticalInvalid)
+            {
+                changed = CleanupInvalidTriangles(tessMesh) || changed;
+            }
+            if (hasZeroPositions)
+            {
+                const int fixedZeroCount = FixZeroPositionVertices(tessMesh);
+                changed = fixedZeroCount > 0 || changed;
+                printf("Zero-fix [%s]: fixed=%d pass=%d\n", camera.name, fixedZeroCount, pass);
+            }
+            if (!changed)
+            {
+                break;
+            }
+        }
+        printf("Eval debug [%s]: patch_lookup_failures=%d fallbacks=%d\n",
+               camera.name,
+               gEvalDebugStats.patchLookupFailures,
+               gEvalDebugStats.fallbackEvaluations);
+        printf("Eval debug [%s]: raw_misses_recovered=%d\n",
+               camera.name,
+               gEvalDebugStats.rawLookupMissesRecovered);
+        for (const std::string &example : gRecoveredRawMissExamples)
+        {
+            printf("  recovered_raw_miss [%s] %s\n", camera.name, example.c_str());
+        }
         const fs::path outPath = outputDir / outputNames[i];
         if (!WriteAdaptiveObj(tessMesh, outPath, selected, camera, settings, usdCameraInfo))
         {
@@ -816,6 +1418,13 @@ int main()
     SelectedSubdivMesh selectedWithCreases = {};
     if (SelectLargestCatmullClarkMeshWithCreases(stage, selectedWithCreases))
     {
+        if (selectedWithCreases.faceVertexCounts.size() > 417)
+        {
+            const int faceVertexCount417 = selectedWithCreases.faceVertexCounts[417];
+            printf("selected_creased coarse_face=417 face_vertex_count=%d is_triangle=%d\n",
+                   faceVertexCount417,
+                   faceVertexCount417 == 3 ? 1 : 0);
+        }
         if (!ProcessSelectedMesh(stage,
                                  selectedWithCreases,
                                  outputDir,

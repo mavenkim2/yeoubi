@@ -11,9 +11,11 @@
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
@@ -45,6 +47,22 @@ struct LaunchParams
     ybi::float3 cameraV;
     ybi::float3 cameraW;
     WireframeConfig wireframe;
+};
+
+enum class RenderType
+{
+    Triangle,
+    Cluster,
+    Curve
+};
+
+struct CliOptions
+{
+    RenderType type = RenderType::Triangle;
+    std::string inputPath = "tests/bvh/out/stoat_body_selected.obj";
+    std::string outputPath = "optix_triangle_gas.png";
+    std::optional<ybi::float3> cameraPosition;
+    std::optional<ybi::float3> lookAt;
 };
 
 template <typename T>
@@ -88,6 +106,127 @@ static ybi::float3 Normalize(const ybi::float3 &v)
     }
     const float invLen = 1.0f / std::sqrt(lenSq);
     return v * invLen;
+}
+
+static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valueOut)
+{
+    if (startIndex + 2 >= argc)
+    {
+        return false;
+    }
+    valueOut.x = std::stof(argv[startIndex + 0]);
+    valueOut.y = std::stof(argv[startIndex + 1]);
+    valueOut.z = std::stof(argv[startIndex + 2]);
+    return true;
+}
+
+static void PrintUsage(const char *exeName)
+{
+    printf("Usage: %s [--type triangle|cluster|curve] [--file path] [--out path] "
+           "[--cam-pos x y z] [--look-at x y z]\n",
+           exeName);
+    printf("  --type triangle|cluster|curve\n");
+    printf("  --file OBJ path for triangle/cluster; JSON path for curve\n");
+    printf("  --out PNG output path\n");
+    printf("  --cam-pos optional camera position override\n");
+    printf("  --look-at optional look-at target (default bounds center)\n");
+}
+
+static CliOptions ParseCli(int argc, char **argv)
+{
+    CliOptions options = {};
+    for (int i = 1; i < argc; i++)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--type")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            const std::string value = argv[++i];
+            if (value == "triangle")
+            {
+                options.type = RenderType::Triangle;
+                if (options.outputPath == "optix_triangle_gas.png")
+                {
+                    options.outputPath = "optix_triangle_gas.png";
+                }
+            }
+            else if (value == "cluster")
+            {
+                options.type = RenderType::Cluster;
+                options.outputPath = "optix_cluster_gas.png";
+            }
+            else if (value == "curve")
+            {
+                options.type = RenderType::Curve;
+                options.inputPath = "tests/bvh/out/selected_curve.json";
+                options.outputPath = "optix_curve_gas.png";
+            }
+            else
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            continue;
+        }
+        if (arg == "--file")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.inputPath = argv[++i];
+            continue;
+        }
+        if (arg == "--out")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.outputPath = argv[++i];
+            continue;
+        }
+        if (arg == "--cam-pos")
+        {
+            ybi::float3 value = {};
+            if (!ParseFloat3(argc, argv, i + 1, value))
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.cameraPosition = value;
+            i += 3;
+            continue;
+        }
+        if (arg == "--look-at")
+        {
+            ybi::float3 value = {};
+            if (!ParseFloat3(argc, argv, i + 1, value))
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.lookAt = value;
+            i += 3;
+            continue;
+        }
+        if (arg == "--help" || arg == "-h")
+        {
+            PrintUsage(argv[0]);
+            std::exit(0);
+        }
+
+        PrintUsage(argv[0]);
+        std::abort();
+    }
+
+    return options;
 }
 
 static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int width, int height)
@@ -556,20 +695,29 @@ static void RenderTraversable(OptixPipeline pipeline,
                               OptixTraversableHandle traversable,
                               const ybi::float3 &boundsMin,
                               const ybi::float3 &boundsMax,
-                              const char *outputFile)
+                              const char *outputFile,
+                              const std::optional<ybi::float3> &cameraPositionOverride,
+                              const std::optional<ybi::float3> &lookAtOverride)
 {
+    printf("render: begin\n");
+    fflush(stdout);
     const int width = 1280;
     const int height = 720;
     const size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
     CUdeviceptr imageBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&imageBuffer, imageSize));
+    printf("render: image buffer allocated\n");
+    fflush(stdout);
 
     const ybi::float3 center = (boundsMin + boundsMax) * 0.5f;
     const ybi::float3 extent = boundsMax - boundsMin;
     const float diagonal = std::max(0.001f, ybi::length(extent));
 
-    const ybi::float3 eye = center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
-    const ybi::float3 forward = Normalize(center - eye);
+    const ybi::float3 eye =
+        cameraPositionOverride.has_value() ? cameraPositionOverride.value()
+                                           : center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
+    const ybi::float3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
+    const ybi::float3 forward = Normalize(lookAt - eye);
     const ybi::float3 worldUp = ybi::make_float3(0.0f, 1.0f, 0.0f);
     const ybi::float3 right = Normalize(Cross(forward, worldUp));
     const ybi::float3 up = Normalize(Cross(right, forward));
@@ -594,38 +742,51 @@ static void RenderTraversable(OptixPipeline pipeline,
     CUdeviceptr paramsBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&paramsBuffer, sizeof(LaunchParams)));
     CUDA_ASSERT(cuMemcpyHtoD(paramsBuffer, &params, sizeof(LaunchParams)));
+    printf("render: params uploaded\n");
+    fflush(stdout);
 
     OPTIX_ASSERT(optixLaunch(
         pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
+    printf("render: launch returned\n");
+    fflush(stdout);
     CUDA_ASSERT(cuStreamSynchronize(0));
+    printf("render: stream synced\n");
+    fflush(stdout);
 
     std::vector<uint8_t> hostImage(imageSize);
     CUDA_ASSERT(cuMemcpyDtoH(hostImage.data(), imageBuffer, imageSize));
-    if (!SavePNG(outputFile, hostImage, width, height))
+    printf("render: copied image to host\n");
+    fflush(stdout);
+    const bool writeOk = SavePNG(outputFile, hostImage, width, height);
+    printf("render: save returned=%d file=%s\n", writeOk ? 1 : 0, outputFile);
+    fflush(stdout);
+    if (!writeOk)
     {
         fprintf(stderr, "Failed to write PNG: %s\n", outputFile);
     }
 
     CUDA_ASSERT(cuMemFree(paramsBuffer));
     CUDA_ASSERT(cuMemFree(imageBuffer));
+    printf("render: end\n");
+    fflush(stdout);
 }
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
-    const std::string objPath = "tests/bvh/out/stoat_body_selected.obj";
-    const std::string curveJsonPath = "tests/bvh/out/selected_curve.json";
-    Mesh mesh = LoadObjMesh(objPath);
-    if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
-    {
-        fprintf(stderr, "OBJ has no geometry: %s\n", objPath.c_str());
-        return 1;
-    }
-    Curves curves = LoadCurveJson(curveJsonPath);
+    printf("optix_harness: start\n");
+    fflush(stdout);
+    const CliOptions options = ParseCli(argc, argv);
+    printf("optix_harness: parsed cli\n");
+    fflush(stdout);
 
     CUDADevice device;
+    printf("optix_harness: cuda device ready\n");
+    fflush(stdout);
     HostMemoryArena hostArena;
     const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
+    printf("optix_harness: ptx loaded\n");
+    fflush(stdout);
 
     OptixShaderBindingTable sbt = {};
     CUdeviceptr raygenRecordBuffer = 0;
@@ -636,18 +797,7 @@ int main()
     OptixProgramGroup raygenGroup = nullptr;
     OptixProgramGroup missGroup = nullptr;
     OptixProgramGroup hitgroupGroup = nullptr;
-    OptixPipeline pipeline = CreatePipeline(device.optixDeviceContext,
-                                            ptx,
-                                            false,
-                                            sbt,
-                                            raygenRecordBuffer,
-                                            missRecordBuffer,
-                                            hitgroupRecordBuffer,
-                                            module,
-                                            curveModule,
-                                            raygenGroup,
-                                            missGroup,
-                                            hitgroupGroup);
+    OptixPipeline pipeline = nullptr;
 
     OptixShaderBindingTable curveSbt = {};
     CUdeviceptr curveRaygenRecordBuffer = 0;
@@ -658,106 +808,177 @@ int main()
     OptixProgramGroup curveRaygenGroup = nullptr;
     OptixProgramGroup curveMissGroup = nullptr;
     OptixProgramGroup curveHitgroupGroup = nullptr;
-    OptixPipeline curvePipeline = CreatePipeline(device.optixDeviceContext,
-                                                 ptx,
-                                                 true,
-                                                 curveSbt,
-                                                 curveRaygenRecordBuffer,
-                                                 curveMissRecordBuffer,
-                                                 curveHitgroupRecordBuffer,
-                                                 curvePipelineModule,
-                                                 curveIsModule,
-                                                 curveRaygenGroup,
-                                                 curveMissGroup,
-                                                 curveHitgroupGroup);
+    OptixPipeline curvePipeline = nullptr;
 
-    ybi::float3 meshBoundsMin, meshBoundsMax;
-    ComputeBounds(mesh, meshBoundsMin, meshBoundsMax);
-
-    OptixTraversableHandle triangleHandle = BuildTriangleGASFromMesh(&device, hostArena, mesh);
-    RenderTraversable(
-        pipeline, sbt, triangleHandle, meshBoundsMin, meshBoundsMax, "optix_triangle_gas.png");
-    printf("Wrote optix_triangle_gas.png\n");
-    hostArena.Clear();
-    device.deviceArena->Clear();
-
-#if (OPTIX_VERSION >= 90000)
-    OptixTraversableHandle clusterHandle = BuildClusterGASFromMesh(&device, hostArena, mesh);
-    if (clusterHandle)
+    if (options.type == RenderType::Triangle || options.type == RenderType::Cluster)
     {
-        RenderTraversable(
-            pipeline, sbt, clusterHandle, meshBoundsMin, meshBoundsMax, "optix_cluster_gas.png");
-        printf("Wrote optix_cluster_gas.png\n");
+        pipeline = CreatePipeline(device.optixDeviceContext,
+                                  ptx,
+                                  false,
+                                  sbt,
+                                  raygenRecordBuffer,
+                                  missRecordBuffer,
+                                  hitgroupRecordBuffer,
+                                  module,
+                                  curveModule,
+                                  raygenGroup,
+                                  missGroup,
+                                  hitgroupGroup);
+        printf("optix_harness: triangle pipeline created\n");
+        fflush(stdout);
     }
     else
     {
-        printf("Cluster handle invalid; skipped cluster render.\n");
+        curvePipeline = CreatePipeline(device.optixDeviceContext,
+                                       ptx,
+                                       true,
+                                       curveSbt,
+                                       curveRaygenRecordBuffer,
+                                       curveMissRecordBuffer,
+                                       curveHitgroupRecordBuffer,
+                                       curvePipelineModule,
+                                       curveIsModule,
+                                       curveRaygenGroup,
+                                       curveMissGroup,
+                                       curveHitgroupGroup);
+        printf("optix_harness: curve pipeline created\n");
+        fflush(stdout);
     }
-    hostArena.Clear();
-    device.deviceArena->Clear();
-#else
-    printf("Cluster GAS not supported on this OptiX version.\n");
-#endif
 
-    if (curves.GetNumVertices() > 0 && curves.GetNumCurves() > 0)
+    if (options.type == RenderType::Triangle || options.type == RenderType::Cluster)
     {
-        ybi::float3 curveBoundsMin, curveBoundsMax;
-        ComputeBounds(curves, curveBoundsMin, curveBoundsMax);
-        printf("Curve bounds min=(%f,%f,%f) max=(%f,%f,%f)\n",
-               curveBoundsMin.x,
-               curveBoundsMin.y,
-               curveBoundsMin.z,
-               curveBoundsMax.x,
-               curveBoundsMax.y,
-               curveBoundsMax.z);
-        OptixTraversableHandle curveHandle = BuildCurveGASFromCurves(&device, hostArena, curves);
-        printf("Curve handle=%llu\n", (unsigned long long)curveHandle);
-        if (curveHandle)
+        printf("optix_harness: loading obj %s\n", options.inputPath.c_str());
+        fflush(stdout);
+        Mesh mesh = LoadObjMesh(options.inputPath);
+        printf("optix_harness: obj loaded verts=%zu tris=%zu\n",
+               mesh.positions.size(),
+               mesh.indices.size() / 3);
+        fflush(stdout);
+        if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
         {
-            RenderTraversable(curvePipeline,
-                              curveSbt,
-                              curveHandle,
-                              curveBoundsMin,
-                              curveBoundsMax,
-                              "optix_curve_gas.png");
-            printf("Wrote optix_curve_gas.png\n");
+            fprintf(stderr, "OBJ has no geometry: %s\n", options.inputPath.c_str());
+            return 1;
+        }
+        ybi::float3 meshBoundsMin, meshBoundsMax;
+        ComputeBounds(mesh, meshBoundsMin, meshBoundsMax);
+
+        if (options.type == RenderType::Triangle)
+        {
+            printf("optix_harness: building triangle gas\n");
+            fflush(stdout);
+            OptixTraversableHandle triangleHandle = BuildTriangleGASFromMesh(&device, hostArena, mesh);
+            printf("optix_harness: rendering triangle gas\n");
+            fflush(stdout);
+            RenderTraversable(pipeline,
+                              sbt,
+                              triangleHandle,
+                              meshBoundsMin,
+                              meshBoundsMax,
+                              options.outputPath.c_str(),
+                              options.cameraPosition,
+                              options.lookAt);
+            printf("Wrote %s\n", options.outputPath.c_str());
         }
         else
         {
-            printf("Curve handle invalid; skipped curve render.\n");
+#if (OPTIX_VERSION >= 90000)
+            printf("optix_harness: building cluster gas\n");
+            fflush(stdout);
+            OptixTraversableHandle clusterHandle = BuildClusterGASFromMesh(&device, hostArena, mesh);
+            if (clusterHandle)
+            {
+                printf("optix_harness: rendering cluster gas\n");
+                fflush(stdout);
+                RenderTraversable(pipeline,
+                                  sbt,
+                                  clusterHandle,
+                                  meshBoundsMin,
+                                  meshBoundsMax,
+                                  options.outputPath.c_str(),
+                                  options.cameraPosition,
+                                  options.lookAt);
+                printf("Wrote %s\n", options.outputPath.c_str());
+            }
+            else
+            {
+                printf("Cluster handle invalid; skipped cluster render.\n");
+            }
+#else
+            printf("Cluster GAS not supported on this OptiX version.\n");
+#endif
         }
     }
     else
     {
-        printf("Curve JSON empty or invalid; skipped curve render: %s\n", curveJsonPath.c_str());
+        printf("optix_harness: loading curve json %s\n", options.inputPath.c_str());
+        fflush(stdout);
+        Curves curves = LoadCurveJson(options.inputPath);
+        printf("optix_harness: curve loaded verts=%d curves=%d\n",
+               curves.GetNumVertices(),
+               curves.GetNumCurves());
+        fflush(stdout);
+        if (curves.GetNumVertices() > 0 && curves.GetNumCurves() > 0)
+        {
+            ybi::float3 curveBoundsMin, curveBoundsMax;
+            ComputeBounds(curves, curveBoundsMin, curveBoundsMax);
+            OptixTraversableHandle curveHandle = BuildCurveGASFromCurves(&device, hostArena, curves);
+            if (curveHandle)
+            {
+                RenderTraversable(curvePipeline,
+                                  curveSbt,
+                                  curveHandle,
+                                  curveBoundsMin,
+                                  curveBoundsMax,
+                                  options.outputPath.c_str(),
+                                  options.cameraPosition,
+                                  options.lookAt);
+                printf("Wrote %s\n", options.outputPath.c_str());
+            }
+            else
+            {
+                printf("Curve handle invalid; skipped curve render.\n");
+            }
+        }
+        else
+        {
+            printf("Curve JSON empty or invalid; skipped curve render: %s\n", options.inputPath.c_str());
+        }
     }
     hostArena.Clear();
     device.deviceArena->Clear();
 
-    CUDA_ASSERT(cuMemFree(hitgroupRecordBuffer));
-    CUDA_ASSERT(cuMemFree(missRecordBuffer));
-    CUDA_ASSERT(cuMemFree(raygenRecordBuffer));
-    OPTIX_ASSERT(optixPipelineDestroy(pipeline));
-    OPTIX_ASSERT(optixProgramGroupDestroy(hitgroupGroup));
-    OPTIX_ASSERT(optixProgramGroupDestroy(missGroup));
-    OPTIX_ASSERT(optixProgramGroupDestroy(raygenGroup));
-    if (curveModule)
+    if (pipeline)
     {
-        OPTIX_ASSERT(optixModuleDestroy(curveModule));
+        CUDA_ASSERT(cuMemFree(hitgroupRecordBuffer));
+        CUDA_ASSERT(cuMemFree(missRecordBuffer));
+        CUDA_ASSERT(cuMemFree(raygenRecordBuffer));
+        OPTIX_ASSERT(optixPipelineDestroy(pipeline));
+        OPTIX_ASSERT(optixProgramGroupDestroy(hitgroupGroup));
+        OPTIX_ASSERT(optixProgramGroupDestroy(missGroup));
+        OPTIX_ASSERT(optixProgramGroupDestroy(raygenGroup));
+        if (curveModule)
+        {
+            OPTIX_ASSERT(optixModuleDestroy(curveModule));
+        }
+        OPTIX_ASSERT(optixModuleDestroy(module));
     }
-    OPTIX_ASSERT(optixModuleDestroy(module));
 
-    CUDA_ASSERT(cuMemFree(curveHitgroupRecordBuffer));
-    CUDA_ASSERT(cuMemFree(curveMissRecordBuffer));
-    CUDA_ASSERT(cuMemFree(curveRaygenRecordBuffer));
-    OPTIX_ASSERT(optixPipelineDestroy(curvePipeline));
-    OPTIX_ASSERT(optixProgramGroupDestroy(curveHitgroupGroup));
-    OPTIX_ASSERT(optixProgramGroupDestroy(curveMissGroup));
-    OPTIX_ASSERT(optixProgramGroupDestroy(curveRaygenGroup));
-    if (curveIsModule)
+    if (curvePipeline)
     {
-        OPTIX_ASSERT(optixModuleDestroy(curveIsModule));
+        CUDA_ASSERT(cuMemFree(curveHitgroupRecordBuffer));
+        CUDA_ASSERT(cuMemFree(curveMissRecordBuffer));
+        CUDA_ASSERT(cuMemFree(curveRaygenRecordBuffer));
+        OPTIX_ASSERT(optixPipelineDestroy(curvePipeline));
+        OPTIX_ASSERT(optixProgramGroupDestroy(curveHitgroupGroup));
+        OPTIX_ASSERT(optixProgramGroupDestroy(curveMissGroup));
+        OPTIX_ASSERT(optixProgramGroupDestroy(curveRaygenGroup));
+        if (curveIsModule)
+        {
+            OPTIX_ASSERT(optixModuleDestroy(curveIsModule));
+        }
+        OPTIX_ASSERT(optixModuleDestroy(curvePipelineModule));
     }
-    OPTIX_ASSERT(optixModuleDestroy(curvePipelineModule));
-    return 0;
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(0);
 }
