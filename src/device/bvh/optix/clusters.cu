@@ -12,7 +12,8 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                    HostMemoryArena &hostArena,
                    const Mesh &mesh,
                    const MeshletClustersResult &clusterResult,
-                   size_t &totalOutputSizeOut)
+                   size_t &totalOutputSizeOut,
+                   OptixTraversableHandle &outputHandleOut)
 {
     const size_t meshletCount = clusterResult.meshletCount;
     const uint32_t vertexCount = static_cast<uint32_t>(mesh.positions.size());
@@ -237,6 +238,8 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     DeviceMemoryView<uint64_t> deviceGASDestAddresses = deviceArena.PushArray<uint64_t>(1);
     CUDA_ASSERT(
         cuMemcpyHtoD(CUdeviceptr(deviceGASDestAddresses.data()), &gasBaseAddr, sizeof(uint64_t)));
+    DeviceMemoryView<OptixTraversableHandle> deviceGASOutputHandles =
+        deviceArena.PushArray<OptixTraversableHandle>(1);
 
     OptixClusterAccelBuildModeDesc gasExplicitDesc = {};
     gasExplicitDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS;
@@ -245,6 +248,8 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     gasExplicitDesc.explicitDest.outputSizesBuffer = CUdeviceptr(deviceGASOutputSizes.data());
     gasExplicitDesc.explicitDest.destAddressesBuffer = CUdeviceptr(deviceGASDestAddresses.data());
     gasExplicitDesc.explicitDest.destAddressesStrideInBytes = sizeof(uint64_t);
+    gasExplicitDesc.explicitDest.outputHandlesBuffer = CUdeviceptr(deviceGASOutputHandles.data());
+    gasExplicitDesc.explicitDest.outputHandlesStrideInBytes = sizeof(OptixTraversableHandle);
 
     OPTIX_ASSERT(optixClusterAccelBuild(cudaDevice->optixDeviceContext,
                                         0,
@@ -254,12 +259,12 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                                         CUdeviceptr(deviceGASArgsCount.data()),
                                         sizeof(OptixClusterAccelBuildInputClustersArgs)));
     CUDA_ASSERT(cuStreamSynchronize(0));
+    CUDA_ASSERT(cuMemcpyDtoH(
+        &outputHandleOut, CUdeviceptr(deviceGASOutputHandles.data()), sizeof(OptixTraversableHandle)));
 
     cudaDevice->bvhTotalAllocated += gasSize;
     cudaDevice->bvhTotalAllocated += totalSize;
     totalOutputSizeOut = totalSize;
-
-    deviceArena.Clear();
 }
 
 __global__ void

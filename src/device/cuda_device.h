@@ -22,6 +22,7 @@ YBI_NAMESPACE_BEGIN
 #if defined(WITH_CUDA) && defined(WITH_OPTIX)
 
 struct Scene;
+struct Mesh;
 
 struct ClusterAccelerationStructureLimits
 {
@@ -66,6 +67,13 @@ struct CUDADevice
     void BuildBVH(Scene *scene);
     void CreateGridClusterTemplates();
 };
+
+OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
+                                                HostMemoryArena &hostArena,
+                                                Mesh &mesh);
+OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
+                                               HostMemoryArena &hostArena,
+                                               const Mesh &mesh);
 
 #endif
 

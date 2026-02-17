@@ -278,6 +278,8 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
                                                   uint32_t numMotionKeys,
                                                   OptixAccelBuildOptions &options)
 {
+    (void)cudaDevice;
+    (void)options;
     const uint32_t numVertices = mesh.positions.size();
     const uint32_t numIndices = mesh.indices.size();
 
@@ -301,7 +303,8 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceIndices.data()), mesh.indices.data(), deviceIndices.numBytes()));
 
-    unsigned int flags = OPTIX_GEOMETRY_FLAG_REQUIRE_SINGLE_ANYHIT_CALL;
+    MemoryView<unsigned int> geometryFlags = hostArena.PushArray<unsigned int>(1);
+    geometryFlags[0] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
     OptixBuildInput input = {};
     input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
     OptixBuildInputTriangleArray &triangleArray = input.triangleArray;
@@ -309,16 +312,59 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     triangleArray.vertexBuffers = vertexBuffers.data();
     triangleArray.numVertices = numVertices;
     triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    triangleArray.vertexStrideInBytes = 0;
+    triangleArray.vertexStrideInBytes = sizeof(float3);
     triangleArray.indexBuffer = CUdeviceptr(deviceIndices.data());
     triangleArray.numIndexTriplets = numIndices / 3;
     triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    triangleArray.indexStrideInBytes = 0;
-    triangleArray.flags = &flags;
+    triangleArray.indexStrideInBytes = sizeof(int) * 3;
+    triangleArray.flags = geometryFlags.data();
     triangleArray.numSbtRecords = 1;
 
-    BuildOptixBVH(cudaDevice, deviceArena, options, input);
     return input;
+}
+
+OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
+                                                HostMemoryArena &hostArena,
+                                                Mesh &mesh)
+{
+    CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
+    const uint32_t numMotionKeys = 1;
+
+    OptixAccelBuildOptions options = {};
+    options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    options.operation = OPTIX_BUILD_OPERATION_BUILD;
+    options.motionOptions.numKeys = numMotionKeys;
+    options.motionOptions.flags = 0;
+    options.motionOptions.timeBegin = 0.f;
+    options.motionOptions.timeEnd = 1.f;
+
+    OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
+        cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options);
+    OptixTraversableHandle handle =
+        BuildOptixBVH(cudaDevice, *cudaDevice->deviceArena, options, buildInput);
+    CUDA_ASSERT(cuCtxPopCurrent(0));
+    return handle;
+}
+
+OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
+                                               HostMemoryArena &hostArena,
+                                               const Mesh &mesh)
+{
+#if (OPTIX_VERSION >= 90000)
+    CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
+    MeshletClustersResult clusterResult = ClusterizeTest(mesh);
+    YBI_ASSERT(clusterResult.meshletCount > 0);
+    size_t totalOutputSize = 0;
+    OptixTraversableHandle handle = {};
+    BuildMeshCLAS(cudaDevice, hostArena, mesh, clusterResult, totalOutputSize, handle);
+    (void)totalOutputSize;
+    CUDA_ASSERT(cuCtxPopCurrent(0));
+    return handle;
+#else
+    (void)cudaDevice;
+    (void)mesh;
+    return {};
+#endif
 }
 
 // TODO: handle the case where cuda is enabled but optix isn't
@@ -330,26 +376,12 @@ void CUDADevice::BuildBVH(Scene *scene)
 
     for (Mesh &mesh : scene->meshes)
     {
-        const uint32_t numMotionKeys = 1;
-
-        OptixAccelBuildOptions options = {};
-        options.buildFlags =
-            OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
-        options.operation = OPTIX_BUILD_OPERATION_BUILD;
-        options.motionOptions.numKeys = numMotionKeys;
-        options.motionOptions.flags = 0;
-        options.motionOptions.timeBegin = 0.f;
-        options.motionOptions.timeEnd = 1.f;
-
 #if (OPTIX_VERSION >= 90000)
-        MeshletClustersResult clusterResult = ClusterizeTest(mesh);
-        YBI_ASSERT(clusterResult.meshletCount > 0);
-        size_t totalOutputSize = 0;
-        BuildMeshCLAS(this, hostArena, mesh, clusterResult, totalOutputSize);
-        (void)totalOutputSize;
+        OptixTraversableHandle handle = BuildClusterGASFromMesh(this, hostArena, mesh);
+        (void)handle;
 #else
-        OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
-            this, hostArena, *deviceArena, mesh, numMotionKeys, options);
+        OptixTraversableHandle handle = BuildTriangleGASFromMesh(this, hostArena, mesh);
+        (void)handle;
 #endif
 
         hostArena.Clear();

@@ -4,3 +4,5 @@ build_clang/
 src/third_party/install
 .cursor/
 *.ppm
+out/
+usd_extract.cpp

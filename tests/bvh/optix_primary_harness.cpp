@@ -1,20 +1,17 @@
-#include "device/cuda_assert.h"
-#include "io/usd/load.h"
+#include "device/cuda_device.h"
 #include "scene/scene.h"
+#include "util/array.h"
 #include "util/float3.h"
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
-#include <cuda.h>
-#include <optix.h>
-#include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
 
@@ -32,10 +29,10 @@ struct LaunchParams
     CUdeviceptr image;
     int width;
     int height;
-    float3 cameraOrigin;
-    float3 cameraU;
-    float3 cameraV;
-    float3 cameraW;
+    ybi::float3 cameraOrigin;
+    ybi::float3 cameraU;
+    ybi::float3 cameraV;
+    ybi::float3 cameraW;
 };
 
 template <typename T>
@@ -53,18 +50,29 @@ using RaygenRecord = SbtRecord<EmptyData>;
 using MissRecord = SbtRecord<EmptyData>;
 using HitgroupRecord = SbtRecord<EmptyData>;
 
-static float3 Cross(const float3 &a, const float3 &b)
+static std::string ReadTextFile(const std::string &path)
 {
-    return make_float3(
+    std::ifstream input(path, std::ios::in | std::ios::binary);
+    if (!input.is_open())
+    {
+        fprintf(stderr, "Failed to open PTX file: %s\n", path.c_str());
+        std::abort();
+    }
+    return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+}
+
+static ybi::float3 Cross(const ybi::float3 &a, const ybi::float3 &b)
+{
+    return ybi::make_float3(
         a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
 }
 
-static float3 Normalize(const float3 &v)
+static ybi::float3 Normalize(const ybi::float3 &v)
 {
-    const float lenSq = dot(v, v);
+    const float lenSq = ybi::dot(v, v);
     if (lenSq <= 0.0f)
     {
-        return make_float3(0.0f, 0.0f, 1.0f);
+        return ybi::make_float3(0.0f, 0.0f, 1.0f);
     }
     const float invLen = 1.0f / std::sqrt(lenSq);
     return v * invLen;
@@ -77,7 +85,6 @@ static bool SavePPM(const char *filePath, const std::vector<uint8_t> &rgba, int 
     {
         return false;
     }
-
     out << "P6\n" << width << " " << height << "\n255\n";
     for (int y = 0; y < height; y++)
     {
@@ -89,122 +96,96 @@ static bool SavePPM(const char *filePath, const std::vector<uint8_t> &rgba, int 
             out.put(static_cast<char>(rgba[idx + 2]));
         }
     }
-
     return out.good();
 }
 
-static std::string ReadTextFile(const std::string &path)
+static bool ParseObjIndex(const std::string &token, int &indexOut)
 {
-    std::ifstream input(path, std::ios::in | std::ios::binary);
+    const size_t slashPos = token.find('/');
+    const std::string indexText = slashPos == std::string::npos ? token : token.substr(0, slashPos);
+    if (indexText.empty())
+    {
+        return false;
+    }
+    indexOut = std::stoi(indexText);
+    return true;
+}
+
+static Mesh LoadObjMesh(const std::string &path)
+{
+    std::ifstream input(path);
     if (!input.is_open())
     {
-        fprintf(stderr, "Failed to open PTX file: %s\n", path.c_str());
+        fprintf(stderr, "Failed to open OBJ: %s\n", path.c_str());
         std::abort();
     }
 
-    return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-}
-
-static void BuildFallbackMesh(Scene &scene)
-{
-    Mesh mesh;
-    mesh.positions.Resize(8);
-    mesh.indices.Resize(36);
-
-    mesh.positions[0] = make_float3(-1.0f, -1.0f, -1.0f);
-    mesh.positions[1] = make_float3(1.0f, -1.0f, -1.0f);
-    mesh.positions[2] = make_float3(1.0f, 1.0f, -1.0f);
-    mesh.positions[3] = make_float3(-1.0f, 1.0f, -1.0f);
-    mesh.positions[4] = make_float3(-1.0f, -1.0f, 1.0f);
-    mesh.positions[5] = make_float3(1.0f, -1.0f, 1.0f);
-    mesh.positions[6] = make_float3(1.0f, 1.0f, 1.0f);
-    mesh.positions[7] = make_float3(-1.0f, 1.0f, 1.0f);
-
-    const int tris[] = {
-        0, 1, 2, 0, 2, 3, // back
-        4, 6, 5, 4, 7, 6, // front
-        0, 4, 5, 0, 5, 1, // bottom
-        3, 2, 6, 3, 6, 7, // top
-        1, 5, 6, 1, 6, 2, // right
-        0, 3, 7, 0, 7, 4  // left
-    };
-
-    for (int i = 0; i < 36; i++)
+    std::vector<ybi::float3> positions;
+    std::vector<int> indices;
+    std::string line;
+    while (std::getline(input, line))
     {
-        mesh.indices[i] = tris[i];
-    }
-
-    scene.meshes.emplace_back(std::move(mesh));
-}
-} // namespace
-
-int main(int argc, char **argv)
-{
-    CUdevice device = 0;
-    CUcontext cudaContext = nullptr;
-    CUDA_ASSERT(cuInit(0));
-    CUDA_ASSERT(cuDeviceGet(&device, 0));
-    CUDA_ASSERT(cuDevicePrimaryCtxRetain(&cudaContext, device));
-    CUDA_ASSERT(cuCtxSetCurrent(cudaContext));
-
-    OPTIX_ASSERT(optixInit());
-
-    OptixDeviceContextOptions contextOptions = {};
-    contextOptions.logCallbackFunction = [](unsigned int level,
-                                            const char *tag,
-                                            const char *message,
-                                            void *cbdata) {
-        (void)cbdata;
-        printf("[OptiX][%u][%s] %s\n", level, tag ? tag : "", message ? message : "");
-    };
-    contextOptions.logCallbackLevel = 4;
-#ifdef YBI_DEBUG
-    contextOptions.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
-#endif
-
-    OptixDeviceContext optixContext = nullptr;
-    OPTIX_ASSERT(optixDeviceContextCreate(cudaContext, &contextOptions, &optixContext));
-
-    bool loadUsd = false;
-    for (int argIndex = 1; argIndex < argc; argIndex++)
-    {
-        if (std::string(argv[argIndex]) == "--usd")
+        if (line.empty() || line[0] == '#')
         {
-            loadUsd = true;
+            continue;
+        }
+        std::istringstream ss(line);
+        std::string tag;
+        ss >> tag;
+        if (tag == "v")
+        {
+            float x, y, z;
+            ss >> x >> y >> z;
+            positions.push_back(ybi::make_float3(x, y, z));
+            continue;
+        }
+        if (tag == "f")
+        {
+            std::vector<int> face;
+            std::string token;
+            while (ss >> token)
+            {
+                int idx = 0;
+                if (!ParseObjIndex(token, idx))
+                {
+                    continue;
+                }
+                if (idx < 0)
+                {
+                    idx = static_cast<int>(positions.size()) + idx;
+                }
+                else
+                {
+                    idx = idx - 1;
+                }
+                face.push_back(idx);
+            }
+
+            if (face.size() >= 3)
+            {
+                const int i0 = face[0];
+                for (size_t i = 1; i + 1 < face.size(); i++)
+                {
+                    indices.push_back(i0);
+                    indices.push_back(face[i]);
+                    indices.push_back(face[i + 1]);
+                }
+            }
         }
     }
 
-    Scene scene;
-    if (loadUsd)
-    {
-        LoadUSDScene(&scene);
-    }
-    if (scene.meshes.empty())
-    {
-        printf("Using fallback cube mesh.\n");
-        BuildFallbackMesh(scene);
-    }
+    Array<ybi::float3> meshPositions(positions);
+    Array<int> meshIndices(indices);
+    return Mesh(std::move(meshPositions), std::move(meshIndices));
+}
 
-    Mesh &mesh = scene.meshes[0];
-    const uint32_t numVertices = static_cast<uint32_t>(mesh.positions.size());
-    const uint32_t numIndices = static_cast<uint32_t>(mesh.indices.size());
-    if (numVertices == 0 || numIndices == 0)
+static void ComputeBounds(const Mesh &mesh, ybi::float3 &boundsMinOut, ybi::float3 &boundsMaxOut)
+{
+    ybi::float3 boundsMin = ybi::make_float3(std::numeric_limits<float>::max());
+    ybi::float3 boundsMax = ybi::make_float3(-std::numeric_limits<float>::max());
+    for (size_t i = 0; i < mesh.positions.size(); i++)
     {
-        fprintf(stderr, "Mesh has no geometry.\n");
-        return 1;
-    }
-
-    float3 boundsMin = make_float3(
-        std::numeric_limits<float>::max(),
-        std::numeric_limits<float>::max(),
-        std::numeric_limits<float>::max());
-    float3 boundsMax = make_float3(
-        -std::numeric_limits<float>::max(),
-        -std::numeric_limits<float>::max(),
-        -std::numeric_limits<float>::max());
-    for (uint32_t i = 0; i < numVertices; i++)
-    {
-        const float3 p = mesh.positions[i];
+        const ybi::float3 p = mesh.positions[i];
         boundsMin.x = std::min(boundsMin.x, p.x);
         boundsMin.y = std::min(boundsMin.y, p.y);
         boundsMin.z = std::min(boundsMin.z, p.z);
@@ -212,82 +193,21 @@ int main(int argc, char **argv)
         boundsMax.y = std::max(boundsMax.y, p.y);
         boundsMax.z = std::max(boundsMax.z, p.z);
     }
+    boundsMinOut = boundsMin;
+    boundsMaxOut = boundsMax;
+}
 
-    const float3 boundsCenter = (boundsMin + boundsMax) * 0.5f;
-    const float3 boundsExtent = boundsMax - boundsMin;
-    const float diagonal = std::max(0.001f, length(boundsExtent));
-
-    CUdeviceptr vertexBuffer = 0;
-    CUdeviceptr indexBuffer = 0;
-    CUDA_ASSERT(cuMemAlloc(&vertexBuffer, sizeof(float3) * numVertices));
-    CUDA_ASSERT(cuMemAlloc(&indexBuffer, sizeof(int) * numIndices));
-    CUDA_ASSERT(cuMemcpyHtoD(vertexBuffer, mesh.positions.data(), sizeof(float3) * numVertices));
-    CUDA_ASSERT(cuMemcpyHtoD(indexBuffer, mesh.indices.data(), sizeof(int) * numIndices));
-
-    uint32_t triangleInputFlags[1] = {OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT};
-    OptixBuildInput buildInput = {};
-    buildInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    buildInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    buildInput.triangleArray.vertexStrideInBytes = sizeof(float3);
-    buildInput.triangleArray.numVertices = numVertices;
-    buildInput.triangleArray.vertexBuffers = &vertexBuffer;
-    buildInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-    buildInput.triangleArray.indexStrideInBytes = sizeof(int) * 3;
-    buildInput.triangleArray.numIndexTriplets = numIndices / 3;
-    buildInput.triangleArray.indexBuffer = indexBuffer;
-    buildInput.triangleArray.flags = triangleInputFlags;
-    buildInput.triangleArray.numSbtRecords = 1;
-
-    OptixAccelBuildOptions accelOptions = {};
-    accelOptions.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
-    accelOptions.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    OptixAccelBufferSizes gasBufferSizes = {};
-    OPTIX_ASSERT(optixAccelComputeMemoryUsage(
-        optixContext, &accelOptions, &buildInput, 1, &gasBufferSizes));
-
-    CUdeviceptr tempBuffer = 0;
-    CUdeviceptr outputBuffer = 0;
-    CUDA_ASSERT(cuMemAlloc(&tempBuffer, gasBufferSizes.tempSizeInBytes));
-    CUDA_ASSERT(cuMemAlloc(&outputBuffer, gasBufferSizes.outputSizeInBytes));
-
-    CUdeviceptr compactedSizeBuffer = 0;
-    CUDA_ASSERT(cuMemAlloc(&compactedSizeBuffer, sizeof(uint64_t)));
-    OptixAccelEmitDesc emitProperty = {};
-    emitProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
-    emitProperty.result = compactedSizeBuffer;
-
-    OptixTraversableHandle gasHandle = 0;
-    OPTIX_ASSERT(optixAccelBuild(optixContext,
-                                 0,
-                                 &accelOptions,
-                                 &buildInput,
-                                 1,
-                                 tempBuffer,
-                                 gasBufferSizes.tempSizeInBytes,
-                                 outputBuffer,
-                                 gasBufferSizes.outputSizeInBytes,
-                                 &gasHandle,
-                                 &emitProperty,
-                                 1));
-    CUDA_ASSERT(cuStreamSynchronize(0));
-
-    uint64_t compactedSize = 0;
-    CUDA_ASSERT(cuMemcpyDtoH(&compactedSize, compactedSizeBuffer, sizeof(uint64_t)));
-    CUdeviceptr gasBuffer = outputBuffer;
-    if (compactedSize > 0 && compactedSize < gasBufferSizes.outputSizeInBytes)
-    {
-        CUdeviceptr compactedBuffer = 0;
-        CUDA_ASSERT(cuMemAlloc(&compactedBuffer, compactedSize));
-        OPTIX_ASSERT(optixAccelCompact(
-            optixContext, 0, gasHandle, compactedBuffer, compactedSize, &gasHandle));
-        CUDA_ASSERT(cuStreamSynchronize(0));
-        CUDA_ASSERT(cuMemFree(outputBuffer));
-        gasBuffer = compactedBuffer;
-    }
-
-    const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
-
+static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
+                                    const std::string &ptx,
+                                    OptixShaderBindingTable &sbtOut,
+                                    CUdeviceptr &raygenRecordBufferOut,
+                                    CUdeviceptr &missRecordBufferOut,
+                                    CUdeviceptr &hitgroupRecordBufferOut,
+                                    OptixModule &moduleOut,
+                                    OptixProgramGroup &raygenGroupOut,
+                                    OptixProgramGroup &missGroupOut,
+                                    OptixProgramGroup &hitgroupGroupOut)
+{
     OptixModuleCompileOptions moduleCompileOptions = {};
     moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
     moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
@@ -303,7 +223,6 @@ int main(int argc, char **argv)
 
     char log[2048];
     size_t logSize = sizeof(log);
-    OptixModule module = nullptr;
     OPTIX_ASSERT(optixModuleCreate(optixContext,
                                    &moduleCompileOptions,
                                    &pipelineCompileOptions,
@@ -311,52 +230,36 @@ int main(int argc, char **argv)
                                    ptx.size(),
                                    log,
                                    &logSize,
-                                   &module));
-    if (logSize > 1)
-    {
-        printf("%s\n", log);
-    }
+                                   &moduleOut));
 
     OptixProgramGroupOptions programGroupOptions = {};
-
     OptixProgramGroupDesc raygenDesc = {};
     raygenDesc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-    raygenDesc.raygen.module = module;
+    raygenDesc.raygen.module = moduleOut;
     raygenDesc.raygen.entryFunctionName = "__raygen__primary";
-    OptixProgramGroup raygenGroup = nullptr;
     logSize = sizeof(log);
-    OPTIX_ASSERT(
-        optixProgramGroupCreate(
-            optixContext, &raygenDesc, 1, &programGroupOptions, log, &logSize, &raygenGroup));
+    OPTIX_ASSERT(optixProgramGroupCreate(
+        optixContext, &raygenDesc, 1, &programGroupOptions, log, &logSize, &raygenGroupOut));
 
     OptixProgramGroupDesc missDesc = {};
     missDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-    missDesc.miss.module = module;
+    missDesc.miss.module = moduleOut;
     missDesc.miss.entryFunctionName = "__miss__primary";
-    OptixProgramGroup missGroup = nullptr;
     logSize = sizeof(log);
-    OPTIX_ASSERT(
-        optixProgramGroupCreate(
-            optixContext, &missDesc, 1, &programGroupOptions, log, &logSize, &missGroup));
+    OPTIX_ASSERT(optixProgramGroupCreate(
+        optixContext, &missDesc, 1, &programGroupOptions, log, &logSize, &missGroupOut));
 
     OptixProgramGroupDesc hitgroupDesc = {};
     hitgroupDesc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-    hitgroupDesc.hitgroup.moduleCH = module;
+    hitgroupDesc.hitgroup.moduleCH = moduleOut;
     hitgroupDesc.hitgroup.entryFunctionNameCH = "__closesthit__primary";
-    OptixProgramGroup hitgroupGroup = nullptr;
     logSize = sizeof(log);
-    OPTIX_ASSERT(optixProgramGroupCreate(optixContext,
-                                         &hitgroupDesc,
-                                         1,
-                                         &programGroupOptions,
-                                         log,
-                                         &logSize,
-                                         &hitgroupGroup));
+    OPTIX_ASSERT(optixProgramGroupCreate(
+        optixContext, &hitgroupDesc, 1, &programGroupOptions, log, &logSize, &hitgroupGroupOut));
 
-    OptixProgramGroup groups[] = {raygenGroup, missGroup, hitgroupGroup};
+    OptixProgramGroup groups[] = {raygenGroupOut, missGroupOut, hitgroupGroupOut};
     OptixPipelineLinkOptions pipelineLinkOptions = {};
     pipelineLinkOptions.maxTraceDepth = 1;
-
     OptixPipeline pipeline = nullptr;
     logSize = sizeof(log);
     OPTIX_ASSERT(optixPipelineCreate(optixContext,
@@ -367,15 +270,11 @@ int main(int argc, char **argv)
                                      log,
                                      &logSize,
                                      &pipeline));
-    if (logSize > 1)
-    {
-        printf("%s\n", log);
-    }
 
     OptixStackSizes stackSizes = {};
-    OPTIX_ASSERT(optixUtilAccumulateStackSizes(raygenGroup, &stackSizes, pipeline));
-    OPTIX_ASSERT(optixUtilAccumulateStackSizes(missGroup, &stackSizes, pipeline));
-    OPTIX_ASSERT(optixUtilAccumulateStackSizes(hitgroupGroup, &stackSizes, pipeline));
+    OPTIX_ASSERT(optixUtilAccumulateStackSizes(raygenGroupOut, &stackSizes, pipeline));
+    OPTIX_ASSERT(optixUtilAccumulateStackSizes(missGroupOut, &stackSizes, pipeline));
+    OPTIX_ASSERT(optixUtilAccumulateStackSizes(hitgroupGroupOut, &stackSizes, pipeline));
     uint32_t directCallableStackSizeFromTraversal = 0;
     uint32_t directCallableStackSizeFromState = 0;
     uint32_t continuationStackSize = 0;
@@ -395,47 +294,57 @@ int main(int argc, char **argv)
     RaygenRecord raygenRecord = {};
     MissRecord missRecord = {};
     HitgroupRecord hitgroupRecord = {};
-    OPTIX_ASSERT(optixSbtRecordPackHeader(raygenGroup, &raygenRecord));
-    OPTIX_ASSERT(optixSbtRecordPackHeader(missGroup, &missRecord));
-    OPTIX_ASSERT(optixSbtRecordPackHeader(hitgroupGroup, &hitgroupRecord));
+    OPTIX_ASSERT(optixSbtRecordPackHeader(raygenGroupOut, &raygenRecord));
+    OPTIX_ASSERT(optixSbtRecordPackHeader(missGroupOut, &missRecord));
+    OPTIX_ASSERT(optixSbtRecordPackHeader(hitgroupGroupOut, &hitgroupRecord));
 
-    CUdeviceptr raygenRecordBuffer = 0;
-    CUdeviceptr missRecordBuffer = 0;
-    CUdeviceptr hitgroupRecordBuffer = 0;
-    CUDA_ASSERT(cuMemAlloc(&raygenRecordBuffer, sizeof(RaygenRecord)));
-    CUDA_ASSERT(cuMemAlloc(&missRecordBuffer, sizeof(MissRecord)));
-    CUDA_ASSERT(cuMemAlloc(&hitgroupRecordBuffer, sizeof(HitgroupRecord)));
-    CUDA_ASSERT(cuMemcpyHtoD(raygenRecordBuffer, &raygenRecord, sizeof(RaygenRecord)));
-    CUDA_ASSERT(cuMemcpyHtoD(missRecordBuffer, &missRecord, sizeof(MissRecord)));
-    CUDA_ASSERT(cuMemcpyHtoD(hitgroupRecordBuffer, &hitgroupRecord, sizeof(HitgroupRecord)));
+    CUDA_ASSERT(cuMemAlloc(&raygenRecordBufferOut, sizeof(RaygenRecord)));
+    CUDA_ASSERT(cuMemAlloc(&missRecordBufferOut, sizeof(MissRecord)));
+    CUDA_ASSERT(cuMemAlloc(&hitgroupRecordBufferOut, sizeof(HitgroupRecord)));
+    CUDA_ASSERT(cuMemcpyHtoD(raygenRecordBufferOut, &raygenRecord, sizeof(RaygenRecord)));
+    CUDA_ASSERT(cuMemcpyHtoD(missRecordBufferOut, &missRecord, sizeof(MissRecord)));
+    CUDA_ASSERT(cuMemcpyHtoD(hitgroupRecordBufferOut, &hitgroupRecord, sizeof(HitgroupRecord)));
 
-    OptixShaderBindingTable sbt = {};
-    sbt.raygenRecord = raygenRecordBuffer;
-    sbt.missRecordBase = missRecordBuffer;
-    sbt.missRecordStrideInBytes = sizeof(MissRecord);
-    sbt.missRecordCount = 1;
-    sbt.hitgroupRecordBase = hitgroupRecordBuffer;
-    sbt.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
-    sbt.hitgroupRecordCount = 1;
+    sbtOut = {};
+    sbtOut.raygenRecord = raygenRecordBufferOut;
+    sbtOut.missRecordBase = missRecordBufferOut;
+    sbtOut.missRecordStrideInBytes = sizeof(MissRecord);
+    sbtOut.missRecordCount = 1;
+    sbtOut.hitgroupRecordBase = hitgroupRecordBufferOut;
+    sbtOut.hitgroupRecordStrideInBytes = sizeof(HitgroupRecord);
+    sbtOut.hitgroupRecordCount = 1;
+    return pipeline;
+}
 
+static void RenderTraversable(OptixPipeline pipeline,
+                              const OptixShaderBindingTable &sbt,
+                              OptixTraversableHandle traversable,
+                              const Mesh &mesh,
+                              const char *outputFile)
+{
     const int width = 1280;
     const int height = 720;
     const size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
     CUdeviceptr imageBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&imageBuffer, imageSize));
 
-    const float3 eye = boundsCenter + make_float3(0.0f, 0.0f, 2.5f * diagonal);
-    const float3 target = boundsCenter;
-    const float3 worldUp = make_float3(0.0f, 1.0f, 0.0f);
-    const float3 forward = Normalize(target - eye);
-    const float3 right = Normalize(Cross(forward, worldUp));
-    const float3 up = Normalize(Cross(right, forward));
+    ybi::float3 boundsMin, boundsMax;
+    ComputeBounds(mesh, boundsMin, boundsMax);
+    const ybi::float3 center = (boundsMin + boundsMax) * 0.5f;
+    const ybi::float3 extent = boundsMax - boundsMin;
+    const float diagonal = std::max(0.001f, ybi::length(extent));
+
+    const ybi::float3 eye = center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
+    const ybi::float3 forward = Normalize(center - eye);
+    const ybi::float3 worldUp = ybi::make_float3(0.0f, 1.0f, 0.0f);
+    const ybi::float3 right = Normalize(Cross(forward, worldUp));
+    const ybi::float3 up = Normalize(Cross(right, forward));
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     const float fovY = 45.0f * 3.14159265358979323846f / 180.0f;
     const float tanHalfFov = std::tan(fovY * 0.5f);
 
     LaunchParams params = {};
-    params.traversable = gasHandle;
+    params.traversable = traversable;
     params.image = imageBuffer;
     params.width = width;
     params.height = height;
@@ -454,37 +363,79 @@ int main(int argc, char **argv)
 
     std::vector<uint8_t> hostImage(imageSize);
     CUDA_ASSERT(cuMemcpyDtoH(hostImage.data(), imageBuffer, imageSize));
-
-    const char *outputFile = "optix_primary.ppm";
     if (!SavePPM(outputFile, hostImage, width, height))
     {
-        fprintf(stderr, "Failed to write image: %s\n", outputFile);
-        return 1;
+        fprintf(stderr, "Failed to write PPM: %s\n", outputFile);
     }
-
-    printf("Wrote %s (%dx%d)\n", outputFile, width, height);
-    printf("Triangles: %u, GAS bytes: %llu\n",
-           numIndices / 3,
-           static_cast<unsigned long long>(compactedSize > 0 ? compactedSize : gasBufferSizes.outputSizeInBytes));
 
     CUDA_ASSERT(cuMemFree(paramsBuffer));
     CUDA_ASSERT(cuMemFree(imageBuffer));
+}
+} // namespace
+
+int main()
+{
+    const std::string objPath = "tests/bvh/out/stoat_body_selected.obj";
+    Mesh mesh = LoadObjMesh(objPath);
+    if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
+    {
+        fprintf(stderr, "OBJ has no geometry: %s\n", objPath.c_str());
+        return 1;
+    }
+
+    CUDADevice device;
+    HostMemoryArena hostArena;
+    const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
+
+    OptixShaderBindingTable sbt = {};
+    CUdeviceptr raygenRecordBuffer = 0;
+    CUdeviceptr missRecordBuffer = 0;
+    CUdeviceptr hitgroupRecordBuffer = 0;
+    OptixModule module = nullptr;
+    OptixProgramGroup raygenGroup = nullptr;
+    OptixProgramGroup missGroup = nullptr;
+    OptixProgramGroup hitgroupGroup = nullptr;
+    OptixPipeline pipeline = CreatePipeline(device.optixDeviceContext,
+                                            ptx,
+                                            sbt,
+                                            raygenRecordBuffer,
+                                            missRecordBuffer,
+                                            hitgroupRecordBuffer,
+                                            module,
+                                            raygenGroup,
+                                            missGroup,
+                                            hitgroupGroup);
+
+    OptixTraversableHandle triangleHandle = BuildTriangleGASFromMesh(&device, hostArena, mesh);
+    RenderTraversable(pipeline, sbt, triangleHandle, mesh, "optix_triangle_gas.ppm");
+    printf("Wrote optix_triangle_gas.ppm\n");
+    hostArena.Clear();
+    device.deviceArena->Clear();
+
+#if (OPTIX_VERSION >= 90000)
+    OptixTraversableHandle clusterHandle = BuildClusterGASFromMesh(&device, hostArena, mesh);
+    if (clusterHandle)
+    {
+        RenderTraversable(pipeline, sbt, clusterHandle, mesh, "optix_cluster_gas.ppm");
+        printf("Wrote optix_cluster_gas.ppm\n");
+    }
+    else
+    {
+        printf("Cluster handle invalid; skipped cluster render.\n");
+    }
+    hostArena.Clear();
+    device.deviceArena->Clear();
+#else
+    printf("Cluster GAS not supported on this OptiX version.\n");
+#endif
+
     CUDA_ASSERT(cuMemFree(hitgroupRecordBuffer));
     CUDA_ASSERT(cuMemFree(missRecordBuffer));
     CUDA_ASSERT(cuMemFree(raygenRecordBuffer));
-    CUDA_ASSERT(cuMemFree(tempBuffer));
-    CUDA_ASSERT(cuMemFree(compactedSizeBuffer));
-    CUDA_ASSERT(cuMemFree(gasBuffer));
-    CUDA_ASSERT(cuMemFree(indexBuffer));
-    CUDA_ASSERT(cuMemFree(vertexBuffer));
-
     OPTIX_ASSERT(optixPipelineDestroy(pipeline));
     OPTIX_ASSERT(optixProgramGroupDestroy(hitgroupGroup));
     OPTIX_ASSERT(optixProgramGroupDestroy(missGroup));
     OPTIX_ASSERT(optixProgramGroupDestroy(raygenGroup));
     OPTIX_ASSERT(optixModuleDestroy(module));
-    OPTIX_ASSERT(optixDeviceContextDestroy(optixContext));
-
-    CUDA_ASSERT(cuDevicePrimaryCtxRelease(device));
     return 0;
 }

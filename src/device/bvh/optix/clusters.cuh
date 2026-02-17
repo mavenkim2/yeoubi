@@ -16,7 +16,8 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                    HostMemoryArena &hostArena,
                    const Mesh &mesh,
                    const MeshletClustersResult &clusterResult,
-                   size_t &totalOutputSizeOut);
+                   size_t &totalOutputSizeOut,
+                   OptixTraversableHandle &outputHandleOut);
 
 struct MeshletDesc
 {

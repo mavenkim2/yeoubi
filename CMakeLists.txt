@@ -44,6 +44,18 @@ if (WITH_USD)
     # install(FILES ${OPENUSD_LIBRARIES} DESTINATION ${CMAKE_INSTALL_PREFIX})
 endif()
 
+if (WITH_USD)
+    add_executable(yeoubi_usd_extract
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_extract.cpp)
+    target_compile_definitions(yeoubi_usd_extract PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_usd_extract PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    target_include_directories(yeoubi_usd_extract PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_usd_extract SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_usd_extract PRIVATE ${OPENUSD_LIBRARIES})
+endif()
+
 if (MESHOPTIMIZER_FOUND)
     list (APPEND YBI_DEPENDENCIES ${MESHOPTIMIZER_LIBRARY})
     list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${MESHOPTIMIZER_INCLUDE_DIR})
@@ -105,9 +117,15 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
 
     add_executable(yeoubi_optix_harness
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
+    if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
+        target_sources(yeoubi_optix_harness PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
+    endif()
     add_dependencies(yeoubi_optix_harness yeoubi_optix_primary_programs_ptx)
 
     target_compile_definitions(yeoubi_optix_harness PRIVATE
