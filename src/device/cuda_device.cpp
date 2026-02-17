@@ -323,6 +323,84 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     return input;
 }
 
+static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
+                                               HostMemoryArena &hostArena,
+                                               CUDAMemoryArena &deviceArena,
+                                               Curves &curves,
+                                               uint32_t numMotionKeys,
+                                               OptixAccelBuildOptions &options)
+{
+    (void)cudaDevice;
+    (void)options;
+    const uint32_t numVertices = (uint32_t)curves.GetNumVertices();
+    const uint32_t totalNumSegments = (uint32_t)curves.GetNumSegments();
+    const uint32_t totalNumVertices = numVertices * numMotionKeys;
+
+    MemoryView<CUdeviceptr> vertexBuffers = hostArena.PushArray<CUdeviceptr>(numMotionKeys);
+    MemoryView<CUdeviceptr> widthBuffers = hostArena.PushArray<CUdeviceptr>(numMotionKeys);
+    MemoryView<uint32_t> indexBuffer = hostArena.PushArray<uint32_t>(totalNumSegments);
+    MemoryView<float3> hostVertices = hostArena.PushArray<float3>(totalNumVertices);
+    MemoryView<float> hostWidths = hostArena.PushArray<float>(totalNumVertices);
+
+    DeviceMemoryView<float3> deviceVertices = deviceArena.PushArray<float3>(totalNumVertices);
+    DeviceMemoryView<int> deviceIndices = deviceArena.PushArray<int>(totalNumSegments);
+    DeviceMemoryView<float> deviceWidths = deviceArena.PushArray<float>(totalNumVertices);
+
+    size_t segmentIndexOut = 0;
+    for (size_t curveIndex = 0; curveIndex < curves.GetNumCurves(); curveIndex++)
+    {
+        const int segmentStart = curves.GetCurveKeyStart(curveIndex);
+        const int numSegments = curves.GetCurveNumSegments(curveIndex);
+        for (int segmentIndex = segmentStart; segmentIndex < segmentStart + numSegments;
+             segmentIndex++, segmentIndexOut++)
+        {
+            indexBuffer[segmentIndexOut] = (uint32_t)segmentIndex;
+        }
+    }
+
+    for (uint32_t step = 0; step < numMotionKeys; step++)
+    {
+        CUdeviceptr dst = (CUdeviceptr)((deviceVertices + step * numVertices).data());
+        vertexBuffers[step] = dst;
+
+        dst = (CUdeviceptr)((deviceWidths + step * numVertices).data());
+        widthBuffers[step] = dst;
+
+        const Array<float3> &positions = curves.GetVertices();
+        const Array<float> &widths = curves.GetWidths();
+        util::Copy(hostVertices + step * numVertices, positions, numVertices);
+        util::Copy(hostWidths + step * numVertices, widths, numVertices);
+    }
+
+    CUDA_ASSERT(cuMemcpyHtoD(
+        CUdeviceptr(deviceVertices.data()), hostVertices.data(), deviceVertices.numBytes()));
+    CUDA_ASSERT(
+        cuMemcpyHtoD(CUdeviceptr(deviceIndices.data()), indexBuffer.data(), deviceIndices.numBytes()));
+    CUDA_ASSERT(
+        cuMemcpyHtoD(CUdeviceptr(deviceWidths.data()), hostWidths.data(), deviceWidths.numBytes()));
+
+    OptixBuildInput input = {};
+    input.type = OPTIX_BUILD_INPUT_TYPE_CURVES;
+    OptixBuildInputCurveArray &curveArray = input.curveArray;
+    curveArray = {};
+    curveArray.curveType = OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE;
+    curveArray.numPrimitives = totalNumSegments;
+    curveArray.vertexBuffers = vertexBuffers.data();
+    curveArray.numVertices = numVertices;
+    curveArray.vertexStrideInBytes = sizeof(float3);
+    curveArray.widthBuffers = widthBuffers.data();
+    curveArray.widthStrideInBytes = sizeof(float);
+    curveArray.normalBuffers = nullptr;
+    curveArray.normalStrideInBytes = 0;
+    curveArray.indexBuffer = CUdeviceptr(deviceIndices.data());
+    curveArray.indexStrideInBytes = sizeof(int);
+    curveArray.flag = OPTIX_GEOMETRY_FLAG_NONE;
+    curveArray.primitiveIndexOffset = 0;
+    curveArray.endcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT;
+
+    return input;
+}
+
 OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
                                                 HostMemoryArena &hostArena,
                                                 Mesh &mesh)
@@ -365,6 +443,30 @@ OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
     (void)mesh;
     return {};
 #endif
+}
+
+OptixTraversableHandle BuildCurveGASFromCurves(CUDADevice *cudaDevice,
+                                               HostMemoryArena &hostArena,
+                                               Curves &curves)
+{
+    CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
+    const uint32_t numMotionKeys = 1;
+
+    OptixAccelBuildOptions options = {};
+    options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION | OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+    options.operation = OPTIX_BUILD_OPERATION_BUILD;
+    options.motionOptions.numKeys = numMotionKeys;
+    options.motionOptions.flags = 0;
+    options.motionOptions.timeBegin = 0.f;
+    options.motionOptions.timeEnd = 1.f;
+
+    OptixBuildInput buildInput = GetOptiXCurveBuildInput(
+        cudaDevice, hostArena, *cudaDevice->deviceArena, curves, numMotionKeys, options);
+    OptixTraversableHandle handle =
+        BuildOptixBVH(cudaDevice, *cudaDevice->deviceArena, options, buildInput);
+
+    CUDA_ASSERT(cuCtxPopCurrent(0));
+    return handle;
 }
 
 // TODO: handle the case where cuda is enabled but optix isn't

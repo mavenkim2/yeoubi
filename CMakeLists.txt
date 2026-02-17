@@ -107,6 +107,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
             "--gpu-architecture=compute_75"
             "--std=c++14"
             "--use_fast_math"
+            "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
             "-I${OPTIX_INCLUDE_DIR}"
             "-I${YBI_CUDA_INCLUDE_DIR}"
             "-o" "${YBI_OPTIX_PRIMARY_PTX_PATH}"

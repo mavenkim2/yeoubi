@@ -23,6 +23,7 @@ YBI_NAMESPACE_BEGIN
 
 struct Scene;
 struct Mesh;
+struct Curves;
 
 struct ClusterAccelerationStructureLimits
 {
@@ -74,6 +75,9 @@ OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
 OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
                                                HostMemoryArena &hostArena,
                                                const Mesh &mesh);
+OptixTraversableHandle BuildCurveGASFromCurves(CUDADevice *cudaDevice,
+                                               HostMemoryArena &hostArena,
+                                               Curves &curves);
 
 #endif
 

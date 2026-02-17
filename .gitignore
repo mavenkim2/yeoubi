@@ -4,5 +4,6 @@ build_clang/
 src/third_party/install
 .cursor/
 *.ppm
+*.png
 out/
 usd_extract.cpp
