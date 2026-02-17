@@ -6,6 +6,7 @@
 #include "util/float3.h"
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +48,10 @@ struct LaunchParams
     ybi::float3 cameraV;
     ybi::float3 cameraW;
     WireframeConfig wireframe;
+    int integrator;
+    int spp;
+    float aoBias;
+    float aoMaxDistance;
 };
 
 enum class RenderType
@@ -56,13 +61,21 @@ enum class RenderType
     Curve
 };
 
+enum class IntegratorType
+{
+    Primary,
+    AO
+};
+
 struct CliOptions
 {
     RenderType type = RenderType::Triangle;
+    IntegratorType integrator = IntegratorType::Primary;
     std::string inputPath = "tests/bvh/out/stoat_body_selected.obj";
     std::string outputPath = "optix_triangle_gas.png";
     std::optional<ybi::float3> cameraPosition;
     std::optional<ybi::float3> lookAt;
+    int spp = 1;
 };
 
 template <typename T>
@@ -76,9 +89,17 @@ struct EmptyData
 {
 };
 
+struct HitgroupData
+{
+    unsigned long long positions;
+    unsigned long long indices;
+    int numPositions;
+    int numIndices;
+};
+
 using RaygenRecord = SbtRecord<EmptyData>;
 using MissRecord = SbtRecord<EmptyData>;
-using HitgroupRecord = SbtRecord<EmptyData>;
+using HitgroupRecord = SbtRecord<HitgroupData>;
 
 static std::string ReadTextFile(const std::string &path)
 {
@@ -123,11 +144,13 @@ static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valu
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--type triangle|cluster|curve] [--file path] [--out path] "
-           "[--cam-pos x y z] [--look-at x y z]\n",
+           "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z]\n",
            exeName);
     printf("  --type triangle|cluster|curve\n");
     printf("  --file OBJ path for triangle/cluster; JSON path for curve\n");
     printf("  --out PNG output path\n");
+    printf("  --integrator primary|ao\n");
+    printf("  --spp samples per pixel for ao integrator\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
 }
@@ -182,6 +205,39 @@ static CliOptions ParseCli(int argc, char **argv)
             options.inputPath = argv[++i];
             continue;
         }
+        if (arg == "--integrator")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            const std::string value = argv[++i];
+            if (value == "primary")
+            {
+                options.integrator = IntegratorType::Primary;
+            }
+            else if (value == "ao")
+            {
+                options.integrator = IntegratorType::AO;
+            }
+            else
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            continue;
+        }
+        if (arg == "--spp")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.spp = std::max(1, std::stoi(argv[++i]));
+            continue;
+        }
         if (arg == "--out")
         {
             if (i + 1 >= argc)
@@ -226,6 +282,11 @@ static CliOptions ParseCli(int argc, char **argv)
         std::abort();
     }
 
+    if (options.integrator == IntegratorType::Primary)
+    {
+        options.spp = 1;
+    }
+
     return options;
 }
 
@@ -233,6 +294,22 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
 {
     const int strideInBytes = width * 4;
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
+}
+
+static void UploadHitgroupData(CUdeviceptr hitgroupRecordBuffer,
+                               CUdeviceptr positionsBuffer,
+                               CUdeviceptr indicesBuffer,
+                               int numPositions,
+                               int numIndices)
+{
+    HitgroupData hitgroupData = {};
+    hitgroupData.positions = (unsigned long long)positionsBuffer;
+    hitgroupData.indices = (unsigned long long)indicesBuffer;
+    hitgroupData.numPositions = numPositions;
+    hitgroupData.numIndices = numIndices;
+    CUDA_ASSERT(cuMemcpyHtoD(hitgroupRecordBuffer + offsetof(HitgroupRecord, data),
+                             &hitgroupData,
+                             sizeof(HitgroupData)));
 }
 
 static bool ParseObjIndex(const std::string &token, int &indexOut)
@@ -633,7 +710,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
 
     OptixProgramGroup groups[] = {raygenGroupOut, missGroupOut, hitgroupGroupOut};
     OptixPipelineLinkOptions pipelineLinkOptions = {};
-    pipelineLinkOptions.maxTraceDepth = 1;
+    pipelineLinkOptions.maxTraceDepth = 2;
     OptixPipeline pipeline = nullptr;
     logSize = sizeof(log);
     OPTIX_ASSERT(optixPipelineCreate(optixContext,
@@ -653,7 +730,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     uint32_t directCallableStackSizeFromState = 0;
     uint32_t continuationStackSize = 0;
     OPTIX_ASSERT(optixUtilComputeStackSizes(&stackSizes,
-                                            1,
+                                            2,
                                             0,
                                             0,
                                             &directCallableStackSizeFromTraversal,
@@ -696,6 +773,8 @@ static void RenderTraversable(OptixPipeline pipeline,
                               const ybi::float3 &boundsMin,
                               const ybi::float3 &boundsMax,
                               const char *outputFile,
+                              IntegratorType integrator,
+                              int spp,
                               const std::optional<ybi::float3> &cameraPositionOverride,
                               const std::optional<ybi::float3> &lookAtOverride)
 {
@@ -738,6 +817,10 @@ static void RenderTraversable(OptixPipeline pipeline,
     params.wireframe.lineFeather = 0.006f;
     params.wireframe.edgeDarkness = 0.10f;
     params.wireframe.padding = 0.0f;
+    params.integrator = integrator == IntegratorType::AO ? 1 : 0;
+    params.spp = std::max(1, spp);
+    params.aoBias = 0.002f * diagonal;
+    params.aoMaxDistance = 0.25f * diagonal;
 
     CUdeviceptr paramsBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&paramsBuffer, sizeof(LaunchParams)));
@@ -862,6 +945,20 @@ int main(int argc, char **argv)
         ybi::float3 meshBoundsMin, meshBoundsMax;
         ComputeBounds(mesh, meshBoundsMin, meshBoundsMax);
 
+        CUdeviceptr meshPositionsBuffer = 0;
+        CUdeviceptr meshIndicesBuffer = 0;
+        CUDA_ASSERT(cuMemAlloc(&meshPositionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemAlloc(&meshIndicesBuffer, sizeof(int) * mesh.indices.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(meshPositionsBuffer,
+                                 mesh.positions.data(),
+                                 sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(meshIndicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
+        UploadHitgroupData(hitgroupRecordBuffer,
+                           meshPositionsBuffer,
+                           meshIndicesBuffer,
+                           (int)mesh.positions.size(),
+                           (int)mesh.indices.size());
+
         if (options.type == RenderType::Triangle)
         {
             printf("optix_harness: building triangle gas\n");
@@ -875,6 +972,8 @@ int main(int argc, char **argv)
                               meshBoundsMin,
                               meshBoundsMax,
                               options.outputPath.c_str(),
+                              options.integrator,
+                              options.spp,
                               options.cameraPosition,
                               options.lookAt);
             printf("Wrote %s\n", options.outputPath.c_str());
@@ -895,6 +994,8 @@ int main(int argc, char **argv)
                                   meshBoundsMin,
                                   meshBoundsMax,
                                   options.outputPath.c_str(),
+                                  options.integrator,
+                                  options.spp,
                                   options.cameraPosition,
                                   options.lookAt);
                 printf("Wrote %s\n", options.outputPath.c_str());
@@ -907,13 +1008,16 @@ int main(int argc, char **argv)
             printf("Cluster GAS not supported on this OptiX version.\n");
 #endif
         }
+
+        CUDA_ASSERT(cuMemFree(meshIndicesBuffer));
+        CUDA_ASSERT(cuMemFree(meshPositionsBuffer));
     }
     else
     {
         printf("optix_harness: loading curve json %s\n", options.inputPath.c_str());
         fflush(stdout);
         Curves curves = LoadCurveJson(options.inputPath);
-        printf("optix_harness: curve loaded verts=%d curves=%d\n",
+        printf("optix_harness: curve loaded verts=%zu curves=%zu\n",
                curves.GetNumVertices(),
                curves.GetNumCurves());
         fflush(stdout);
@@ -930,6 +1034,8 @@ int main(int argc, char **argv)
                                   curveBoundsMin,
                                   curveBoundsMax,
                                   options.outputPath.c_str(),
+                                  options.integrator,
+                                  options.spp,
                                   options.cameraPosition,
                                   options.lookAt);
                 printf("Wrote %s\n", options.outputPath.c_str());
