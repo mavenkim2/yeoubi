@@ -57,7 +57,7 @@ if (WITH_USD)
     target_link_libraries(yeoubi_usd_extract PRIVATE ${OPENUSD_LIBRARIES})
 
     add_executable(yeoubi_tessellation
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tessellation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tessellation_adaptive_impl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp)
     target_compile_definitions(yeoubi_tessellation PRIVATE ${YBI_COMPILE_DEFINITIONS})
     if (WIN32)
