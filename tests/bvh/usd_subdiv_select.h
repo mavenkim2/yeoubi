@@ -11,7 +11,15 @@ struct SelectedSubdivMesh
     pxr::VtVec3fArray points;
     pxr::VtIntArray faceVertexCounts;
     pxr::VtIntArray faceVertexIndices;
+    pxr::VtIntArray cornerIndices;
+    pxr::VtFloatArray cornerSharpnesses;
+    pxr::VtIntArray creaseIndices;
+    pxr::VtIntArray creaseLengths;
+    pxr::VtFloatArray creaseSharpnesses;
+    pxr::VtIntArray holeIndices;
     std::string subdivisionScheme;
 };
 
 bool SelectLargestCatmullClarkMesh(const pxr::UsdStageRefPtr &stage, SelectedSubdivMesh &meshOut);
+bool SelectLargestCatmullClarkMeshWithCreases(const pxr::UsdStageRefPtr &stage,
+                                              SelectedSubdivMesh &meshOut);

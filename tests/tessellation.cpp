@@ -10,6 +10,7 @@
 #include <opensubdiv/far/topologyDescriptor.h>
 #include <opensubdiv/sdc/types.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -39,6 +40,41 @@ struct TessMesh
     std::vector<pxr::GfVec3f> positions;
     std::vector<int> indices;
 };
+
+static void BuildCreasePairs(const SelectedSubdivMesh &source,
+                             std::vector<int> &creaseVertexPairsOut,
+                             std::vector<float> &creaseSharpnessOut)
+{
+    creaseVertexPairsOut.clear();
+    creaseSharpnessOut.clear();
+
+    size_t indexOffset = 0;
+    const size_t creaseCount = std::min(source.creaseLengths.size(), source.creaseSharpnesses.size());
+    for (size_t crease = 0; crease < creaseCount; crease++)
+    {
+        const int length = source.creaseLengths[crease];
+        if (length < 2)
+        {
+            indexOffset += size_t(std::max(0, length));
+            continue;
+        }
+        if (indexOffset + size_t(length) > source.creaseIndices.size())
+        {
+            break;
+        }
+
+        const float sharpness = source.creaseSharpnesses[crease];
+        for (int segment = 0; segment < length - 1; segment++)
+        {
+            const int i0 = source.creaseIndices[indexOffset + size_t(segment)];
+            const int i1 = source.creaseIndices[indexOffset + size_t(segment + 1)];
+            creaseVertexPairsOut.push_back(i0);
+            creaseVertexPairsOut.push_back(i1);
+            creaseSharpnessOut.push_back(sharpness);
+        }
+        indexOffset += size_t(length);
+    }
+}
 
 template <typename T>
 static std::vector<OsdData<T>> InterpolateVertex(const std::vector<T> &array,
@@ -206,28 +242,28 @@ static bool WriteControlCageObj(const SelectedSubdivMesh &source, const fs::path
     return out.good();
 }
 
-int main()
+static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
+                                const fs::path &outputDir,
+                                const char *controlCageName,
+                                const char *rate2Name,
+                                const char *rate8Name)
 {
-    const std::string usdPath = "C:/Users/maven/Downloads/ALab-2.2.0/ALab/entry.usda";
-    pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(usdPath);
-    if (!stage)
-    {
-        fprintf(stderr, "Failed to open USD stage: %s\n", usdPath.c_str());
-        return 1;
-    }
-
-    SelectedSubdivMesh selected = {};
-    if (!SelectLargestCatmullClarkMesh(stage, selected))
-    {
-        fprintf(stderr, "No Catmull-Clark mesh found in stage.\n");
-        return 1;
-    }
-
     Far::TopologyDescriptor desc = {};
     desc.numVertices = int(selected.points.size());
     desc.numFaces = int(selected.faceVertexCounts.size());
     desc.numVertsPerFace = selected.faceVertexCounts.cdata();
     desc.vertIndicesPerFace = selected.faceVertexIndices.cdata();
+    std::vector<int> creaseVertexPairs;
+    std::vector<float> creaseSharpness;
+    BuildCreasePairs(selected, creaseVertexPairs, creaseSharpness);
+    desc.numCreases = int(creaseSharpness.size());
+    desc.creaseVertexIndexPairs = creaseVertexPairs.empty() ? nullptr : creaseVertexPairs.data();
+    desc.creaseWeights = creaseSharpness.empty() ? nullptr : creaseSharpness.data();
+    desc.numCorners = int(std::min(selected.cornerIndices.size(), selected.cornerSharpnesses.size()));
+    desc.cornerVertexIndices = selected.cornerIndices.cdata();
+    desc.cornerWeights = selected.cornerSharpnesses.cdata();
+    desc.numHoles = int(selected.holeIndices.size());
+    desc.holeIndices = selected.holeIndices.cdata();
 
     const Sdc::SchemeType scheme = Sdc::SCHEME_CATMARK;
     Sdc::Options options;
@@ -236,7 +272,7 @@ int main()
     if (!refiner)
     {
         fprintf(stderr, "Failed to create topology refiner.\n");
-        return 1;
+        return false;
     }
 
     Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(1);
@@ -249,7 +285,7 @@ int main()
     {
         fprintf(stderr, "Failed to create patch table.\n");
         delete refiner;
-        return 1;
+        return false;
     }
 
     Far::PatchMap patchMap(*patchTable);
@@ -265,23 +301,25 @@ int main()
     const std::vector<OsdData<pxr::GfVec3f>> refinedPositions =
         InterpolateVertex(cagePositions, refiner, patchTable);
 
-    const fs::path outputDir = fs::path("tests") / "bvh" / "out";
-    fs::create_directories(outputDir);
-    const fs::path controlCagePath = outputDir / "subdiv_control_cage.obj";
+    const fs::path controlCagePath = outputDir / controlCageName;
     if (!WriteControlCageObj(selected, controlCagePath))
     {
         fprintf(stderr, "Failed to write control cage OBJ: %s\n", controlCagePath.string().c_str());
         delete patchTable;
         delete refiner;
-        return 1;
+        return false;
     }
     printf("Wrote %s (verts=%zu faces=%zu)\n",
            controlCagePath.string().c_str(),
            selected.points.size(),
            selected.faceVertexCounts.size());
+    printf("Control-cage features: creaseSegments=%zu corners=%d holes=%d\n",
+           creaseSharpness.size(),
+           desc.numCorners,
+           desc.numHoles);
 
     const int rates[] = {2, 8};
-    const char *names[] = {"subdiv_limit_uniform_r2.obj", "subdiv_limit_uniform_r8.obj"};
+    const char *names[] = {rate2Name, rate8Name};
     for (int i = 0; i < 2; i++)
     {
         const int rate = rates[i];
@@ -293,7 +331,7 @@ int main()
             fprintf(stderr, "Failed to write OBJ: %s\n", outPath.string().c_str());
             delete patchTable;
             delete refiner;
-            return 1;
+            return false;
         }
         printf("Wrote %s (verts=%zu tris=%zu)\n",
                outPath.string().c_str(),
@@ -303,5 +341,53 @@ int main()
 
     delete patchTable;
     delete refiner;
+    return true;
+}
+
+int main()
+{
+    const std::string usdPath = "C:/Users/maven/Downloads/ALab-2.2.0/ALab/entry.usda";
+    pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(usdPath);
+    if (!stage)
+    {
+        fprintf(stderr, "Failed to open USD stage: %s\n", usdPath.c_str());
+        return 1;
+    }
+
+    const fs::path outputDir = fs::path("tests") / "bvh" / "out";
+    fs::create_directories(outputDir);
+
+    SelectedSubdivMesh selected = {};
+    if (!SelectLargestCatmullClarkMesh(stage, selected))
+    {
+        fprintf(stderr, "No Catmull-Clark mesh found in stage.\n");
+        return 1;
+    }
+    if (!ProcessSelectedMesh(selected,
+                             outputDir,
+                             "subdiv_control_cage.obj",
+                             "subdiv_limit_uniform_r2.obj",
+                             "subdiv_limit_uniform_r8.obj"))
+    {
+        return 1;
+    }
+
+    SelectedSubdivMesh selectedWithCreases = {};
+    if (SelectLargestCatmullClarkMeshWithCreases(stage, selectedWithCreases))
+    {
+        if (!ProcessSelectedMesh(selectedWithCreases,
+                                 outputDir,
+                                 "subdiv_control_cage_creased.obj",
+                                 "subdiv_limit_uniform_r2_creased.obj",
+                                 "subdiv_limit_uniform_r8_creased.obj"))
+        {
+            return 1;
+        }
+    }
+    else
+    {
+        printf("No Catmull-Clark mesh with creases found in stage.\n");
+    }
+
     return 0;
 }
