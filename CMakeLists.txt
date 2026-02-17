@@ -84,3 +84,36 @@ target_compile_definitions(yeoubi PRIVATE ${YBI_COMPILE_DEFINITIONS})
 target_include_directories(yeoubi PRIVATE ${YBI_INCLUDE_DIRECTORIES})
 target_include_directories(yeoubi SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
 target_link_libraries(yeoubi PRIVATE ${YBI_DEPENDENCIES})
+
+if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
+    list(GET CUDAToolkit_INCLUDE_DIRS 0 YBI_CUDA_INCLUDE_DIR)
+    set(YBI_OPTIX_PRIMARY_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/optix_primary_programs.ptx")
+    add_custom_command(
+        OUTPUT "${YBI_OPTIX_PRIMARY_PTX_PATH}"
+        COMMAND "${CMAKE_CUDA_COMPILER}"
+            --ptx
+            "--gpu-architecture=compute_75"
+            "--std=c++14"
+            "--use_fast_math"
+            "-I${OPTIX_INCLUDE_DIR}"
+            "-I${YBI_CUDA_INCLUDE_DIR}"
+            "-o" "${YBI_OPTIX_PRIMARY_PTX_PATH}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
+        VERBATIM)
+    add_custom_target(yeoubi_optix_primary_programs_ptx DEPENDS "${YBI_OPTIX_PRIMARY_PTX_PATH}")
+
+    add_executable(yeoubi_optix_harness
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
+    add_dependencies(yeoubi_optix_harness yeoubi_optix_primary_programs_ptx)
+
+    target_compile_definitions(yeoubi_optix_harness PRIVATE
+        ${YBI_COMPILE_DEFINITIONS}
+        YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_PATH}")
+    target_include_directories(yeoubi_optix_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_optix_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_optix_harness PRIVATE ${YBI_DEPENDENCIES})
+endif()

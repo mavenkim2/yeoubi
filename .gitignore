@@ -3,3 +3,4 @@ build_clang/
 .clangd
 src/third_party/install
 .cursor/
+*.ppm
