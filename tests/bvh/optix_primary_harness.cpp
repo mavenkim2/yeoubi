@@ -797,7 +797,11 @@ static void RenderTraversable(OptixPipeline pipeline,
                                            : center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
     const ybi::float3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
     const ybi::float3 forward = Normalize(lookAt - eye);
-    const ybi::float3 worldUp = ybi::make_float3(0.0f, 1.0f, 0.0f);
+    ybi::float3 worldUp = ybi::make_float3(0.0f, 0.0f, 1.0f);
+    if (std::abs(ybi::dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = ybi::make_float3(0.0f, 1.0f, 0.0f);
+    }
     const ybi::float3 right = Normalize(Cross(forward, worldUp));
     const ybi::float3 up = Normalize(Cross(right, forward));
     const float aspect = static_cast<float>(width) / static_cast<float>(height);

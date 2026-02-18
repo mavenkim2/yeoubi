@@ -1,8 +1,6 @@
 #include "bvh/usd_subdiv_select.h"
 #include "bvh/usd_camera_utils.h"
 
-#include <pxr/usd/usd/stage.h>
-
 #include <opensubdiv/far/patchMap.h>
 #include <opensubdiv/far/patchTable.h>
 #include <opensubdiv/far/patchTableFactory.h>
@@ -13,12 +11,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
+#include <numeric>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -149,6 +152,324 @@ struct AdaptiveSettings
     int minRate = 1;
     int maxRate = 32;
 };
+
+struct CliOptions
+{
+    fs::path inputJsonPath;
+    fs::path outputDir = fs::path("tests") / "bvh" / "out";
+    std::string controlCageOutputName = "subdiv_control_cage.obj";
+    std::string farOutputName = "subdiv_limit_adaptive_nosplit_far.obj";
+    std::string nearOutputName = "subdiv_limit_adaptive_nosplit_near.obj";
+};
+
+static std::string ExtractJsonString(const std::string &text, const std::string &key)
+{
+    const std::string token = "\"" + key + "\"";
+    const size_t keyPos = text.find(token);
+    if (keyPos == std::string::npos)
+    {
+        return {};
+    }
+    const size_t colonPos = text.find(':', keyPos);
+    if (colonPos == std::string::npos)
+    {
+        return {};
+    }
+    const size_t quoteStart = text.find('"', colonPos + 1);
+    if (quoteStart == std::string::npos)
+    {
+        return {};
+    }
+    const size_t quoteEnd = text.find('"', quoteStart + 1);
+    if (quoteEnd == std::string::npos || quoteEnd <= quoteStart)
+    {
+        return {};
+    }
+    return text.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+}
+
+static std::optional<float> ExtractJsonFloat(const std::string &text, const std::string &key)
+{
+    const std::string token = "\"" + key + "\"";
+    const size_t keyPos = text.find(token);
+    if (keyPos == std::string::npos)
+    {
+        return std::nullopt;
+    }
+    const size_t colonPos = text.find(':', keyPos);
+    if (colonPos == std::string::npos)
+    {
+        return std::nullopt;
+    }
+
+    size_t begin = colonPos + 1;
+    while (begin < text.size() &&
+           (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\n' || text[begin] == '\r'))
+    {
+        begin++;
+    }
+    if (begin >= text.size())
+    {
+        return std::nullopt;
+    }
+
+    size_t end = begin;
+    while (end < text.size() &&
+           (std::isdigit((unsigned char)text[end]) || text[end] == '.' || text[end] == '-' ||
+            text[end] == '+' || text[end] == 'e' || text[end] == 'E'))
+    {
+        end++;
+    }
+    if (end <= begin)
+    {
+        return std::nullopt;
+    }
+
+    return std::stof(text.substr(begin, end - begin));
+}
+
+static std::string ExtractJsonArray(const std::string &text, const std::string &key)
+{
+    const std::string token = "\"" + key + "\"";
+    const size_t keyPos = text.find(token);
+    if (keyPos == std::string::npos)
+    {
+        return {};
+    }
+    const size_t bracketStart = text.find('[', keyPos);
+    if (bracketStart == std::string::npos)
+    {
+        return {};
+    }
+
+    int depth = 0;
+    for (size_t i = bracketStart; i < text.size(); i++)
+    {
+        if (text[i] == '[')
+        {
+            depth++;
+        }
+        else if (text[i] == ']')
+        {
+            depth--;
+            if (depth == 0)
+            {
+                return text.substr(bracketStart, i - bracketStart + 1);
+            }
+        }
+    }
+
+    return {};
+}
+
+static std::vector<float> ParseFloatArray(const std::string &arrayText)
+{
+    std::vector<float> values;
+    size_t index = 0;
+    while (index < arrayText.size())
+    {
+        while (index < arrayText.size() &&
+               !(std::isdigit((unsigned char)arrayText[index]) || arrayText[index] == '-' ||
+                 arrayText[index] == '+' || arrayText[index] == '.'))
+        {
+            index++;
+        }
+        if (index >= arrayText.size())
+        {
+            break;
+        }
+
+        size_t endIndex = index + 1;
+        while (endIndex < arrayText.size() &&
+               (std::isdigit((unsigned char)arrayText[endIndex]) || arrayText[endIndex] == '.' ||
+                arrayText[endIndex] == '-' || arrayText[endIndex] == '+' ||
+                arrayText[endIndex] == 'e' || arrayText[endIndex] == 'E'))
+        {
+            endIndex++;
+        }
+
+        values.push_back(std::stof(arrayText.substr(index, endIndex - index)));
+        index = endIndex;
+    }
+    return values;
+}
+
+static std::vector<int> ParseIntArray(const std::string &arrayText)
+{
+    const std::vector<float> parsed = ParseFloatArray(arrayText);
+    std::vector<int> values;
+    values.reserve(parsed.size());
+    for (size_t i = 0; i < parsed.size(); i++)
+    {
+        values.push_back((int)parsed[i]);
+    }
+    return values;
+}
+
+static void PrintUsage(const char *exeName)
+{
+    printf("Usage: %s --input-json <path> [--out-dir <dir>] [--control-cage-out <obj>] "
+           "[--far-out <obj>] [--near-out <obj>]\n",
+           exeName);
+}
+
+static CliOptions ParseCli(int argc, char **argv)
+{
+    CliOptions options = {};
+    for (int i = 1; i < argc; i++)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--input-json")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.inputJsonPath = fs::path(argv[++i]);
+            continue;
+        }
+        if (arg == "--out-dir")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.outputDir = fs::path(argv[++i]);
+            continue;
+        }
+        if (arg == "--control-cage-out")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.controlCageOutputName = argv[++i];
+            continue;
+        }
+        if (arg == "--far-out")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.farOutputName = argv[++i];
+            continue;
+        }
+        if (arg == "--near-out")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.nearOutputName = argv[++i];
+            continue;
+        }
+        if (arg == "--help" || arg == "-h")
+        {
+            PrintUsage(argv[0]);
+            std::exit(0);
+        }
+
+        PrintUsage(argv[0]);
+        std::abort();
+    }
+
+    if (options.inputJsonPath.empty())
+    {
+        PrintUsage(argv[0]);
+        std::abort();
+    }
+    return options;
+}
+
+static bool LoadSelectedSubdivFromJson(const fs::path &jsonPath,
+                                       SelectedSubdivMesh &selectedOut,
+                                       UsdCameraInfo &usdCameraInfoOut)
+{
+    std::ifstream input(jsonPath, std::ios::in | std::ios::binary);
+    if (!input.is_open())
+    {
+        fprintf(stderr, "Failed to open input JSON: %s\n", jsonPath.string().c_str());
+        return false;
+    }
+    const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+
+    const std::string sourcePrim = ExtractJsonString(json, "source_prim");
+    if (!sourcePrim.empty())
+    {
+        selectedOut.path = pxr::SdfPath(sourcePrim);
+    }
+    selectedOut.subdivisionScheme = ExtractJsonString(json, "scheme");
+    if (selectedOut.subdivisionScheme.empty())
+    {
+        selectedOut.subdivisionScheme = "catmullClark";
+    }
+
+    const std::vector<float> pointScalars = ParseFloatArray(ExtractJsonArray(json, "points"));
+    if (pointScalars.size() % 3 != 0)
+    {
+        fprintf(stderr, "Invalid points array in JSON (not xyz triplets): %s\n", jsonPath.string().c_str());
+        return false;
+    }
+    selectedOut.points.resize(pointScalars.size() / 3);
+    for (size_t i = 0; i + 2 < pointScalars.size(); i += 3)
+    {
+        selectedOut.points[i / 3] = pxr::GfVec3f(pointScalars[i], pointScalars[i + 1], pointScalars[i + 2]);
+    }
+
+    const std::vector<int> faceVertexCounts = ParseIntArray(ExtractJsonArray(json, "face_vertex_counts"));
+    const std::vector<int> faceVertexIndices = ParseIntArray(ExtractJsonArray(json, "face_vertex_indices"));
+    selectedOut.faceVertexCounts = pxr::VtIntArray(faceVertexCounts.begin(), faceVertexCounts.end());
+    selectedOut.faceVertexIndices = pxr::VtIntArray(faceVertexIndices.begin(), faceVertexIndices.end());
+
+    const std::vector<int> cornerIndices = ParseIntArray(ExtractJsonArray(json, "corner_indices"));
+    const std::vector<float> cornerSharpnesses =
+        ParseFloatArray(ExtractJsonArray(json, "corner_sharpnesses"));
+    const std::vector<int> creaseIndices = ParseIntArray(ExtractJsonArray(json, "crease_indices"));
+    const std::vector<int> creaseLengths = ParseIntArray(ExtractJsonArray(json, "crease_lengths"));
+    const std::vector<float> creaseSharpnesses =
+        ParseFloatArray(ExtractJsonArray(json, "crease_sharpnesses"));
+    const std::vector<int> holeIndices = ParseIntArray(ExtractJsonArray(json, "hole_indices"));
+
+    selectedOut.cornerIndices = pxr::VtIntArray(cornerIndices.begin(), cornerIndices.end());
+    selectedOut.cornerSharpnesses =
+        pxr::VtFloatArray(cornerSharpnesses.begin(), cornerSharpnesses.end());
+    selectedOut.creaseIndices = pxr::VtIntArray(creaseIndices.begin(), creaseIndices.end());
+    selectedOut.creaseLengths = pxr::VtIntArray(creaseLengths.begin(), creaseLengths.end());
+    selectedOut.creaseSharpnesses =
+        pxr::VtFloatArray(creaseSharpnesses.begin(), creaseSharpnesses.end());
+    selectedOut.holeIndices = pxr::VtIntArray(holeIndices.begin(), holeIndices.end());
+
+    const int expectedFaceIndexCount =
+        std::accumulate(selectedOut.faceVertexCounts.begin(), selectedOut.faceVertexCounts.end(), 0);
+    if (expectedFaceIndexCount != int(selectedOut.faceVertexIndices.size()))
+    {
+        fprintf(stderr,
+                "Invalid face topology in JSON: expected %d face indices, found %zu (%s)\n",
+                expectedFaceIndexCount,
+                selectedOut.faceVertexIndices.size(),
+                jsonPath.string().c_str());
+        return false;
+    }
+
+    usdCameraInfoOut = {};
+    const std::string cameraPath = ExtractJsonString(json, "usd_camera_path");
+    const std::optional<float> cameraDistance =
+        ExtractJsonFloat(json, "usd_camera_distance_to_mesh_center");
+    if (!cameraPath.empty() && cameraDistance.has_value())
+    {
+        usdCameraInfoOut.found = true;
+        usdCameraInfoOut.path = pxr::SdfPath(cameraPath);
+        usdCameraInfoOut.distanceToMeshCenter = cameraDistance.value();
+    }
+
+    return true;
+}
 
 static void BuildCreasePairs(const SelectedSubdivMesh &source,
                              std::vector<int> &creaseVertexPairsOut,
@@ -1182,22 +1503,21 @@ static bool WriteControlCageObj(const SelectedSubdivMesh &source, const fs::path
             indexOffset += faceVertexCount;
             continue;
         }
-
-        const int i0 = source.faceVertexIndices[indexOffset];
-        for (int i = 1; i < faceVertexCount - 1; i++)
+        out << "f";
+        for (int i = 0; i < faceVertexCount; i++)
         {
-            const int i1 = source.faceVertexIndices[indexOffset + i];
-            const int i2 = source.faceVertexIndices[indexOffset + i + 1];
-            out << "f " << (i0 + 1) << " " << (i1 + 1) << " " << (i2 + 1) << "\n";
+            const int index = source.faceVertexIndices[indexOffset + i];
+            out << " " << (index + 1);
         }
+        out << "\n";
         indexOffset += faceVertexCount;
     }
 
     return out.good();
 }
 
-static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
-                                const SelectedSubdivMesh &selected,
+static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
+                                const UsdCameraInfo &usdCameraInfo,
                                 const fs::path &outputDir,
                                 const char *controlCageName,
                                 const char *farOutputName,
@@ -1295,8 +1615,7 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
            selected.faceVertexCounts.size());
     printf("Control-cage features: crease/corner/hole handling disabled for tessellation debug.\n");
 
-    UsdCameraInfo usdCameraInfo = {};
-    if (GetClosestUsdCameraInfo(stage, selected.points, usdCameraInfo))
+    if (usdCameraInfo.found)
     {
         printf("Using USD camera: %s distance=%f\n",
                usdCameraInfo.path.GetString().c_str(),
@@ -1304,7 +1623,7 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
     }
     else
     {
-        printf("No USD camera found; using fallback mesh-scaled camera distance.\n");
+        printf("No USD camera metadata found in input; using fallback mesh-scaled camera distance.\n");
     }
 
     const std::array<CameraPreset, 2> cameras = BuildCameraPresets(selected, usdCameraInfo);
@@ -1386,58 +1705,36 @@ static bool ProcessSelectedMesh(const pxr::UsdStageRefPtr &stage,
     return true;
 }
 
-int main()
+int main(int argc, char **argv)
 {
-    const std::string usdPath = "C:/Users/maven/Downloads/ALab-2.2.0/ALab/entry.usda";
-    pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(usdPath);
-    if (!stage)
-    {
-        fprintf(stderr, "Failed to open USD stage: %s\n", usdPath.c_str());
-        return 1;
-    }
-
-    const fs::path outputDir = fs::path("tests") / "bvh" / "out";
-    fs::create_directories(outputDir);
+    const CliOptions options = ParseCli(argc, argv);
+    fs::create_directories(options.outputDir);
 
     SelectedSubdivMesh selected = {};
-    if (!SelectLargestCatmullClarkMesh(stage, selected))
-    {
-        fprintf(stderr, "No Catmull-Clark mesh found in stage.\n");
-        return 1;
-    }
-    if (!ProcessSelectedMesh(stage,
-                             selected,
-                             outputDir,
-                             "subdiv_control_cage.obj",
-                             "subdiv_limit_adaptive_nosplit_far.obj",
-                             "subdiv_limit_adaptive_nosplit_near.obj"))
+    UsdCameraInfo usdCameraInfo = {};
+    if (!LoadSelectedSubdivFromJson(options.inputJsonPath, selected, usdCameraInfo))
     {
         return 1;
     }
 
-    SelectedSubdivMesh selectedWithCreases = {};
-    if (SelectLargestCatmullClarkMeshWithCreases(stage, selectedWithCreases))
+    printf("Loaded control cage JSON: %s\n", options.inputJsonPath.string().c_str());
+    printf("  prim=%s scheme=%s vertices=%zu faces=%zu creases=%zu corners=%zu holes=%zu\n",
+           selected.path.GetString().c_str(),
+           selected.subdivisionScheme.c_str(),
+           selected.points.size(),
+           selected.faceVertexCounts.size(),
+           selected.creaseSharpnesses.size(),
+           selected.cornerIndices.size(),
+           selected.holeIndices.size());
+
+    if (!ProcessSelectedMesh(selected,
+                             usdCameraInfo,
+                             options.outputDir,
+                             options.controlCageOutputName.c_str(),
+                             options.farOutputName.c_str(),
+                             options.nearOutputName.c_str()))
     {
-        if (selectedWithCreases.faceVertexCounts.size() > 417)
-        {
-            const int faceVertexCount417 = selectedWithCreases.faceVertexCounts[417];
-            printf("selected_creased coarse_face=417 face_vertex_count=%d is_triangle=%d\n",
-                   faceVertexCount417,
-                   faceVertexCount417 == 3 ? 1 : 0);
-        }
-        if (!ProcessSelectedMesh(stage,
-                                 selectedWithCreases,
-                                 outputDir,
-                                 "subdiv_control_cage_creased.obj",
-                                 "subdiv_limit_adaptive_nosplit_far_creased.obj",
-                                 "subdiv_limit_adaptive_nosplit_near_creased.obj"))
-        {
-            return 1;
-        }
-    }
-    else
-    {
-        printf("No Catmull-Clark mesh with creases found in stage.\n");
+        return 1;
     }
 
     return 0;
