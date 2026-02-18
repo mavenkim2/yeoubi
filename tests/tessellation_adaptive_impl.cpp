@@ -1,5 +1,7 @@
 #include "bvh/usd_subdiv_select.h"
 #include "bvh/usd_camera_utils.h"
+#include "io/usd_mesh_io.h"
+#include "io/usd_subdiv_json_io.h"
 
 #include <opensubdiv/far/patchMap.h>
 #include <opensubdiv/far/patchTable.h>
@@ -11,17 +13,13 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <numeric>
-#include <optional>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -51,25 +49,6 @@ struct TessMesh
     std::vector<int> indices;
 };
 
-struct MeshValidationStats
-{
-    int outOfBoundsTriangles = 0;
-    int degenerateIndexTriangles = 0;
-    int degenerateAreaTriangles = 0;
-    int maxVertexTriangleUse = 0;
-    int suspiciousOverusedVertices = 0;
-    int zeroPositionVertices = 0;
-};
-
-struct EvalDebugStats
-{
-    int patchLookupFailures = 0;
-    int fallbackEvaluations = 0;
-    int rawLookupMissesRecovered = 0;
-};
-
-static EvalDebugStats gEvalDebugStats = {};
-static std::vector<std::string> gRecoveredRawMissExamples;
 static const SelectedSubdivMesh *gFallbackSelectedMesh = nullptr;
 static const std::vector<int> *gFallbackCoarseFaceForPtex = nullptr;
 static const std::vector<int> *gFallbackFaceStartOffsets = nullptr;
@@ -168,150 +147,6 @@ struct CliOptions
     EvaluationMode evaluationMode = EvaluationMode::Adaptive;
     int uniformRate = 8;
 };
-
-static std::string ExtractJsonString(const std::string &text, const std::string &key)
-{
-    const std::string token = "\"" + key + "\"";
-    const size_t keyPos = text.find(token);
-    if (keyPos == std::string::npos)
-    {
-        return {};
-    }
-    const size_t colonPos = text.find(':', keyPos);
-    if (colonPos == std::string::npos)
-    {
-        return {};
-    }
-    const size_t quoteStart = text.find('"', colonPos + 1);
-    if (quoteStart == std::string::npos)
-    {
-        return {};
-    }
-    const size_t quoteEnd = text.find('"', quoteStart + 1);
-    if (quoteEnd == std::string::npos || quoteEnd <= quoteStart)
-    {
-        return {};
-    }
-    return text.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
-}
-
-static std::optional<float> ExtractJsonFloat(const std::string &text, const std::string &key)
-{
-    const std::string token = "\"" + key + "\"";
-    const size_t keyPos = text.find(token);
-    if (keyPos == std::string::npos)
-    {
-        return std::nullopt;
-    }
-    const size_t colonPos = text.find(':', keyPos);
-    if (colonPos == std::string::npos)
-    {
-        return std::nullopt;
-    }
-
-    size_t begin = colonPos + 1;
-    while (begin < text.size() &&
-           (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\n' || text[begin] == '\r'))
-    {
-        begin++;
-    }
-    if (begin >= text.size())
-    {
-        return std::nullopt;
-    }
-
-    size_t end = begin;
-    while (end < text.size() &&
-           (std::isdigit((unsigned char)text[end]) || text[end] == '.' || text[end] == '-' ||
-            text[end] == '+' || text[end] == 'e' || text[end] == 'E'))
-    {
-        end++;
-    }
-    if (end <= begin)
-    {
-        return std::nullopt;
-    }
-
-    return std::stof(text.substr(begin, end - begin));
-}
-
-static std::string ExtractJsonArray(const std::string &text, const std::string &key)
-{
-    const std::string token = "\"" + key + "\"";
-    const size_t keyPos = text.find(token);
-    if (keyPos == std::string::npos)
-    {
-        return {};
-    }
-    const size_t bracketStart = text.find('[', keyPos);
-    if (bracketStart == std::string::npos)
-    {
-        return {};
-    }
-
-    int depth = 0;
-    for (size_t i = bracketStart; i < text.size(); i++)
-    {
-        if (text[i] == '[')
-        {
-            depth++;
-        }
-        else if (text[i] == ']')
-        {
-            depth--;
-            if (depth == 0)
-            {
-                return text.substr(bracketStart, i - bracketStart + 1);
-            }
-        }
-    }
-
-    return {};
-}
-
-static std::vector<float> ParseFloatArray(const std::string &arrayText)
-{
-    std::vector<float> values;
-    size_t index = 0;
-    while (index < arrayText.size())
-    {
-        while (index < arrayText.size() &&
-               !(std::isdigit((unsigned char)arrayText[index]) || arrayText[index] == '-' ||
-                 arrayText[index] == '+' || arrayText[index] == '.'))
-        {
-            index++;
-        }
-        if (index >= arrayText.size())
-        {
-            break;
-        }
-
-        size_t endIndex = index + 1;
-        while (endIndex < arrayText.size() &&
-               (std::isdigit((unsigned char)arrayText[endIndex]) || arrayText[endIndex] == '.' ||
-                arrayText[endIndex] == '-' || arrayText[endIndex] == '+' ||
-                arrayText[endIndex] == 'e' || arrayText[endIndex] == 'E'))
-        {
-            endIndex++;
-        }
-
-        values.push_back(std::stof(arrayText.substr(index, endIndex - index)));
-        index = endIndex;
-    }
-    return values;
-}
-
-static std::vector<int> ParseIntArray(const std::string &arrayText)
-{
-    const std::vector<float> parsed = ParseFloatArray(arrayText);
-    std::vector<int> values;
-    values.reserve(parsed.size());
-    for (size_t i = 0; i < parsed.size(); i++)
-    {
-        values.push_back((int)parsed[i]);
-    }
-    return values;
-}
 
 static void PrintUsage(const char *exeName)
 {
@@ -417,89 +252,6 @@ static CliOptions ParseCli(int argc, char **argv)
     return options;
 }
 
-static bool LoadSelectedSubdivFromJson(const fs::path &jsonPath,
-                                       SelectedSubdivMesh &selectedOut,
-                                       UsdCameraInfo &usdCameraInfoOut)
-{
-    std::ifstream input(jsonPath, std::ios::in | std::ios::binary);
-    if (!input.is_open())
-    {
-        fprintf(stderr, "Failed to open input JSON: %s\n", jsonPath.string().c_str());
-        return false;
-    }
-    const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-
-    const std::string sourcePrim = ExtractJsonString(json, "source_prim");
-    if (!sourcePrim.empty())
-    {
-        selectedOut.path = pxr::SdfPath(sourcePrim);
-    }
-    selectedOut.subdivisionScheme = ExtractJsonString(json, "scheme");
-    if (selectedOut.subdivisionScheme.empty())
-    {
-        selectedOut.subdivisionScheme = "catmullClark";
-    }
-
-    const std::vector<float> pointScalars = ParseFloatArray(ExtractJsonArray(json, "points"));
-    if (pointScalars.size() % 3 != 0)
-    {
-        fprintf(stderr, "Invalid points array in JSON (not xyz triplets): %s\n", jsonPath.string().c_str());
-        return false;
-    }
-    selectedOut.points.resize(pointScalars.size() / 3);
-    for (size_t i = 0; i + 2 < pointScalars.size(); i += 3)
-    {
-        selectedOut.points[i / 3] = pxr::GfVec3f(pointScalars[i], pointScalars[i + 1], pointScalars[i + 2]);
-    }
-
-    const std::vector<int> faceVertexCounts = ParseIntArray(ExtractJsonArray(json, "face_vertex_counts"));
-    const std::vector<int> faceVertexIndices = ParseIntArray(ExtractJsonArray(json, "face_vertex_indices"));
-    selectedOut.faceVertexCounts = pxr::VtIntArray(faceVertexCounts.begin(), faceVertexCounts.end());
-    selectedOut.faceVertexIndices = pxr::VtIntArray(faceVertexIndices.begin(), faceVertexIndices.end());
-
-    const std::vector<int> cornerIndices = ParseIntArray(ExtractJsonArray(json, "corner_indices"));
-    const std::vector<float> cornerSharpnesses =
-        ParseFloatArray(ExtractJsonArray(json, "corner_sharpnesses"));
-    const std::vector<int> creaseIndices = ParseIntArray(ExtractJsonArray(json, "crease_indices"));
-    const std::vector<int> creaseLengths = ParseIntArray(ExtractJsonArray(json, "crease_lengths"));
-    const std::vector<float> creaseSharpnesses =
-        ParseFloatArray(ExtractJsonArray(json, "crease_sharpnesses"));
-    const std::vector<int> holeIndices = ParseIntArray(ExtractJsonArray(json, "hole_indices"));
-
-    selectedOut.cornerIndices = pxr::VtIntArray(cornerIndices.begin(), cornerIndices.end());
-    selectedOut.cornerSharpnesses =
-        pxr::VtFloatArray(cornerSharpnesses.begin(), cornerSharpnesses.end());
-    selectedOut.creaseIndices = pxr::VtIntArray(creaseIndices.begin(), creaseIndices.end());
-    selectedOut.creaseLengths = pxr::VtIntArray(creaseLengths.begin(), creaseLengths.end());
-    selectedOut.creaseSharpnesses =
-        pxr::VtFloatArray(creaseSharpnesses.begin(), creaseSharpnesses.end());
-    selectedOut.holeIndices = pxr::VtIntArray(holeIndices.begin(), holeIndices.end());
-
-    const int expectedFaceIndexCount =
-        std::accumulate(selectedOut.faceVertexCounts.begin(), selectedOut.faceVertexCounts.end(), 0);
-    if (expectedFaceIndexCount != int(selectedOut.faceVertexIndices.size()))
-    {
-        fprintf(stderr,
-                "Invalid face topology in JSON: expected %d face indices, found %zu (%s)\n",
-                expectedFaceIndexCount,
-                selectedOut.faceVertexIndices.size(),
-                jsonPath.string().c_str());
-        return false;
-    }
-
-    usdCameraInfoOut = {};
-    const std::string cameraPath = ExtractJsonString(json, "usd_camera_path");
-    const std::optional<float> cameraDistance =
-        ExtractJsonFloat(json, "usd_camera_distance_to_mesh_center");
-    if (!cameraPath.empty() && cameraDistance.has_value())
-    {
-        usdCameraInfoOut.found = true;
-        usdCameraInfoOut.path = pxr::SdfPath(cameraPath);
-        usdCameraInfoOut.distanceToMeshCenter = cameraDistance.value();
-    }
-
-    return true;
-}
 
 static void BuildCreasePairs(const SelectedSubdivMesh &source,
                              std::vector<int> &creaseVertexPairsOut,
@@ -655,36 +407,17 @@ static pxr::GfVec3f EvaluatePosition(const Far::PatchMap &patchMap,
     float evalV = 0.0f;
     const Far::PatchTable::PatchHandle *handle =
         FindPatchHandleRobust(patchMap, ptexFace, u, v, evalU, evalV);
-    if (!rawHandle && handle)
-    {
-        gEvalDebugStats.rawLookupMissesRecovered++;
-        if (gRecoveredRawMissExamples.size() < 16)
-        {
-            char line[256];
-            snprintf(line,
-                     sizeof(line),
-                     "ptex=%d req=(%.6f,%.6f) recovered=(%.6f,%.6f)",
-                     ptexFace,
-                     u,
-                     v,
-                     evalU,
-                     evalV);
-            gRecoveredRawMissExamples.push_back(std::string(line));
-        }
-    }
+    (void)rawHandle;
     if (!handle)
     {
-        gEvalDebugStats.patchLookupFailures++;
         const pxr::GfVec3f coarseFallback = EvaluateCoarseFallbackPosition(ptexFace, u, v);
         if (!(fabsf(coarseFallback[0]) < 1e-20f && fabsf(coarseFallback[1]) < 1e-20f &&
               fabsf(coarseFallback[2]) < 1e-20f))
         {
-            gEvalDebugStats.fallbackEvaluations++;
             return coarseFallback;
         }
         if (!positions.empty())
         {
-            gEvalDebugStats.fallbackEvaluations++;
             return positions[0].value;
         }
         return pxr::GfVec3f(0.0f);
@@ -1286,176 +1019,6 @@ static void EmitLowEdgeStitchTriangles(TessMesh &mesh,
     }
 }
 
-static MeshValidationStats ValidateMesh(const TessMesh &mesh, const char *label)
-{
-    MeshValidationStats stats = {};
-    if (mesh.positions.empty() || mesh.indices.empty())
-    {
-        return stats;
-    }
-
-    std::vector<int> usage(mesh.positions.size(), 0);
-    for (const pxr::GfVec3f &p : mesh.positions)
-    {
-        if (fabsf(p[0]) < 1e-20f && fabsf(p[1]) < 1e-20f && fabsf(p[2]) < 1e-20f)
-        {
-            stats.zeroPositionVertices++;
-        }
-    }
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
-    {
-        const int i0 = mesh.indices[i + 0];
-        const int i1 = mesh.indices[i + 1];
-        const int i2 = mesh.indices[i + 2];
-        const bool outOfBounds = i0 < 0 || i1 < 0 || i2 < 0 || i0 >= int(mesh.positions.size()) ||
-                                 i1 >= int(mesh.positions.size()) || i2 >= int(mesh.positions.size());
-        if (outOfBounds)
-        {
-            stats.outOfBoundsTriangles++;
-            continue;
-        }
-
-        if (i0 == i1 || i1 == i2 || i2 == i0)
-        {
-            stats.degenerateIndexTriangles++;
-            continue;
-        }
-
-        const float areaSq = TriangleAreaSquared(
-            mesh.positions[size_t(i0)], mesh.positions[size_t(i1)], mesh.positions[size_t(i2)]);
-        if (areaSq < 1e-18f)
-        {
-            stats.degenerateAreaTriangles++;
-            continue;
-        }
-
-        usage[size_t(i0)]++;
-        usage[size_t(i1)]++;
-        usage[size_t(i2)]++;
-    }
-
-    long long totalUse = 0;
-    for (int count : usage)
-    {
-        stats.maxVertexTriangleUse = std::max(stats.maxVertexTriangleUse, count);
-        totalUse += count;
-    }
-    const float meanUse = usage.empty() ? 0.0f : float(totalUse) / float(usage.size());
-    for (int count : usage)
-    {
-        if (count > 500 && count > int(meanUse * 50.0f))
-        {
-            stats.suspiciousOverusedVertices++;
-        }
-    }
-
-    printf("Mesh validation [%s]: oob=%d deg_idx=%d deg_area=%d max_use=%d suspicious_use=%d zero_pos=%d\n",
-           label,
-           stats.outOfBoundsTriangles,
-           stats.degenerateIndexTriangles,
-           stats.degenerateAreaTriangles,
-           stats.maxVertexTriangleUse,
-           stats.suspiciousOverusedVertices,
-           stats.zeroPositionVertices);
-    return stats;
-}
-
-static bool CleanupInvalidTriangles(TessMesh &mesh)
-{
-    bool changed = false;
-    std::vector<int> cleaned;
-    cleaned.reserve(mesh.indices.size());
-
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
-    {
-        const int i0 = mesh.indices[i + 0];
-        const int i1 = mesh.indices[i + 1];
-        const int i2 = mesh.indices[i + 2];
-        const bool outOfBounds = i0 < 0 || i1 < 0 || i2 < 0 || i0 >= int(mesh.positions.size()) ||
-                                 i1 >= int(mesh.positions.size()) || i2 >= int(mesh.positions.size());
-        if (outOfBounds || IsTriangleDegenerate(mesh, i0, i1, i2))
-        {
-            changed = true;
-            continue;
-        }
-
-        cleaned.push_back(i0);
-        cleaned.push_back(i1);
-        cleaned.push_back(i2);
-    }
-
-    if (changed)
-    {
-        mesh.indices.swap(cleaned);
-    }
-    return changed;
-}
-
-static int FixZeroPositionVertices(TessMesh &mesh)
-{
-    if (mesh.positions.empty() || mesh.indices.empty())
-    {
-        return 0;
-    }
-
-    std::vector<pxr::GfVec3f> sum(mesh.positions.size(), pxr::GfVec3f(0.0f));
-    std::vector<int> count(mesh.positions.size(), 0);
-
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
-    {
-        const int idx[3] = {mesh.indices[i + 0], mesh.indices[i + 1], mesh.indices[i + 2]};
-        for (int a = 0; a < 3; a++)
-        {
-            if (idx[a] < 0 || idx[a] >= int(mesh.positions.size()))
-            {
-                continue;
-            }
-            for (int b = 0; b < 3; b++)
-            {
-                if (a == b || idx[b] < 0 || idx[b] >= int(mesh.positions.size()))
-                {
-                    continue;
-                }
-                sum[size_t(idx[a])] += mesh.positions[size_t(idx[b])];
-                count[size_t(idx[a])]++;
-            }
-        }
-    }
-
-    pxr::GfVec3f fallback(0.0f);
-    for (const pxr::GfVec3f &p : mesh.positions)
-    {
-        if (!(fabsf(p[0]) < 1e-20f && fabsf(p[1]) < 1e-20f && fabsf(p[2]) < 1e-20f))
-        {
-            fallback = p;
-            break;
-        }
-    }
-
-    int fixed = 0;
-    for (size_t i = 0; i < mesh.positions.size(); i++)
-    {
-        const pxr::GfVec3f p = mesh.positions[i];
-        const bool isZero = fabsf(p[0]) < 1e-20f && fabsf(p[1]) < 1e-20f && fabsf(p[2]) < 1e-20f;
-        if (!isZero)
-        {
-            continue;
-        }
-
-        if (count[i] > 0)
-        {
-            mesh.positions[i] = sum[i] / float(count[i]);
-            fixed++;
-        }
-        else
-        {
-            mesh.positions[i] = fallback;
-            fixed++;
-        }
-    }
-    return fixed;
-}
-
 static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
                                           const Far::PatchTable &patchTable,
                                           const std::vector<OsdData<pxr::GfVec3f>> &positions,
@@ -1700,55 +1263,6 @@ static TessMesh TessellateUniformNoStitch(const Far::PatchMap &patchMap,
     return mesh;
 }
 
-static bool WriteAdaptiveObj(const TessMesh &mesh,
-                             const fs::path &path,
-                             const SelectedSubdivMesh &source,
-                             const CameraPreset &camera,
-                             const AdaptiveSettings &settings,
-                             const UsdCameraInfo &usdCameraInfo,
-                             const char *modeLabel,
-                             int uniformRate)
-{
-    std::ofstream out(path, std::ios::out | std::ios::binary);
-    if (!out.is_open())
-    {
-        return false;
-    }
-
-    out << "# source_prim " << source.path.GetString() << "\n";
-    out << "# scheme " << source.subdivisionScheme << "\n";
-    out << "# control_cage_faces " << source.faceVertexCounts.size() << "\n";
-    out << "# mode " << modeLabel << "\n";
-    out << "# camera " << camera.name << "\n";
-    out << "# camera_distance_to_target " << camera.distanceToTarget << "\n";
-    if (usdCameraInfo.found)
-    {
-        out << "# usd_camera_path " << usdCameraInfo.path.GetString() << "\n";
-        out << "# usd_camera_distance_to_mesh_center " << usdCameraInfo.distanceToMeshCenter << "\n";
-    }
-    out << "# N " << settings.numEdgeSamples << "\n";
-    out << "# R " << settings.pixelSpacing << "\n";
-    out << "# rate_clamp_min " << settings.minRate << "\n";
-    out << "# rate_clamp_max " << settings.maxRate << "\n";
-    if (uniformRate > 0)
-    {
-        out << "# uniform_rate " << uniformRate << "\n";
-    }
-    out << "# vertices " << mesh.positions.size() << "\n";
-    out << "# triangles " << (mesh.indices.size() / 3) << "\n";
-
-    for (const pxr::GfVec3f &p : mesh.positions)
-    {
-        out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
-    }
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
-    {
-        out << "f " << (mesh.indices[i + 0] + 1) << " " << (mesh.indices[i + 1] + 1) << " "
-            << (mesh.indices[i + 2] + 1) << "\n";
-    }
-    return out.good();
-}
-
 static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
                                 const UsdCameraInfo &usdCameraInfo,
                                 const fs::path &outputDir,
@@ -1856,8 +1370,6 @@ static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
     for (int i = 0; i < 2; i++)
     {
         const CameraPreset &camera = cameras[size_t(i)];
-        gEvalDebugStats = {};
-        gRecoveredRawMissExamples.clear();
         TessMesh tessMesh = {};
         if (evaluationMode == EvaluationMode::Uniform)
         {
@@ -1883,50 +1395,21 @@ static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
                                                  camera,
                                                  settings);
         }
-        for (int pass = 0; pass < 64; pass++)
-        {
-            const MeshValidationStats stats =
-                ValidateMesh(tessMesh, camera.name);
-            const bool hasCriticalInvalid = stats.outOfBoundsTriangles > 0 ||
-                                            stats.degenerateIndexTriangles > 0 ||
-                                            stats.degenerateAreaTriangles > 0;
-            const bool hasZeroPositions = stats.zeroPositionVertices > 0;
-            if (!hasCriticalInvalid && !hasZeroPositions)
-            {
-                break;
-            }
-
-            bool changed = false;
-            if (hasCriticalInvalid)
-            {
-                changed = CleanupInvalidTriangles(tessMesh) || changed;
-            }
-            if (hasZeroPositions)
-            {
-                const int fixedZeroCount = FixZeroPositionVertices(tessMesh);
-                changed = fixedZeroCount > 0 || changed;
-                printf("Zero-fix [%s]: fixed=%d pass=%d\n", camera.name, fixedZeroCount, pass);
-            }
-            if (!changed)
-            {
-                break;
-            }
-        }
-        printf("Eval debug [%s]: patch_lookup_failures=%d fallbacks=%d\n",
-               camera.name,
-               gEvalDebugStats.patchLookupFailures,
-               gEvalDebugStats.fallbackEvaluations);
-        printf("Eval debug [%s]: raw_misses_recovered=%d\n",
-               camera.name,
-               gEvalDebugStats.rawLookupMissesRecovered);
-        for (const std::string &example : gRecoveredRawMissExamples)
-        {
-            printf("  recovered_raw_miss [%s] %s\n", camera.name, example.c_str());
-        }
         const fs::path outPath = outputDir / outputNames[i];
         const int uniformRateMetadata = evaluationMode == EvaluationMode::Uniform ? uniformRate : -1;
-        if (!WriteAdaptiveObj(
-                tessMesh, outPath, selected, camera, settings, usdCameraInfo, modeLabel, uniformRateMetadata))
+        if (!ybi::testio::WriteAdaptiveObj(tessMesh.positions,
+                                           tessMesh.indices,
+                                           outPath,
+                                           selected,
+                                           camera.name,
+                                           camera.distanceToTarget,
+                                           settings.numEdgeSamples,
+                                           settings.pixelSpacing,
+                                           settings.minRate,
+                                           settings.maxRate,
+                                           usdCameraInfo,
+                                           modeLabel,
+                                           uniformRateMetadata))
         {
             fprintf(stderr, "Failed to write OBJ: %s\n", outPath.string().c_str());
             delete patchTable;
@@ -1952,7 +1435,7 @@ int main(int argc, char **argv)
 
     SelectedSubdivMesh selected = {};
     UsdCameraInfo usdCameraInfo = {};
-    if (!LoadSelectedSubdivFromJson(options.inputJsonPath, selected, usdCameraInfo))
+    if (!ybi::testio::LoadSelectedSubdivFromJson(options.inputJsonPath, selected, usdCameraInfo))
     {
         return 1;
     }

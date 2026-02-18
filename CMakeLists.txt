@@ -47,18 +47,23 @@ endif()
 if (WITH_USD)
     add_executable(yeoubi_usd_extract
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_extract.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_mesh_io.cpp)
     target_compile_definitions(yeoubi_usd_extract PRIVATE ${YBI_COMPILE_DEFINITIONS})
     if (WIN32)
         target_compile_definitions(yeoubi_usd_extract PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
-    target_include_directories(yeoubi_usd_extract PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_usd_extract PRIVATE
+        ${YBI_INCLUDE_DIRECTORIES}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_include_directories(yeoubi_usd_extract SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_usd_extract PRIVATE ${OPENUSD_LIBRARIES})
 
     add_executable(yeoubi_tessellation
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/tessellation_adaptive_impl.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_mesh_io.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_subdiv_json_io.cpp)
     target_compile_definitions(yeoubi_tessellation PRIVATE ${YBI_COMPILE_DEFINITIONS})
     if (WIN32)
         target_compile_definitions(yeoubi_tessellation PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
