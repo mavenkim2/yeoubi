@@ -157,7 +157,6 @@ struct CliOptions
 {
     fs::path inputJsonPath;
     fs::path outputDir = fs::path("tests") / "bvh" / "out";
-    std::string controlCageOutputName = "subdiv_control_cage.obj";
     std::string farOutputName = "subdiv_limit_adaptive_nosplit_far.obj";
     std::string nearOutputName = "subdiv_limit_adaptive_nosplit_near.obj";
 };
@@ -308,8 +307,7 @@ static std::vector<int> ParseIntArray(const std::string &arrayText)
 
 static void PrintUsage(const char *exeName)
 {
-    printf("Usage: %s --input-json <path> [--out-dir <dir>] [--control-cage-out <obj>] "
-           "[--far-out <obj>] [--near-out <obj>]\n",
+    printf("Usage: %s --input-json <path> [--out-dir <dir>] [--far-out <obj>] [--near-out <obj>]\n",
            exeName);
 }
 
@@ -337,16 +335,6 @@ static CliOptions ParseCli(int argc, char **argv)
                 std::abort();
             }
             options.outputDir = fs::path(argv[++i]);
-            continue;
-        }
-        if (arg == "--control-cage-out")
-        {
-            if (i + 1 >= argc)
-            {
-                PrintUsage(argv[0]);
-                std::abort();
-            }
-            options.controlCageOutputName = argv[++i];
             continue;
         }
         if (arg == "--far-out")
@@ -1063,6 +1051,7 @@ static bool UsesCanonicalOrientation(int face, int edge, const EdgeKey &key)
 static int GetOrCreateEdgeVertex(const EdgeKey &key,
                                  int canonicalSegment,
                                  int segments,
+                                 const std::vector<bool> &faceIsEvaluable,
                                  std::unordered_map<EdgeVertexKey, int, EdgeVertexKeyHash> &edgeVertexCache,
                                  TessMesh &mesh,
                                  const Far::PatchMap &patchMap,
@@ -1076,9 +1065,26 @@ static int GetOrCreateEdgeVertex(const EdgeKey &key,
         return it->second;
     }
 
-    const float s = float(canonicalSegment) / float(std::max(1, segments));
-    const pxr::GfVec2f uv = EdgeUV(key.edgeA, s);
-    const pxr::GfVec3f p = EvaluatePosition(patchMap, patchTable, positions, key.faceA, uv[0], uv[1]);
+    int evalFace = key.faceA;
+    int evalEdge = key.edgeA;
+    int evalSegment = canonicalSegment;
+    if (key.faceB >= 0 && key.edgeB >= 0)
+    {
+        const bool faceAEvaluable =
+            key.faceA >= 0 && key.faceA < int(faceIsEvaluable.size()) && faceIsEvaluable[size_t(key.faceA)];
+        const bool faceBEvaluable =
+            key.faceB >= 0 && key.faceB < int(faceIsEvaluable.size()) && faceIsEvaluable[size_t(key.faceB)];
+        if (!faceAEvaluable && faceBEvaluable)
+        {
+            evalFace = key.faceB;
+            evalEdge = key.edgeB;
+            evalSegment = segments - canonicalSegment;
+        }
+    }
+
+    const float s = float(evalSegment) / float(std::max(1, segments));
+    const pxr::GfVec2f uv = EdgeUV(evalEdge, s);
+    const pxr::GfVec3f p = EvaluatePosition(patchMap, patchTable, positions, evalFace, uv[0], uv[1]);
     const int index = int(mesh.positions.size());
     mesh.positions.push_back(p);
     edgeVertexCache.emplace(vertexKey, index);
@@ -1108,6 +1114,53 @@ static bool IsTriangleDegenerate(const TessMesh &mesh, int i0, int i1, int i2)
     const float areaSq = TriangleAreaSquared(
         mesh.positions[size_t(i0)], mesh.positions[size_t(i1)], mesh.positions[size_t(i2)]);
     return areaSq < 1e-18f;
+}
+
+static void EmitQuadCellTriangles(TessMesh &mesh, int i0, int i1, int i2, int i3)
+{
+    std::array<int, 4> ring = {i0, i1, i2, i3};
+    std::vector<int> unique;
+    unique.reserve(4);
+    for (int i = 0; i < 4; i++)
+    {
+        const int index = ring[size_t(i)];
+        if (unique.empty() || unique.back() != index)
+        {
+            unique.push_back(index);
+        }
+    }
+    if (unique.size() >= 2 && unique.front() == unique.back())
+    {
+        unique.pop_back();
+    }
+
+    if (unique.size() < 3)
+    {
+        return;
+    }
+    if (unique.size() == 3)
+    {
+        if (!IsTriangleDegenerate(mesh, unique[0], unique[1], unique[2]))
+        {
+            mesh.indices.push_back(unique[0]);
+            mesh.indices.push_back(unique[1]);
+            mesh.indices.push_back(unique[2]);
+        }
+        return;
+    }
+
+    if (!IsTriangleDegenerate(mesh, unique[0], unique[1], unique[2]))
+    {
+        mesh.indices.push_back(unique[0]);
+        mesh.indices.push_back(unique[1]);
+        mesh.indices.push_back(unique[2]);
+    }
+    if (!IsTriangleDegenerate(mesh, unique[0], unique[2], unique[3]))
+    {
+        mesh.indices.push_back(unique[0]);
+        mesh.indices.push_back(unique[2]);
+        mesh.indices.push_back(unique[3]);
+    }
 }
 
 static MeshValidationStats ValidateMesh(const TessMesh &mesh, const char *label)
@@ -1292,9 +1345,20 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
                                           const AdaptiveSettings &settings)
 {
     std::vector<bool> faceIsEvaluable(size_t(numPtexFaces), false);
+    int nonEvaluableFaceCount = 0;
     for (int face = 0; face < numPtexFaces; face++)
     {
         faceIsEvaluable[size_t(face)] = FaceHasPatchCoverage(patchMap, face);
+        if (!faceIsEvaluable[size_t(face)])
+        {
+            nonEvaluableFaceCount++;
+        }
+    }
+    if (nonEvaluableFaceCount > 0)
+    {
+        printf("Tessellation warning: %d/%d ptex faces are non-evaluable; using coarse fallback for non-evaluable samples.\n",
+               nonEvaluableFaceCount,
+               numPtexFaces);
     }
     gFallbackSelectedMesh = &selected;
     gFallbackCoarseFaceForPtex = &coarseFaceForPtex;
@@ -1383,6 +1447,7 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
                     const int index = GetOrCreateEdgeVertex(key,
                                                             canonicalSegment,
                                                             sharedRate,
+                                                            faceIsEvaluable,
                                                             edgeVertexCache,
                                                             mesh,
                                                             patchMap,
@@ -1411,18 +1476,7 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
                 const int i1 = gridIndices[size_t(GridOffset(u + 1, v))];
                 const int i2 = gridIndices[size_t(GridOffset(u + 1, v + 1))];
                 const int i3 = gridIndices[size_t(GridOffset(u, v + 1))];
-                if (!IsTriangleDegenerate(mesh, i0, i1, i2))
-                {
-                    mesh.indices.push_back(i0);
-                    mesh.indices.push_back(i1);
-                    mesh.indices.push_back(i2);
-                }
-                if (!IsTriangleDegenerate(mesh, i0, i2, i3))
-                {
-                    mesh.indices.push_back(i0);
-                    mesh.indices.push_back(i2);
-                    mesh.indices.push_back(i3);
-                }
+                EmitQuadCellTriangles(mesh, i0, i1, i2, i3);
             }
         }
     }
@@ -1477,49 +1531,9 @@ static bool WriteAdaptiveObj(const TessMesh &mesh,
     return out.good();
 }
 
-static bool WriteControlCageObj(const SelectedSubdivMesh &source, const fs::path &path)
-{
-    std::ofstream out(path, std::ios::out | std::ios::binary);
-    if (!out.is_open())
-    {
-        return false;
-    }
-
-    out << "# source_prim " << source.path.GetString() << "\n";
-    out << "# scheme " << source.subdivisionScheme << "\n";
-    out << "# control_cage_faces " << source.faceVertexCounts.size() << "\n";
-    out << "# control_cage_vertices " << source.points.size() << "\n";
-
-    for (const pxr::GfVec3f &p : source.points)
-    {
-        out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
-    }
-
-    int indexOffset = 0;
-    for (int faceVertexCount : source.faceVertexCounts)
-    {
-        if (faceVertexCount < 3)
-        {
-            indexOffset += faceVertexCount;
-            continue;
-        }
-        out << "f";
-        for (int i = 0; i < faceVertexCount; i++)
-        {
-            const int index = source.faceVertexIndices[indexOffset + i];
-            out << " " << (index + 1);
-        }
-        out << "\n";
-        indexOffset += faceVertexCount;
-    }
-
-    return out.good();
-}
-
 static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
                                 const UsdCameraInfo &usdCameraInfo,
                                 const fs::path &outputDir,
-                                const char *controlCageName,
                                 const char *farOutputName,
                                 const char *nearOutputName)
 {
@@ -1537,15 +1551,17 @@ static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
     desc.numFaces = int(selected.faceVertexCounts.size());
     desc.numVertsPerFace = selected.faceVertexCounts.cdata();
     desc.vertIndicesPerFace = selected.faceVertexIndices.cdata();
-    // Temporary debug mode: disable crease/corner/hole handling to isolate artifacts.
-    desc.numCreases = 0;
-    desc.creaseVertexIndexPairs = nullptr;
-    desc.creaseWeights = nullptr;
-    desc.numCorners = 0;
-    desc.cornerVertexIndices = nullptr;
-    desc.cornerWeights = nullptr;
-    desc.numHoles = 0;
-    desc.holeIndices = nullptr;
+    std::vector<int> creaseVertexPairs;
+    std::vector<float> creaseSharpnesses;
+    BuildCreasePairs(selected, creaseVertexPairs, creaseSharpnesses);
+    desc.numCreases = int(creaseSharpnesses.size());
+    desc.creaseVertexIndexPairs = creaseVertexPairs.empty() ? nullptr : creaseVertexPairs.data();
+    desc.creaseWeights = creaseSharpnesses.empty() ? nullptr : creaseSharpnesses.data();
+    desc.numCorners = int(std::min(selected.cornerIndices.size(), selected.cornerSharpnesses.size()));
+    desc.cornerVertexIndices = selected.cornerIndices.empty() ? nullptr : selected.cornerIndices.cdata();
+    desc.cornerWeights = selected.cornerSharpnesses.empty() ? nullptr : selected.cornerSharpnesses.cdata();
+    desc.numHoles = int(selected.holeIndices.size());
+    desc.holeIndices = selected.holeIndices.empty() ? nullptr : selected.holeIndices.cdata();
 
     const Sdc::SchemeType scheme = Sdc::SCHEME_CATMARK;
     Sdc::Options options;
@@ -1600,20 +1616,6 @@ static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
     }
     const std::vector<OsdData<pxr::GfVec3f>> refinedPositions =
         InterpolateVertex(cagePositions, refiner, patchTable);
-
-    const fs::path controlCagePath = outputDir / controlCageName;
-    if (!WriteControlCageObj(selected, controlCagePath))
-    {
-        fprintf(stderr, "Failed to write control cage OBJ: %s\n", controlCagePath.string().c_str());
-        delete patchTable;
-        delete refiner;
-        return false;
-    }
-    printf("Wrote %s (verts=%zu faces=%zu)\n",
-           controlCagePath.string().c_str(),
-           selected.points.size(),
-           selected.faceVertexCounts.size());
-    printf("Control-cage features: crease/corner/hole handling disabled for tessellation debug.\n");
 
     if (usdCameraInfo.found)
     {
@@ -1730,7 +1732,6 @@ int main(int argc, char **argv)
     if (!ProcessSelectedMesh(selected,
                              usdCameraInfo,
                              options.outputDir,
-                             options.controlCageOutputName.c_str(),
                              options.farOutputName.c_str(),
                              options.nearOutputName.c_str()))
     {
