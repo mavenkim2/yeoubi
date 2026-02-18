@@ -2,6 +2,7 @@
 #include "cuda.h"
 #include "device/bvh/optix/clusters.cuh"
 #include "scene/scene.h"
+#include <cstring>
 #include <optix_function_table_definition.h>
 
 YBI_NAMESPACE_BEGIN
@@ -292,11 +293,12 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
     {
-        CUdeviceptr dst = (CUdeviceptr)((deviceVertices + step * numVertices).data());
+        CUdeviceptr dst = (CUdeviceptr)(deviceVertices.data() + step * numVertices);
         vertexBuffers[step] = dst;
 
-        util::Copy(
-            hostVertices + step * numVertices, mesh.positions + step * numVertices, numVertices);
+        memcpy(hostVertices.data() + step * numVertices,
+               mesh.positions.data() + step * numVertices,
+               sizeof(float3) * numVertices);
     }
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceVertices.data()), hostVertices.data(), deviceVertices.numBytes()));
@@ -360,16 +362,17 @@ static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
     {
-        CUdeviceptr dst = (CUdeviceptr)((deviceVertices + step * numVertices).data());
+        CUdeviceptr dst = (CUdeviceptr)(deviceVertices.data() + step * numVertices);
         vertexBuffers[step] = dst;
 
-        dst = (CUdeviceptr)((deviceWidths + step * numVertices).data());
+        dst = (CUdeviceptr)(deviceWidths.data() + step * numVertices);
         widthBuffers[step] = dst;
 
         const Array<float3> &positions = curves.GetVertices();
         const Array<float> &widths = curves.GetWidths();
-        util::Copy(hostVertices + step * numVertices, positions, numVertices);
-        util::Copy(hostWidths + step * numVertices, widths, numVertices);
+        memcpy(
+            hostVertices.data() + step * numVertices, positions.data(), sizeof(float3) * numVertices);
+        memcpy(hostWidths.data() + step * numVertices, widths.data(), sizeof(float) * numVertices);
     }
 
     CUDA_ASSERT(cuMemcpyHtoD(
@@ -535,16 +538,20 @@ void CUDADevice::BuildBVH(Scene *scene)
 
         for (uint32_t step = 0; step < numMotionKeys; step++)
         {
-            CUdeviceptr dst = (CUdeviceptr)((deviceVertices + step * numVertices).data());
+            CUdeviceptr dst = (CUdeviceptr)(deviceVertices.data() + step * numVertices);
             vertexBuffers[step] = dst;
 
-            dst = (CUdeviceptr)((deviceWidths + step * numVertices).data());
+            dst = (CUdeviceptr)(deviceWidths.data() + step * numVertices);
             widthBuffers[step] = dst;
 
             const Array<float3> &positions = curve.GetVertices();
             const Array<float> &widths = curve.GetWidths();
-            util::Copy(hostVertices + step * numVertices, positions, numVertices);
-            util::Copy(hostWidths + step * numVertices, widths, numVertices);
+            memcpy(hostVertices.data() + step * numVertices,
+                   positions.data(),
+                   sizeof(float3) * numVertices);
+            memcpy(hostWidths.data() + step * numVertices,
+                   widths.data(),
+                   sizeof(float) * numVertices);
         }
 
         CUDA_ASSERT(cuMemcpyHtoD(

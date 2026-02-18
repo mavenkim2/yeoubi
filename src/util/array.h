@@ -3,7 +3,10 @@
 #include "util/aligned_malloc.h"
 #include "util/assert.h"
 #include "util/memory_view.h"
+#include <algorithm>
+#include <cstring>
 #include <type_traits>
+#include <utility>
 
 YBI_NAMESPACE_BEGIN
 
@@ -179,16 +182,6 @@ public:
     {
         return m_data + m_size;
     }
-    MemoryView<T> operator+(size_t offset) const
-    {
-        YBI_ASSERT(offset <= m_size);
-
-        MemoryView<T> result;
-        result.ptr = m_data + offset;
-        result.count = m_size - offset;
-        return result;
-    }
-
 private:
     // TODO: investigate performance
     T *AllocateAligned(size_t n)

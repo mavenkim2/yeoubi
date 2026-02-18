@@ -49,15 +49,6 @@ struct MemoryView
         return count * sizeof(T);
     }
 
-    MemoryView<T> operator+(size_t offset) const
-    {
-        YBI_ASSERT(offset <= count);
-
-        MemoryView<T> result;
-        result.ptr = ptr + offset;
-        result.count = count - offset;
-        return result;
-    }
     MemoryView<T> &operator+=(size_t offset)
     {
         YBI_ASSERT(offset <= count);

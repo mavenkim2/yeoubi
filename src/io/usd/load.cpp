@@ -217,7 +217,7 @@ static void TraversePrim(pxr::UsdPrim &root,
         if (pushChildren)
         {
             pxr::UsdPrimSiblingRange range = prim.GetFilteredChildren(filterPredicate);
-            for (pxr::UsdPrim &prim : range)
+            for (const pxr::UsdPrim &prim : range)
             {
                 if (stackTop >= stackMax)
                 {
@@ -244,7 +244,7 @@ static float3x4 ConvertAffineTransform(pxr::GfMatrix4d &transform)
     return float3x4(r0, r1, r2);
 }
 
-static pxr::UsdShadeMaterial GetPrimMaterial(pxr::UsdPrim &prim,
+static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim,
                                              pxr::TfToken token = pxr::UsdShadeTokens->full)
 {
     pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
