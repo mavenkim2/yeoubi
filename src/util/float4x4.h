@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/forceinline.h"
 #include "util/float4.h"
 
 YBI_NAMESPACE_BEGIN

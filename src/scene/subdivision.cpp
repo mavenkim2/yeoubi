@@ -5,6 +5,7 @@
 #include "util/base.h"
 #include "util/float2.h"
 #include "util/float4x4.h"
+#include "util/forceinline.h"
 #include "util/host_memory_arena.h"
 #include <algorithm>
 #include <opensubdiv/far/patchMap.h>

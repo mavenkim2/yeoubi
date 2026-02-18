@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util/assert.h"
+#include "util/forceinline.h"
 #include <cmath>
 
 YBI_NAMESPACE_BEGIN

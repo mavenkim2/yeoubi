@@ -6,3 +6,4 @@ src/third_party/install
 *.ppm
 *.png
 out/
+*.deb

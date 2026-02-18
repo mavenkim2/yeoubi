@@ -76,6 +76,6 @@ BuildClusterGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, cons
 OptixTraversableHandle
 BuildCurveGASFromCurves(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Curves &curves);
 
-#endif
-
 YBI_NAMESPACE_END
+
+#endif
