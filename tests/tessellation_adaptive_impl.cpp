@@ -153,12 +153,20 @@ struct AdaptiveSettings
     int maxRate = 32;
 };
 
+enum class EvaluationMode
+{
+    Adaptive,
+    Uniform
+};
+
 struct CliOptions
 {
     fs::path inputJsonPath;
     fs::path outputDir = fs::path("tests") / "bvh" / "out";
     std::string farOutputName = "subdiv_limit_adaptive_nosplit_far.obj";
     std::string nearOutputName = "subdiv_limit_adaptive_nosplit_near.obj";
+    EvaluationMode evaluationMode = EvaluationMode::Adaptive;
+    int uniformRate = 8;
 };
 
 static std::string ExtractJsonString(const std::string &text, const std::string &key)
@@ -307,7 +315,8 @@ static std::vector<int> ParseIntArray(const std::string &arrayText)
 
 static void PrintUsage(const char *exeName)
 {
-    printf("Usage: %s --input-json <path> [--out-dir <dir>] [--far-out <obj>] [--near-out <obj>]\n",
+    printf("Usage: %s --input-json <path> [--out-dir <dir>] [--far-out <obj>] [--near-out <obj>] "
+           "[--evaluation adaptive|uniform] [--uniform-rate N]\n",
            exeName);
 }
 
@@ -355,6 +364,39 @@ static CliOptions ParseCli(int argc, char **argv)
                 std::abort();
             }
             options.nearOutputName = argv[++i];
+            continue;
+        }
+        if (arg == "--evaluation")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            const std::string mode = argv[++i];
+            if (mode == "adaptive")
+            {
+                options.evaluationMode = EvaluationMode::Adaptive;
+            }
+            else if (mode == "uniform")
+            {
+                options.evaluationMode = EvaluationMode::Uniform;
+            }
+            else
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            continue;
+        }
+        if (arg == "--uniform-rate")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.uniformRate = std::max(1, std::stoi(argv[++i]));
             continue;
         }
         if (arg == "--help" || arg == "-h")
@@ -1163,6 +1205,87 @@ static void EmitQuadCellTriangles(TessMesh &mesh, int i0, int i1, int i2, int i3
     }
 }
 
+static void EmitTriangleIfValid(TessMesh &mesh, int i0, int i1, int i2)
+{
+    if (!IsTriangleDegenerate(mesh, i0, i1, i2))
+    {
+        mesh.indices.push_back(i0);
+        mesh.indices.push_back(i1);
+        mesh.indices.push_back(i2);
+    }
+}
+
+static void EmitLowEdgeStitchTriangles(TessMesh &mesh,
+                                       const std::vector<int> &gridIndices,
+                                       int uSegments,
+                                       int vSegments,
+                                       int edge,
+                                       int lowRate)
+{
+    auto GridOffset = [&](int u, int v) -> int { return v * (uSegments + 1) + u; };
+    auto BoundaryVertex = [&](int t) -> int {
+        if (edge == 0)
+        {
+            return gridIndices[size_t(GridOffset(t, 0))];
+        }
+        if (edge == 1)
+        {
+            return gridIndices[size_t(GridOffset(uSegments, t))];
+        }
+        if (edge == 2)
+        {
+            return gridIndices[size_t(GridOffset(uSegments - t, vSegments))];
+        }
+        return gridIndices[size_t(GridOffset(0, vSegments - t))];
+    };
+    auto InnerVertex = [&](int t) -> int {
+        if (edge == 0)
+        {
+            return gridIndices[size_t(GridOffset(t, 1))];
+        }
+        if (edge == 1)
+        {
+            return gridIndices[size_t(GridOffset(uSegments - 1, t))];
+        }
+        if (edge == 2)
+        {
+            return gridIndices[size_t(GridOffset(uSegments - t, vSegments - 1))];
+        }
+        return gridIndices[size_t(GridOffset(1, vSegments - t))];
+    };
+
+    const int highRate = (edge == 0 || edge == 2) ? uSegments : vSegments;
+    if (highRate <= 0 || lowRate <= 0)
+    {
+        return;
+    }
+
+    for (int coarseSegment = 0; coarseSegment < lowRate; coarseSegment++)
+    {
+        int h0 = int(std::lround(float(coarseSegment) * float(highRate) / float(lowRate)));
+        int h1 = int(std::lround(float(coarseSegment + 1) * float(highRate) / float(lowRate)));
+        h0 = std::clamp(h0, 0, highRate);
+        h1 = std::clamp(h1, 0, highRate);
+        if (h1 <= h0)
+        {
+            h1 = std::min(highRate, h0 + 1);
+        }
+        const int tip0 = BoundaryVertex(h0);
+        const int tip1 = BoundaryVertex(h1);
+        for (int h = h0; h < h1; h++)
+        {
+            const int i0 = InnerVertex(h);
+            const int i1 = InnerVertex(h + 1);
+            EmitTriangleIfValid(mesh, tip0, i1, i0);
+        }
+        if (tip1 != tip0)
+        {
+            const int edgeInnerEnd = InnerVertex(h1);
+            EmitTriangleIfValid(mesh, tip0, tip1, edgeInnerEnd);
+        }
+    }
+}
+
 static MeshValidationStats ValidateMesh(const TessMesh &mesh, const char *label)
 {
     MeshValidationStats stats = {};
@@ -1394,6 +1517,10 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
         const std::array<int, 4> &rates = patchEdgeRates[size_t(face)];
         const int uSegments = std::max(rates[0], rates[2]);
         const int vSegments = std::max(rates[1], rates[3]);
+        const bool lowBottom = rates[0] < rates[2];
+        const bool lowRight = rates[1] < rates[3];
+        const bool lowTop = rates[2] < rates[0];
+        const bool lowLeft = rates[3] < rates[1];
         const int width = uSegments + 1;
         const int height = vSegments + 1;
 
@@ -1472,6 +1599,92 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
         {
             for (int u = 0; u < uSegments; u++)
             {
+                if (lowBottom && v == 0)
+                {
+                    continue;
+                }
+                if (lowTop && v == vSegments - 1)
+                {
+                    continue;
+                }
+                if (lowLeft && u == 0)
+                {
+                    continue;
+                }
+                if (lowRight && u == uSegments - 1)
+                {
+                    continue;
+                }
+                const int i0 = gridIndices[size_t(GridOffset(u, v))];
+                const int i1 = gridIndices[size_t(GridOffset(u + 1, v))];
+                const int i2 = gridIndices[size_t(GridOffset(u + 1, v + 1))];
+                const int i3 = gridIndices[size_t(GridOffset(u, v + 1))];
+                EmitQuadCellTriangles(mesh, i0, i1, i2, i3);
+            }
+        }
+        if (lowBottom)
+        {
+            EmitLowEdgeStitchTriangles(mesh, gridIndices, uSegments, vSegments, 0, rates[0]);
+        }
+        if (lowRight)
+        {
+            EmitLowEdgeStitchTriangles(mesh, gridIndices, uSegments, vSegments, 1, rates[1]);
+        }
+        if (lowTop)
+        {
+            EmitLowEdgeStitchTriangles(mesh, gridIndices, uSegments, vSegments, 2, rates[2]);
+        }
+        if (lowLeft)
+        {
+            EmitLowEdgeStitchTriangles(mesh, gridIndices, uSegments, vSegments, 3, rates[3]);
+        }
+    }
+
+    gFallbackSelectedMesh = nullptr;
+    gFallbackCoarseFaceForPtex = nullptr;
+    gFallbackFaceStartOffsets = nullptr;
+
+    return mesh;
+}
+
+static TessMesh TessellateUniformNoStitch(const Far::PatchMap &patchMap,
+                                          const Far::PatchTable &patchTable,
+                                          const std::vector<OsdData<pxr::GfVec3f>> &positions,
+                                          const std::vector<int> &coarseFaceForPtex,
+                                          const std::vector<int> &faceStartOffsets,
+                                          const SelectedSubdivMesh &selected,
+                                          int numPtexFaces,
+                                          int uniformRate)
+{
+    gFallbackSelectedMesh = &selected;
+    gFallbackCoarseFaceForPtex = &coarseFaceForPtex;
+    gFallbackFaceStartOffsets = &faceStartOffsets;
+
+    TessMesh mesh = {};
+    const int segments = std::max(1, uniformRate);
+    const int width = segments + 1;
+    const int height = segments + 1;
+    for (int face = 0; face < numPtexFaces; face++)
+    {
+        std::vector<int> gridIndices(size_t(width * height), -1);
+        auto GridOffset = [&](int u, int v) -> int { return v * width + u; };
+        for (int v = 0; v < height; v++)
+        {
+            for (int u = 0; u < width; u++)
+            {
+                const float fu = float(u) / float(segments);
+                const float fv = float(v) / float(segments);
+                const pxr::GfVec3f p = EvaluatePosition(patchMap, patchTable, positions, face, fu, fv);
+                const int index = int(mesh.positions.size());
+                mesh.positions.push_back(p);
+                gridIndices[size_t(GridOffset(u, v))] = index;
+            }
+        }
+
+        for (int v = 0; v < segments; v++)
+        {
+            for (int u = 0; u < segments; u++)
+            {
                 const int i0 = gridIndices[size_t(GridOffset(u, v))];
                 const int i1 = gridIndices[size_t(GridOffset(u + 1, v))];
                 const int i2 = gridIndices[size_t(GridOffset(u + 1, v + 1))];
@@ -1484,7 +1697,6 @@ static TessMesh TessellateAdaptiveNoSplit(const Far::PatchMap &patchMap,
     gFallbackSelectedMesh = nullptr;
     gFallbackCoarseFaceForPtex = nullptr;
     gFallbackFaceStartOffsets = nullptr;
-
     return mesh;
 }
 
@@ -1493,7 +1705,9 @@ static bool WriteAdaptiveObj(const TessMesh &mesh,
                              const SelectedSubdivMesh &source,
                              const CameraPreset &camera,
                              const AdaptiveSettings &settings,
-                             const UsdCameraInfo &usdCameraInfo)
+                             const UsdCameraInfo &usdCameraInfo,
+                             const char *modeLabel,
+                             int uniformRate)
 {
     std::ofstream out(path, std::ios::out | std::ios::binary);
     if (!out.is_open())
@@ -1504,7 +1718,7 @@ static bool WriteAdaptiveObj(const TessMesh &mesh,
     out << "# source_prim " << source.path.GetString() << "\n";
     out << "# scheme " << source.subdivisionScheme << "\n";
     out << "# control_cage_faces " << source.faceVertexCounts.size() << "\n";
-    out << "# mode adaptive_nosplit\n";
+    out << "# mode " << modeLabel << "\n";
     out << "# camera " << camera.name << "\n";
     out << "# camera_distance_to_target " << camera.distanceToTarget << "\n";
     if (usdCameraInfo.found)
@@ -1516,6 +1730,10 @@ static bool WriteAdaptiveObj(const TessMesh &mesh,
     out << "# R " << settings.pixelSpacing << "\n";
     out << "# rate_clamp_min " << settings.minRate << "\n";
     out << "# rate_clamp_max " << settings.maxRate << "\n";
+    if (uniformRate > 0)
+    {
+        out << "# uniform_rate " << uniformRate << "\n";
+    }
     out << "# vertices " << mesh.positions.size() << "\n";
     out << "# triangles " << (mesh.indices.size() / 3) << "\n";
 
@@ -1534,6 +1752,8 @@ static bool WriteAdaptiveObj(const TessMesh &mesh,
 static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
                                 const UsdCameraInfo &usdCameraInfo,
                                 const fs::path &outputDir,
+                                EvaluationMode evaluationMode,
+                                int uniformRate,
                                 const char *farOutputName,
                                 const char *nearOutputName)
 {
@@ -1631,22 +1851,38 @@ static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
     const std::array<CameraPreset, 2> cameras = BuildCameraPresets(selected, usdCameraInfo);
     const AdaptiveSettings settings = {};
     const char *outputNames[2] = {farOutputName, nearOutputName};
+    const char *modeLabel =
+        evaluationMode == EvaluationMode::Uniform ? "uniform_grid_no_stitch" : "adaptive_nosplit";
     for (int i = 0; i < 2; i++)
     {
         const CameraPreset &camera = cameras[size_t(i)];
         gEvalDebugStats = {};
         gRecoveredRawMissExamples.clear();
-        TessMesh tessMesh = TessellateAdaptiveNoSplit(
-            patchMap,
-            *patchTable,
-            refinedPositions,
-            adjacency,
-            coarseFaceForPtex,
-            faceStartOffsets,
-            selected,
-            numPtexFaces,
-            camera,
-            settings);
+        TessMesh tessMesh = {};
+        if (evaluationMode == EvaluationMode::Uniform)
+        {
+            tessMesh = TessellateUniformNoStitch(patchMap,
+                                                 *patchTable,
+                                                 refinedPositions,
+                                                 coarseFaceForPtex,
+                                                 faceStartOffsets,
+                                                 selected,
+                                                 numPtexFaces,
+                                                 uniformRate);
+        }
+        else
+        {
+            tessMesh = TessellateAdaptiveNoSplit(patchMap,
+                                                 *patchTable,
+                                                 refinedPositions,
+                                                 adjacency,
+                                                 coarseFaceForPtex,
+                                                 faceStartOffsets,
+                                                 selected,
+                                                 numPtexFaces,
+                                                 camera,
+                                                 settings);
+        }
         for (int pass = 0; pass < 64; pass++)
         {
             const MeshValidationStats stats =
@@ -1688,7 +1924,9 @@ static bool ProcessSelectedMesh(const SelectedSubdivMesh &selected,
             printf("  recovered_raw_miss [%s] %s\n", camera.name, example.c_str());
         }
         const fs::path outPath = outputDir / outputNames[i];
-        if (!WriteAdaptiveObj(tessMesh, outPath, selected, camera, settings, usdCameraInfo))
+        const int uniformRateMetadata = evaluationMode == EvaluationMode::Uniform ? uniformRate : -1;
+        if (!WriteAdaptiveObj(
+                tessMesh, outPath, selected, camera, settings, usdCameraInfo, modeLabel, uniformRateMetadata))
         {
             fprintf(stderr, "Failed to write OBJ: %s\n", outPath.string().c_str());
             delete patchTable;
@@ -1732,6 +1970,8 @@ int main(int argc, char **argv)
     if (!ProcessSelectedMesh(selected,
                              usdCameraInfo,
                              options.outputDir,
+                             options.evaluationMode,
+                             options.uniformRate,
                              options.farOutputName.c_str(),
                              options.nearOutputName.c_str()))
     {
