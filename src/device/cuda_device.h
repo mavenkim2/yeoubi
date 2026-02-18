@@ -1,5 +1,7 @@
 #pragma once
 
+#if defined(WITH_CUDA) && defined(WITH_OPTIX)
+
 #include "device/cuda_assert.h"
 #include "device/cuda_device_memory_arena.h"
 #include "scene/clusterizer.h"
@@ -18,8 +20,6 @@
 #include <string>
 
 YBI_NAMESPACE_BEGIN
-
-#if defined(WITH_CUDA) && defined(WITH_OPTIX)
 
 struct Scene;
 struct Mesh;
@@ -69,15 +69,12 @@ struct CUDADevice
     void CreateGridClusterTemplates();
 };
 
-OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
-                                                HostMemoryArena &hostArena,
-                                                Mesh &mesh);
-OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
-                                               HostMemoryArena &hostArena,
-                                               const Mesh &mesh);
-OptixTraversableHandle BuildCurveGASFromCurves(CUDADevice *cudaDevice,
-                                               HostMemoryArena &hostArena,
-                                               Curves &curves);
+OptixTraversableHandle
+BuildTriangleGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Mesh &mesh);
+OptixTraversableHandle
+BuildClusterGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, const Mesh &mesh);
+OptixTraversableHandle
+BuildCurveGASFromCurves(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Curves &curves);
 
 #endif
 

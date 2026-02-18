@@ -6,4 +6,3 @@ src/third_party/install
 *.ppm
 *.png
 out/
-usd_extract.cpp
