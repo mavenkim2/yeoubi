@@ -7,6 +7,7 @@
 #include "util/float3x4.h"
 #include "util/float4x4.h"
 #include "util/host_memory_arena.h"
+#include <cstdint>
 #include <vector>
 
 YBI_NAMESPACE_BEGIN
@@ -83,18 +84,38 @@ public:
     const Array<float> &GetWidths() const;
 };
 
-struct Instances
+enum SceneRefType : int
 {
-private:
-    Array<float3x4> affineTransforms;
-    Array<int> objectIDs;
+    SCENE_REF_TYPE_MESH,
+    SCENE_REF_TYPE_CURVES,
+    SCENE_REF_TYPE_INSTANCE,
+};
 
-public:
-    Instances() = default;
-    ~Instances() = default;
-    Instances(Instances &&other) = default;
+struct SceneRef
+{
+    SceneRefType type;
+    int index;
 
-    Instances(Array<float3x4> &&affineTransforms, Array<int> &&objectIDs);
+    SceneRef() = default;
+    SceneRef(SceneRefType type, int index) : type(type), index(index) {}
+};
+
+struct SceneRefRange
+{
+    uint32_t offset;
+    uint32_t count;
+};
+
+struct Instance
+{
+    float3x4 localFromParent;
+    SceneRefRange refs;
+
+    Instance() = default;
+    ~Instance() = default;
+    Instance(Instance &&other) = default;
+
+    Instance(const float3x4 &localFromParent, SceneRefRange refs);
 };
 
 struct Primitive
@@ -146,7 +167,9 @@ struct Scene
     BVH bvh;
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
-    std::vector<Instances> instancesArray;
+    std::vector<Instance> instances;
+    Array<SceneRef> sceneRefs;
+    SceneRefRange rootRefs;
     std::vector<MicropolygonMesh> micropolygonMeshes;
 
     // TODO: these are tessellated and displaced to either Mesh or Micropolygon Mesh

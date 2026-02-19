@@ -60,7 +60,8 @@ if (WITH_USD)
     target_link_libraries(yeoubi_usd_extract PRIVATE ${OPENUSD_LIBRARIES})
 
     add_executable(yeoubi_tessellation
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tessellation_adaptive_impl.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/tessellation_adaptive_impl.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/edge_rate_obj_io.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_mesh_io.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_subdiv_json_io.cpp)

@@ -8,6 +8,7 @@
 #include <opensubdiv/far/topologyDescriptor.h>
 #include <opensubdiv/far/topologyRefinerFactory.h>
 
+#include "tesselation/edge_rate_obj_io.h"
 #include "util/assert.h"
 #include <algorithm>
 #include <array>
@@ -57,6 +58,7 @@ struct PtexFaceAdj
     std::array<int, 4> adjFace = {-1, -1, -1, -1};
     std::array<int, 4> adjEdge = {-1, -1, -1, -1};
     std::array<int, 4> edgeIndex = {-1, -1, -1, -1};
+    bool fromNgon = false;
 };
 
 struct EdgeFactorCamera
@@ -75,6 +77,12 @@ struct EdgeFactorSettings
     float pixelSpacing = 1.0f;
     int minRate = 1;
     int maxRate = 32;
+};
+
+struct EdgeFactorResult
+{
+    int maxCalculatedEdgeFactor = 0;
+    std::vector<int> edgeFactors;
 };
 
 static CreasePairs BuildCreasePairs(const SelectedSubdivMesh &m)
@@ -209,7 +217,8 @@ static pxr::GfVec3f Normalize(const pxr::GfVec3f &v)
 }
 
 static EdgeFactorCamera BuildEdgeFactorCamera(const pxr::VtVec3fArray &points,
-                                              const UsdCameraInfo &cameraInfo)
+                                              const UsdCameraInfo &cameraInfo,
+                                              float cameraDistanceScale)
 {
     pxr::GfVec3f bbMin(std::numeric_limits<float>::max());
     pxr::GfVec3f bbMax(std::numeric_limits<float>::lowest());
@@ -226,8 +235,9 @@ static EdgeFactorCamera BuildEdgeFactorCamera(const pxr::VtVec3fArray &points,
     EdgeFactorCamera camera = {};
     camera.target = (bbMin + bbMax) * 0.5f;
     const float diag = std::max((bbMax - bbMin).GetLength(), 1.0f);
-    const float distance = cameraInfo.found ? std::max(cameraInfo.distanceToMeshCenter, 1e-3f)
-                                            : (2.8f * diag);
+    const float distance =
+        (cameraInfo.found ? std::max(cameraInfo.distanceToMeshCenter, 1e-3f) : (2.8f * diag)) *
+        std::max(cameraDistanceScale, 1e-4f);
     const pxr::GfVec3f dir = Normalize(pxr::GfVec3f(0.0f, 0.2f, 2.8f));
     camera.origin = camera.target + dir * distance;
     return camera;
@@ -370,18 +380,17 @@ static int ComputeDiagSplitEdgeFactor(const Far::PatchMap &patchMap,
     return std::clamp(std::max(1, tMax), settings.minRate, settings.maxRate);
 }
 
-static int ComputeMaxPtexEdgeFactor(const Far::PatchMap &patchMap,
-                                    const Far::PatchTable &patchTable,
-                                    const std::vector<Primvar3> &positions,
-                                    const std::vector<PtexFaceAdj> &faces,
-                                    int numPtexFaces,
-                                    int uniqueEdgeCount,
-                                    const EdgeFactorCamera &camera,
-                                    const EdgeFactorSettings &settings)
+static EdgeFactorResult ComputeEdgeFactors(const Far::PatchMap &patchMap,
+                                           const Far::PatchTable &patchTable,
+                                           const std::vector<Primvar3> &positions,
+                                           const std::vector<PtexFaceAdj> &faces,
+                                           int numPtexFaces,
+                                           int uniqueEdgeCount,
+                                           const EdgeFactorCamera &camera,
+                                           const EdgeFactorSettings &settings)
 {
-    std::vector<int> edgeFactors(std::max(0, uniqueEdgeCount), -1);
-
-    int maxCalculatedEdgeFactor = 0;
+    EdgeFactorResult result = {};
+    result.edgeFactors.assign(std::max(0, uniqueEdgeCount), -1);
     for (int pf = 0; pf < numPtexFaces; ++pf)
     {
         if (!patchMap.FindPatch(pf, 0.5f, 0.5f))
@@ -394,18 +403,74 @@ static int ComputeMaxPtexEdgeFactor(const Far::PatchMap &patchMap,
             YBI_ASSERT(edgeId >= 0 && edgeId < uniqueEdgeCount);
             const int candidate =
                 ComputeDiagSplitEdgeFactor(patchMap, patchTable, positions, pf, e, camera, settings);
-            if (edgeFactors[edgeId] < 0)
+            if (result.edgeFactors[edgeId] < 0)
             {
-                edgeFactors[edgeId] = candidate;
+                result.edgeFactors[edgeId] = candidate;
             }
             else
             {
-                edgeFactors[edgeId] = std::max(edgeFactors[edgeId], candidate);
+                result.edgeFactors[edgeId] = std::max(result.edgeFactors[edgeId], candidate);
             }
-            maxCalculatedEdgeFactor = std::max(maxCalculatedEdgeFactor, edgeFactors[edgeId]);
+            result.maxCalculatedEdgeFactor =
+                std::max(result.maxCalculatedEdgeFactor, result.edgeFactors[edgeId]);
         }
     }
-    return maxCalculatedEdgeFactor;
+    return result;
+}
+
+static std::vector<ybi::testio::EdgeRateDebugLine>
+BuildEdgeRateDebugLines(const Far::PatchMap &patchMap,
+                        const Far::PatchTable &patchTable,
+                        const std::vector<Primvar3> &positions,
+                        const std::vector<PtexFaceAdj> &faces,
+                        int numPtexFaces,
+                        const std::vector<int> &edgeFactors)
+{
+    std::vector<ybi::testio::EdgeRateDebugLine> lines;
+    std::vector<bool> emitted(edgeFactors.size(), false);
+
+    for (int pf = 0; pf < numPtexFaces; ++pf)
+    {
+        if (!patchMap.FindPatch(pf, 0.5f, 0.5f))
+        {
+            continue;
+        }
+        for (int e = 0; e < 4; ++e)
+        {
+            const int edgeId = faces[pf].edgeIndex[e];
+            if (edgeId < 0 || edgeId >= int(edgeFactors.size()) || emitted[edgeId])
+            {
+                continue;
+            }
+            emitted[edgeId] = true;
+
+            const int rate = std::max(1, edgeFactors[edgeId]);
+            const int samples = std::max(2, rate + 1);
+            ybi::testio::EdgeRateDebugLine line = {};
+            line.rate = rate;
+            line.points.reserve(samples);
+
+            bool valid = true;
+            for (int i = 0; i < samples; ++i)
+            {
+                const float t = float(i) / float(samples - 1);
+                const pxr::GfVec2f uv = EdgeUV(e, t);
+                pxr::GfVec3f p(0.0f);
+                if (!EvaluateLimitPosition(
+                        patchMap, patchTable, positions, pf, uv[0], uv[1], p))
+                {
+                    valid = false;
+                    break;
+                }
+                line.points.push_back(p);
+            }
+            if (valid && line.points.size() > 1)
+            {
+                lines.push_back(std::move(line));
+            }
+        }
+    }
+    return lines;
 }
 
 static int BuildUniquePtexEdgeIds(const Far::TopologyRefiner &refiner,
@@ -434,6 +499,7 @@ static int BuildUniquePtexEdgeIds(const Far::TopologyRefiner &refiner,
                 facesOut[pf].adjFace[e] = adjFaces[e];
                 facesOut[pf].adjEdge[e] = adjEdges[e];
             }
+            facesOut[pf].fromNgon = (n != 4);
         }
     }
 
@@ -472,19 +538,81 @@ static int BuildUniquePtexEdgeIds(const Far::TopologyRefiner &refiner,
     return edgeCount;
 }
 
+static int ReportMissingCenterPatches(const Far::PatchMap &patchMap,
+                                      const std::vector<PtexFaceAdj> &faces,
+                                      int numPtexFaces)
+{
+    int missing = 0;
+    for (int pf = 0; pf < numPtexFaces; ++pf)
+    {
+        if (patchMap.FindPatch(pf, 0.5f, 0.5f))
+        {
+            continue;
+        }
+        std::printf("Missing patch at ptexFace=%d fromNgon=%d\n", pf, faces[pf].fromNgon ? 1 : 0);
+        missing++;
+    }
+    std::printf("Missing center patches: %d\n", missing);
+    return missing;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 2 || argc > 4)
+    if (argc < 2)
     {
-        std::fprintf(stderr, "Usage: %s <selected-subdiv.json> [level>=1] [out.obj]\n", argv[0]);
+        std::fprintf(stderr,
+                     "Usage: %s <selected-subdiv.json> [level>=1] [out.obj] "
+                     "[--camera-distance-scale s]\n",
+                     argv[0]);
         return 2;
     }
 
     const std::string inJson = argv[1];
-    const int level = (argc >= 3) ? std::max(1, std::atoi(argv[2])) : 1;
-    const std::string outObj =
-        (argc >= 4) ? argv[3]
-                    : ("tests/bvh/out/refined_adaptive_level" + std::to_string(level) + ".obj");
+    int level = 1;
+    std::string outObj;
+    float cameraDistanceScale = 1.0f;
+    bool levelSet = false;
+    bool outSet = false;
+    for (int i = 2; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--camera-distance-scale")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "Missing value for --camera-distance-scale\n");
+                return 2;
+            }
+            cameraDistanceScale = std::strtof(argv[++i], nullptr);
+            if (!(cameraDistanceScale > 0.0f))
+            {
+                std::fprintf(stderr, "camera-distance-scale must be > 0\n");
+                return 2;
+            }
+            continue;
+        }
+        if (!levelSet)
+        {
+            level = std::max(1, std::atoi(argv[i]));
+            levelSet = true;
+            continue;
+        }
+        if (!outSet)
+        {
+            outObj = argv[i];
+            outSet = true;
+            continue;
+        }
+        std::fprintf(stderr,
+                     "Usage: %s <selected-subdiv.json> [level>=1] [out.obj] "
+                     "[--camera-distance-scale s]\n",
+                     argv[0]);
+        return 2;
+    }
+    if (outObj.empty())
+    {
+        outObj = "tests/bvh/out/refined_adaptive_level" + std::to_string(level) + ".obj";
+    }
 
     SelectedSubdivMesh m = {};
     UsdCameraInfo camera = {};
@@ -552,7 +680,8 @@ int main(int argc, char **argv)
     }
     Far::PatchMap patchMap(*patchTable);
     const std::vector<Primvar3> patchEvalPositions = BuildPatchEvalPositions(*refiner, *patchTable, m.points);
-    const EdgeFactorCamera edgeFactorCamera = BuildEdgeFactorCamera(m.points, camera);
+    const EdgeFactorCamera edgeFactorCamera =
+        BuildEdgeFactorCamera(m.points, camera, cameraDistanceScale);
     const EdgeFactorSettings edgeFactorSettings = {};
 
     std::vector<Primvar3> p0;
@@ -570,14 +699,15 @@ int main(int argc, char **argv)
     std::vector<PtexFaceAdj> ptexFaceAdj;
     const int uniquePtexEdges =
         BuildUniquePtexEdgeIds(*refiner, level0, ptex, ptexFaceAdj, ptexFaceCount);
-    const int maxCalculatedEdgeFactor = ComputeMaxPtexEdgeFactor(patchMap,
-                                                                 *patchTable,
-                                                                 patchEvalPositions,
-                                                                 ptexFaceAdj,
-                                                                 ptexFaceCount,
-                                                                 uniquePtexEdges,
-                                                                 edgeFactorCamera,
-                                                                 edgeFactorSettings);
+    ReportMissingCenterPatches(patchMap, ptexFaceAdj, ptexFaceCount);
+    const EdgeFactorResult edgeFactors = ComputeEdgeFactors(patchMap,
+                                                            *patchTable,
+                                                            patchEvalPositions,
+                                                            ptexFaceAdj,
+                                                            ptexFaceCount,
+                                                            uniquePtexEdges,
+                                                            edgeFactorCamera,
+                                                            edgeFactorSettings);
 
     int nonQuadFaces = 0;
     if (!WriteObjLevel(outObj, refiner->GetLevel(level), p1, nonQuadFaces))
@@ -587,13 +717,27 @@ int main(int argc, char **argv)
         delete refiner;
         return 1;
     }
+    const std::string edgeRateObj = outObj + ".edge_rates.obj";
+    const std::vector<ybi::testio::EdgeRateDebugLine> edgeRateLines =
+        BuildEdgeRateDebugLines(
+            patchMap, *patchTable, patchEvalPositions, ptexFaceAdj, ptexFaceCount, edgeFactors.edgeFactors);
+    if (!ybi::testio::WriteEdgeRateDebugObj(
+            edgeRateObj, edgeRateLines, edgeFactorSettings.minRate, edgeFactorSettings.maxRate))
+    {
+        std::fprintf(stderr, "Failed to write edge-rate debug OBJ: %s\n", edgeRateObj.c_str());
+        delete patchTable;
+        delete refiner;
+        return 1;
+    }
 
     std::printf("Wrote adaptive level-%d OBJ: %s\n", level, outObj.c_str());
+    std::printf("Wrote edge-rate debug OBJ: %s\n", edgeRateObj.c_str());
     std::printf("  verts=%zu faces=%d nonQuads=%d\n",
                 p1.size(),
                 refiner->GetLevel(level).GetNumFaces(),
                 nonQuadFaces);
-    std::printf("  maxCalculatedEdgeFactor=%d\n", maxCalculatedEdgeFactor);
+    std::printf("  maxCalculatedEdgeFactor=%d\n", edgeFactors.maxCalculatedEdgeFactor);
+    std::printf("  cameraDistanceScale=%g\n", cameraDistanceScale);
     std::printf("  ptexFaces=%d\n", ptexFaceCount);
     std::printf("  controlCageEdgesWithOver2Faces=%d\n", edgesWithOver2Faces);
 

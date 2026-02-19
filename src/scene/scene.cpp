@@ -66,9 +66,8 @@ const Array<float> &Curves::GetWidths() const
     return widths;
 }
 
-// Instances
-Instances::Instances(Array<float3x4> &&affineTransforms, Array<int> &&objectIDs)
-    : affineTransforms(std::move(affineTransforms)), objectIDs(std::move(objectIDs))
+Instance::Instance(const float3x4 &localFromParent, SceneRefRange refs)
+    : localFromParent(localFromParent), refs(refs)
 {
 }
 
