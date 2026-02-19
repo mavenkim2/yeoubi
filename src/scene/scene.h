@@ -50,12 +50,14 @@ struct Mesh
 {
     Array<float3> positions;
     Array<int> indices;
+    float3x4 parentFromLocal;
 
     Mesh() = default;
     ~Mesh() = default;
     Mesh(Mesh &&other) = default;
 
     Mesh(Array<float3> &&pos, Array<int> &&idx);
+    Mesh(Array<float3> &&pos, Array<int> &&idx, const float3x4 &parentFromLocal);
 };
 
 struct Curves
@@ -68,11 +70,17 @@ private:
     int curveFlags;
 
 public:
+    float3x4 parentFromLocal;
+
     Curves() = default;
     ~Curves() = default;
     Curves(Curves &&other) = default;
 
     Curves(Array<float3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets);
+    Curves(Array<float3> &&positions,
+           Array<float> &&widths,
+           Array<int> &&curveVertexOffsets,
+           const float3x4 &parentFromLocal);
     size_t GetNumVertices() const;
     size_t GetNumCurves() const;
     size_t GetNumSegments() const;
@@ -84,38 +92,16 @@ public:
     const Array<float> &GetWidths() const;
 };
 
-enum SceneRefType : int
-{
-    SCENE_REF_TYPE_MESH,
-    SCENE_REF_TYPE_CURVES,
-    SCENE_REF_TYPE_INSTANCE,
-};
-
-struct SceneRef
-{
-    SceneRefType type;
-    int index;
-
-    SceneRef() = default;
-    SceneRef(SceneRefType type, int index) : type(type), index(index) {}
-};
-
-struct SceneRefRange
-{
-    uint32_t offset;
-    uint32_t count;
-};
-
 struct Instance
 {
-    float3x4 localFromParent;
-    SceneRefRange refs;
+    float3x4 parentFromLocal;
+    uint32_t childSceneIndex;
 
     Instance() = default;
     ~Instance() = default;
     Instance(Instance &&other) = default;
 
-    Instance(const float3x4 &localFromParent, SceneRefRange refs);
+    Instance(const float3x4 &parentFromLocal, uint32_t childSceneIndex);
 };
 
 struct Primitive
@@ -168,8 +154,7 @@ struct Scene
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
     std::vector<Instance> instances;
-    Array<SceneRef> sceneRefs;
-    SceneRefRange rootRefs;
+    std::vector<Scene *> childScenes;
     std::vector<MicropolygonMesh> micropolygonMeshes;
 
     // TODO: these are tessellated and displaced to either Mesh or Micropolygon Mesh
@@ -181,13 +166,23 @@ struct Scene
     // HostMemoryArena arena;
     Array<Attribute> attributes;
     Device *device;
-    Camera camera;
 
     Scene() = default;
     ~Scene() = default;
+    Scene(const Scene &) = delete;
+    Scene &operator=(const Scene &) = delete;
+    Scene(Scene &&other) noexcept;
+    Scene &operator=(Scene &&other) noexcept = delete;
 
     int GetNumPrimitives(int collectionIndex) const;
     ConstCollectionRange GetPrimitivesInCollection(int collectionIndex) const;
+};
+
+struct ScenePool
+{
+    std::vector<Scene> scenes;
+    uint32_t rootSceneIndex = 0;
+    Camera camera;
 };
 
 YBI_NAMESPACE_END

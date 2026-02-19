@@ -22,6 +22,7 @@ list (APPEND YBI_SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
 )
 list (APPEND YBI_COMPILE_DEFINITIONS 
@@ -144,6 +145,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
     if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
         target_sources(yeoubi_optix_harness PRIVATE

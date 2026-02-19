@@ -6,14 +6,44 @@ YBI_NAMESPACE_BEGIN
 
 BVH::BVH() : flags(BVHFlags(0)) {}
 
+static float3x4 GetIdentityTransform()
+{
+    return float3x4(1.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    1.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    1.0f,
+                    0.0f);
+}
+
 Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx)
-    : positions(std::move(pos)), indices(std::move(idx))
+    : positions(std::move(pos)), indices(std::move(idx)), parentFromLocal(GetIdentityTransform())
+{
+}
+
+Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx, const float3x4 &parentFromLocal)
+    : positions(std::move(pos)), indices(std::move(idx)), parentFromLocal(parentFromLocal)
 {
 }
 
 Curves::Curves(Array<float3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets)
     : positions(std::move(positions)), widths(std::move(widths)),
-      curveVertexOffsets(std::move(curveVertexOffsets))
+      curveVertexOffsets(std::move(curveVertexOffsets)), parentFromLocal(GetIdentityTransform())
+{
+}
+
+Curves::Curves(Array<float3> &&positions,
+               Array<float> &&widths,
+               Array<int> &&curveVertexOffsets,
+               const float3x4 &parentFromLocal)
+    : positions(std::move(positions)), widths(std::move(widths)),
+      curveVertexOffsets(std::move(curveVertexOffsets)), parentFromLocal(parentFromLocal)
 {
 }
 
@@ -66,8 +96,22 @@ const Array<float> &Curves::GetWidths() const
     return widths;
 }
 
-Instance::Instance(const float3x4 &localFromParent, SceneRefRange refs)
-    : localFromParent(localFromParent), refs(refs)
+Instance::Instance(const float3x4 &parentFromLocal, uint32_t childSceneIndex)
+    : parentFromLocal(parentFromLocal), childSceneIndex(childSceneIndex)
+{
+}
+
+Scene::Scene(Scene &&other) noexcept
+    : bvh(other.bvh),
+      meshes(std::move(other.meshes)),
+      curves(std::move(other.curves)),
+      instances(std::move(other.instances)),
+      childScenes(std::move(other.childScenes)),
+      micropolygonMeshes(std::move(other.micropolygonMeshes)),
+      subdivisionMeshes(std::move(other.subdivisionMeshes)),
+      primitives(std::move(other.primitives)),
+      primitiveCollections(std::move(other.primitiveCollections)),
+      attributes(std::move(other.attributes)), device(other.device)
 {
 }
 

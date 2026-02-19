@@ -418,7 +418,7 @@ static void Dice(const DiagSplitParams &params, Array<SubPatch> &patches)
 
 } // namespace DiagSplit
 
-void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
+void Subdivision(Scene *scene, const SubdivisionMesh &mesh, const Camera &camera, int refineLevel)
 {
     using TopologyDescriptor = Far::TopologyDescriptor;
 
@@ -490,7 +490,7 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
         InterpolateVertex<float3>(arena, mesh.vertices, refiner, patchTable);
 
     Array<DiagSplit::SubPatch> patches(numFaces);
-    float4x4 clipFromWorld = mul(scene->camera.clipFromCamera, scene->camera.cameraFromWorld);
+    float4x4 clipFromWorld = mul(camera.clipFromCamera, camera.cameraFromWorld);
     DiagSplit::DiagSplitParams params = {&patchMap,
                                          patchTable,
                                          positions,
@@ -498,8 +498,8 @@ void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel)
                                          1.f,
                                          1,
                                          clipFromWorld,
-                                         scene->camera.viewportWidth,
-                                         scene->camera.viewportHeight};
+                                         camera.viewportWidth,
+                                         camera.viewportHeight};
 
     if (numPtexFaces == numFaces)
     {

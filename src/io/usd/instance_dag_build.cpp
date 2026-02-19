@@ -25,31 +25,22 @@ YBI_NAMESPACE_BEGIN
 namespace
 {
 
-struct USDPrimLists
-{
-    std::string ownerPath;
-    std::vector<pxr::UsdPrim> meshes;
-    std::vector<pxr::UsdPrim> curves;
-    std::vector<pxr::UsdPrim> instances;
-    std::vector<pxr::UsdPrim> pointInstancers;
-};
-
 struct SceneInstance
 {
-    float3x4 worldFromLocal;
+    float3x4 parentFromLocal;
     uint32_t childSceneIndex;
 };
 
 struct SceneMesh
 {
     std::string path;
-    float3x4 worldFromLocal;
+    float3x4 parentFromLocal;
 };
 
 struct SceneCurve
 {
     std::string path;
-    float3x4 worldFromLocal;
+    float3x4 parentFromLocal;
 };
 
 struct BuildScene
@@ -100,7 +91,7 @@ static pxr::GfMatrix4d GetPrimLocalToParentTransform(const pxr::UsdPrim &prim,
     return localTransform;
 }
 
-static void TraversePrimToPrimLists(const pxr::UsdPrim &root, USDPrimLists *out)
+static void TraversePrimToPrimListsImpl(const pxr::UsdPrim &root, USDPrimLists *out)
 {
     YBI_ASSERT(out);
 
@@ -210,12 +201,12 @@ static bool CollectPrototypeDependencies(const USDPrimLists &lists,
     return true;
 }
 
-static bool CollectPrototypePrimLists(const pxr::UsdStageRefPtr &stage,
-                                      const USDPrimLists &rootPrimLists,
-                                      std::unordered_map<std::string, int> *pathToPrototypeIndex,
-                                      std::vector<std::string> *prototypePaths,
-                                      std::vector<USDPrimLists> *prototypePrimLists,
-                                      std::string *error)
+static bool CollectPrototypePrimListsImpl(const pxr::UsdStageRefPtr &stage,
+                                          const USDPrimLists &rootPrimLists,
+                                          std::unordered_map<std::string, int> *pathToPrototypeIndex,
+                                          std::vector<std::string> *prototypePaths,
+                                          std::vector<USDPrimLists> *prototypePrimLists,
+                                          std::string *error)
 {
     YBI_ASSERT(pathToPrototypeIndex);
     YBI_ASSERT(prototypePaths);
@@ -243,7 +234,7 @@ static bool CollectPrototypePrimLists(const pxr::UsdStageRefPtr &stage,
 
         USDPrimLists primLists = {};
         primLists.ownerPath = prototypePath;
-        TraversePrimToPrimLists(prototypePrim, &primLists);
+        TraversePrimToPrimListsImpl(prototypePrim, &primLists);
         (*prototypePrimLists)[prototypeIndex] = std::move(primLists);
 
         if (!CollectPrototypeDependencies(
@@ -410,12 +401,12 @@ static bool AppendPointInstancerInstances(
 
         // Most-local (right) to least-local (left):
         // prototype local->parent, then S, R, T, then point instancer local->world.
-        const pxr::GfMatrix4d worldFromLocal = pointInstancerLocalToWorld *
+        const pxr::GfMatrix4d parentFromLocal = pointInstancerLocalToWorld *
                                                translationFromOrientation * orientationFromScale *
                                                scaleFromPrototype * prototypeLocalToParent;
 
         SceneInstance instance = {};
-        instance.worldFromLocal = ConvertAffineTransform(worldFromLocal);
+        instance.parentFromLocal = ConvertAffineTransform(parentFromLocal);
         instance.childSceneIndex = childSceneIndex;
         outScene->instances.push_back(instance);
     }
@@ -473,7 +464,7 @@ static bool BuildSceneFromPrimLists(const USDPrimLists &primLists,
         }
 
         SceneInstance instance = {};
-        instance.worldFromLocal =
+        instance.parentFromLocal =
             ConvertAffineTransform(xformCache->GetLocalToWorldTransform(instancePrim));
         instance.childSceneIndex = childSceneIndex;
         outScene->instances.push_back(instance);
@@ -496,51 +487,167 @@ static bool BuildSceneFromPrimLists(const USDPrimLists &primLists,
     return true;
 }
 
+static bool ExportBuildSceneDAG(const BuildResult &build, USDBuildSceneDAG *out, std::string *error)
+{
+    YBI_ASSERT(out);
+    if (!build.rootScene)
+    {
+        SetError(error, "missing root build scene");
+        return false;
+    }
+
+    const uint32_t numPrototypeScenes = static_cast<uint32_t>(build.prototypeScenes.size());
+    const uint32_t rootSceneIndex = numPrototypeScenes;
+    out->scenes.clear();
+    out->scenes.resize(numPrototypeScenes + 1);
+    out->rootSceneIndex = rootSceneIndex;
+
+    std::unordered_map<const BuildScene *, uint32_t> sceneIndexByPtr;
+    for (uint32_t i = 0; i < numPrototypeScenes; i++)
+    {
+        if (!build.prototypeScenes[i])
+        {
+            SetError(error, "missing prototype build scene");
+            return false;
+        }
+        sceneIndexByPtr.emplace(build.prototypeScenes[i].get(), i);
+    }
+    sceneIndexByPtr.emplace(build.rootScene.get(), rootSceneIndex);
+
+    auto copyScene = [&](const BuildScene *src, USDBuildScene *dst) -> bool {
+        dst->path = src->path;
+        dst->meshes.clear();
+        dst->curves.clear();
+        dst->instances.clear();
+
+        dst->meshes.reserve(src->meshes.size());
+        for (const SceneMesh &mesh : src->meshes)
+        {
+            dst->meshes.push_back({mesh.path, mesh.parentFromLocal});
+        }
+
+        dst->curves.reserve(src->curves.size());
+        for (const SceneCurve &curve : src->curves)
+        {
+            dst->curves.push_back({curve.path, curve.parentFromLocal});
+        }
+
+        dst->instances.reserve(src->instances.size());
+        for (const SceneInstance &instance : src->instances)
+        {
+            if (instance.childSceneIndex >= src->childScenes.size())
+            {
+                SetError(error, "instance child index out of range while exporting build scene");
+                return false;
+            }
+
+            const BuildScene *childScene = src->childScenes[instance.childSceneIndex];
+            auto childIndexIter = sceneIndexByPtr.find(childScene);
+            if (childIndexIter == sceneIndexByPtr.end())
+            {
+                SetError(error, "child scene pointer missing while exporting build scene");
+                return false;
+            }
+
+            dst->instances.push_back({instance.parentFromLocal, childIndexIter->second});
+        }
+
+        return true;
+    };
+
+    for (uint32_t i = 0; i < numPrototypeScenes; i++)
+    {
+        if (!copyScene(build.prototypeScenes[i].get(), &out->scenes[i]))
+        {
+            return false;
+        }
+    }
+
+    if (!copyScene(build.rootScene.get(), &out->scenes[rootSceneIndex]))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 } // namespace
 
-bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage, Scene *scene, std::string *error)
+void TraverseUSDPrimLists(const pxr::UsdPrim &root, USDPrimLists *out)
 {
-    if (!stage || !scene)
+    if (!out)
     {
-        SetError(error, "invalid stage or scene");
+        return;
+    }
+
+    out->ownerPath = root.GetPath().GetString();
+    out->meshes.clear();
+    out->curves.clear();
+    out->instances.clear();
+    out->pointInstancers.clear();
+    TraversePrimToPrimListsImpl(root, out);
+}
+
+bool CollectUSDPrototypePrimLists(const pxr::UsdStageRefPtr &stage,
+                                  const USDPrimLists &rootPrimLists,
+                                  USDPrototypePrimLists *out,
+                                  std::string *error)
+{
+    if (!stage || !out)
+    {
+        SetError(error, "invalid stage or output");
+        return false;
+    }
+
+    out->prototypePathToIndex.clear();
+    out->prototypePaths.clear();
+    out->prototypePrimLists.clear();
+
+    return CollectPrototypePrimListsImpl(stage,
+                                         rootPrimLists,
+                                         &out->prototypePathToIndex,
+                                         &out->prototypePaths,
+                                         &out->prototypePrimLists,
+                                         error);
+}
+
+bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage,
+                             USDBuildSceneDAG *out,
+                             std::string *error)
+{
+    if (!stage || !out)
+    {
+        SetError(error, "invalid stage or output");
         return false;
     }
 
     USDPrimLists rootPrimLists = {};
-    rootPrimLists.ownerPath = stage->GetPseudoRoot().GetPath().GetString();
-    TraversePrimToPrimLists(stage->GetPseudoRoot(), &rootPrimLists);
+    TraverseUSDPrimLists(stage->GetPseudoRoot(), &rootPrimLists);
 
-    std::unordered_map<std::string, int> pathToPrototypeIndex;
-    std::vector<std::string> prototypePaths;
-    std::vector<USDPrimLists> prototypePrimLists;
-    if (!CollectPrototypePrimLists(stage,
-                                   rootPrimLists,
-                                   &pathToPrototypeIndex,
-                                   &prototypePaths,
-                                   &prototypePrimLists,
-                                   error))
+    USDPrototypePrimLists prototypeData = {};
+    if (!CollectUSDPrototypePrimLists(stage, rootPrimLists, &prototypeData, error))
     {
         return false;
     }
 
     std::vector<int> reversedPrototypeOrder;
-    reversedPrototypeOrder.reserve(prototypePaths.size());
-    for (size_t i = 0; i < prototypePaths.size(); i++)
+    reversedPrototypeOrder.reserve(prototypeData.prototypePaths.size());
+    for (size_t i = 0; i < prototypeData.prototypePaths.size(); i++)
     {
         reversedPrototypeOrder.push_back(static_cast<int>(i));
     }
     std::reverse(reversedPrototypeOrder.begin(), reversedPrototypeOrder.end());
 
     BuildResult build = {};
-    build.prototypeScenes.resize(prototypePrimLists.size());
+    build.prototypeScenes.resize(prototypeData.prototypePrimLists.size());
 
     pxr::UsdGeomXformCache xformCache(0.0);
 
     for (int prototypeIndex : reversedPrototypeOrder)
     {
         std::unique_ptr<BuildScene> sceneForPrototype = std::make_unique<BuildScene>();
-        if (!BuildSceneFromPrimLists(prototypePrimLists[(size_t)prototypeIndex],
-                                     pathToPrototypeIndex,
+        if (!BuildSceneFromPrimLists(prototypeData.prototypePrimLists[(size_t)prototypeIndex],
+                                     prototypeData.prototypePathToIndex,
                                      build.prototypeScenes,
                                      &xformCache,
                                      sceneForPrototype.get(),
@@ -553,7 +660,7 @@ bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage, Scene *scene, std
 
     build.rootScene = std::make_unique<BuildScene>();
     if (!BuildSceneFromPrimLists(rootPrimLists,
-                                 pathToPrototypeIndex,
+                                 prototypeData.prototypePathToIndex,
                                  build.prototypeScenes,
                                  &xformCache,
                                  build.rootScene.get(),
@@ -562,8 +669,7 @@ bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage, Scene *scene, std
         return false;
     }
 
-    (void)build;
-    return true;
+    return ExportBuildSceneDAG(build, out, error);
 }
 
 YBI_NAMESPACE_END

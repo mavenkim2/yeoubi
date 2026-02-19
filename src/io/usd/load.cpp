@@ -1,4 +1,5 @@
 #include "io/usd/load.h"
+#include "io/usd/instance_dag_build.h"
 #include "pxr/base/gf/vec2f.h"
 #include "scene/attributes.h"
 #include "scene/scene.h"
@@ -60,421 +61,86 @@ YBI_NAMESPACE_BEGIN
         } \
     }
 
-struct USDTraversalState
+static void CollectUSDCameras(const pxr::UsdPrim &root, std::vector<pxr::UsdGeomCamera> *out)
 {
-    std::vector<pxr::UsdGeomMesh> meshes;
-    std::vector<pxr::UsdGeomBasisCurves> basisCurves;
-    std::vector<pxr::UsdGeomPointInstancer> pointInstancers;
-    std::vector<pxr::UsdPrim> instances;
+    YBI_ASSERT(out);
+    out->clear();
 
-    std::vector<pxr::UsdGeomCamera> cameras;
-};
-
-struct USDPrototypeRanges
-{
-    size_t meshStart;
-    size_t meshEnd;
-
-    size_t curveStart;
-    size_t curveEnd;
-
-    size_t instanceStart;
-    size_t instanceEnd;
-
-    size_t pointInstancerStart;
-    size_t pointInstancerEnd;
-
-    void StartRange(USDTraversalState &state)
+    const pxr::Usd_PrimFlagsPredicate filterPredicate =
+        pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
+    std::vector<pxr::UsdPrim> stack;
+    stack.push_back(root);
+    while (!stack.empty())
     {
-        meshStart = state.meshes.size();
-        curveStart = state.basisCurves.size();
-        instanceStart = state.instances.size();
-        pointInstancerStart = state.pointInstancers.size();
-    }
+        const pxr::UsdPrim prim = stack.back();
+        stack.pop_back();
 
-    void EndRange(USDTraversalState &state)
-    {
-        meshEnd = state.meshes.size();
-        curveEnd = state.basisCurves.size();
-        instanceEnd = state.instances.size();
-        pointInstancerEnd = state.pointInstancers.size();
-    }
-
-    size_t GetNumMeshes() const
-    {
-        return meshEnd - meshStart;
-    }
-
-    size_t GetNumCurves() const
-    {
-        return curveEnd - curveStart;
-    }
-
-    size_t GetNumInstances() const
-    {
-        return instanceEnd - instanceStart;
-    }
-
-    size_t GetNumPointInstancers() const
-    {
-        return pointInstancerEnd - pointInstancerStart;
-    }
-
-    bool CanMergeWithChild() const
-    {
-        return GetNumMeshes() == 0 && GetNumCurves() == 0 && GetNumInstances() == 1 &&
-               GetNumPointInstancers() == 0;
-    }
-};
-
-struct USDPrototypeCollection
-{
-    std::unordered_map<std::string, int> prototypePathToIndex;
-    std::vector<pxr::UsdPrim> prototypes;
-    std::vector<USDPrototypeRanges> ranges;
-};
-
-static void TraversePrim(pxr::UsdPrim &root,
-                         USDTraversalState &state,
-                         pxr::Usd_PrimFlagsPredicate filterPredicate)
-{
-    const uint32_t stackMax = 1024;
-    uint32_t stackTop = 0;
-    pxr::UsdPrim stack[stackMax];
-    stack[stackTop++] = root;
-
-    while (stackTop)
-    {
-        uint32_t stackIndex = --stackTop;
-        pxr::UsdPrim prim = stack[stackIndex];
-
-        bool pushChildren = true;
-        if (prim.IsInstance())
+        if (prim.IsA<pxr::UsdGeomCamera>())
         {
-            state.instances.push_back(prim);
-        }
-        else if (prim.IsA<pxr::UsdGeomPointInstancer>())
-        {
-            pxr::UsdGeomPointInstancer pointInstancer(prim);
-            state.pointInstancers.push_back(pointInstancer);
-            pushChildren = false;
-        }
-        else if (prim.IsA<pxr::UsdGeomMesh>())
-        {
-            state.meshes.push_back(pxr::UsdGeomMesh(prim));
-        }
-        else if (prim.IsA<pxr::UsdGeomBasisCurves>())
-        {
-            state.basisCurves.push_back(pxr::UsdGeomBasisCurves(prim));
-        }
-        else if (prim.IsA<pxr::UsdGeomNurbsCurves>())
-        {
-            pxr::UsdGeomNurbsCurves nurbsCurves(prim);
-            size_t numCurves = nurbsCurves.GetCurveCount(0.0);
-        }
-        else if (prim.IsA<pxr::UsdGeomHermiteCurves>())
-        {
-            printf("hermite\n");
-        }
-        else if (prim.IsA<pxr::UsdGeomCurves>())
-        {
-            printf("curve\n");
-        }
-        else if (prim.IsA<pxr::UsdGeomCamera>())
-        {
-            pxr::UsdGeomCamera camera(prim);
-            state.cameras.push_back(camera);
-        }
-        else if (prim.IsA<pxr::UsdShadeShader>())
-        {
-            pxr::UsdShadeShader shader(prim);
-            std::vector<pxr::UsdShadeInput> inputs = shader.GetInputs();
-            for (pxr::UsdShadeInput &input : inputs)
-            {
-                // printf("help: %s %s\n",
-                //        input.GetFullName().GetText(),
-                //        input.GetTypeName().GetAsToken().GetText());
-            }
-
-            pxr::TfToken shaderId;
-            if (shader.GetShaderId(&shaderId))
-            {
-                // printf("help: %s\n", shaderId.GetText());
-            }
-            else
-            {
-            }
-        }
-        else if (prim.IsA<pxr::UsdGeomScope>())
-        {
-            pxr::UsdGeomScope scope(prim);
-        }
-        else if (prim.IsA<pxr::UsdVolVolume>())
-        {
-            pxr::UsdVolVolume volume(prim);
-            pxr::TfToken fieldPath;
-            volume.GetFieldPath(fieldPath);
-            printf("volume: %s\n", fieldPath.GetText());
-        }
-        else
-        {
-            // printf("type: %s\n", prim.GetTypeName().GetString().c_str());
+            out->push_back(pxr::UsdGeomCamera(prim));
         }
 
-        if (pushChildren)
+        for (const pxr::UsdPrim &child : prim.GetFilteredChildren(filterPredicate))
         {
-            pxr::UsdPrimSiblingRange range = prim.GetFilteredChildren(filterPredicate);
-            for (const pxr::UsdPrim &prim : range)
-            {
-                if (stackTop >= stackMax)
-                {
-                    printf("help: %i %i\n", stackTop, stackMax);
-                }
-                YBI_ASSERT(stackTop < stackMax);
-                stack[stackTop++] = prim;
-            }
+            stack.push_back(child);
         }
     }
-}
-
-static float3x4 ConvertAffineTransform(pxr::GfMatrix4d &transform)
-{
-    pxr::GfMatrix4d transposeMatrix = transform.GetTranspose();
-    pxr::GfVec4d row0 = transposeMatrix.GetRow(0);
-    pxr::GfVec4d row1 = transposeMatrix.GetRow(1);
-    pxr::GfVec4d row2 = transposeMatrix.GetRow(2);
-
-    float4 r0 = make_float4(row0[0], row0[1], row0[2], row0[3]);
-    float4 r1 = make_float4(row1[0], row1[1], row1[2], row1[3]);
-    float4 r2 = make_float4(row2[0], row2[1], row2[2], row2[3]);
-
-    return float3x4(r0, r1, r2);
-}
-
-static float3x4 IdentityAffineTransform()
-{
-    return float3x4(1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f);
-}
-
-static float3x4 GetPrimLocalTransform(const pxr::UsdPrim &prim, pxr::UsdTimeCode timeCode = 0.0)
-{
-    pxr::GfMatrix4d transform(1.0);
-    if (prim.IsA<pxr::UsdGeomXformable>())
-    {
-        pxr::UsdGeomXformable xformable(prim);
-        bool resetsXformStack = false;
-        xformable.GetLocalTransformation(&transform, &resetsXformStack, timeCode);
-    }
-    return ConvertAffineTransform(transform);
-}
-
-static int
-CreateSceneInstanceForTarget(Scene *scene, const float3x4 &localFromParent, int targetIndex)
-{
-    const uint32_t offset = static_cast<uint32_t>(scene->sceneRefs.size());
-    scene->sceneRefs.EmplaceBack(SCENE_REF_TYPE_INSTANCE, targetIndex);
-    const int instanceIndex = static_cast<int>(scene->instances.size());
-    scene->instances.emplace_back(localFromParent, SceneRefRange{offset, 1});
-    return instanceIndex;
 }
 
 static bool
-AppendPointInstancerChildren(std::vector<SceneRef> &parentRefs,
-                             const pxr::UsdGeomPointInstancer &pointInstancer,
-                             Scene *scene,
-                             const std::unordered_map<std::string, int> &prototypeToSceneInstance,
-                             pxr::UsdTimeCode timeCode = 0.0)
+CreateRuntimeScenesFromBuildSceneDAG(const USDBuildSceneDAG &dag,
+                                     ScenePool *scenePool,
+                                     std::string *error)
 {
-    pxr::VtIntArray protoIndices;
-    pxr::VtVec3fArray positions;
-    pxr::VtQuatfArray orientations;
-    pxr::VtVec3fArray scales;
-    pxr::SdfPathVector prototypePaths;
-
-    USD_ASSERT(pointInstancer.GetProtoIndicesAttr().Get(&protoIndices, timeCode));
-    USD_ASSERT(pointInstancer.GetPositionsAttr().Get(&positions, timeCode));
-    USD_ASSERT(pointInstancer.GetPrototypesRel().GetTargets(&prototypePaths));
-
-    pxr::UsdAttribute orientationsAttr = pointInstancer.GetOrientationsfAttr();
-    pxr::UsdAttribute scaleAttr = pointInstancer.GetScalesAttr();
-    if (orientationsAttr.HasValue())
+    YBI_ASSERT(scenePool);
+    if (dag.rootSceneIndex >= dag.scenes.size())
     {
-        orientationsAttr.Get(&orientations, timeCode);
-    }
-    if (scaleAttr.HasValue())
-    {
-        scaleAttr.Get(&scales, timeCode);
-    }
-
-    if (protoIndices.size() != positions.size())
-    {
-        printf("point instancer invalid data: protoIndices != positions\n");
-        return false;
-    }
-    if (!orientations.empty() && orientations.size() != positions.size())
-    {
-        printf("point instancer invalid data: orientations != positions\n");
-        return false;
-    }
-    if (!scales.empty() && scales.size() != positions.size())
-    {
-        printf("point instancer invalid data: scales != positions\n");
+        if (error)
+        {
+            *error = "build scene dag root index out of range";
+        }
         return false;
     }
 
-    for (size_t i = 0; i < protoIndices.size(); i++)
+    scenePool->scenes.clear();
+    scenePool->scenes.reserve(dag.scenes.size());
+    for (size_t i = 0; i < dag.scenes.size(); i++)
     {
-        const int protoIndex = protoIndices[i];
-        if (protoIndex < 0 || protoIndex >= static_cast<int>(prototypePaths.size()))
-        {
-            printf("point instancer invalid data: proto index out of range\n");
-            return false;
-        }
-
-        const std::string pathString = prototypePaths[protoIndex].GetString();
-        auto found = prototypeToSceneInstance.find(pathString);
-        if (found == prototypeToSceneInstance.end())
-        {
-            printf("point instancer missing prototype mapping: %s\n", pathString.c_str());
-            return false;
-        }
-
-        pxr::GfMatrix4d transform;
-        transform.SetIdentity();
-        if (!scales.empty())
-        {
-            transform.SetScale(scales[i]);
-        }
-        if (!orientations.empty())
-        {
-            transform.SetRotate(orientations[i]);
-        }
-        transform.SetTranslateOnly(positions[i]);
-
-        int childInstance =
-            CreateSceneInstanceForTarget(scene, ConvertAffineTransform(transform), found->second);
-        parentRefs.push_back({SCENE_REF_TYPE_INSTANCE, childInstance});
+        scenePool->scenes.emplace_back();
     }
 
-    return true;
-}
-
-static bool
-AppendRefsFromRange(const USDTraversalState &state,
-                    const USDPrototypeRanges &range,
-                    Scene *scene,
-                    const std::unordered_map<std::string, int> &prototypeToSceneInstance,
-                    SceneRefRange *rangeOut)
-{
-    if (!rangeOut)
+    for (uint32_t sceneIndex = 0; sceneIndex < dag.scenes.size(); sceneIndex++)
     {
-        return false;
-    }
+        const USDBuildScene &buildScene = dag.scenes[sceneIndex];
+        Scene *outScene = &scenePool->scenes[sceneIndex];
+        outScene->meshes.clear();
+        outScene->curves.clear();
+        outScene->instances.clear();
+        outScene->childScenes.clear();
+        outScene->meshes.reserve(buildScene.meshes.size());
+        outScene->curves.reserve(buildScene.curves.size());
+        outScene->instances.reserve(buildScene.instances.size());
+        outScene->childScenes.reserve(buildScene.instances.size());
 
-    std::vector<SceneRef> refs;
-    refs.reserve((range.meshEnd - range.meshStart) + (range.curveEnd - range.curveStart) +
-                 (range.instanceEnd - range.instanceStart) +
-                 (range.pointInstancerEnd - range.pointInstancerStart));
-
-    for (size_t i = range.meshStart; i < range.meshEnd; i++)
-    {
-        refs.push_back({SCENE_REF_TYPE_MESH, static_cast<int>(i)});
-    }
-    for (size_t i = range.curveStart; i < range.curveEnd; i++)
-    {
-        refs.push_back({SCENE_REF_TYPE_CURVES, static_cast<int>(i)});
-    }
-
-    for (size_t i = range.instanceStart; i < range.instanceEnd; i++)
-    {
-        const pxr::UsdPrim &instancePrim = state.instances[i];
-        const std::string pathString = instancePrim.GetPrototype().GetPath().GetString();
-        auto found = prototypeToSceneInstance.find(pathString);
-        if (found == prototypeToSceneInstance.end())
+        for (const USDBuildSceneInstance &instance : buildScene.instances)
         {
-            printf("instance missing prototype mapping: %s\n", pathString.c_str());
-            continue;
-        }
-
-        int childInstance = CreateSceneInstanceForTarget(
-            scene, GetPrimLocalTransform(instancePrim), found->second);
-        refs.push_back({SCENE_REF_TYPE_INSTANCE, childInstance});
-    }
-
-    for (size_t i = range.pointInstancerStart; i < range.pointInstancerEnd; i++)
-    {
-        if (!AppendPointInstancerChildren(
-                refs, state.pointInstancers[i], scene, prototypeToSceneInstance))
-        {
-            printf("failed point instancer: %s\n",
-                   state.pointInstancers[i].GetPrim().GetPath().GetText());
-        }
-    }
-
-    const uint32_t offset = static_cast<uint32_t>(scene->sceneRefs.size());
-    scene->sceneRefs.Reserve(scene->sceneRefs.size() + refs.size());
-    for (const SceneRef &ref : refs)
-    {
-        scene->sceneRefs.EmplaceBack(ref);
-    }
-    *rangeOut = {offset, static_cast<uint32_t>(refs.size())};
-    return true;
-}
-
-static USDPrototypeCollection CollectUSDPrototypes(pxr::UsdStageRefPtr stage,
-                                                   USDTraversalState &state,
-                                                   pxr::Usd_PrimFlagsPredicate filterPredicate)
-{
-    USDPrototypeCollection out = {};
-
-    int depth = 0;
-    const int maxDepth = 32;
-    size_t instanceStart = 0;
-    size_t pointInstancerStart = 0;
-    while (depth++ < maxDepth && (instanceStart < state.instances.size() ||
-                                  pointInstancerStart < state.pointInstancers.size()))
-    {
-        size_t prototypeStart = out.prototypes.size();
-        for (size_t i = instanceStart; i < state.instances.size(); i++)
-        {
-            pxr::UsdPrim proto = state.instances[i].GetPrototype();
-            const std::string pathString = proto.GetPath().GetString();
-            if (out.prototypePathToIndex.find(pathString) == out.prototypePathToIndex.end())
+            if (instance.childSceneIndex >= dag.scenes.size())
             {
-                const int index = static_cast<int>(out.prototypes.size());
-                out.prototypePathToIndex.emplace(pathString, index);
-                out.prototypes.push_back(proto);
-            }
-        }
-        for (size_t i = pointInstancerStart; i < state.pointInstancers.size(); i++)
-        {
-            pxr::SdfPathVector prototypePaths;
-            USD_ASSERT(state.pointInstancers[i].GetPrototypesRel().GetTargets(&prototypePaths));
-            for (pxr::SdfPath &path : prototypePaths)
-            {
-                const std::string pathString = path.GetString();
-                if (out.prototypePathToIndex.find(pathString) == out.prototypePathToIndex.end())
+                if (error)
                 {
-                    const int index = static_cast<int>(out.prototypes.size());
-                    out.prototypePathToIndex.emplace(pathString, index);
-                    out.prototypes.push_back(stage->GetPrimAtPath(path));
+                    *error = "child scene index out of range while converting build scenes";
                 }
+                return false;
             }
-        }
-
-        instanceStart = state.instances.size();
-        pointInstancerStart = state.pointInstancers.size();
-        out.ranges.resize(out.prototypes.size());
-        for (size_t i = prototypeStart; i < out.prototypes.size(); i++)
-        {
-            out.ranges[i].StartRange(state);
-            TraversePrim(out.prototypes[i], state, filterPredicate);
-            out.ranges[i].EndRange(state);
+            outScene->childScenes.push_back(&scenePool->scenes[instance.childSceneIndex]);
+            outScene->instances.emplace_back(
+                instance.parentFromLocal,
+                static_cast<uint32_t>(outScene->childScenes.size() - 1));
         }
     }
 
-    YBI_ASSERT(out.prototypes.size() == out.ranges.size());
-    return out;
+    scenePool->rootSceneIndex = dag.rootSceneIndex;
+    return true;
 }
 
 static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim,
@@ -1069,8 +735,9 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     printf("basis: %zi %zi %s\n", numCurves, points.size(), basisToken.GetText());
 }
 
-void LoadUSDScene(Scene *scene, const std::string &filePath)
+void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 {
+    YBI_ASSERT(scenePool);
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
 
     if (!stage)
@@ -1091,11 +758,6 @@ void LoadUSDScene(Scene *scene, const std::string &filePath)
 
     printf("start: %f, end: %f, fps: %f, tcps: %f\n", startTimeCode, endTimeCode, fps, tcps);
 
-    pxr::Usd_PrimFlagsConjunction filterFlags =
-        pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
-
-    pxr::Usd_PrimFlagsPredicate filterPredicate(filterFlags);
-
     pxr::UsdRenderSettings settings = pxr::UsdRenderSettings::GetStageRenderSettings(stage);
     if (settings)
     {
@@ -1107,22 +769,34 @@ void LoadUSDScene(Scene *scene, const std::string &filePath)
         }
     }
 
-    USDTraversalState state;
     pxr::UsdPrim root = stage->GetPseudoRoot();
-    TraversePrim(root, state, filterPredicate);
-
-    scene->curves.reserve(state.basisCurves.size());
-
-    if (state.cameras.size())
+    USDBuildSceneDAG buildSceneDAG = {};
+    std::string buildSceneError;
+    if (!BuildInstanceDAGFromUSD(stage, &buildSceneDAG, &buildSceneError))
     {
-        pxr::UsdGeomCamera &camera = state.cameras[0];
+        printf("build instance dag failed: %s\n", buildSceneError.c_str());
+        return;
+    }
+    std::vector<pxr::UsdGeomCamera> cameras;
+    CollectUSDCameras(root, &cameras);
+
+    std::string createScenesError;
+    if (!CreateRuntimeScenesFromBuildSceneDAG(buildSceneDAG, scenePool, &createScenesError))
+    {
+        printf("build scene creation failed: %s\n", createScenesError.c_str());
+        return;
+    }
+
+    if (cameras.size())
+    {
+        pxr::UsdGeomCamera &camera = cameras[0];
         const pxr::UsdTimeCode timeCode(0.0);
         pxr::GfCamera gfCam = camera.GetCamera(timeCode);
         pxr::GfFrustum frustum = gfCam.GetFrustum();
         pxr::GfMatrix4d viewM = frustum.ComputeViewMatrix().GetTranspose();
         pxr::GfMatrix4d projM = frustum.ComputeProjectionMatrix().GetTranspose();
 
-        Camera &uc = scene->camera;
+        Camera &uc = scenePool->camera;
         for (int i = 0; i < 4; i++)
         {
             for (int j = 0; j < 4; j++)
@@ -1153,76 +827,45 @@ void LoadUSDScene(Scene *scene, const std::string &filePath)
         printf("open: %f close: %f\n", shutterOpen, shutterClose);
     }
 
-    const USDPrototypeRanges rootRange = {0,
-                                          state.meshes.size(),
-                                          0,
-                                          state.basisCurves.size(),
-                                          0,
-                                          state.instances.size(),
-                                          0,
-                                          state.pointInstancers.size()};
-
-    USDPrototypeCollection prototypeCollection =
-        CollectUSDPrototypes(stage, state, filterPredicate);
-
-    std::unordered_map<std::string, int> prototypeToSceneInstance;
-    prototypeToSceneInstance.reserve(prototypeCollection.prototypes.size());
-    scene->instances.reserve(prototypeCollection.prototypes.size());
-
-    for (const pxr::UsdPrim &prototype : prototypeCollection.prototypes)
-    {
-        const int sceneInstanceIndex = static_cast<int>(scene->instances.size());
-        scene->instances.emplace_back(IdentityAffineTransform(), SceneRefRange{0, 0});
-        prototypeToSceneInstance.emplace(prototype.GetPath().GetString(), sceneInstanceIndex);
-    }
-
-    for (size_t prototypeIndex = 0; prototypeIndex < prototypeCollection.prototypes.size();
-         prototypeIndex++)
-    {
-        const std::string prototypePath =
-            prototypeCollection.prototypes[prototypeIndex].GetPath().GetString();
-        auto found = prototypeToSceneInstance.find(prototypePath);
-        YBI_ASSERT(found != prototypeToSceneInstance.end());
-
-        SceneRefRange refs = {};
-        AppendRefsFromRange(state,
-                            prototypeCollection.ranges[prototypeIndex],
-                            scene,
-                            prototypeToSceneInstance,
-                            &refs);
-        scene->instances[found->second].refs = refs;
-    }
-
-    AppendRefsFromRange(state, rootRange, scene, prototypeToSceneInstance, &scene->rootRefs);
-
     std::unordered_map<std::string, int> materialMap;
     std::vector<pxr::UsdShadeMaterial> materials;
-    Array<int> curveMaterialIndices(state.basisCurves.size());
 
-    // Handle materials
-    int curveIndex = 0;
-    for (pxr::UsdGeomBasisCurves &curve : state.basisCurves)
+    for (const USDBuildScene &buildScene : buildSceneDAG.scenes)
     {
-        pxr::UsdShadeMaterial material = GetPrimMaterial(curve.GetPrim());
-        int materialIndex = AddMaterialToMap(materialMap, materials, material);
-        curveMaterialIndices[curveIndex++] = materialIndex;
-    }
-
-    for (pxr::UsdGeomMesh &mesh : state.meshes)
-    {
-        const std::vector<pxr::UsdGeomSubset> subsets =
-            pxr::UsdGeomSubset::GetAllGeomSubsets(mesh);
-
-        if (subsets.size())
+        for (const USDBuildSceneCurve &curveRef : buildScene.curves)
         {
-            printf("subsets not handled yet\n");
+            const pxr::UsdPrim prim = stage->GetPrimAtPath(pxr::SdfPath(curveRef.path));
+            if (!prim || !prim.IsA<pxr::UsdGeomBasisCurves>())
+            {
+                printf("curve prim missing or invalid: %s\n", curveRef.path.c_str());
+                return;
+            }
+            pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
+            AddMaterialToMap(materialMap, materials, material);
         }
-        else
+
+        for (const USDBuildSceneMesh &meshRef : buildScene.meshes)
         {
-            pxr::UsdShadeMaterial material = GetPrimMaterial(mesh.GetPrim());
-            int materialIndex = AddMaterialToMap(materialMap, materials, material);
+            const pxr::UsdPrim prim = stage->GetPrimAtPath(pxr::SdfPath(meshRef.path));
+            if (!prim || !prim.IsA<pxr::UsdGeomMesh>())
+            {
+                printf("mesh prim missing or invalid: %s\n", meshRef.path.c_str());
+                return;
+            }
+
+            pxr::UsdGeomMesh mesh(prim);
+            const std::vector<pxr::UsdGeomSubset> subsets =
+                pxr::UsdGeomSubset::GetAllGeomSubsets(mesh);
+            if (subsets.size())
+            {
+                printf("subsets not handled yet\n");
+            }
+            else
+            {
+                pxr::UsdShadeMaterial material = GetPrimMaterial(mesh.GetPrim());
+                AddMaterialToMap(materialMap, materials, material);
+            }
         }
-        // mesh.GetLocalTransformation()
     }
 
     printf("num materials: %zi\n", materials.size());
@@ -1256,108 +899,127 @@ void LoadUSDScene(Scene *scene, const std::string &filePath)
         }
     }
 
-    // Process geometry
-    for (pxr::UsdGeomBasisCurves &curve : state.basisCurves)
-    {
-        ProcessUSDBasisCurve(curve, scene);
-    }
-
     int total = 0;
-    scene->meshes.reserve(state.meshes.size());
-    scene->attributes.Reserve(state.meshes.size());
-    for (pxr::UsdGeomMesh &mesh : state.meshes)
+    for (size_t sceneIndex = 0; sceneIndex < buildSceneDAG.scenes.size(); sceneIndex++)
     {
-        pxr::VtVec3fArray positions;
-        pxr::VtIntArray faceIndices;
-        pxr::VtIntArray faceCounts;
-        pxr::TfToken scheme;
+        const USDBuildScene &buildScene = buildSceneDAG.scenes[sceneIndex];
+        Scene *outScene = &scenePool->scenes[sceneIndex];
 
-        mesh.GetSubdivisionSchemeAttr().Get(&scheme);
-        if (scheme == pxr::UsdGeomTokens->catmullClark)
+        for (const USDBuildSceneCurve &curveRef : buildScene.curves)
         {
-            ProcessCatmullClarkMesh(mesh, scene);
-            total++;
-            continue;
-        }
-        else if (scheme == pxr::UsdGeomTokens->none)
-        {
-            ProcessPrimvars(mesh.GetPrim(), 0.0, scene);
-            // printf("poly\n");
-        }
-        else
-        {
-            printf("%s\n", scheme.GetText());
-        }
-
-        USD_ASSERT(mesh.GetPointsAttr().Get(&positions, 0.0));
-        USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, 0.0));
-        USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, 0.0));
-
-        bool constantFaceCount = true;
-        int numTriangles = 0;
-
-        for (int faceCount : faceCounts)
-        {
-            if (faceCount != 3)
+            const pxr::UsdPrim prim = stage->GetPrimAtPath(pxr::SdfPath(curveRef.path));
+            if (!prim || !prim.IsA<pxr::UsdGeomBasisCurves>())
             {
-                if (faceCount == 4)
+                printf("curve prim missing or invalid: %s\n", curveRef.path.c_str());
+                return;
+            }
+
+            pxr::UsdGeomBasisCurves curve(prim);
+            ProcessUSDBasisCurve(curve, outScene);
+            outScene->curves.back().parentFromLocal = curveRef.parentFromLocal;
+        }
+
+        outScene->attributes.Reserve(buildScene.meshes.size());
+        for (const USDBuildSceneMesh &meshRef : buildScene.meshes)
+        {
+            const pxr::UsdPrim prim = stage->GetPrimAtPath(pxr::SdfPath(meshRef.path));
+            if (!prim || !prim.IsA<pxr::UsdGeomMesh>())
+            {
+                printf("mesh prim missing or invalid: %s\n", meshRef.path.c_str());
+                return;
+            }
+
+            pxr::UsdGeomMesh mesh(prim);
+            pxr::VtVec3fArray positions;
+            pxr::VtIntArray faceIndices;
+            pxr::VtIntArray faceCounts;
+            pxr::TfToken scheme;
+
+            mesh.GetSubdivisionSchemeAttr().Get(&scheme);
+            if (scheme == pxr::UsdGeomTokens->catmullClark)
+            {
+                ProcessCatmullClarkMesh(mesh, outScene);
+                total++;
+                continue;
+            }
+            else if (scheme == pxr::UsdGeomTokens->none)
+            {
+                ProcessPrimvars(mesh.GetPrim(), 0.0, outScene);
+            }
+            else
+            {
+                printf("%s\n", scheme.GetText());
+            }
+
+            USD_ASSERT(mesh.GetPointsAttr().Get(&positions, 0.0));
+            USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, 0.0));
+            USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, 0.0));
+
+            int numTriangles = 0;
+            for (int faceCount : faceCounts)
+            {
+                if (faceCount != 3)
                 {
-                    numTriangles += 2;
+                    if (faceCount == 4)
+                    {
+                        numTriangles += 2;
+                    }
+                    else
+                    {
+                        printf("n-gon found\n");
+                        YBI_ASSERT(0);
+                    }
                 }
                 else
                 {
-                    printf("n-gon found\n");
+                    numTriangles++;
+                }
+            }
+
+            Array<float3> finalPositions(positions);
+            Array<int> finalIndices(3 * numTriangles);
+
+            int inputOffset = 0;
+            int finalOffset = 0;
+            for (int faceCount : faceCounts)
+            {
+                if (faceCount == 3)
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        int index = faceIndices[inputOffset++];
+                        YBI_ASSERT(index < positions.size());
+                        finalIndices[finalOffset++] = index;
+                    }
+                }
+                else if (faceCount == 4)
+                {
+                    int tempIndices[4];
+                    for (int i = 0; i < 4; i++)
+                    {
+                        int index = faceIndices[inputOffset++];
+                        YBI_ASSERT(index < positions.size());
+                        tempIndices[i] = index;
+                    }
+                    finalIndices[finalOffset++] = tempIndices[0];
+                    finalIndices[finalOffset++] = tempIndices[1];
+                    finalIndices[finalOffset++] = tempIndices[2];
+
+                    finalIndices[finalOffset++] = tempIndices[0];
+                    finalIndices[finalOffset++] = tempIndices[2];
+                    finalIndices[finalOffset++] = tempIndices[3];
+                }
+                else
+                {
                     YBI_ASSERT(0);
                 }
             }
-            else
-            {
-                numTriangles++;
-            }
+
+            outScene->meshes.emplace_back(
+                std::move(finalPositions), std::move(finalIndices), meshRef.parentFromLocal);
         }
-
-        Array<float3> finalPositions(positions);
-        Array<int> finalIndices(3 * numTriangles);
-
-        int inputOffset = 0;
-        int finalOffset = 0;
-        for (int faceCount : faceCounts)
-        {
-            if (faceCount == 3)
-            {
-                for (int i = 0; i < 3; i++)
-                {
-                    int index = faceIndices[inputOffset++];
-                    YBI_ASSERT(index < positions.size());
-                    finalIndices[finalOffset++] = index;
-                }
-            }
-            else if (faceCount == 4)
-            {
-                // TODO: handle concavity/non-planarity?
-                int tempIndices[4];
-                for (int i = 0; i < 4; i++)
-                {
-                    int index = faceIndices[inputOffset++];
-                    YBI_ASSERT(index < positions.size());
-                    tempIndices[i] = index;
-                }
-                finalIndices[finalOffset++] = tempIndices[0];
-                finalIndices[finalOffset++] = tempIndices[1];
-                finalIndices[finalOffset++] = tempIndices[2];
-
-                finalIndices[finalOffset++] = tempIndices[0];
-                finalIndices[finalOffset++] = tempIndices[2];
-                finalIndices[finalOffset++] = tempIndices[3];
-            }
-            else
-            {
-                YBI_ASSERT(0);
-            }
-        }
-
-        scene->meshes.emplace_back(std::move(finalPositions), std::move(finalIndices));
     }
+
     printf("num cat clarks: %i\n", total);
 }
 

@@ -6,8 +6,12 @@
 
 YBI_NAMESPACE_BEGIN
 
+struct Camera;
 struct Scene;
 
-void Subdivision(Scene *scene, const SubdivisionMesh &mesh, int refineLevel = 1);
+void Subdivision(Scene *scene,
+                 const SubdivisionMesh &mesh,
+                 const Camera &camera,
+                 int refineLevel = 1);
 
 YBI_NAMESPACE_END

@@ -25,12 +25,13 @@ int main(int argc, char **argv)
     // SubdivisionMesh mesh;
     // Subdivision(mesh);
 
-    CUDADevice device;
-    device.CreateGridClusterTemplates();
+    // CUDADevice device;
+    // device.CreateGridClusterTemplates();
 
-    Scene scene;
-    LoadUSDScene(&scene, usdFilePath);
+    ScenePool scenePool;
+    LoadUSDScene(&scenePool, usdFilePath);
 
+#if 0
     // for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
     // {
     //     Subdivision(&scene, mesh);
@@ -54,6 +55,7 @@ int main(int argc, char **argv)
     printf("time elapsed: %f\n", elapsed.count());
     printf("num tris: %i\n", totalNumTriangles);
     printf("bvh size: %zi\n", device.bvhTotalAllocated);
+#endif
 
     return 0;
 }
