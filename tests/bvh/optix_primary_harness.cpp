@@ -29,6 +29,23 @@ using namespace ybi;
 
 namespace
 {
+static void OptixCheckImpl(OptixResult result, const char *expr, const char *file, int line)
+{
+    if (result != OPTIX_SUCCESS)
+    {
+        fprintf(stderr,
+                "OptiX call failed: %s -> %s (%s) at %s:%d\n",
+                expr,
+                optixGetErrorName(result),
+                optixGetErrorString(result),
+                file,
+                line);
+        std::abort();
+    }
+}
+
+#define OPTIX_CHECK(expr) OptixCheckImpl((expr), #expr, __FILE__, __LINE__)
+
 struct LaunchParams
 {
     struct WireframeConfig
@@ -100,6 +117,48 @@ struct HitgroupData
 using RaygenRecord = SbtRecord<EmptyData>;
 using MissRecord = SbtRecord<EmptyData>;
 using HitgroupRecord = SbtRecord<HitgroupData>;
+
+static OptixResult CreateOptixModuleCompat(OptixDeviceContext context,
+                                           const OptixModuleCompileOptions *moduleCompileOptions,
+                                           const OptixPipelineCompileOptions *pipelineCompileOptions,
+                                           const char *ptx,
+                                           size_t ptxSize,
+                                           char *log,
+                                           size_t *logSize,
+                                           OptixModule *moduleOut)
+{
+#if (OPTIX_VERSION >= 80000)
+    return optixModuleCreate(context,
+                             moduleCompileOptions,
+                             pipelineCompileOptions,
+                             ptx,
+                             ptxSize,
+                             log,
+                             logSize,
+                             moduleOut);
+#else
+    return optixModuleCreateFromPTX(context,
+                                    moduleCompileOptions,
+                                    pipelineCompileOptions,
+                                    ptx,
+                                    ptxSize,
+                                    log,
+                                    logSize,
+                                    moduleOut);
+#endif
+}
+
+static OptixResult AccumulateStackSizesCompat(OptixProgramGroup programGroup,
+                                              OptixStackSizes *stackSizes,
+                                              OptixPipeline pipeline)
+{
+#if (OPTIX_VERSION >= 80000)
+    return optixUtilAccumulateStackSizes(programGroup, stackSizes, pipeline);
+#else
+    (void)pipeline;
+    return optixUtilAccumulateStackSizes(programGroup, stackSizes);
+#endif
+}
 
 static std::string ReadTextFile(const std::string &path)
 {
@@ -656,14 +715,14 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
 
     char log[2048];
     size_t logSize = sizeof(log);
-    OPTIX_ASSERT(optixModuleCreate(optixContext,
-                                   &moduleCompileOptions,
-                                   &pipelineCompileOptions,
-                                   ptx.c_str(),
-                                   ptx.size(),
-                                   log,
-                                   &logSize,
-                                   &moduleOut));
+    OPTIX_CHECK(CreateOptixModuleCompat(optixContext,
+                                         &moduleCompileOptions,
+                                         &pipelineCompileOptions,
+                                         ptx.c_str(),
+                                         ptx.size(),
+                                         log,
+                                         &logSize,
+                                         &moduleOut));
 
     if (useCurveIntersection)
     {
@@ -672,7 +731,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
         builtinISOptions.usesMotionBlur = 0;
         builtinISOptions.buildFlags = OPTIX_BUILD_FLAG_NONE;
         builtinISOptions.curveEndcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT;
-        OPTIX_ASSERT(optixBuiltinISModuleGet(optixContext,
+        OPTIX_CHECK(optixBuiltinISModuleGet(optixContext,
                                              &moduleCompileOptions,
                                              &pipelineCompileOptions,
                                              &builtinISOptions,
@@ -685,7 +744,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     raygenDesc.raygen.module = moduleOut;
     raygenDesc.raygen.entryFunctionName = "__raygen__primary";
     logSize = sizeof(log);
-    OPTIX_ASSERT(optixProgramGroupCreate(
+    OPTIX_CHECK(optixProgramGroupCreate(
         optixContext, &raygenDesc, 1, &programGroupOptions, log, &logSize, &raygenGroupOut));
 
     OptixProgramGroupDesc missDesc = {};
@@ -693,7 +752,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     missDesc.miss.module = moduleOut;
     missDesc.miss.entryFunctionName = "__miss__primary";
     logSize = sizeof(log);
-    OPTIX_ASSERT(optixProgramGroupCreate(
+    OPTIX_CHECK(optixProgramGroupCreate(
         optixContext, &missDesc, 1, &programGroupOptions, log, &logSize, &missGroupOut));
 
     OptixProgramGroupDesc hitgroupDesc = {};
@@ -705,7 +764,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     hitgroupDesc.hitgroup.moduleIS = useCurveIntersection ? curveModuleOut : nullptr;
     hitgroupDesc.hitgroup.entryFunctionNameIS = nullptr;
     logSize = sizeof(log);
-    OPTIX_ASSERT(optixProgramGroupCreate(
+    OPTIX_CHECK(optixProgramGroupCreate(
         optixContext, &hitgroupDesc, 1, &programGroupOptions, log, &logSize, &hitgroupGroupOut));
 
     OptixProgramGroup groups[] = {raygenGroupOut, missGroupOut, hitgroupGroupOut};
@@ -713,7 +772,7 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     pipelineLinkOptions.maxTraceDepth = 2;
     OptixPipeline pipeline = nullptr;
     logSize = sizeof(log);
-    OPTIX_ASSERT(optixPipelineCreate(optixContext,
+    OPTIX_CHECK(optixPipelineCreate(optixContext,
                                      &pipelineCompileOptions,
                                      &pipelineLinkOptions,
                                      groups,
@@ -723,20 +782,20 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
                                      &pipeline));
 
     OptixStackSizes stackSizes = {};
-    OPTIX_ASSERT(optixUtilAccumulateStackSizes(raygenGroupOut, &stackSizes, pipeline));
-    OPTIX_ASSERT(optixUtilAccumulateStackSizes(missGroupOut, &stackSizes, pipeline));
-    OPTIX_ASSERT(optixUtilAccumulateStackSizes(hitgroupGroupOut, &stackSizes, pipeline));
+    OPTIX_CHECK(AccumulateStackSizesCompat(raygenGroupOut, &stackSizes, pipeline));
+    OPTIX_CHECK(AccumulateStackSizesCompat(missGroupOut, &stackSizes, pipeline));
+    OPTIX_CHECK(AccumulateStackSizesCompat(hitgroupGroupOut, &stackSizes, pipeline));
     uint32_t directCallableStackSizeFromTraversal = 0;
     uint32_t directCallableStackSizeFromState = 0;
     uint32_t continuationStackSize = 0;
-    OPTIX_ASSERT(optixUtilComputeStackSizes(&stackSizes,
+    OPTIX_CHECK(optixUtilComputeStackSizes(&stackSizes,
                                             2,
                                             0,
                                             0,
                                             &directCallableStackSizeFromTraversal,
                                             &directCallableStackSizeFromState,
                                             &continuationStackSize));
-    OPTIX_ASSERT(optixPipelineSetStackSize(pipeline,
+    OPTIX_CHECK(optixPipelineSetStackSize(pipeline,
                                            directCallableStackSizeFromTraversal,
                                            directCallableStackSizeFromState,
                                            continuationStackSize,
@@ -745,9 +804,9 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     RaygenRecord raygenRecord = {};
     MissRecord missRecord = {};
     HitgroupRecord hitgroupRecord = {};
-    OPTIX_ASSERT(optixSbtRecordPackHeader(raygenGroupOut, &raygenRecord));
-    OPTIX_ASSERT(optixSbtRecordPackHeader(missGroupOut, &missRecord));
-    OPTIX_ASSERT(optixSbtRecordPackHeader(hitgroupGroupOut, &hitgroupRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(raygenGroupOut, &raygenRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(missGroupOut, &missRecord));
+    OPTIX_CHECK(optixSbtRecordPackHeader(hitgroupGroupOut, &hitgroupRecord));
 
     CUDA_ASSERT(cuMemAlloc(&raygenRecordBufferOut, sizeof(RaygenRecord)));
     CUDA_ASSERT(cuMemAlloc(&missRecordBufferOut, sizeof(MissRecord)));
@@ -832,7 +891,7 @@ static void RenderTraversable(OptixPipeline pipeline,
     printf("render: params uploaded\n");
     fflush(stdout);
 
-    OPTIX_ASSERT(optixLaunch(
+    OPTIX_CHECK(optixLaunch(
         pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
     printf("render: launch returned\n");
     fflush(stdout);
@@ -1062,15 +1121,15 @@ int main(int argc, char **argv)
         CUDA_ASSERT(cuMemFree(hitgroupRecordBuffer));
         CUDA_ASSERT(cuMemFree(missRecordBuffer));
         CUDA_ASSERT(cuMemFree(raygenRecordBuffer));
-        OPTIX_ASSERT(optixPipelineDestroy(pipeline));
-        OPTIX_ASSERT(optixProgramGroupDestroy(hitgroupGroup));
-        OPTIX_ASSERT(optixProgramGroupDestroy(missGroup));
-        OPTIX_ASSERT(optixProgramGroupDestroy(raygenGroup));
+        OPTIX_CHECK(optixPipelineDestroy(pipeline));
+        OPTIX_CHECK(optixProgramGroupDestroy(hitgroupGroup));
+        OPTIX_CHECK(optixProgramGroupDestroy(missGroup));
+        OPTIX_CHECK(optixProgramGroupDestroy(raygenGroup));
         if (curveModule)
         {
-            OPTIX_ASSERT(optixModuleDestroy(curveModule));
+            OPTIX_CHECK(optixModuleDestroy(curveModule));
         }
-        OPTIX_ASSERT(optixModuleDestroy(module));
+        OPTIX_CHECK(optixModuleDestroy(module));
     }
 
     if (curvePipeline)
@@ -1078,15 +1137,15 @@ int main(int argc, char **argv)
         CUDA_ASSERT(cuMemFree(curveHitgroupRecordBuffer));
         CUDA_ASSERT(cuMemFree(curveMissRecordBuffer));
         CUDA_ASSERT(cuMemFree(curveRaygenRecordBuffer));
-        OPTIX_ASSERT(optixPipelineDestroy(curvePipeline));
-        OPTIX_ASSERT(optixProgramGroupDestroy(curveHitgroupGroup));
-        OPTIX_ASSERT(optixProgramGroupDestroy(curveMissGroup));
-        OPTIX_ASSERT(optixProgramGroupDestroy(curveRaygenGroup));
+        OPTIX_CHECK(optixPipelineDestroy(curvePipeline));
+        OPTIX_CHECK(optixProgramGroupDestroy(curveHitgroupGroup));
+        OPTIX_CHECK(optixProgramGroupDestroy(curveMissGroup));
+        OPTIX_CHECK(optixProgramGroupDestroy(curveRaygenGroup));
         if (curveIsModule)
         {
-            OPTIX_ASSERT(optixModuleDestroy(curveIsModule));
+            OPTIX_CHECK(optixModuleDestroy(curveIsModule));
         }
-        OPTIX_ASSERT(optixModuleDestroy(curvePipelineModule));
+        OPTIX_CHECK(optixModuleDestroy(curvePipelineModule));
     }
     std::fflush(stdout);
     std::fflush(stderr);

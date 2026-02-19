@@ -1,9 +1,13 @@
 #include "device/cuda_device.h"
 #include "cuda.h"
-#include "device/bvh/optix/clusters.cuh"
 #include "scene/scene.h"
+#include <cstdlib>
 #include <cstring>
 #include <optix_function_table_definition.h>
+
+#if (OPTIX_VERSION >= 90000)
+#include "device/bvh/optix/clusters.cuh"
+#endif
 
 YBI_NAMESPACE_BEGIN
 
@@ -11,7 +15,15 @@ YBI_NAMESPACE_BEGIN
 
 static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
 {
-    OPTIX_ASSERT(optixInit());
+    const OptixResult initResult = optixInit();
+    if (initResult != OPTIX_SUCCESS)
+    {
+        fprintf(stderr,
+                "OptiX init failed: %s (%s)\n",
+                optixGetErrorName(initResult),
+                optixGetErrorString(initResult));
+        return nullptr;
+    }
     OptixDeviceContextOptions contextOptions = {};
     contextOptions.logCallbackFunction =
         [](unsigned int level, const char *tag, const char *message, void *cbdata) {
@@ -41,21 +53,82 @@ static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
     contextOptions.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
 
     OptixDeviceContext optixDeviceContext;
-    OPTIX_ASSERT(optixDeviceContextCreate(cudaContext, &contextOptions, &optixDeviceContext));
-    OPTIX_ASSERT(optixDeviceContextSetLogCallback(optixDeviceContext,
-                                                  contextOptions.logCallbackFunction,
-                                                  contextOptions.logCallbackData,
-                                                  contextOptions.logCallbackLevel));
+    const OptixResult createResult =
+        optixDeviceContextCreate(cudaContext, &contextOptions, &optixDeviceContext);
+    if (createResult != OPTIX_SUCCESS)
+    {
+        fprintf(stderr,
+                "OptiX context create failed: %s (%s)\n",
+                optixGetErrorName(createResult),
+                optixGetErrorString(createResult));
+        return nullptr;
+    }
+
+    const OptixResult callbackResult =
+        optixDeviceContextSetLogCallback(optixDeviceContext,
+                                         contextOptions.logCallbackFunction,
+                                         contextOptions.logCallbackData,
+                                         contextOptions.logCallbackLevel);
+    if (callbackResult != OPTIX_SUCCESS)
+    {
+        fprintf(stderr,
+                "OptiX set log callback failed: %s (%s)\n",
+                optixGetErrorName(callbackResult),
+                optixGetErrorString(callbackResult));
+        optixDeviceContextDestroy(optixDeviceContext);
+        return nullptr;
+    }
     return optixDeviceContext;
 }
 
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
 {
-    cuInit(0);
-    cuDeviceGet(&device, 0);
-    cuDevicePrimaryCtxRetain(&cudaContext, device);
+    CUresult cuResult = cuInit(0);
+    if (cuResult != CUDA_SUCCESS)
+    {
+        const char *str = nullptr;
+        const char *name = nullptr;
+        cuGetErrorString(cuResult, &str);
+        cuGetErrorName(cuResult, &name);
+        fprintf(
+            stderr, "CUDA init failed: %s (%s)\n", name ? name : "unknown", str ? str : "unknown");
+        std::abort();
+    }
+
+    cuResult = cuDeviceGet(&device, 0);
+    if (cuResult != CUDA_SUCCESS)
+    {
+        const char *str = nullptr;
+        const char *name = nullptr;
+        cuGetErrorString(cuResult, &str);
+        cuGetErrorName(cuResult, &name);
+        fprintf(stderr,
+                "CUDA device get failed: %s (%s)\n",
+                name ? name : "unknown",
+                str ? str : "unknown");
+        std::abort();
+    }
+
+    cuResult = cuDevicePrimaryCtxRetain(&cudaContext, device);
+    if (cuResult != CUDA_SUCCESS)
+    {
+        const char *str = nullptr;
+        const char *name = nullptr;
+        cuGetErrorString(cuResult, &str);
+        cuGetErrorName(cuResult, &name);
+        fprintf(stderr,
+                "CUDA primary context retain failed: %s (%s)\n",
+                name ? name : "unknown",
+                str ? str : "unknown");
+        std::abort();
+    }
 
     optixDeviceContext = InitializeOptix(cudaContext);
+    if (!optixDeviceContext)
+    {
+        fprintf(stderr, "Failed to initialize OptiX device context.\n");
+        std::abort();
+    }
 
     void *mem = util::AlignedAlloc(sizeof(CUDAMemoryArena), alignof(CUDAMemoryArena));
     YBI_ASSERT(mem != nullptr);
@@ -370,17 +443,18 @@ static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
 
         const Array<float3> &positions = curves.GetVertices();
         const Array<float> &widths = curves.GetWidths();
-        memcpy(
-            hostVertices.data() + step * numVertices, positions.data(), sizeof(float3) * numVertices);
+        memcpy(hostVertices.data() + step * numVertices,
+               positions.data(),
+               sizeof(float3) * numVertices);
         memcpy(hostWidths.data() + step * numVertices, widths.data(), sizeof(float) * numVertices);
     }
 
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceVertices.data()), hostVertices.data(), deviceVertices.numBytes()));
-    CUDA_ASSERT(
-        cuMemcpyHtoD(CUdeviceptr(deviceIndices.data()), indexBuffer.data(), deviceIndices.numBytes()));
-    CUDA_ASSERT(
-        cuMemcpyHtoD(CUdeviceptr(deviceWidths.data()), hostWidths.data(), deviceWidths.numBytes()));
+    CUDA_ASSERT(cuMemcpyHtoD(
+        CUdeviceptr(deviceIndices.data()), indexBuffer.data(), deviceIndices.numBytes()));
+    CUDA_ASSERT(cuMemcpyHtoD(
+        CUdeviceptr(deviceWidths.data()), hostWidths.data(), deviceWidths.numBytes()));
 
     OptixBuildInput input = {};
     input.type = OPTIX_BUILD_INPUT_TYPE_CURVES;
@@ -404,9 +478,8 @@ static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
     return input;
 }
 
-OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
-                                                HostMemoryArena &hostArena,
-                                                Mesh &mesh)
+OptixTraversableHandle
+BuildTriangleGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Mesh &mesh)
 {
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
     const uint32_t numMotionKeys = 1;
@@ -427,9 +500,8 @@ OptixTraversableHandle BuildTriangleGASFromMesh(CUDADevice *cudaDevice,
     return handle;
 }
 
-OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
-                                               HostMemoryArena &hostArena,
-                                               const Mesh &mesh)
+OptixTraversableHandle
+BuildClusterGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, const Mesh &mesh)
 {
 #if (OPTIX_VERSION >= 90000)
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
@@ -448,9 +520,8 @@ OptixTraversableHandle BuildClusterGASFromMesh(CUDADevice *cudaDevice,
 #endif
 }
 
-OptixTraversableHandle BuildCurveGASFromCurves(CUDADevice *cudaDevice,
-                                               HostMemoryArena &hostArena,
-                                               Curves &curves)
+OptixTraversableHandle
+BuildCurveGASFromCurves(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Curves &curves)
 {
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
     const uint32_t numMotionKeys = 1;
