@@ -7,13 +7,20 @@
 #include <cassert>
 #include <chrono>
 #include <cstdio>
+#include <string>
 
 using namespace ybi;
 
 int main(int argc, char **argv)
 {
+    if (argc < 2)
+    {
+        printf("usage: %s <usd_file>\n", argv[0]);
+        return 1;
+    }
+    std::string usdFilePath = argv[1];
+
     // BuildBVH();
-    // TODO: hardcoded
 
     // SubdivisionMesh mesh;
     // Subdivision(mesh);
@@ -22,7 +29,7 @@ int main(int argc, char **argv)
     device.CreateGridClusterTemplates();
 
     Scene scene;
-    LoadUSDScene(&scene);
+    LoadUSDScene(&scene, usdFilePath);
 
     // for (SubdivisionMesh &mesh : scene.subdivisionMeshes)
     // {
