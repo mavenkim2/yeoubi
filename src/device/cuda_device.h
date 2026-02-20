@@ -26,6 +26,20 @@ struct ScenePool;
 struct Mesh;
 struct Curves;
 
+struct OptixPrimaryPipelineState
+{
+    OptixPipeline pipeline = nullptr;
+    OptixShaderBindingTable sbt = {};
+    CUdeviceptr raygenRecordBuffer = 0;
+    CUdeviceptr missRecordBuffer = 0;
+    CUdeviceptr hitgroupRecordBuffer = 0;
+    OptixModule module = nullptr;
+    OptixModule curveModule = nullptr;
+    OptixProgramGroup raygenGroup = nullptr;
+    OptixProgramGroup missGroup = nullptr;
+    OptixProgramGroup hitgroupGroup = nullptr;
+};
+
 struct ClusterAccelerationStructureLimits
 {
     uint32_t maxTrianglesPerCluster;
@@ -57,6 +71,8 @@ struct CUDADevice
     Array<OptixTraversableHandle> gridClusterTemplateHandles;
 #endif
 
+    OptixPrimaryPipelineState optixPrimaryPipeline;
+
     CUDADevice();
     ~CUDADevice();
 
@@ -66,16 +82,23 @@ struct CUDADevice
     void Free(DeviceMemoryView<T> &view);
     bool SupportsGrids() const;
 
+    bool CreateOptixPrimaryPipeline(const std::string &ptx);
+    void DestroyOptixPrimaryPipeline();
+
     void BuildBVH(ScenePool *scenePool);
     void CreateGridClusterTemplates();
 };
+
+OptixDeviceContext InitializeOptix(CUcontext cudaContext);
 
 OptixTraversableHandle
 BuildTriangleGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Mesh &mesh);
 OptixTraversableHandle
 BuildClusterGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, const Mesh &mesh);
 OptixTraversableHandle
-BuildCurveGASFromCurves(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Curves &curves);
+BuildCurveGASFromCurves(CUDADevice *cudaDevice,
+                        HostMemoryArena &hostArena,
+                        Curves &curves);
 
 YBI_NAMESPACE_END
 

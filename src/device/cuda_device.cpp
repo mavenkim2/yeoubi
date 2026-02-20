@@ -1,79 +1,10 @@
 #include "device/cuda_device.h"
 #include "cuda.h"
 #include <cstdlib>
-#include <optix_function_table_definition.h>
 
 YBI_NAMESPACE_BEGIN
 
 #if defined(WITH_CUDA) && defined(WITH_OPTIX)
-
-static OptixDeviceContext InitializeOptix(CUcontext cudaContext)
-{
-    const OptixResult initResult = optixInit();
-    if (initResult != OPTIX_SUCCESS)
-    {
-        fprintf(stderr,
-                "OptiX init failed: %s (%s)\n",
-                optixGetErrorName(initResult),
-                optixGetErrorString(initResult));
-        return nullptr;
-    }
-    OptixDeviceContextOptions contextOptions = {};
-    contextOptions.logCallbackFunction =
-        [](unsigned int level, const char *tag, const char *message, void *cbdata) {
-            std::string type = {};
-
-            switch (level)
-            {
-                case 1:
-                    type = "Fatal Error";
-                    break;
-                case 2:
-                    type = "Error";
-                    break;
-                case 3:
-                    type = "Warning";
-                    break;
-                case 4:
-                    type = "Status";
-                    break;
-                default:
-                    break;
-            }
-
-            // Print("Optix %S: %s\n", type, message);
-        };
-    contextOptions.logCallbackLevel = 4;
-    contextOptions.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
-
-    OptixDeviceContext optixDeviceContext;
-    const OptixResult createResult =
-        optixDeviceContextCreate(cudaContext, &contextOptions, &optixDeviceContext);
-    if (createResult != OPTIX_SUCCESS)
-    {
-        fprintf(stderr,
-                "OptiX context create failed: %s (%s)\n",
-                optixGetErrorName(createResult),
-                optixGetErrorString(createResult));
-        return nullptr;
-    }
-
-    const OptixResult callbackResult =
-        optixDeviceContextSetLogCallback(optixDeviceContext,
-                                         contextOptions.logCallbackFunction,
-                                         contextOptions.logCallbackData,
-                                         contextOptions.logCallbackLevel);
-    if (callbackResult != OPTIX_SUCCESS)
-    {
-        fprintf(stderr,
-                "OptiX set log callback failed: %s (%s)\n",
-                optixGetErrorName(callbackResult),
-                optixGetErrorString(callbackResult));
-        optixDeviceContextDestroy(optixDeviceContext);
-        return nullptr;
-    }
-    return optixDeviceContext;
-}
 
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
 {
@@ -132,6 +63,7 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
 CUDADevice::~CUDADevice()
 {
     deviceArena.reset();
+    DestroyOptixPrimaryPipeline();
     CUDA_ASSERT(cuDevicePrimaryCtxRelease(device));
 
     if (optixDeviceContext)
