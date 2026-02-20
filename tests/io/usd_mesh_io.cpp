@@ -110,6 +110,10 @@ bool WriteSelectedSubdivJson(const SelectedSubdivMesh &mesh,
     out << "{\n";
     out << "  \"source_prim\": \"" << mesh.path.GetString() << "\",\n";
     out << "  \"scheme\": \"" << mesh.subdivisionScheme << "\",\n";
+    out << "  \"vertex_boundary_interpolation\": \"" << mesh.vertexBoundaryInterpolation << "\",\n";
+    out << "  \"fvar_linear_interpolation\": \"" << mesh.fvarLinearInterpolation << "\",\n";
+    out << "  \"creasing_method\": \"" << mesh.creasingMethod << "\",\n";
+    out << "  \"triangle_subdivision\": \"" << mesh.triangleSubdivision << "\",\n";
     out << "  \"points\": [\n";
     for (size_t i = 0; i < mesh.points.size(); i++)
     {

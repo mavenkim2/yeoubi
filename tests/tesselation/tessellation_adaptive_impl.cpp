@@ -85,6 +85,19 @@ struct EdgeFactorResult
     std::vector<int> edgeFactors;
 };
 
+struct RefinedPositions
+{
+    std::vector<Primvar3> values;
+    std::vector<int> levelStarts;
+    int numRefinerVerts = 0;
+};
+
+struct TriMesh
+{
+    std::vector<pxr::GfVec3f> positions;
+    std::vector<int> indices;
+};
+
 static CreasePairs BuildCreasePairs(const SelectedSubdivMesh &m)
 {
     CreasePairs out = {};
@@ -120,6 +133,66 @@ static Sdc::SchemeType SchemeFromString(const std::string &s)
         return Sdc::SCHEME_BILINEAR;
     }
     return Sdc::SCHEME_CATMARK;
+}
+
+static Sdc::Options::VtxBoundaryInterpolation VtxBoundaryFromString(const std::string &s)
+{
+    if (s == "none")
+    {
+        return Sdc::Options::VTX_BOUNDARY_NONE;
+    }
+    if (s == "edgeOnly")
+    {
+        return Sdc::Options::VTX_BOUNDARY_EDGE_ONLY;
+    }
+    return Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER;
+}
+
+static Sdc::Options::FVarLinearInterpolation FVarLinearFromString(const std::string &s)
+{
+    if (s == "none")
+    {
+        return Sdc::Options::FVAR_LINEAR_NONE;
+    }
+    if (s == "cornersOnly")
+    {
+        return Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
+    }
+    if (s == "cornersPlus1")
+    {
+        return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
+    }
+    if (s == "cornersPlus2")
+    {
+        return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS2;
+    }
+    if (s == "boundaries")
+    {
+        return Sdc::Options::FVAR_LINEAR_BOUNDARIES;
+    }
+    if (s == "all" || s == "bilinear")
+    {
+        return Sdc::Options::FVAR_LINEAR_ALL;
+    }
+    return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
+}
+
+static Sdc::Options::CreasingMethod CreasingMethodFromString(const std::string &s)
+{
+    if (s == "chaikin")
+    {
+        return Sdc::Options::CREASE_CHAIKIN;
+    }
+    return Sdc::Options::CREASE_UNIFORM;
+}
+
+static Sdc::Options::TriangleSubdivision TriangleSubFromString(const std::string &s)
+{
+    if (s == "smooth")
+    {
+        return Sdc::Options::TRI_SUB_SMOOTH;
+    }
+    return Sdc::Options::TRI_SUB_CATMARK;
 }
 
 static bool WriteObjLevel(const std::string &path,
@@ -165,6 +238,25 @@ static bool WriteObjLevel(const std::string &path,
             out << " " << (verts[i] + 1);
         }
         out << "\n";
+    }
+    return true;
+}
+
+static bool WriteTriObj(const std::string &path, const TriMesh &mesh)
+{
+    std::ofstream out(path);
+    if (!out.is_open())
+    {
+        return false;
+    }
+    for (const pxr::GfVec3f &p : mesh.positions)
+    {
+        out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
+    }
+    for (int i = 0; i + 2 < int(mesh.indices.size()); i += 3)
+    {
+        out << "f " << (mesh.indices[i + 0] + 1) << " " << (mesh.indices[i + 1] + 1) << " "
+            << (mesh.indices[i + 2] + 1) << "\n";
     }
     return true;
 }
@@ -265,27 +357,39 @@ static pxr::GfVec2f ToScreen(const EdgeFactorCamera &camera, const pxr::GfVec3f 
     return pxr::GfVec2f(sx, sy);
 }
 
-static std::vector<Primvar3> BuildPatchEvalPositions(const Far::TopologyRefiner &refiner,
-                                                      const Far::PatchTable &patchTable,
-                                                      const pxr::VtVec3fArray &points)
+static RefinedPositions BuildRefinedPositions(const Far::TopologyRefiner &refiner,
+                                              const Far::PatchTable &patchTable,
+                                              const pxr::VtVec3fArray &points)
 {
-    const int numVertices = refiner.GetNumVerticesTotal();
+    RefinedPositions out = {};
+    const int numLevels = refiner.GetNumLevels();
+    out.levelStarts.assign(std::max(0, numLevels), 0);
+    for (int l = 1; l < numLevels; ++l)
+    {
+        out.levelStarts[l] = out.levelStarts[l - 1] + refiner.GetLevel(l - 1).GetNumVertices();
+    }
+
+    out.numRefinerVerts = refiner.GetNumVerticesTotal();
     const int numLocalPoints = patchTable.GetNumLocalPoints();
-    std::vector<Primvar3> values(size_t(numVertices + numLocalPoints));
+    out.values.resize(size_t(out.numRefinerVerts + numLocalPoints));
     for (size_t i = 0; i < points.size(); ++i)
     {
-        values[i] = Primvar3(points[i]);
+        out.values[i] = Primvar3(points[i]);
     }
-    Primvar3 *src = values.data();
+
+    Primvar3 *src = out.values.data();
     Far::PrimvarRefiner prim(refiner);
-    for (int l = 1; l < refiner.GetNumLevels(); ++l)
+    for (int l = 0; l < refiner.GetMaxLevel(); ++l)
     {
-        Primvar3 *dst = src + refiner.GetLevel(l - 1).GetNumVertices();
-        prim.Interpolate(l, src, dst);
+        Primvar3 *dst = src + refiner.GetLevel(l).GetNumVertices();
+        prim.Interpolate(l + 1, src, dst);
         src = dst;
     }
-    patchTable.ComputeLocalPointValues(values.data(), values.data() + numVertices);
-    return values;
+    if (numLocalPoints > 0)
+    {
+        patchTable.ComputeLocalPointValues(out.values.data(), out.values.data() + out.numRefinerVerts);
+    }
+    return out;
 }
 
 static pxr::GfVec2f EdgeUV(int edge, float t)
@@ -473,6 +577,71 @@ BuildEdgeRateDebugLines(const Far::PatchMap &patchMap,
     return lines;
 }
 
+static TriMesh TessellateFixedRateNoStitch(const Far::PatchMap &patchMap,
+                                           const Far::PatchTable &patchTable,
+                                           const std::vector<Primvar3> &positions,
+                                           int numPtexFaces,
+                                           int fixedEdgeRate,
+                                           int &skippedPtexFacesOut)
+{
+    TriMesh out = {};
+    skippedPtexFacesOut = 0;
+    const int steps = std::max(1, fixedEdgeRate);
+    const int side = steps + 1;
+
+    for (int pf = 0; pf < numPtexFaces; ++pf)
+    {
+        if (!patchMap.FindPatch(pf, 0.5f, 0.5f))
+        {
+            skippedPtexFacesOut++;
+            continue;
+        }
+
+        const int base = int(out.positions.size());
+        bool ok = true;
+        for (int v = 0; v <= steps && ok; ++v)
+        {
+            for (int u = 0; u <= steps; ++u)
+            {
+                const float fu = float(u) / float(steps);
+                const float fv = float(v) / float(steps);
+                pxr::GfVec3f p(0.0f);
+                if (!EvaluateLimitPosition(patchMap, patchTable, positions, pf, fu, fv, p))
+                {
+                    ok = false;
+                    break;
+                }
+                out.positions.push_back(p);
+            }
+        }
+        if (!ok)
+        {
+            out.positions.resize(size_t(base));
+            skippedPtexFacesOut++;
+            continue;
+        }
+
+        auto Idx = [side, base](int u, int v) { return base + v * side + u; };
+        for (int v = 0; v < steps; ++v)
+        {
+            for (int u = 0; u < steps; ++u)
+            {
+                const int i0 = Idx(u, v);
+                const int i1 = Idx(u + 1, v);
+                const int i2 = Idx(u + 1, v + 1);
+                const int i3 = Idx(u, v + 1);
+                out.indices.push_back(i0);
+                out.indices.push_back(i1);
+                out.indices.push_back(i2);
+                out.indices.push_back(i0);
+                out.indices.push_back(i2);
+                out.indices.push_back(i3);
+            }
+        }
+    }
+    return out;
+}
+
 static int BuildUniquePtexEdgeIds(const Far::TopologyRefiner &refiner,
                                   const Far::TopologyLevel &level0,
                                   const Far::PtexIndices &ptex,
@@ -538,22 +707,36 @@ static int BuildUniquePtexEdgeIds(const Far::TopologyRefiner &refiner,
     return edgeCount;
 }
 
-static int ReportMissingCenterPatches(const Far::PatchMap &patchMap,
-                                      const std::vector<PtexFaceAdj> &faces,
-                                      int numPtexFaces)
+static bool WriteMissingPatchNeighbors(const Far::PatchMap &patchMap,
+                                       const std::vector<PtexFaceAdj> &faces,
+                                       int numPtexFaces,
+                                       const std::string &outPath,
+                                       int &missingCountOut)
 {
-    int missing = 0;
+    std::ofstream out(outPath);
+    if (!out.is_open())
+    {
+        return false;
+    }
+
+    missingCountOut = 0;
     for (int pf = 0; pf < numPtexFaces; ++pf)
     {
         if (patchMap.FindPatch(pf, 0.5f, 0.5f))
         {
             continue;
         }
-        std::printf("Missing patch at ptexFace=%d fromNgon=%d\n", pf, faces[pf].fromNgon ? 1 : 0);
-        missing++;
+        out << "ptexFace=" << pf;
+        for (int e = 0; e < 4; ++e)
+        {
+            out << " e" << e << ":(adjFace=" << faces[pf].adjFace[e]
+                << ",adjEdge=" << faces[pf].adjEdge[e] << ",edgeId=" << faces[pf].edgeIndex[e]
+                << ")";
+        }
+        out << " fromNgon=" << (faces[pf].fromNgon ? 1 : 0) << "\n";
+        missingCountOut++;
     }
-    std::printf("Missing center patches: %d\n", missing);
-    return missing;
+    return out.good();
 }
 
 int main(int argc, char **argv)
@@ -562,7 +745,7 @@ int main(int argc, char **argv)
     {
         std::fprintf(stderr,
                      "Usage: %s <selected-subdiv.json> [level>=1] [out.obj] "
-                     "[--camera-distance-scale s]\n",
+                     "[--camera-distance-scale s] [--fixed-edge-rate r]\n",
                      argv[0]);
         return 2;
     }
@@ -571,6 +754,7 @@ int main(int argc, char **argv)
     int level = 1;
     std::string outObj;
     float cameraDistanceScale = 1.0f;
+    int fixedEdgeRate = 8;
     bool levelSet = false;
     bool outSet = false;
     for (int i = 2; i < argc; ++i)
@@ -591,6 +775,21 @@ int main(int argc, char **argv)
             }
             continue;
         }
+        if (arg == "--fixed-edge-rate")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "Missing value for --fixed-edge-rate\n");
+                return 2;
+            }
+            fixedEdgeRate = std::atoi(argv[++i]);
+            if (fixedEdgeRate < 1)
+            {
+                std::fprintf(stderr, "fixed-edge-rate must be >= 1\n");
+                return 2;
+            }
+            continue;
+        }
         if (!levelSet)
         {
             level = std::max(1, std::atoi(argv[i]));
@@ -605,7 +804,7 @@ int main(int argc, char **argv)
         }
         std::fprintf(stderr,
                      "Usage: %s <selected-subdiv.json> [level>=1] [out.obj] "
-                     "[--camera-distance-scale s]\n",
+                     "[--camera-distance-scale s] [--fixed-edge-rate r]\n",
                      argv[0]);
         return 2;
     }
@@ -637,8 +836,14 @@ int main(int argc, char **argv)
     d.numHoles = int(m.holeIndices.size());
     d.holeIndices = m.holeIndices.data();
 
+    Sdc::Options sdcOptions;
+    sdcOptions.SetVtxBoundaryInterpolation(VtxBoundaryFromString(m.vertexBoundaryInterpolation));
+    sdcOptions.SetFVarLinearInterpolation(FVarLinearFromString(m.fvarLinearInterpolation));
+    sdcOptions.SetCreasingMethod(CreasingMethodFromString(m.creasingMethod));
+    sdcOptions.SetTriangleSubdivision(TriangleSubFromString(m.triangleSubdivision));
+
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
-        SchemeFromString(m.subdivisionScheme));
+        SchemeFromString(m.subdivisionScheme), sdcOptions);
 
     const int edgesWithOver2Faces = CountControlCageEdgesWithOver2FacesFromIndices(m);
     if (edgesWithOver2Faces > 0)
@@ -679,27 +884,27 @@ int main(int argc, char **argv)
         return 1;
     }
     Far::PatchMap patchMap(*patchTable);
-    const std::vector<Primvar3> patchEvalPositions = BuildPatchEvalPositions(*refiner, *patchTable, m.points);
+    const RefinedPositions refinedPositions = BuildRefinedPositions(*refiner, *patchTable, m.points);
+    const std::vector<Primvar3> &patchEvalPositions = refinedPositions.values;
     const EdgeFactorCamera edgeFactorCamera =
         BuildEdgeFactorCamera(m.points, camera, cameraDistanceScale);
     const EdgeFactorSettings edgeFactorSettings = {};
-
-    std::vector<Primvar3> p0;
-    p0.reserve(m.points.size());
-    for (const auto &p : m.points)
-    {
-        p0.emplace_back(p);
-    }
-    std::vector<Primvar3> p1(refiner->GetLevel(level).GetNumVertices());
-    Far::PrimvarRefiner prim(*refiner);
-    prim.Interpolate(level, p0, p1);
 
     Far::PtexIndices ptex(*refiner);
     int ptexFaceCount = 0;
     std::vector<PtexFaceAdj> ptexFaceAdj;
     const int uniquePtexEdges =
         BuildUniquePtexEdgeIds(*refiner, level0, ptex, ptexFaceAdj, ptexFaceCount);
-    ReportMissingCenterPatches(patchMap, ptexFaceAdj, ptexFaceCount);
+    int missingCenterPtexFaces = 0;
+    const std::string missingNeighborsPath = outObj + ".missing_neighbors.txt";
+    if (!WriteMissingPatchNeighbors(
+            patchMap, ptexFaceAdj, ptexFaceCount, missingNeighborsPath, missingCenterPtexFaces))
+    {
+        std::fprintf(stderr, "Failed to write missing-patch neighbor report: %s\n", missingNeighborsPath.c_str());
+        delete patchTable;
+        delete refiner;
+        return 1;
+    }
     const EdgeFactorResult edgeFactors = ComputeEdgeFactors(patchMap,
                                                             *patchTable,
                                                             patchEvalPositions,
@@ -709,8 +914,10 @@ int main(int argc, char **argv)
                                                             edgeFactorCamera,
                                                             edgeFactorSettings);
 
-    int nonQuadFaces = 0;
-    if (!WriteObjLevel(outObj, refiner->GetLevel(level), p1, nonQuadFaces))
+    int skippedPtexFaces = 0;
+    const TriMesh fixedRateNoStitch = TessellateFixedRateNoStitch(
+        patchMap, *patchTable, patchEvalPositions, ptexFaceCount, fixedEdgeRate, skippedPtexFaces);
+    if (!WriteTriObj(outObj, fixedRateNoStitch))
     {
         std::fprintf(stderr, "Failed to write OBJ: %s\n", outObj.c_str());
         delete patchTable;
@@ -732,12 +939,15 @@ int main(int argc, char **argv)
 
     std::printf("Wrote adaptive level-%d OBJ: %s\n", level, outObj.c_str());
     std::printf("Wrote edge-rate debug OBJ: %s\n", edgeRateObj.c_str());
-    std::printf("  verts=%zu faces=%d nonQuads=%d\n",
-                p1.size(),
-                refiner->GetLevel(level).GetNumFaces(),
-                nonQuadFaces);
+    std::printf("Wrote missing-patch neighbors: %s\n", missingNeighborsPath.c_str());
+    std::printf("  fixedRateNoStitch verts=%zu tris=%zu\n",
+                fixedRateNoStitch.positions.size(),
+                fixedRateNoStitch.indices.size() / 3);
+    std::printf("  skippedPtexFaces=%d\n", skippedPtexFaces);
+    std::printf("  missingCenterPtexFaces=%d\n", missingCenterPtexFaces);
     std::printf("  maxCalculatedEdgeFactor=%d\n", edgeFactors.maxCalculatedEdgeFactor);
     std::printf("  cameraDistanceScale=%g\n", cameraDistanceScale);
+    std::printf("  fixedEdgeRate=%d\n", fixedEdgeRate);
     std::printf("  ptexFaces=%d\n", ptexFaceCount);
     std::printf("  controlCageEdgesWithOver2Faces=%d\n", edgesWithOver2Faces);
 

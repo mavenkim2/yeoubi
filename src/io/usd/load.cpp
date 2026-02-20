@@ -106,13 +106,13 @@ CreateRuntimeScenesFromBuildSceneDAG(const USDBuildSceneDAG &dag,
     scenePool->scenes.reserve(dag.scenes.size());
     for (size_t i = 0; i < dag.scenes.size(); i++)
     {
-        scenePool->scenes.emplace_back();
+        scenePool->scenes.push_back(std::make_unique<Scene>());
     }
 
     for (uint32_t sceneIndex = 0; sceneIndex < dag.scenes.size(); sceneIndex++)
     {
         const USDBuildScene &buildScene = dag.scenes[sceneIndex];
-        Scene *outScene = &scenePool->scenes[sceneIndex];
+        Scene *outScene = scenePool->scenes[sceneIndex].get();
         outScene->meshes.clear();
         outScene->curves.clear();
         outScene->instances.clear();
@@ -132,7 +132,7 @@ CreateRuntimeScenesFromBuildSceneDAG(const USDBuildSceneDAG &dag,
                 }
                 return false;
             }
-            outScene->childScenes.push_back(&scenePool->scenes[instance.childSceneIndex]);
+            outScene->childScenes.push_back(scenePool->scenes[instance.childSceneIndex].get());
             outScene->instances.emplace_back(
                 instance.parentFromLocal,
                 static_cast<uint32_t>(outScene->childScenes.size() - 1));
@@ -903,7 +903,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
     for (size_t sceneIndex = 0; sceneIndex < buildSceneDAG.scenes.size(); sceneIndex++)
     {
         const USDBuildScene &buildScene = buildSceneDAG.scenes[sceneIndex];
-        Scene *outScene = &scenePool->scenes[sceneIndex];
+        Scene *outScene = scenePool->scenes[sceneIndex].get();
 
         for (const USDBuildSceneCurve &curveRef : buildScene.curves)
         {

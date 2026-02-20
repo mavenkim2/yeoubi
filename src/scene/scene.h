@@ -8,6 +8,7 @@
 #include "util/float4x4.h"
 #include "util/host_memory_arena.h"
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 YBI_NAMESPACE_BEGIN
@@ -180,7 +181,7 @@ struct Scene
 
 struct ScenePool
 {
-    std::vector<Scene> scenes;
+    std::vector<std::unique_ptr<Scene>> scenes;
     uint32_t rootSceneIndex = 0;
     Camera camera;
 };

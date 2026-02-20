@@ -18,6 +18,10 @@ struct SelectedSubdivMesh
     pxr::VtFloatArray creaseSharpnesses;
     pxr::VtIntArray holeIndices;
     std::string subdivisionScheme;
+    std::string vertexBoundaryInterpolation = "edgeAndCorner";
+    std::string fvarLinearInterpolation = "cornersPlus1";
+    std::string creasingMethod = "uniform";
+    std::string triangleSubdivision = "catmullClark";
 };
 
 bool SelectLargestCatmullClarkMesh(const pxr::UsdStageRefPtr &stage, SelectedSubdivMesh &meshOut);

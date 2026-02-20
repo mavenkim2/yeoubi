@@ -4,6 +4,32 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
+static pxr::TfToken GetTokenAttrOrDefault(const pxr::UsdAttribute &attr, const pxr::TfToken &fallback)
+{
+    pxr::TfToken value = fallback;
+    if (attr)
+    {
+        attr.Get(&value);
+    }
+    return value;
+}
+
+static pxr::TfToken GetCreaseMethodOrDefault(const pxr::UsdPrim &prim)
+{
+    pxr::TfToken value = pxr::TfToken("uniform");
+    const pxr::UsdAttribute attr = prim.GetAttribute(pxr::TfToken("creaseMethod"));
+    if (attr && attr.Get(&value))
+    {
+        return value;
+    }
+    const pxr::UsdAttribute namespaced = prim.GetAttribute(pxr::TfToken("osd:creaseMethod"));
+    if (namespaced && namespaced.Get(&value))
+    {
+        return value;
+    }
+    return value;
+}
+
 static bool HasValidCreaseData(const pxr::VtIntArray &creaseLengths,
                                const pxr::VtFloatArray &creaseSharpnesses)
 {
@@ -43,6 +69,9 @@ static bool SelectLargestCatmullClarkMeshImpl(const pxr::UsdStageRefPtr &stage,
 
         pxr::UsdGeomMesh mesh(prim);
         pxr::TfToken scheme;
+        pxr::TfToken vtxBoundary;
+        pxr::TfToken fvarLinear;
+        pxr::TfToken triSub;
         if (!mesh.GetSubdivisionSchemeAttr().Get(&scheme))
         {
             continue;
@@ -51,6 +80,13 @@ static bool SelectLargestCatmullClarkMeshImpl(const pxr::UsdStageRefPtr &stage,
         {
             continue;
         }
+        vtxBoundary = GetTokenAttrOrDefault(mesh.GetInterpolateBoundaryAttr(),
+                                            pxr::UsdGeomTokens->edgeAndCorner);
+        fvarLinear = GetTokenAttrOrDefault(mesh.GetFaceVaryingLinearInterpolationAttr(),
+                                           pxr::UsdGeomTokens->cornersPlus1);
+        triSub = GetTokenAttrOrDefault(mesh.GetTriangleSubdivisionRuleAttr(),
+                                       pxr::UsdGeomTokens->catmullClark);
+        const pxr::TfToken creasing = GetCreaseMethodOrDefault(prim);
 
         pxr::VtVec3fArray points;
         pxr::VtIntArray faceCounts;
@@ -91,6 +127,10 @@ static bool SelectLargestCatmullClarkMeshImpl(const pxr::UsdStageRefPtr &stage,
             meshOut.creaseSharpnesses = std::move(creaseSharpnesses);
             meshOut.holeIndices = std::move(holeIndices);
             meshOut.subdivisionScheme = scheme.GetString();
+            meshOut.vertexBoundaryInterpolation = vtxBoundary.GetString();
+            meshOut.fvarLinearInterpolation = fvarLinear.GetString();
+            meshOut.creasingMethod = creasing.GetString();
+            meshOut.triangleSubdivision = triSub.GetString();
             maxFaceCount = faceCount;
             found = true;
         }

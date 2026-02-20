@@ -180,6 +180,27 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
     {
         selectedOut.subdivisionScheme = "catmullClark";
     }
+    selectedOut.vertexBoundaryInterpolation =
+        ExtractJsonString(json, "vertex_boundary_interpolation");
+    if (selectedOut.vertexBoundaryInterpolation.empty())
+    {
+        selectedOut.vertexBoundaryInterpolation = "edgeAndCorner";
+    }
+    selectedOut.fvarLinearInterpolation = ExtractJsonString(json, "fvar_linear_interpolation");
+    if (selectedOut.fvarLinearInterpolation.empty())
+    {
+        selectedOut.fvarLinearInterpolation = "cornersPlus1";
+    }
+    selectedOut.creasingMethod = ExtractJsonString(json, "creasing_method");
+    if (selectedOut.creasingMethod.empty())
+    {
+        selectedOut.creasingMethod = "uniform";
+    }
+    selectedOut.triangleSubdivision = ExtractJsonString(json, "triangle_subdivision");
+    if (selectedOut.triangleSubdivision.empty())
+    {
+        selectedOut.triangleSubdivision = "catmullClark";
+    }
 
     const std::vector<float> pointScalars = ParseFloatArray(ExtractJsonArray(json, "points"));
     if (pointScalars.size() % 3 != 0)
