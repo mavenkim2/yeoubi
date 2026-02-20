@@ -102,7 +102,7 @@ Instance::Instance(const float3x4 &parentFromLocal, uint32_t childSceneIndex)
 }
 
 Scene::Scene(Scene &&other) noexcept
-    : bvh(other.bvh),
+    : bvh(other.bvh), bvhHandle(other.bvhHandle),
       meshes(std::move(other.meshes)),
       curves(std::move(other.curves)),
       instances(std::move(other.instances)),

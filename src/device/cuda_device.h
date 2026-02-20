@@ -22,6 +22,7 @@
 YBI_NAMESPACE_BEGIN
 
 struct Scene;
+struct ScenePool;
 struct Mesh;
 struct Curves;
 
@@ -65,7 +66,7 @@ struct CUDADevice
     void Free(DeviceMemoryView<T> &view);
     bool SupportsGrids() const;
 
-    void BuildBVH(Scene *scene);
+    void BuildBVH(ScenePool *scenePool);
     void CreateGridClusterTemplates();
 };
 

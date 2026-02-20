@@ -151,7 +151,10 @@ struct Camera
 
 struct Scene
 {
+    using BVHHandle = uint64_t;
+
     BVH bvh;
+    BVHHandle bvhHandle = 0;
     std::vector<Mesh> meshes;
     std::vector<Curves> curves;
     std::vector<Instance> instances;

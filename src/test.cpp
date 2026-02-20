@@ -38,10 +38,11 @@ int main(int argc, char **argv)
     // }
 
     uint32_t totalNumTriangles = 0;
+    Scene &scene = *scenePool.scenes[scenePool.rootSceneIndex];
 
     printf("bvh start\n");
     auto start = std::chrono::high_resolution_clock::now();
-    device.BuildBVH(&scene);
+    device.BuildBVH(&scenePool);
 
     for (Mesh &mesh : scene.meshes)
     {

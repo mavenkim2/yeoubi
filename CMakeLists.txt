@@ -77,6 +77,19 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_include_directories(yeoubi_tessellation SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_tessellation PRIVATE ${OPENUSD_LIBRARIES})
+
+    add_executable(yeoubi_usd_instance_dag_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_instance_dag_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp)
+    target_compile_definitions(yeoubi_usd_instance_dag_test PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_usd_instance_dag_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    target_include_directories(yeoubi_usd_instance_dag_test PRIVATE
+        ${YBI_INCLUDE_DIRECTORIES}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_include_directories(yeoubi_usd_instance_dag_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_usd_instance_dag_test PRIVATE ${OPENUSD_LIBRARIES})
 endif()
 
 if (MESHOPTIMIZER_FOUND)
@@ -106,6 +119,7 @@ if (CMAKE_CUDA_COMPILER)
         list (APPEND YBI_COMPILE_DEFINITIONS WITH_OPTIX OPTIX_VERSION=${OPTIX_VERSION})
         list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES "${OPTIX_INCLUDE_DIR}")
         list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp)
+        list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp)
         message (STATUS "OptiX Found: ${OPTIX_INCLUDE_DIR} ${OPTIX_VERSION}")
         if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
             list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
@@ -144,6 +158,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     add_executable(yeoubi_optix_harness
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_harness.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
