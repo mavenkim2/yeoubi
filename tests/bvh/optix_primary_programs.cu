@@ -145,7 +145,7 @@ static __forceinline__ __device__ float3 ComputeDirection(const uint3 &launchInd
 {
     const float2 ndc =
         make_float2(((float)launchIndex.x + pixelOffset.x) / (float)launchDims.x * 2.0f - 1.0f,
-                    ((float)launchIndex.y + pixelOffset.y) / (float)launchDims.y * 2.0f - 1.0f);
+                    1.0f - ((float)launchIndex.y + pixelOffset.y) / (float)launchDims.y * 2.0f);
 
     return Normalize3(
         make_float3(params.cameraU.x * ndc.x + params.cameraV.x * ndc.y + params.cameraW.x,

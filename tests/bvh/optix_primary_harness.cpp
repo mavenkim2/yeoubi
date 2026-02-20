@@ -10,10 +10,11 @@
 #include "util/float4x4.h"
 #include <algorithm>
 #include <cctype>
-#include <cstddef>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -21,7 +22,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <cstdlib>
 
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
@@ -144,14 +144,15 @@ using RaygenRecord = SbtRecord<EmptyData>;
 using MissRecord = SbtRecord<EmptyData>;
 using HitgroupRecord = SbtRecord<HitgroupData>;
 
-static OptixResult CreateOptixModuleCompat(OptixDeviceContext context,
-                                           const OptixModuleCompileOptions *moduleCompileOptions,
-                                           const OptixPipelineCompileOptions *pipelineCompileOptions,
-                                           const char *ptx,
-                                           size_t ptxSize,
-                                           char *log,
-                                           size_t *logSize,
-                                           OptixModule *moduleOut)
+static OptixResult
+CreateOptixModuleCompat(OptixDeviceContext context,
+                        const OptixModuleCompileOptions *moduleCompileOptions,
+                        const OptixPipelineCompileOptions *pipelineCompileOptions,
+                        const char *ptx,
+                        size_t ptxSize,
+                        char *log,
+                        size_t *logSize,
+                        OptixModule *moduleOut)
 {
 #if (OPTIX_VERSION >= 80000)
     return optixModuleCreate(context,
@@ -199,8 +200,7 @@ static std::string ReadTextFile(const std::string &path)
 
 static ybi::float3 Cross(const ybi::float3 &a, const ybi::float3 &b)
 {
-    return ybi::make_float3(
-        a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    return ybi::make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
 }
 
 static ybi::float3 Normalize(const ybi::float3 &v)
@@ -248,22 +248,8 @@ static bool InvertAffine(const ybi::float4x4 &m, ybi::float4x4 &out)
     const float ity = -(r10 * tx + r11 * ty + r12 * tz);
     const float itz = -(r20 * tx + r21 * ty + r22 * tz);
 
-    out = ybi::float4x4(r00,
-                        r01,
-                        r02,
-                        itx,
-                        r10,
-                        r11,
-                        r12,
-                        ity,
-                        r20,
-                        r21,
-                        r22,
-                        itz,
-                        0.0f,
-                        0.0f,
-                        0.0f,
-                        1.0f);
+    out = ybi::float4x4(
+        r00, r01, r02, itx, r10, r11, r12, ity, r20, r21, r22, itz, 0.0f, 0.0f, 0.0f, 1.0f);
     return true;
 }
 
@@ -294,7 +280,8 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
     const float m00 = camera.clipFromCamera.m[0][0];
     const float m11 = camera.clipFromCamera.m[1][1];
     float tanHalfFov = std::tan(45.0f * 0.5f * 3.14159265358979323846f / 180.0f);
-    float aspect = static_cast<float>(camera.viewportWidth) / static_cast<float>(camera.viewportHeight);
+    float aspect =
+        static_cast<float>(camera.viewportWidth) / static_cast<float>(camera.viewportHeight);
     if (std::abs(m00) > 1e-6f && std::abs(m11) > 1e-6f)
     {
         tanHalfFov = 1.0f / std::abs(m11);
@@ -491,7 +478,8 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
 static bool ParseObjIndex(const std::string &token, int &indexOut)
 {
     const size_t slashPos = token.find('/');
-    const std::string indexText = slashPos == std::string::npos ? token : token.substr(0, slashPos);
+    const std::string indexText =
+        slashPos == std::string::npos ? token : token.substr(0, slashPos);
     if (indexText.empty())
     {
         return false;
@@ -655,8 +643,8 @@ static Curves LoadCurveJson(const std::string &path)
         return {};
     }
 
-    const std::string json(
-        (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    const std::string json((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
     const std::string pointsArray = ExtractJsonArray(json, "points");
     const std::string widthsArray = ExtractJsonArray(json, "widths");
     const std::string curveCountsArray = ExtractJsonArray(json, "curve_vertex_counts");
@@ -677,7 +665,8 @@ static Curves LoadCurveJson(const std::string &path)
     positions.reserve(pointScalars.size() / 3);
     for (size_t i = 0; i + 2 < pointScalars.size(); i += 3)
     {
-        positions.push_back(ybi::make_float3(pointScalars[i + 0], pointScalars[i + 1], pointScalars[i + 2]));
+        positions.push_back(
+            ybi::make_float3(pointScalars[i + 0], pointScalars[i + 1], pointScalars[i + 2]));
     }
 
     const std::vector<int> curveVertexCounts = ParseIntArray(curveCountsArray);
@@ -826,20 +815,11 @@ struct FlattenedSceneData
     ybi::float3 boundsMax = ybi::make_float3(-std::numeric_limits<float>::max());
 };
 
+static constexpr unsigned int kHitgroupSbtOffset = 0u;
+
 static ybi::float3x4 IdentityTransform3x4()
 {
-    return ybi::float3x4(1.0f,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         1.0f,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         1.0f,
-                         0.0f);
+    return ybi::float3x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 }
 
 static ybi::float4x4 ToFloat4x4(const ybi::float3x4 &m)
@@ -959,8 +939,7 @@ static OptixTraversableHandle BuildTopLevelIAS(CUDADevice *device,
 
     DeviceMemoryView<uint8_t> tempBuffer = device->deviceArena->PushArray<uint8_t>(
         sizes.tempSizeInBytes, OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT);
-    DeviceMemoryView<uint8_t> outputBuffer =
-        device->Alloc<uint8_t>(sizes.outputSizeInBytes);
+    DeviceMemoryView<uint8_t> outputBuffer = device->Alloc<uint8_t>(sizes.outputSizeInBytes);
 
     OptixTraversableHandle outputHandle = {};
     OPTIX_CHECK(optixAccelBuild(device->optixDeviceContext,
@@ -982,13 +961,13 @@ static OptixTraversableHandle BuildTopLevelIAS(CUDADevice *device,
     return outputHandle;
 }
 
-static void AppendFlattenedSceneInstances(
-    Scene *scene,
-    const ybi::float4x4 &worldFromScene,
-    const std::unordered_map<Scene *, size_t> &sceneIndexMap,
-    const std::vector<std::vector<MeshAccelData>> &sceneMeshAccels,
-    const std::vector<std::vector<CurveAccelData>> &sceneCurveAccels,
-    FlattenedSceneData &out)
+static void
+AppendFlattenedSceneInstances(Scene *scene,
+                              const ybi::float4x4 &worldFromScene,
+                              const std::unordered_map<Scene *, size_t> &sceneIndexMap,
+                              const std::vector<std::vector<MeshAccelData>> &sceneMeshAccels,
+                              const std::vector<std::vector<CurveAccelData>> &sceneCurveAccels,
+                              FlattenedSceneData &out)
 {
     const auto sceneIndexIt = sceneIndexMap.find(scene);
     YBI_ASSERT(sceneIndexIt != sceneIndexMap.end());
@@ -1015,7 +994,7 @@ static void AppendFlattenedSceneInstances(
         CopyTransform(worldFromMesh3x4, optixInstance.transform);
         optixInstance.instanceId = (unsigned int)out.refs.size();
         YBI_ASSERT(optixInstance.instanceId < (1u << 24));
-        optixInstance.sbtOffset = 0;
+        optixInstance.sbtOffset = kHitgroupSbtOffset;
         optixInstance.traversableHandle = meshAccel.gasHandle;
         out.instances.push_back(optixInstance);
         out.refs.push_back({(unsigned long long)meshAccel.positionsBuffer,
@@ -1023,8 +1002,11 @@ static void AppendFlattenedSceneInstances(
                             meshAccel.numPositions,
                             meshAccel.numIndices});
 
-        ExpandTransformedBounds(
-            out.boundsMin, out.boundsMax, worldFromMesh3x4, meshAccel.boundsMin, meshAccel.boundsMax);
+        ExpandTransformedBounds(out.boundsMin,
+                                out.boundsMax,
+                                worldFromMesh3x4,
+                                meshAccel.boundsMin,
+                                meshAccel.boundsMax);
     }
 
     for (size_t curveIndex = 0; curveIndex < scene->curves.size(); curveIndex++)
@@ -1044,13 +1026,16 @@ static void AppendFlattenedSceneInstances(
         CopyTransform(worldFromCurve3x4, optixInstance.transform);
         optixInstance.instanceId = (unsigned int)out.refs.size();
         YBI_ASSERT(optixInstance.instanceId < (1u << 24));
-        optixInstance.sbtOffset = 0;
+        optixInstance.sbtOffset = kHitgroupSbtOffset;
         optixInstance.traversableHandle = curveAccel.gasHandle;
         out.instances.push_back(optixInstance);
         out.refs.push_back({0ull, 0ull, 0, 0});
 
-        ExpandTransformedBounds(
-            out.boundsMin, out.boundsMax, worldFromCurve3x4, curveAccel.boundsMin, curveAccel.boundsMax);
+        ExpandTransformedBounds(out.boundsMin,
+                                out.boundsMax,
+                                worldFromCurve3x4,
+                                curveAccel.boundsMin,
+                                curveAccel.boundsMax);
     }
 
     for (const Instance &instance : scene->instances)
@@ -1065,9 +1050,8 @@ static void AppendFlattenedSceneInstances(
     }
 }
 
-static FlattenedSceneData BuildFlattenedUSDScene(CUDADevice *device,
-                                                 HostMemoryArena &hostArena,
-                                                 ScenePool *scenePool)
+static FlattenedSceneData
+BuildFlattenedUSDScene(CUDADevice *device, HostMemoryArena &hostArena, ScenePool *scenePool)
 {
     YBI_ASSERT(scenePool);
     YBI_ASSERT(scenePool->rootSceneIndex < scenePool->scenes.size());
@@ -1102,8 +1086,8 @@ static FlattenedSceneData BuildFlattenedUSDScene(CUDADevice *device,
             meshAccel.numIndices = (int)mesh.indices.size();
             ComputeBounds(localMesh, meshAccel.boundsMin, meshAccel.boundsMax);
 
-            CUDA_ASSERT(cuMemAlloc(
-                &meshAccel.positionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
+            CUDA_ASSERT(cuMemAlloc(&meshAccel.positionsBuffer,
+                                   sizeof(ybi::float3) * mesh.positions.size()));
             CUDA_ASSERT(cuMemAlloc(&meshAccel.indicesBuffer, sizeof(int) * mesh.indices.size()));
             CUDA_ASSERT(cuMemcpyHtoD(meshAccel.positionsBuffer,
                                      mesh.positions.data(),
@@ -1136,8 +1120,9 @@ static FlattenedSceneData BuildFlattenedUSDScene(CUDADevice *device,
                 offsets.push_back(curves.GetCurveKeyStart(i));
             }
 
-            Curves localCurves{
-                Array<ybi::float3>(localPositions), Array<float>(localWidths), Array<int>(offsets)};
+            Curves localCurves{Array<ybi::float3>(localPositions),
+                               Array<float>(localWidths),
+                               Array<int>(offsets)};
 
             CurveAccelData &curveAccel = curveAccels[curveIndex];
             curveAccel.gasHandle = BuildCurveGASFromCurves(device, hostArena, localCurves);
@@ -1149,8 +1134,12 @@ static FlattenedSceneData BuildFlattenedUSDScene(CUDADevice *device,
 
     FlattenedSceneData result = {};
     Scene *rootScene = scenePool->scenes[scenePool->rootSceneIndex].get();
-    AppendFlattenedSceneInstances(
-        rootScene, ybi::float4x4::Identity(), sceneIndexMap, sceneMeshAccels, sceneCurveAccels, result);
+    AppendFlattenedSceneInstances(rootScene,
+                                  ybi::float4x4::Identity(),
+                                  sceneIndexMap,
+                                  sceneMeshAccels,
+                                  sceneCurveAccels,
+                                  result);
     for (const std::vector<MeshAccelData> &meshAccels : sceneMeshAccels)
     {
         for (const MeshAccelData &meshAccel : meshAccels)
@@ -1170,7 +1159,6 @@ static FlattenedSceneData BuildFlattenedUSDScene(CUDADevice *device,
 
 static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
                                     const std::string &ptx,
-                                    bool useCurveIntersection,
                                     OptixShaderBindingTable &sbtOut,
                                     CUdeviceptr &raygenRecordBufferOut,
                                     CUdeviceptr &missRecordBufferOut,
@@ -1190,41 +1178,37 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     OptixPipelineCompileOptions pipelineCompileOptions = {};
     pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
     pipelineCompileOptions.usesMotionBlur = 0;
-    pipelineCompileOptions.usesPrimitiveTypeFlags = useCurveIntersection
-                                                        ? (OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_LINEAR |
-                                                           OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_CUBIC_BSPLINE)
-                                                        : (OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE |
-                                                           OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_LINEAR |
-                                                           OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_CUBIC_BSPLINE);
+    pipelineCompileOptions.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE |
+                                                    OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_LINEAR |
+                                                    OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_CUBIC_BSPLINE;
     pipelineCompileOptions.numPayloadValues = 1;
-    pipelineCompileOptions.numAttributeValues = useCurveIntersection ? 4 : 2;
+    pipelineCompileOptions.numAttributeValues = 4;
     pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
 
     char log[2048];
     size_t logSize = sizeof(log);
     OPTIX_CHECK(CreateOptixModuleCompat(optixContext,
-                                         &moduleCompileOptions,
-                                         &pipelineCompileOptions,
-                                         ptx.c_str(),
-                                         ptx.size(),
-                                         log,
-                                         &logSize,
-                                         &moduleOut));
+                                        &moduleCompileOptions,
+                                        &pipelineCompileOptions,
+                                        ptx.c_str(),
+                                        ptx.size(),
+                                        log,
+                                        &logSize,
+                                        &moduleOut));
 
-    if (useCurveIntersection)
-    {
-        OptixBuiltinISOptions builtinISOptions = {};
-        builtinISOptions.builtinISModuleType = OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE;
-        builtinISOptions.usesMotionBlur = 0;
-        builtinISOptions.buildFlags = OPTIX_BUILD_FLAG_NONE;
-        builtinISOptions.curveEndcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT;
-        OPTIX_CHECK(optixBuiltinISModuleGet(optixContext,
-                                             &moduleCompileOptions,
-                                             &pipelineCompileOptions,
-                                             &builtinISOptions,
-                                             &curveModuleOut));
-    }
+    OptixBuiltinISOptions builtinISOptions = {};
+    builtinISOptions.builtinISModuleType = OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE;
+    builtinISOptions.usesMotionBlur = 0;
+    builtinISOptions.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE |
+                                  OPTIX_BUILD_FLAG_ALLOW_COMPACTION |
+                                  OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+    builtinISOptions.curveEndcapFlags = OPTIX_CURVE_ENDCAP_DEFAULT;
+    OPTIX_CHECK(optixBuiltinISModuleGet(optixContext,
+                                        &moduleCompileOptions,
+                                        &pipelineCompileOptions,
+                                        &builtinISOptions,
+                                        &curveModuleOut));
 
     OptixProgramGroupOptions programGroupOptions = {};
     OptixProgramGroupDesc raygenDesc = {};
@@ -1249,25 +1233,29 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     hitgroupDesc.hitgroup.entryFunctionNameCH = "__closesthit__primary";
     hitgroupDesc.hitgroup.moduleAH = moduleOut;
     hitgroupDesc.hitgroup.entryFunctionNameAH = "__anyhit__primary";
-    hitgroupDesc.hitgroup.moduleIS = useCurveIntersection ? curveModuleOut : nullptr;
+    hitgroupDesc.hitgroup.moduleIS = curveModuleOut;
     hitgroupDesc.hitgroup.entryFunctionNameIS = nullptr;
     logSize = sizeof(log);
     OPTIX_CHECK(optixProgramGroupCreate(
         optixContext, &hitgroupDesc, 1, &programGroupOptions, log, &logSize, &hitgroupGroupOut));
 
-    OptixProgramGroup groups[] = {raygenGroupOut, missGroupOut, hitgroupGroupOut};
+    OptixProgramGroup groups[] = {
+        raygenGroupOut,
+        missGroupOut,
+        hitgroupGroupOut,
+    };
     OptixPipelineLinkOptions pipelineLinkOptions = {};
     pipelineLinkOptions.maxTraceDepth = 2;
     OptixPipeline pipeline = nullptr;
     logSize = sizeof(log);
     OPTIX_CHECK(optixPipelineCreate(optixContext,
-                                     &pipelineCompileOptions,
-                                     &pipelineLinkOptions,
-                                     groups,
-                                     3,
-                                     log,
-                                     &logSize,
-                                     &pipeline));
+                                    &pipelineCompileOptions,
+                                    &pipelineLinkOptions,
+                                    groups,
+                                    3,
+                                    log,
+                                    &logSize,
+                                    &pipeline));
 
     OptixStackSizes stackSizes = {};
     OPTIX_CHECK(AccumulateStackSizesCompat(raygenGroupOut, &stackSizes, pipeline));
@@ -1277,17 +1265,17 @@ static OptixPipeline CreatePipeline(OptixDeviceContext optixContext,
     uint32_t directCallableStackSizeFromState = 0;
     uint32_t continuationStackSize = 0;
     OPTIX_CHECK(optixUtilComputeStackSizes(&stackSizes,
-                                            2,
-                                            0,
-                                            0,
-                                            &directCallableStackSizeFromTraversal,
-                                            &directCallableStackSizeFromState,
-                                            &continuationStackSize));
+                                           2,
+                                           0,
+                                           0,
+                                           &directCallableStackSizeFromTraversal,
+                                           &directCallableStackSizeFromState,
+                                           &continuationStackSize));
     OPTIX_CHECK(optixPipelineSetStackSize(pipeline,
-                                           directCallableStackSizeFromTraversal,
-                                           directCallableStackSizeFromState,
-                                           continuationStackSize,
-                                           1));
+                                          directCallableStackSizeFromTraversal,
+                                          directCallableStackSizeFromState,
+                                          continuationStackSize,
+                                          1));
 
     RaygenRecord raygenRecord = {};
     MissRecord missRecord = {};
@@ -1356,9 +1344,9 @@ static void RenderTraversable(OptixPipeline pipeline,
     }
     else
     {
-        const ybi::float3 eye =
-            cameraPositionOverride.has_value() ? cameraPositionOverride.value()
-                                               : center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
+        const ybi::float3 eye = cameraPositionOverride.has_value()
+                                    ? cameraPositionOverride.value()
+                                    : center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
         const ybi::float3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
         const ybi::float3 forward = Normalize(lookAt - eye);
         ybi::float3 worldUp = ybi::make_float3(0.0f, 0.0f, 1.0f);
@@ -1393,8 +1381,8 @@ static void RenderTraversable(OptixPipeline pipeline,
     printf("render: params uploaded\n");
     fflush(stdout);
 
-    OPTIX_CHECK(optixLaunch(
-        pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
+    OPTIX_CHECK(
+        optixLaunch(pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
     printf("render: launch returned\n");
     fflush(stdout);
     CUDA_ASSERT(cuStreamSynchronize(0));
@@ -1447,52 +1435,19 @@ int main(int argc, char **argv)
     OptixProgramGroup hitgroupGroup = nullptr;
     OptixPipeline pipeline = nullptr;
 
-    OptixShaderBindingTable curveSbt = {};
-    CUdeviceptr curveRaygenRecordBuffer = 0;
-    CUdeviceptr curveMissRecordBuffer = 0;
-    CUdeviceptr curveHitgroupRecordBuffer = 0;
-    OptixModule curvePipelineModule = nullptr;
-    OptixModule curveIsModule = nullptr;
-    OptixProgramGroup curveRaygenGroup = nullptr;
-    OptixProgramGroup curveMissGroup = nullptr;
-    OptixProgramGroup curveHitgroupGroup = nullptr;
-    OptixPipeline curvePipeline = nullptr;
-
-    if (options.type == RenderType::Triangle || options.type == RenderType::Cluster ||
-        options.type == RenderType::USD)
-    {
-        pipeline = CreatePipeline(device.optixDeviceContext,
-                                  ptx,
-                                  false,
-                                  sbt,
-                                  raygenRecordBuffer,
-                                  missRecordBuffer,
-                                  hitgroupRecordBuffer,
-                                  module,
-                                  curveModule,
-                                  raygenGroup,
-                                  missGroup,
-                                  hitgroupGroup);
-        printf("optix_harness: triangle pipeline created\n");
-        fflush(stdout);
-    }
-    else
-    {
-        curvePipeline = CreatePipeline(device.optixDeviceContext,
-                                       ptx,
-                                       true,
-                                       curveSbt,
-                                       curveRaygenRecordBuffer,
-                                       curveMissRecordBuffer,
-                                       curveHitgroupRecordBuffer,
-                                       curvePipelineModule,
-                                       curveIsModule,
-                                       curveRaygenGroup,
-                                       curveMissGroup,
-                                       curveHitgroupGroup);
-        printf("optix_harness: curve pipeline created\n");
-        fflush(stdout);
-    }
+    pipeline = CreatePipeline(device.optixDeviceContext,
+                              ptx,
+                              sbt,
+                              raygenRecordBuffer,
+                              missRecordBuffer,
+                              hitgroupRecordBuffer,
+                              module,
+                              curveModule,
+                              raygenGroup,
+                              missGroup,
+                              hitgroupGroup);
+    printf("optix_harness: pipeline created\n");
+    fflush(stdout);
 
     if (options.type == RenderType::Triangle || options.type == RenderType::Cluster)
     {
@@ -1519,7 +1474,8 @@ int main(int argc, char **argv)
         CUDA_ASSERT(cuMemcpyHtoD(meshPositionsBuffer,
                                  mesh.positions.data(),
                                  sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(meshIndicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(
+            meshIndicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
         const LaunchParams::InstanceGeomRef meshRef = {
             (unsigned long long)meshPositionsBuffer,
             (unsigned long long)meshIndicesBuffer,
@@ -1527,14 +1483,15 @@ int main(int argc, char **argv)
             (int)mesh.indices.size(),
         };
         CUDA_ASSERT(cuMemAlloc(&instanceGeomRefsBuffer, sizeof(LaunchParams::InstanceGeomRef)));
-        CUDA_ASSERT(cuMemcpyHtoD(
-            instanceGeomRefsBuffer, &meshRef, sizeof(LaunchParams::InstanceGeomRef)));
+        CUDA_ASSERT(
+            cuMemcpyHtoD(instanceGeomRefsBuffer, &meshRef, sizeof(LaunchParams::InstanceGeomRef)));
 
         if (options.type == RenderType::Triangle)
         {
             printf("optix_harness: building triangle gas\n");
             fflush(stdout);
-            OptixTraversableHandle triangleHandle = BuildTriangleGASFromMesh(&device, hostArena, mesh);
+            OptixTraversableHandle triangleHandle =
+                BuildTriangleGASFromMesh(&device, hostArena, mesh);
             if (triangleHandle)
             {
                 OptixInstance rootInstance = {};
@@ -1542,11 +1499,12 @@ int main(int argc, char **argv)
                 const ybi::float3x4 identity = IdentityTransform3x4();
                 CopyTransform(identity, rootInstance.transform);
                 rootInstance.instanceId = 0;
-                rootInstance.sbtOffset = 0;
+                rootInstance.sbtOffset = kHitgroupSbtOffset;
                 rootInstance.traversableHandle = triangleHandle;
 
                 const std::vector<OptixInstance> rootInstances = {rootInstance};
-                OptixTraversableHandle rootIAS = BuildTopLevelIAS(&device, hostArena, rootInstances);
+                OptixTraversableHandle rootIAS =
+                    BuildTopLevelIAS(&device, hostArena, rootInstances);
 
                 printf("optix_harness: rendering triangle ias\n");
                 fflush(stdout);
@@ -1575,7 +1533,8 @@ int main(int argc, char **argv)
 #if (OPTIX_VERSION >= 90000)
             printf("optix_harness: building cluster gas\n");
             fflush(stdout);
-            OptixTraversableHandle clusterHandle = BuildClusterGASFromMesh(&device, hostArena, mesh);
+            OptixTraversableHandle clusterHandle =
+                BuildClusterGASFromMesh(&device, hostArena, mesh);
             if (clusterHandle)
             {
                 OptixInstance rootInstance = {};
@@ -1583,11 +1542,12 @@ int main(int argc, char **argv)
                 const ybi::float3x4 identity = IdentityTransform3x4();
                 CopyTransform(identity, rootInstance.transform);
                 rootInstance.instanceId = 0;
-                rootInstance.sbtOffset = 0;
+                rootInstance.sbtOffset = kHitgroupSbtOffset;
                 rootInstance.traversableHandle = clusterHandle;
 
                 const std::vector<OptixInstance> rootInstances = {rootInstance};
-                OptixTraversableHandle rootIAS = BuildTopLevelIAS(&device, hostArena, rootInstances);
+                OptixTraversableHandle rootIAS =
+                    BuildTopLevelIAS(&device, hostArena, rootInstances);
 
                 printf("optix_harness: rendering cluster ias\n");
                 fflush(stdout);
@@ -1632,12 +1592,25 @@ int main(int argc, char **argv)
         {
             ybi::float3 curveBoundsMin, curveBoundsMax;
             ComputeBounds(curves, curveBoundsMin, curveBoundsMax);
-            OptixTraversableHandle curveHandle = BuildCurveGASFromCurves(&device, hostArena, curves);
+            OptixTraversableHandle curveHandle =
+                BuildCurveGASFromCurves(&device, hostArena, curves);
             if (curveHandle)
             {
-                RenderTraversable(curvePipeline,
-                                  curveSbt,
-                                  curveHandle,
+                OptixInstance rootInstance = {};
+                SetInstanceDefaults(rootInstance);
+                const ybi::float3x4 identity = IdentityTransform3x4();
+                CopyTransform(identity, rootInstance.transform);
+                rootInstance.instanceId = 0;
+                rootInstance.sbtOffset = kHitgroupSbtOffset;
+                rootInstance.traversableHandle = curveHandle;
+
+                const std::vector<OptixInstance> rootInstances = {rootInstance};
+                OptixTraversableHandle rootIAS =
+                    BuildTopLevelIAS(&device, hostArena, rootInstances);
+
+                RenderTraversable(pipeline,
+                                  sbt,
+                                  rootIAS,
                                   curveBoundsMin,
                                   curveBoundsMax,
                                   options.outputPath.c_str(),
@@ -1657,7 +1630,8 @@ int main(int argc, char **argv)
         }
         else
         {
-            printf("Curve JSON empty or invalid; skipped curve render: %s\n", options.inputPath.c_str());
+            printf("Curve JSON empty or invalid; skipped curve render: %s\n",
+                   options.inputPath.c_str());
         }
     }
     else
@@ -1669,14 +1643,17 @@ int main(int argc, char **argv)
         LoadUSDScene(&scenePool, options.inputPath);
         if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
         {
-            fprintf(stderr, "Failed to load USD scene or invalid root: %s\n", options.inputPath.c_str());
+            fprintf(stderr,
+                    "Failed to load USD scene or invalid root: %s\n",
+                    options.inputPath.c_str());
             return 1;
         }
 
         FlattenedSceneData flattened = BuildFlattenedUSDScene(&device, hostArena, &scenePool);
         if (flattened.instances.empty() || flattened.refs.empty())
         {
-            fprintf(stderr, "USD scene produced no mesh instances: %s\n", options.inputPath.c_str());
+            fprintf(
+                stderr, "USD scene produced no mesh instances: %s\n", options.inputPath.c_str());
             return 1;
         }
         YBI_ASSERT(flattened.instances.size() == flattened.refs.size());
@@ -1684,8 +1661,8 @@ int main(int argc, char **argv)
         OptixTraversableHandle rootIAS = BuildTopLevelIAS(&device, hostArena, flattened.instances);
 
         CUdeviceptr instanceGeomRefsBuffer = 0;
-        CUDA_ASSERT(cuMemAlloc(
-            &instanceGeomRefsBuffer, flattened.refs.size() * sizeof(LaunchParams::InstanceGeomRef)));
+        CUDA_ASSERT(cuMemAlloc(&instanceGeomRefsBuffer,
+                               flattened.refs.size() * sizeof(LaunchParams::InstanceGeomRef)));
         CUDA_ASSERT(cuMemcpyHtoD(instanceGeomRefsBuffer,
                                  flattened.refs.data(),
                                  flattened.refs.size() * sizeof(LaunchParams::InstanceGeomRef)));
@@ -1744,22 +1721,6 @@ int main(int argc, char **argv)
             OPTIX_CHECK(optixModuleDestroy(curveModule));
         }
         OPTIX_CHECK(optixModuleDestroy(module));
-    }
-
-    if (curvePipeline)
-    {
-        CUDA_ASSERT(cuMemFree(curveHitgroupRecordBuffer));
-        CUDA_ASSERT(cuMemFree(curveMissRecordBuffer));
-        CUDA_ASSERT(cuMemFree(curveRaygenRecordBuffer));
-        OPTIX_CHECK(optixPipelineDestroy(curvePipeline));
-        OPTIX_CHECK(optixProgramGroupDestroy(curveHitgroupGroup));
-        OPTIX_CHECK(optixProgramGroupDestroy(curveMissGroup));
-        OPTIX_CHECK(optixProgramGroupDestroy(curveRaygenGroup));
-        if (curveIsModule)
-        {
-            OPTIX_CHECK(optixModuleDestroy(curveIsModule));
-        }
-        OPTIX_CHECK(optixModuleDestroy(curvePipelineModule));
     }
     std::fflush(stdout);
     std::fflush(stderr);
