@@ -79,7 +79,7 @@ static float3x4 ConvertAffineTransform(const pxr::GfMatrix4d &m)
 }
 
 static pxr::GfMatrix4d GetPrimLocalToParentTransform(const pxr::UsdPrim &prim,
-                                                      pxr::UsdTimeCode timeCode = 0.0)
+                                                     pxr::UsdTimeCode timeCode = 0.0)
 {
     pxr::GfMatrix4d localTransform(1.0);
     if (prim.IsA<pxr::UsdGeomXformable>())
@@ -164,10 +164,11 @@ static void EnqueuePrototypePath(const std::string &prototypePath,
     prototypePaths->push_back(prototypePath);
 }
 
-static bool CollectPrototypeDependencies(const USDPrimLists &lists,
-                                         std::unordered_map<std::string, int> *pathToPrototypeIndex,
-                                         std::vector<std::string> *prototypePaths,
-                                         std::string *error)
+static bool
+CollectPrototypeDependencies(const USDPrimLists &lists,
+                             std::unordered_map<std::string, int> *pathToPrototypeIndex,
+                             std::vector<std::string> *prototypePaths,
+                             std::string *error)
 {
     for (const pxr::UsdPrim &instancePrim : lists.instances)
     {
@@ -177,7 +178,8 @@ static bool CollectPrototypeDependencies(const USDPrimLists &lists,
             SetError(error, "instance without prototype at " + instancePrim.GetPath().GetString());
             return false;
         }
-        EnqueuePrototypePath(prototype.GetPath().GetString(), pathToPrototypeIndex, prototypePaths);
+        EnqueuePrototypePath(
+            prototype.GetPath().GetString(), pathToPrototypeIndex, prototypePaths);
     }
 
     for (const pxr::UsdPrim &pointInstancerPrim : lists.pointInstancers)
@@ -201,12 +203,13 @@ static bool CollectPrototypeDependencies(const USDPrimLists &lists,
     return true;
 }
 
-static bool CollectPrototypePrimListsImpl(const pxr::UsdStageRefPtr &stage,
-                                          const USDPrimLists &rootPrimLists,
-                                          std::unordered_map<std::string, int> *pathToPrototypeIndex,
-                                          std::vector<std::string> *prototypePaths,
-                                          std::vector<USDPrimLists> *prototypePrimLists,
-                                          std::string *error)
+static bool
+CollectPrototypePrimListsImpl(const pxr::UsdStageRefPtr &stage,
+                              const USDPrimLists &rootPrimLists,
+                              std::unordered_map<std::string, int> *pathToPrototypeIndex,
+                              std::vector<std::string> *prototypePaths,
+                              std::vector<USDPrimLists> *prototypePrimLists,
+                              std::string *error)
 {
     YBI_ASSERT(pathToPrototypeIndex);
     YBI_ASSERT(prototypePaths);
@@ -237,8 +240,10 @@ static bool CollectPrototypePrimListsImpl(const pxr::UsdStageRefPtr &stage,
         TraversePrimToPrimListsImpl(prototypePrim, &primLists);
         (*prototypePrimLists)[prototypeIndex] = std::move(primLists);
 
-        if (!CollectPrototypeDependencies(
-                (*prototypePrimLists)[prototypeIndex], pathToPrototypeIndex, prototypePaths, error))
+        if (!CollectPrototypeDependencies((*prototypePrimLists)[prototypeIndex],
+                                          pathToPrototypeIndex,
+                                          prototypePaths,
+                                          error))
         {
             return false;
         }
@@ -248,14 +253,155 @@ static bool CollectPrototypePrimListsImpl(const pxr::UsdStageRefPtr &stage,
     return true;
 }
 
-static bool ResolvePrototypeChildSceneIndex(
-    const std::string &prototypePath,
-    const std::unordered_map<std::string, int> &pathToPrototypeIndex,
-    const std::vector<std::unique_ptr<BuildScene>> &prototypeScenes,
-    std::unordered_map<int, uint32_t> *childSceneIndexByPrototype,
-    BuildScene *outScene,
-    uint32_t *outChildSceneIndex,
-    std::string *error)
+static bool
+GetPrototypeTopologicalOrder(const std::unordered_map<std::string, int> &pathToPrototypeIndex,
+                             const std::vector<USDPrimLists> &prototypePrimLists,
+                             std::vector<int> *outSortedOrder,
+                             std::string *error)
+{
+    YBI_ASSERT(outSortedOrder);
+
+    const int numPrototypes = static_cast<int>(prototypePrimLists.size());
+    outSortedOrder->clear();
+    outSortedOrder->reserve((size_t)numPrototypes);
+    if (numPrototypes == 0)
+    {
+        return true;
+    }
+
+    // TODO: jagged array instead?
+    std::vector<std::vector<int>> dependentsByPrototype((size_t)numPrototypes);
+    std::vector<int> dependencyCount((size_t)numPrototypes, 0);
+
+    for (int prototypeIndex = 0; prototypeIndex < numPrototypes; prototypeIndex++)
+    {
+        std::vector<uint8_t> hasDependency((size_t)numPrototypes, 0);
+        const USDPrimLists &lists = prototypePrimLists[(size_t)prototypeIndex];
+
+        for (const pxr::UsdPrim &instancePrim : lists.instances)
+        {
+            const pxr::UsdPrim dependencyPrototype = instancePrim.GetPrototype();
+            if (!dependencyPrototype)
+            {
+                SetError(error,
+                         "instance without prototype at " + instancePrim.GetPath().GetString());
+                return false;
+            }
+
+            auto depFound = pathToPrototypeIndex.find(dependencyPrototype.GetPath().GetString());
+            if (depFound == pathToPrototypeIndex.end())
+            {
+                SetError(error,
+                         "prototype dependency missing from index map: " +
+                             dependencyPrototype.GetPath().GetString());
+                return false;
+            }
+
+            const int dependencyIndex = depFound->second;
+            if (dependencyIndex < 0 || dependencyIndex >= numPrototypes)
+            {
+                SetError(error,
+                         "prototype dependency index out of range: " +
+                             dependencyPrototype.GetPath().GetString());
+                return false;
+            }
+            if (!hasDependency[(size_t)dependencyIndex])
+            {
+                hasDependency[(size_t)dependencyIndex] = 1;
+                dependencyCount[(size_t)prototypeIndex]++;
+                dependentsByPrototype[(size_t)dependencyIndex].push_back(prototypeIndex);
+            }
+        }
+
+        for (const pxr::UsdPrim &pointInstancerPrim : lists.pointInstancers)
+        {
+            pxr::UsdGeomPointInstancer pointInstancer(pointInstancerPrim);
+            pxr::SdfPathVector dependencyPrototypePaths;
+            if (!pointInstancer.GetPrototypesRel().GetTargets(&dependencyPrototypePaths))
+            {
+                SetError(error,
+                         "failed to read point instancer prototypes at " +
+                             pointInstancerPrim.GetPath().GetString());
+                return false;
+            }
+
+            for (const pxr::SdfPath &dependencyPath : dependencyPrototypePaths)
+            {
+                auto depFound = pathToPrototypeIndex.find(dependencyPath.GetString());
+                if (depFound == pathToPrototypeIndex.end())
+                {
+                    SetError(error,
+                             "point instancer prototype dependency missing from index map: " +
+                                 dependencyPath.GetString());
+                    return false;
+                }
+
+                const int dependencyIndex = depFound->second;
+                if (dependencyIndex < 0 || dependencyIndex >= numPrototypes)
+                {
+                    SetError(error,
+                             "point instancer dependency index out of range: " +
+                                 dependencyPath.GetString());
+                    return false;
+                }
+                if (!hasDependency[(size_t)dependencyIndex])
+                {
+                    hasDependency[(size_t)dependencyIndex] = 1;
+                    dependencyCount[(size_t)prototypeIndex]++;
+                    dependentsByPrototype[(size_t)dependencyIndex].push_back(prototypeIndex);
+                }
+            }
+        }
+    }
+
+    std::vector<int> ready;
+    ready.reserve((size_t)numPrototypes);
+    for (int prototypeIndex = 0; prototypeIndex < numPrototypes; prototypeIndex++)
+    {
+        if (dependencyCount[(size_t)prototypeIndex] == 0)
+        {
+            ready.push_back(prototypeIndex);
+        }
+    }
+
+    std::vector<int> sortedOrder;
+    sortedOrder.reserve((size_t)numPrototypes);
+
+    size_t readyCursor = 0;
+    while (readyCursor < ready.size())
+    {
+        const int next = ready[readyCursor++];
+        outSortedOrder->push_back(next);
+
+        for (int dependentIndex : dependentsByPrototype[(size_t)next])
+        {
+            int &count = dependencyCount[(size_t)dependentIndex];
+            YBI_ASSERT(count > 0);
+            count--;
+            if (count == 0)
+            {
+                ready.push_back(dependentIndex);
+            }
+        }
+    }
+
+    if (outSortedOrder->size() != (size_t)numPrototypes)
+    {
+        SetError(error, "prototype dependency cycle detected while topologically sorting");
+        return false;
+    }
+
+    return true;
+}
+
+static bool
+ResolvePrototypeChildSceneIndex(const std::string &prototypePath,
+                                const std::unordered_map<std::string, int> &pathToPrototypeIndex,
+                                const std::vector<std::unique_ptr<BuildScene>> &prototypeScenes,
+                                std::unordered_map<int, uint32_t> *childSceneIndexByPrototype,
+                                BuildScene *outScene,
+                                uint32_t *outChildSceneIndex,
+                                std::string *error)
 {
     auto found = pathToPrototypeIndex.find(prototypePath);
     if (found == pathToPrototypeIndex.end())
@@ -290,15 +436,15 @@ static bool ResolvePrototypeChildSceneIndex(
     return true;
 }
 
-static bool AppendPointInstancerInstances(
-    const pxr::UsdPrim &pointInstancerPrim,
-    const std::unordered_map<std::string, int> &pathToPrototypeIndex,
-    const std::vector<std::unique_ptr<BuildScene>> &prototypeScenes,
-    std::unordered_map<int, uint32_t> *childSceneIndexByPrototype,
-    pxr::UsdGeomXformCache *xformCache,
-    BuildScene *outScene,
-    std::string *error,
-    pxr::UsdTimeCode timeCode = 0.0)
+static bool
+AppendPointInstancerInstances(const pxr::UsdPrim &pointInstancerPrim,
+                              const std::unordered_map<std::string, int> &pathToPrototypeIndex,
+                              const std::vector<std::unique_ptr<BuildScene>> &prototypeScenes,
+                              std::unordered_map<int, uint32_t> *childSceneIndexByPrototype,
+                              pxr::UsdGeomXformCache *xformCache,
+                              BuildScene *outScene,
+                              std::string *error,
+                              pxr::UsdTimeCode timeCode = 0.0)
 {
     pxr::UsdGeomPointInstancer pointInstancer(pointInstancerPrim);
 
@@ -312,8 +458,9 @@ static bool AppendPointInstancerInstances(
         !pointInstancer.GetPositionsAttr().Get(&positions, timeCode) ||
         !pointInstancer.GetPrototypesRel().GetTargets(&prototypePaths))
     {
-        SetError(error, "failed to read point instancer arrays at " +
-                            pointInstancerPrim.GetPath().GetString());
+        SetError(error,
+                 "failed to read point instancer arrays at " +
+                     pointInstancerPrim.GetPath().GetString());
         return false;
     }
 
@@ -330,20 +477,23 @@ static bool AppendPointInstancerInstances(
 
     if (protoIndices.size() != positions.size())
     {
-        SetError(error, "point instancer protoIndices/positions size mismatch at " +
-                            pointInstancerPrim.GetPath().GetString());
+        SetError(error,
+                 "point instancer protoIndices/positions size mismatch at " +
+                     pointInstancerPrim.GetPath().GetString());
         return false;
     }
     if (!orientations.empty() && orientations.size() != positions.size())
     {
-        SetError(error, "point instancer orientations/positions size mismatch at " +
-                            pointInstancerPrim.GetPath().GetString());
+        SetError(error,
+                 "point instancer orientations/positions size mismatch at " +
+                     pointInstancerPrim.GetPath().GetString());
         return false;
     }
     if (!scales.empty() && scales.size() != positions.size())
     {
-        SetError(error, "point instancer scales/positions size mismatch at " +
-                            pointInstancerPrim.GetPath().GetString());
+        SetError(error,
+                 "point instancer scales/positions size mismatch at " +
+                     pointInstancerPrim.GetPath().GetString());
         return false;
     }
 
@@ -356,8 +506,9 @@ static bool AppendPointInstancerInstances(
         const int protoIndex = protoIndices[i];
         if (protoIndex < 0 || protoIndex >= static_cast<int>(prototypePaths.size()))
         {
-            SetError(error, "point instancer prototype index out of range at " +
-                                pointInstancerPrim.GetPath().GetString());
+            SetError(error,
+                     "point instancer prototype index out of range at " +
+                         pointInstancerPrim.GetPath().GetString());
             return false;
         }
 
@@ -377,7 +528,8 @@ static bool AppendPointInstancerInstances(
         const pxr::UsdPrim prototypePrim = stage->GetPrimAtPath(prototypePath);
         if (!prototypePrim)
         {
-            SetError(error, "point instancer missing prototype prim: " + prototypePath.GetString());
+            SetError(error,
+                     "point instancer missing prototype prim: " + prototypePath.GetString());
             return false;
         }
 
@@ -402,8 +554,8 @@ static bool AppendPointInstancerInstances(
         // Most-local (right) to least-local (left):
         // prototype local->parent, then S, R, T, then point instancer local->world.
         const pxr::GfMatrix4d parentFromLocal = pointInstancerLocalToWorld *
-                                               translationFromOrientation * orientationFromScale *
-                                               scaleFromPrototype * prototypeLocalToParent;
+                                                translationFromOrientation * orientationFromScale *
+                                                scaleFromPrototype * prototypeLocalToParent;
 
         SceneInstance instance = {};
         instance.parentFromLocal = ConvertAffineTransform(parentFromLocal);
@@ -414,12 +566,13 @@ static bool AppendPointInstancerInstances(
     return true;
 }
 
-static bool BuildSceneFromPrimLists(const USDPrimLists &primLists,
-                                    const std::unordered_map<std::string, int> &pathToPrototypeIndex,
-                                    const std::vector<std::unique_ptr<BuildScene>> &prototypeScenes,
-                                    pxr::UsdGeomXformCache *xformCache,
-                                    BuildScene *outScene,
-                                    std::string *error)
+static bool
+BuildSceneFromPrimLists(const USDPrimLists &primLists,
+                        const std::unordered_map<std::string, int> &pathToPrototypeIndex,
+                        const std::vector<std::unique_ptr<BuildScene>> &prototypeScenes,
+                        pxr::UsdGeomXformCache *xformCache,
+                        BuildScene *outScene,
+                        std::string *error)
 {
     YBI_ASSERT(xformCache);
     YBI_ASSERT(outScene);
@@ -487,7 +640,8 @@ static bool BuildSceneFromPrimLists(const USDPrimLists &primLists,
     return true;
 }
 
-static bool ExportBuildSceneDAG(const BuildResult &build, USDBuildSceneDAG *out, std::string *error)
+static bool
+ExportBuildSceneDAG(const BuildResult &build, USDBuildSceneDAG *out, std::string *error)
 {
     YBI_ASSERT(out);
     if (!build.rootScene)
@@ -630,20 +784,21 @@ bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage,
         return false;
     }
 
-    std::vector<int> reversedPrototypeOrder;
-    reversedPrototypeOrder.reserve(prototypeData.prototypePaths.size());
-    for (size_t i = 0; i < prototypeData.prototypePaths.size(); i++)
-    {
-        reversedPrototypeOrder.push_back(static_cast<int>(i));
-    }
-    std::reverse(reversedPrototypeOrder.begin(), reversedPrototypeOrder.end());
-
     BuildResult build = {};
     build.prototypeScenes.resize(prototypeData.prototypePrimLists.size());
 
+    std::vector<int> prototypeBuildOrder;
+    if (!GetPrototypeTopologicalOrder(prototypeData.prototypePathToIndex,
+                                      prototypeData.prototypePrimLists,
+                                      &prototypeBuildOrder,
+                                      error))
+    {
+        return false;
+    }
+
     pxr::UsdGeomXformCache xformCache(0.0);
 
-    for (int prototypeIndex : reversedPrototypeOrder)
+    for (int prototypeIndex : prototypeBuildOrder)
     {
         std::unique_ptr<BuildScene> sceneForPrototype = std::make_unique<BuildScene>();
         if (!BuildSceneFromPrimLists(prototypeData.prototypePrimLists[(size_t)prototypeIndex],
