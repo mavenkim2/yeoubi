@@ -3,6 +3,14 @@
 
 struct LaunchParams
 {
+    struct InstanceGeomRef
+    {
+        unsigned long long positions;
+        unsigned long long indices;
+        int numPositions;
+        int numIndices;
+    };
+
     struct WireframeConfig
     {
         float lineWidth;
@@ -24,6 +32,8 @@ struct LaunchParams
     int spp;
     float aoBias;
     float aoMaxDistance;
+    unsigned long long instanceGeomRefs;
+    int instanceGeomRefCount;
 };
 
 struct HitgroupData
@@ -244,26 +254,34 @@ extern "C" __global__ void __closesthit__primary()
         if (hitKind == OPTIX_HIT_KIND_TRIANGLE_FRONT_FACE ||
             hitKind == OPTIX_HIT_KIND_TRIANGLE_BACK_FACE)
         {
-            const HitgroupData *hitgroupData = reinterpret_cast<const HitgroupData *>(optixGetSbtDataPointer());
-            const int primitiveIndex = int(optixGetPrimitiveIndex());
-            const int indexBase = primitiveIndex * 3;
-            const float3 *positions = reinterpret_cast<const float3 *>(hitgroupData->positions);
-            const int *indices = reinterpret_cast<const int *>(hitgroupData->indices);
-            if (positions != nullptr && indices != nullptr && indexBase + 2 < hitgroupData->numIndices)
+            const unsigned int instanceId = optixGetInstanceId();
+            if (params.instanceGeomRefs != 0ull && instanceId < (unsigned int)params.instanceGeomRefCount)
             {
-                const int i0 = indices[indexBase + 0];
-                const int i1 = indices[indexBase + 1];
-                const int i2 = indices[indexBase + 2];
-                if (i0 >= 0 && i0 < hitgroupData->numPositions && i1 >= 0 && i1 < hitgroupData->numPositions &&
-                    i2 >= 0 && i2 < hitgroupData->numPositions)
+                const LaunchParams::InstanceGeomRef *refs =
+                    reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+                const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+                const int primitiveIndex = int(optixGetPrimitiveIndex());
+                const int indexBase = primitiveIndex * 3;
+                const float3 *positions = reinterpret_cast<const float3 *>(ref.positions);
+                const int *indices = reinterpret_cast<const int *>(ref.indices);
+                if (positions != nullptr && indices != nullptr && indexBase + 2 < ref.numIndices)
                 {
-                    const float3 p0 = positions[i0];
-                    const float3 p1 = positions[i1];
-                    const float3 p2 = positions[i2];
-                    const float3 edge01 = make_float3(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
-                    const float3 edge02 = make_float3(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
-                    const float3 geometricNormal = Normalize3(Cross3(edge01, edge02));
-                    normal = FaceForward(geometricNormal, rayDirection);
+                    const int i0 = indices[indexBase + 0];
+                    const int i1 = indices[indexBase + 1];
+                    const int i2 = indices[indexBase + 2];
+                    if (i0 >= 0 && i0 < ref.numPositions && i1 >= 0 && i1 < ref.numPositions &&
+                        i2 >= 0 && i2 < ref.numPositions)
+                    {
+                        const float3 p0 = positions[i0];
+                        const float3 p1 = positions[i1];
+                        const float3 p2 = positions[i2];
+                        const float3 edge01 = make_float3(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
+                        const float3 edge02 = make_float3(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
+                        const float3 localNormal = Normalize3(Cross3(edge01, edge02));
+                        const float3 worldNormal =
+                            Normalize3(optixTransformNormalFromObjectToWorldSpace(localNormal));
+                        normal = FaceForward(worldNormal, rayDirection);
+                    }
                 }
             }
         }
