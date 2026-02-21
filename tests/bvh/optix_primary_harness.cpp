@@ -894,32 +894,83 @@ static OptixTraversableHandle BuildTopLevelIAS(CUDADevice *device,
     return outputHandle;
 }
 
-static void
-AppendFlattenedSceneInstances(Scene *scene,
-                              const ybi::float4x4 &worldFromScene,
-                              const std::unordered_map<Scene *, size_t> &sceneIndexMap,
-                              const std::vector<std::vector<MeshAccelData>> &sceneMeshAccels,
-                              const std::vector<std::vector<CurveAccelData>> &sceneCurveAccels,
-                              FlattenedSceneData &out)
+struct SceneAccelData
 {
-    const auto sceneIndexIt = sceneIndexMap.find(scene);
-    YBI_ASSERT(sceneIndexIt != sceneIndexMap.end());
-    const size_t sceneIndex = sceneIndexIt->second;
-    const std::vector<MeshAccelData> &meshAccels = sceneMeshAccels[sceneIndex];
-    const std::vector<CurveAccelData> &curveAccels = sceneCurveAccels[sceneIndex];
-    YBI_ASSERT(meshAccels.size() == scene->meshes.size());
-    YBI_ASSERT(curveAccels.size() == scene->curves.size());
+    std::vector<MeshAccelData> meshAccels;
+    std::vector<CurveAccelData> curveAccels;
+};
 
+static SceneAccelData
+BuildSceneAccelData(CUDADevice *device, HostMemoryArena &hostArena, Scene *scene)
+{
+    YBI_ASSERT(scene);
+    SceneAccelData out = {};
+
+    out.meshAccels.resize(scene->meshes.size());
     for (size_t meshIndex = 0; meshIndex < scene->meshes.size(); meshIndex++)
     {
-        const MeshAccelData &meshAccel = meshAccels[meshIndex];
+        Mesh &mesh = scene->meshes[meshIndex];
+        if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
+        {
+            continue;
+        }
+
+        MeshAccelData &meshAccel = out.meshAccels[meshIndex];
+        meshAccel.gasHandle = BuildTriangleGASFromMesh(device, hostArena, mesh);
+        meshAccel.numPositions = (int)mesh.positions.size();
+        meshAccel.numIndices = (int)mesh.indices.size();
+        ComputeBounds(mesh, meshAccel.boundsMin, meshAccel.boundsMax);
+
+        CUDA_ASSERT(
+            cuMemAlloc(&meshAccel.positionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemAlloc(&meshAccel.indicesBuffer, sizeof(int) * mesh.indices.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(meshAccel.positionsBuffer,
+                                 mesh.positions.data(),
+                                 sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(
+            meshAccel.indicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
+
+        hostArena.Clear();
+        device->deviceArena->Clear();
+    }
+
+    out.curveAccels.resize(scene->curves.size());
+    for (size_t curveIndex = 0; curveIndex < scene->curves.size(); curveIndex++)
+    {
+        Curves &curves = scene->curves[curveIndex];
+        if (curves.GetNumVertices() == 0 || curves.GetNumCurves() == 0)
+        {
+            continue;
+        }
+
+        CurveAccelData &curveAccel = out.curveAccels[curveIndex];
+        curveAccel.gasHandle = BuildCurveGASFromCurves(device, hostArena, curves);
+        ComputeBounds(curves, curveAccel.boundsMin, curveAccel.boundsMax);
+        hostArena.Clear();
+        device->deviceArena->Clear();
+    }
+
+    return out;
+}
+
+static void AppendSceneAccelInstances(const Scene &scene,
+                                      const SceneAccelData &accels,
+                                      const ybi::float4x4 &worldFromScene,
+                                      FlattenedSceneData &out)
+{
+    YBI_ASSERT(accels.meshAccels.size() == scene.meshes.size());
+    YBI_ASSERT(accels.curveAccels.size() == scene.curves.size());
+
+    for (size_t meshIndex = 0; meshIndex < scene.meshes.size(); meshIndex++)
+    {
+        const MeshAccelData &meshAccel = accels.meshAccels[meshIndex];
         if (!meshAccel.gasHandle)
         {
             continue;
         }
 
         const ybi::float4x4 worldFromMesh =
-            ybi::mul(worldFromScene, ToFloat4x4(scene->meshes[meshIndex].parentFromLocal));
+            ybi::mul(worldFromScene, ToFloat4x4(scene.meshes[meshIndex].parentFromLocal));
         const ybi::float3x4 worldFromMesh3x4 = ToFloat3x4(worldFromMesh);
 
         OptixInstance optixInstance = {};
@@ -942,16 +993,16 @@ AppendFlattenedSceneInstances(Scene *scene,
                                 meshAccel.boundsMax);
     }
 
-    for (size_t curveIndex = 0; curveIndex < scene->curves.size(); curveIndex++)
+    for (size_t curveIndex = 0; curveIndex < scene.curves.size(); curveIndex++)
     {
-        const CurveAccelData &curveAccel = curveAccels[curveIndex];
+        const CurveAccelData &curveAccel = accels.curveAccels[curveIndex];
         if (!curveAccel.gasHandle)
         {
             continue;
         }
 
         const ybi::float4x4 worldFromCurve =
-            ybi::mul(worldFromScene, ToFloat4x4(scene->curves[curveIndex].parentFromLocal));
+            ybi::mul(worldFromScene, ToFloat4x4(scene.curves[curveIndex].parentFromLocal));
         const ybi::float3x4 worldFromCurve3x4 = ToFloat3x4(worldFromCurve);
 
         OptixInstance optixInstance = {};
@@ -970,17 +1021,6 @@ AppendFlattenedSceneInstances(Scene *scene,
                                 curveAccel.boundsMin,
                                 curveAccel.boundsMax);
     }
-
-    for (const Instance &instance : scene->instances)
-    {
-        YBI_ASSERT(instance.childSceneIndex < scene->childScenes.size());
-        Scene *childScene = scene->childScenes[instance.childSceneIndex];
-        YBI_ASSERT(childScene != nullptr);
-        const ybi::float4x4 worldFromChild =
-            ybi::mul(worldFromScene, ToFloat4x4(instance.parentFromLocal));
-        AppendFlattenedSceneInstances(
-            childScene, worldFromChild, sceneIndexMap, sceneMeshAccels, sceneCurveAccels, out);
-    }
 }
 
 static FlattenedSceneData
@@ -989,93 +1029,58 @@ BuildFlattenedUSDScene(CUDADevice *device, HostMemoryArena &hostArena, ScenePool
     YBI_ASSERT(scenePool);
     YBI_ASSERT(scenePool->rootSceneIndex < scenePool->scenes.size());
 
-    std::unordered_map<Scene *, size_t> sceneIndexMap;
-    sceneIndexMap.reserve(scenePool->scenes.size());
-    std::vector<std::vector<MeshAccelData>> sceneMeshAccels(scenePool->scenes.size());
-    std::vector<std::vector<CurveAccelData>> sceneCurveAccels(scenePool->scenes.size());
-
+    FlattenedSceneData result = {};
     for (size_t sceneIndex = 0; sceneIndex < scenePool->scenes.size(); sceneIndex++)
     {
+        if (sceneIndex == scenePool->rootSceneIndex)
+        {
+            continue;
+        }
         Scene *scene = scenePool->scenes[sceneIndex].get();
-        YBI_ASSERT(scene != nullptr);
-        sceneIndexMap[scene] = sceneIndex;
-
-        std::vector<MeshAccelData> &meshAccels = sceneMeshAccels[sceneIndex];
-        meshAccels.resize(scene->meshes.size());
-        for (size_t meshIndex = 0; meshIndex < scene->meshes.size(); meshIndex++)
-        {
-            Mesh &mesh = scene->meshes[meshIndex];
-            if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
-            {
-                continue;
-            }
-
-            std::vector<ybi::float3> meshPositions(mesh.positions.begin(), mesh.positions.end());
-            std::vector<int> meshIndices(mesh.indices.begin(), mesh.indices.end());
-            Mesh localMesh{Array<ybi::float3>(meshPositions), Array<int>(meshIndices)};
-            MeshAccelData &meshAccel = meshAccels[meshIndex];
-            meshAccel.gasHandle = BuildTriangleGASFromMesh(device, hostArena, localMesh);
-            meshAccel.numPositions = (int)mesh.positions.size();
-            meshAccel.numIndices = (int)mesh.indices.size();
-            ComputeBounds(localMesh, meshAccel.boundsMin, meshAccel.boundsMax);
-
-            CUDA_ASSERT(cuMemAlloc(&meshAccel.positionsBuffer,
-                                   sizeof(ybi::float3) * mesh.positions.size()));
-            CUDA_ASSERT(cuMemAlloc(&meshAccel.indicesBuffer, sizeof(int) * mesh.indices.size()));
-            CUDA_ASSERT(cuMemcpyHtoD(meshAccel.positionsBuffer,
-                                     mesh.positions.data(),
-                                     sizeof(ybi::float3) * mesh.positions.size()));
-            CUDA_ASSERT(cuMemcpyHtoD(
-                meshAccel.indicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
-
-            hostArena.Clear();
-            device->deviceArena->Clear();
-        }
-
-        std::vector<CurveAccelData> &curveAccels = sceneCurveAccels[sceneIndex];
-        curveAccels.resize(scene->curves.size());
-        for (size_t curveIndex = 0; curveIndex < scene->curves.size(); curveIndex++)
-        {
-            Curves &curves = scene->curves[curveIndex];
-            if (curves.GetNumVertices() == 0 || curves.GetNumCurves() == 0)
-            {
-                continue;
-            }
-
-            const Array<ybi::float3> &curvePositions = curves.GetVertices();
-            const Array<float> &curveWidths = curves.GetWidths();
-            std::vector<ybi::float3> localPositions(curvePositions.begin(), curvePositions.end());
-            std::vector<float> localWidths(curveWidths.begin(), curveWidths.end());
-            std::vector<int> offsets;
-            offsets.reserve(curves.GetNumCurves());
-            for (size_t i = 0; i < curves.GetNumCurves(); i++)
-            {
-                offsets.push_back(curves.GetCurveKeyStart(i));
-            }
-
-            Curves localCurves{Array<ybi::float3>(localPositions),
-                               Array<float>(localWidths),
-                               Array<int>(offsets)};
-
-            CurveAccelData &curveAccel = curveAccels[curveIndex];
-            curveAccel.gasHandle = BuildCurveGASFromCurves(device, hostArena, localCurves);
-            ComputeBounds(curves, curveAccel.boundsMin, curveAccel.boundsMax);
-            hostArena.Clear();
-            device->deviceArena->Clear();
-        }
+        YBI_ASSERT(scene);
+        YBI_ASSERT(scene->instances.empty());
+        YBI_ASSERT(scene->childScenes.empty());
     }
 
-    FlattenedSceneData result = {};
+    std::unordered_map<Scene *, size_t> accelIndexByScene;
+    accelIndexByScene.reserve(scenePool->scenes.size());
+    std::vector<SceneAccelData> allSceneAccels;
+    allSceneAccels.reserve(scenePool->scenes.size());
+
+    auto getSceneAccelIndex = [&](Scene *scene) -> size_t {
+        auto found = accelIndexByScene.find(scene);
+        if (found != accelIndexByScene.end())
+        {
+            return found->second;
+        }
+        const size_t newIndex = allSceneAccels.size();
+        accelIndexByScene.emplace(scene, newIndex);
+        allSceneAccels.push_back(BuildSceneAccelData(device, hostArena, scene));
+        return newIndex;
+    };
+
     Scene *rootScene = scenePool->scenes[scenePool->rootSceneIndex].get();
-    AppendFlattenedSceneInstances(rootScene,
-                                  ybi::float4x4::Identity(),
-                                  sceneIndexMap,
-                                  sceneMeshAccels,
-                                  sceneCurveAccels,
-                                  result);
-    for (const std::vector<MeshAccelData> &meshAccels : sceneMeshAccels)
+    YBI_ASSERT(rootScene != nullptr);
+
+    const size_t rootAccelIndex = getSceneAccelIndex(rootScene);
+    AppendSceneAccelInstances(
+        *rootScene, allSceneAccels[rootAccelIndex], ybi::float4x4::Identity(), result);
+
+    for (const Instance &instance : rootScene->instances)
     {
-        for (const MeshAccelData &meshAccel : meshAccels)
+        YBI_ASSERT(instance.childSceneIndex < rootScene->childScenes.size());
+        Scene *childScene = rootScene->childScenes[instance.childSceneIndex];
+        YBI_ASSERT(childScene != nullptr);
+
+        const size_t childAccelIndex = getSceneAccelIndex(childScene);
+        const ybi::float4x4 worldFromChild = ToFloat4x4(instance.parentFromLocal);
+        AppendSceneAccelInstances(
+            *childScene, allSceneAccels[childAccelIndex], worldFromChild, result);
+    }
+
+    for (const SceneAccelData &sceneAccels : allSceneAccels)
+    {
+        for (const MeshAccelData &meshAccel : sceneAccels.meshAccels)
         {
             if (meshAccel.positionsBuffer)
             {
@@ -1422,7 +1427,24 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        FlattenedSceneData flattened = BuildFlattenedUSDScene(&device, hostArena, &scenePool);
+        ScenePool flattenedScenePool = {};
+        std::string flattenError;
+        if (!FlattenScenePoolToRootChildren(&scenePool, &flattenedScenePool, &flattenError))
+        {
+            fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
+            return 1;
+        }
+        if (flattenedScenePool.scenes.empty() ||
+            flattenedScenePool.rootSceneIndex >= flattenedScenePool.scenes.size())
+        {
+            fprintf(stderr,
+                    "Flattened ScenePool invalid for USD scene: %s\n",
+                    options.inputPath.c_str());
+            return 1;
+        }
+
+        FlattenedSceneData flattened =
+            BuildFlattenedUSDScene(&device, hostArena, &flattenedScenePool);
         if (flattened.instances.empty() || flattened.refs.empty())
         {
             fprintf(
@@ -1443,7 +1465,7 @@ int main(int argc, char **argv)
         std::optional<RenderCameraOverride> usdCamera = std::nullopt;
         if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
         {
-            usdCamera = BuildUsdRenderCamera(scenePool.camera);
+            usdCamera = BuildUsdRenderCamera(flattenedScenePool.camera);
             if (usdCamera.has_value())
             {
                 printf("optix_harness: using usd camera viewport=%dx%d\n",

@@ -9,6 +9,7 @@
 #include "util/host_memory_arena.h"
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 YBI_NAMESPACE_BEGIN
@@ -188,5 +189,7 @@ struct ScenePool
     uint32_t rootSceneIndex = 0;
     Camera camera;
 };
+
+bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string *error = nullptr);
 
 YBI_NAMESPACE_END

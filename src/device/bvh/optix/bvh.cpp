@@ -493,7 +493,8 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
                                                   CUDAMemoryArena &deviceArena,
                                                   Mesh &mesh,
                                                   uint32_t numMotionKeys,
-                                                  OptixAccelBuildOptions &options)
+                                                  OptixAccelBuildOptions &options,
+                                                  bool includePreTransform)
 {
     (void)cudaDevice;
     (void)options;
@@ -507,7 +508,7 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     DeviceMemoryView<float3> deviceVertices =
         deviceArena.PushArray<float3>(numVertices * numMotionKeys);
     DeviceMemoryView<int> deviceIndices = deviceArena.PushArray<int>(numIndices);
-    DeviceMemoryView<float> preTransform = deviceArena.PushArray<float>(12);
+    DeviceMemoryView<float> preTransform = {};
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
     {
@@ -519,15 +520,19 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
                sizeof(float3) * numVertices);
     }
 
-    float hostPreTransform[12] = {};
-    CopyTransformMatrix(mesh.parentFromLocal, hostPreTransform);
-
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceVertices.data()), hostVertices.data(), deviceVertices.numBytes()));
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceIndices.data()), mesh.indices.data(), deviceIndices.numBytes()));
-    CUDA_ASSERT(cuMemcpyHtoD(
-        CUdeviceptr(preTransform.data()), hostPreTransform, sizeof(hostPreTransform)));
+
+    if (includePreTransform)
+    {
+        preTransform = deviceArena.PushArray<float>(12);
+        float hostPreTransform[12] = {};
+        CopyTransformMatrix(mesh.parentFromLocal, hostPreTransform);
+        CUDA_ASSERT(cuMemcpyHtoD(
+            CUdeviceptr(preTransform.data()), hostPreTransform, sizeof(hostPreTransform)));
+    }
 
     MemoryView<unsigned int> geometryFlags = hostArena.PushArray<unsigned int>(1);
     geometryFlags[0] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
@@ -544,8 +549,9 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     triangleArray.numIndexTriplets = numIndices / 3;
     triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangleArray.indexStrideInBytes = sizeof(int) * 3;
-    triangleArray.preTransform = CUdeviceptr(preTransform.data());
-    triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12;
+    triangleArray.preTransform = includePreTransform ? CUdeviceptr(preTransform.data()) : 0;
+    triangleArray.transformFormat = includePreTransform ? OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12
+                                                        : OPTIX_TRANSFORM_FORMAT_NONE;
     triangleArray.flags = geometryFlags.data();
     triangleArray.numSbtRecords = 1;
 
@@ -669,7 +675,7 @@ BuildSceneGeometryGAS(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Scene 
     for (Mesh &mesh : scene->meshes)
     {
         buildInputs.push_back(GetOptiXTriangleBuildInput(
-            cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options));
+            cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options, true));
     }
 
     for (Curves &curves : scene->curves)
@@ -762,7 +768,7 @@ BuildTriangleGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Mes
     OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
 
     OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
-        cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options);
+        cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options, false);
     OptixTraversableHandle handle =
         BuildOptixBVH(cudaDevice, *cudaDevice->deviceArena, options, &buildInput, 1);
 
