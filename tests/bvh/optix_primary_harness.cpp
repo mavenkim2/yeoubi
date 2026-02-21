@@ -921,15 +921,6 @@ BuildSceneAccelData(CUDADevice *device, HostMemoryArena &hostArena, Scene *scene
         meshAccel.numIndices = (int)mesh.indices.size();
         ComputeBounds(mesh, meshAccel.boundsMin, meshAccel.boundsMax);
 
-        CUDA_ASSERT(
-            cuMemAlloc(&meshAccel.positionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemAlloc(&meshAccel.indicesBuffer, sizeof(int) * mesh.indices.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(meshAccel.positionsBuffer,
-                                 mesh.positions.data(),
-                                 sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(
-            meshAccel.indicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
-
         hostArena.Clear();
         device->deviceArena->Clear();
     }
@@ -948,6 +939,25 @@ BuildSceneAccelData(CUDADevice *device, HostMemoryArena &hostArena, Scene *scene
         ComputeBounds(curves, curveAccel.boundsMin, curveAccel.boundsMax);
         hostArena.Clear();
         device->deviceArena->Clear();
+    }
+
+    for (size_t meshIndex = 0; meshIndex < scene->meshes.size(); meshIndex++)
+    {
+        Mesh &mesh = scene->meshes[meshIndex];
+        MeshAccelData &meshAccel = out.meshAccels[meshIndex];
+        if (!meshAccel.gasHandle)
+        {
+            continue;
+        }
+
+        CUDA_ASSERT(
+            cuMemAlloc(&meshAccel.positionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemAlloc(&meshAccel.indicesBuffer, sizeof(int) * mesh.indices.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(meshAccel.positionsBuffer,
+                                 mesh.positions.data(),
+                                 sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(
+            meshAccel.indicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
     }
 
     return out;
