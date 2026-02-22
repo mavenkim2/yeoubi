@@ -19,6 +19,9 @@
 #include <string>
 #include <vector>
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
 #if __has_include(<embree4/rtcore.h>)
 #include <embree4/rtcore.h>
 #elif __has_include(<embree3/rtcore.h>)
@@ -432,13 +435,15 @@ static std::vector<uint8_t> RenderImage(RTCScene rootScene,
 {
     const int width = camera.width;
     const int height = camera.height;
+    const int sampleCount = integrator == IntegratorType::AO ? std::max(1, spp) : 1;
     std::vector<uint8_t> image(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u, 0u);
-    for (int y = 0; y < height; y++)
+
+    tbb::parallel_for(tbb::blocked_range<int>(0, height), [&](const tbb::blocked_range<int> &range) {
+        for (int y = range.begin(); y != range.end(); y++)
     {
         for (int x = 0; x < width; x++)
         {
             float3 pixelColor = make_float3(0.0f);
-            const int sampleCount = integrator == IntegratorType::AO ? std::max(1, spp) : 1;
             for (int s = 0; s < sampleCount; s++)
             {
                 uint32_t rngState = Hash32(static_cast<uint32_t>((y * width + x) * 9781 + s * 6271 + 1));
@@ -535,7 +540,7 @@ static std::vector<uint8_t> RenderImage(RTCScene rootScene,
             image[idx + 2] = static_cast<uint8_t>(Clamp01(pixelColor.z) * 255.0f + 0.5f);
             image[idx + 3] = 255u;
         }
-    }
+    }});
     return image;
 }
 } // namespace
