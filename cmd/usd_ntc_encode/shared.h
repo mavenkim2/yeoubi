@@ -48,5 +48,7 @@ bool EncodeMaterial(ntc::IContext *context,
                     float bitsPerPixel,
                     int trainingSteps,
                     int stepsPerIter,
+                    int materialIndex,
+                    int materialCount,
                     float &outActualBpp,
                     std::string &errorOut);

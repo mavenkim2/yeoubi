@@ -126,6 +126,8 @@ int main(int argc, char **argv)
                                cli.bitsPerPixel,
                                cli.trainingSteps,
                                cli.stepsPerIter,
+                               processed,
+                               totalToProcess,
                                actualBpp,
                                reason))
             {

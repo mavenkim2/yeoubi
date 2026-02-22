@@ -279,6 +279,8 @@ bool EncodeMaterial(ntc::IContext *context,
                     float bitsPerPixel,
                     int trainingSteps,
                     int stepsPerIter,
+                    int materialIndex,
+                    int materialCount,
                     float &outActualBpp,
                     std::string &errorOut)
 {
@@ -424,9 +426,34 @@ bool EncodeMaterial(ntc::IContext *context,
     }
 
     ntc::CompressionStats stats = {};
+    int nextPercentPrint = 0;
     do
     {
         status = textureSet->RunCompressionSteps(&stats);
+
+        if (settings.trainingSteps > 0)
+        {
+            const int done = std::max(0, std::min(stats.currentStep, settings.trainingSteps));
+            const int pct = (done * 100) / settings.trainingSteps;
+            if (pct >= nextPercentPrint || status == ntc::Status::Ok)
+            {
+                const int barWidth = 24;
+                const int filled = (done * barWidth) / settings.trainingSteps;
+                std::fprintf(stderr, "  [");
+                for (int i = 0; i < barWidth; ++i)
+                {
+                    std::fprintf(stderr, "%c", i < filled ? '=' : ' ');
+                }
+                std::fprintf(stderr,
+                             "] set %d/%d (%d remaining) step %d/%d\n",
+                             materialIndex,
+                             materialCount,
+                             std::max(0, materialCount - materialIndex),
+                             done,
+                             settings.trainingSteps);
+                nextPercentPrint += 10;
+            }
+        }
     } while (status == ntc::Status::Incomplete);
 
     if (status != ntc::Status::Ok)
