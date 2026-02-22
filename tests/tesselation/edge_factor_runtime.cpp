@@ -298,17 +298,16 @@ int BuildUniquePtexEdgeIds(const OpenSubdiv::Far::TopologyRefiner &refiner,
     return edgeCount;
 }
 
-EdgeFactorResult ComputeEdgeFactors(const OpenSubdiv::Far::PatchMap &patchMap,
-                                    const OpenSubdiv::Far::PatchTable &patchTable,
-                                    const std::vector<Primvar3> &positions,
-                                    const std::vector<PtexFaceAdj> &faces,
-                                    int numPtexFaces,
-                                    int uniqueEdgeCount,
-                                    const EdgeFactorCamera &camera,
-                                    const EdgeFactorSettings &settings)
+std::vector<DiagEdgeState> ComputeEdgeFactors(const OpenSubdiv::Far::PatchMap &patchMap,
+                                              const OpenSubdiv::Far::PatchTable &patchTable,
+                                              const std::vector<Primvar3> &positions,
+                                              const std::vector<PtexFaceAdj> &faces,
+                                              int numPtexFaces,
+                                              int uniqueEdgeCount,
+                                              const EdgeFactorCamera &camera,
+                                              const EdgeFactorSettings &settings)
 {
-    EdgeFactorResult result = {};
-    result.edgeFactors.assign(std::max(0, uniqueEdgeCount), -1);
+    std::vector<DiagEdgeState> result(std::max(0, uniqueEdgeCount), DiagEdgeState{});
     for (int pf = 0; pf < numPtexFaces; ++pf)
     {
         if (!patchMap.FindPatch(pf, 0.5f, 0.5f))
@@ -321,16 +320,7 @@ EdgeFactorResult ComputeEdgeFactors(const OpenSubdiv::Far::PatchMap &patchMap,
             YBI_ASSERT(edgeId >= 0 && edgeId < uniqueEdgeCount);
             const int candidate = ComputeDiagSplitEdgeFactor(
                 patchMap, patchTable, positions, pf, e, camera, settings);
-            if (result.edgeFactors[edgeId] < 0)
-            {
-                result.edgeFactors[edgeId] = candidate;
-            }
-            else
-            {
-                result.edgeFactors[edgeId] = std::max(result.edgeFactors[edgeId], candidate);
-            }
-            result.maxCalculatedEdgeFactor =
-                std::max(result.maxCalculatedEdgeFactor, result.edgeFactors[edgeId]);
+            result[edgeId].rate = std::max(result[edgeId].rate, candidate);
         }
     }
     return result;
@@ -338,7 +328,7 @@ EdgeFactorResult ComputeEdgeFactors(const OpenSubdiv::Far::PatchMap &patchMap,
 
 void ApplyNgonNonUniformConstraint(const std::vector<PtexFaceAdj> &faces,
                                    int numPtexFaces,
-                                   std::vector<int> &edgeRates)
+                                   std::vector<DiagEdgeState> &edgeRates)
 {
     for (int pf = 0; pf < numPtexFaces; ++pf)
     {
@@ -354,9 +344,9 @@ void ApplyNgonNonUniformConstraint(const std::vector<PtexFaceAdj> &faces,
             {
                 continue;
             }
-            if (faces[pf].fromNgon || faces[af].fromNgon)
+            if (faces[pf].fromNgon != faces[af].fromNgon)
             {
-                edgeRates[edgeId] = kDiagSplitNonUniform;
+                edgeRates[edgeId].rate = kDiagSplitNonUniform;
             }
         }
     }
@@ -368,7 +358,7 @@ BuildEdgeRateDebugLines(const OpenSubdiv::Far::PatchMap &patchMap,
                         const std::vector<Primvar3> &positions,
                         const std::vector<PtexFaceAdj> &faces,
                         int numPtexFaces,
-                        const std::vector<int> &edgeFactors)
+                        const std::vector<DiagEdgeState> &edgeFactors)
 {
     std::vector<ybi::testio::EdgeRateDebugLine> lines;
     std::vector<bool> emitted(edgeFactors.size(), false);
@@ -387,7 +377,7 @@ BuildEdgeRateDebugLines(const OpenSubdiv::Far::PatchMap &patchMap,
             }
             emitted[edgeId] = true;
 
-            const int rate = std::max(1, edgeFactors[edgeId]);
+            const int rate = std::max(1, edgeFactors[edgeId].rate);
             const int samples = std::max(2, rate + 1);
             ybi::testio::EdgeRateDebugLine line = {};
             line.rate = rate;

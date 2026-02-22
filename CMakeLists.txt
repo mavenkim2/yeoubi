@@ -64,6 +64,7 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/tessellation_adaptive_impl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/edge_factor_runtime.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/diag_split_runtime.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/diag_split_detail.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/edge_rate_obj_io.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_mesh_io.cpp
@@ -80,7 +81,10 @@ if (WITH_USD)
 
     add_executable(yeoubi_usd_instance_dag_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_instance_dag_test.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
     target_compile_definitions(yeoubi_usd_instance_dag_test PRIVATE ${YBI_COMPILE_DEFINITIONS})
     if (WIN32)
         target_compile_definitions(yeoubi_usd_instance_dag_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

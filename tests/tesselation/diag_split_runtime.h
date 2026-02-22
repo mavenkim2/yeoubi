@@ -52,12 +52,6 @@ struct EdgeFactorSettings
     int maxRate = 32;
 };
 
-struct EdgeFactorResult
-{
-    int maxCalculatedEdgeFactor = 0;
-    std::vector<int> edgeFactors;
-};
-
 struct RefinedPositions
 {
     std::vector<Primvar3> values;
@@ -78,6 +72,10 @@ struct DiagEdgeState
     int child0 = -1;
     int child1 = -1;
     int rate = kDiagSplitNonUniform;
+    float firstT0 = 0.0f;
+    float firstT1 = 0.0f;
+    int firstFace = -1;
+    bool firstSet = false;
 };
 
 struct DiagSubPatch
@@ -110,25 +108,24 @@ int BuildUniquePtexEdgeIds(const OpenSubdiv::Far::TopologyRefiner &refiner,
                            const OpenSubdiv::Far::PtexIndices &ptex,
                            std::vector<PtexFaceAdj> &facesOut,
                            int &numPtexFacesOut);
-EdgeFactorResult ComputeEdgeFactors(const OpenSubdiv::Far::PatchMap &patchMap,
-                                    const OpenSubdiv::Far::PatchTable &patchTable,
-                                    const std::vector<Primvar3> &positions,
-                                    const std::vector<PtexFaceAdj> &faces,
-                                    int numPtexFaces,
-                                    int uniqueEdgeCount,
-                                    const EdgeFactorCamera &camera,
-                                    const EdgeFactorSettings &settings);
+std::vector<DiagEdgeState> ComputeEdgeFactors(const OpenSubdiv::Far::PatchMap &patchMap,
+                                              const OpenSubdiv::Far::PatchTable &patchTable,
+                                              const std::vector<Primvar3> &positions,
+                                              const std::vector<PtexFaceAdj> &faces,
+                                              int numPtexFaces,
+                                              int uniqueEdgeCount,
+                                              const EdgeFactorCamera &camera,
+                                              const EdgeFactorSettings &settings);
 void ApplyNgonNonUniformConstraint(const std::vector<PtexFaceAdj> &faces,
                                    int numPtexFaces,
-                                   std::vector<int> &edgeRates);
+                                   std::vector<DiagEdgeState> &edgeRates);
 std::vector<ybi::testio::EdgeRateDebugLine> BuildEdgeRateDebugLines(
     const OpenSubdiv::Far::PatchMap &patchMap,
     const OpenSubdiv::Far::PatchTable &patchTable,
     const std::vector<Primvar3> &positions,
     const std::vector<PtexFaceAdj> &faces,
     int numPtexFaces,
-    const std::vector<int> &edgeFactors);
-std::vector<DiagEdgeState> BuildDiagEdgesFromRates(const std::vector<int> &edgeRates);
+    const std::vector<DiagEdgeState> &edgeFactors);
 DiagSplitBuildResult BuildDiagSplitSubPatches(const OpenSubdiv::Far::PatchMap &patchMap,
                                               const OpenSubdiv::Far::PatchTable &patchTable,
                                               const std::vector<Primvar3> &positions,
@@ -137,12 +134,12 @@ DiagSplitBuildResult BuildDiagSplitSubPatches(const OpenSubdiv::Far::PatchMap &p
                                               const EdgeFactorCamera &camera,
                                               const EdgeFactorSettings &settings,
                                               std::vector<DiagEdgeState> &edges);
-TriMesh TessellateDiagSplitNoStitch(const OpenSubdiv::Far::PatchMap &patchMap,
-                                    const OpenSubdiv::Far::PatchTable &patchTable,
-                                    const std::vector<Primvar3> &positions,
-                                    const std::vector<DiagSubPatch> &patches,
-                                    const std::vector<DiagEdgeState> &edges,
-                                    int fallbackEdgeRate,
-                                    int &skippedSubPatchesOut);
+TriMesh TessellateDiagSplitSubPatches(const OpenSubdiv::Far::PatchMap &patchMap,
+                                      const OpenSubdiv::Far::PatchTable &patchTable,
+                                      const std::vector<Primvar3> &positions,
+                                      const std::vector<DiagSubPatch> &patches,
+                                      const std::vector<DiagEdgeState> &edges,
+                                      int fallbackEdgeRate,
+                                      int &skippedSubPatchesOut);
 
 } // namespace ybi::tesselation

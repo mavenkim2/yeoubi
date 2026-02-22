@@ -333,7 +333,7 @@ int main(int argc, char **argv)
     const int uniquePtexEdges = ybi::tesselation::BuildUniquePtexEdgeIds(
         *refiner, level0, ptex, ptexFaceAdj, ptexFaceCount);
 
-    ybi::tesselation::EdgeFactorResult edgeFactors = ybi::tesselation::ComputeEdgeFactors(
+    std::vector<ybi::tesselation::DiagEdgeState> diagEdges = ybi::tesselation::ComputeEdgeFactors(
         patchMap,
         *patchTable,
         refined.values,
@@ -342,10 +342,7 @@ int main(int argc, char **argv)
         uniquePtexEdges,
         edgeCamera,
         edgeSettings);
-    ybi::tesselation::ApplyNgonNonUniformConstraint(
-        ptexFaceAdj, ptexFaceCount, edgeFactors.edgeFactors);
-    std::vector<ybi::tesselation::DiagEdgeState> diagEdges =
-        ybi::tesselation::BuildDiagEdgesFromRates(edgeFactors.edgeFactors);
+    ybi::tesselation::ApplyNgonNonUniformConstraint(ptexFaceAdj, ptexFaceCount, diagEdges);
 
     const ybi::tesselation::DiagSplitBuildResult diagSplit =
         ybi::tesselation::BuildDiagSplitSubPatches(patchMap,
@@ -358,7 +355,7 @@ int main(int argc, char **argv)
                                                    diagEdges);
 
     int skippedSubPatches = 0;
-    const ybi::tesselation::TriMesh triMesh = ybi::tesselation::TessellateDiagSplitNoStitch(
+    const ybi::tesselation::TriMesh triMesh = ybi::tesselation::TessellateDiagSplitSubPatches(
         patchMap,
         *patchTable,
         refined.values,
@@ -377,7 +374,12 @@ int main(int argc, char **argv)
     const std::string edgeRateObj = outObj + ".edge_rates.obj";
     const std::vector<ybi::testio::EdgeRateDebugLine> edgeRateLines =
         ybi::tesselation::BuildEdgeRateDebugLines(
-            patchMap, *patchTable, refined.values, ptexFaceAdj, ptexFaceCount, edgeFactors.edgeFactors);
+            patchMap, *patchTable, refined.values, ptexFaceAdj, ptexFaceCount, diagEdges);
+    int maxCalculatedEdgeFactor = 0;
+    for (const ybi::tesselation::DiagEdgeState &edge : diagEdges)
+    {
+        maxCalculatedEdgeFactor = std::max(maxCalculatedEdgeFactor, std::max(0, edge.rate));
+    }
     if (!ybi::testio::WriteEdgeRateDebugObj(
             edgeRateObj, edgeRateLines, edgeSettings.minRate, edgeSettings.maxRate))
     {
@@ -389,7 +391,7 @@ int main(int argc, char **argv)
 
     std::printf("Wrote adaptive level-%d OBJ: %s\n", level, outObj.c_str());
     std::printf("Wrote edge-rate debug OBJ: %s\n", edgeRateObj.c_str());
-    std::printf("  diagNoStitch verts=%zu tris=%zu\n",
+    std::printf("  diagSplitSubPatches verts=%zu tris=%zu\n",
                 triMesh.positions.size(),
                 triMesh.indices.size() / 3);
     std::printf("  skippedPtexFaces=%d\n", diagSplit.skippedPtexFaces);
@@ -398,7 +400,7 @@ int main(int argc, char **argv)
                 diagSplit.splitCount,
                 diagSplit.maxDepthReached,
                 skippedSubPatches);
-    std::printf("  maxCalculatedEdgeFactor=%d\n", edgeFactors.maxCalculatedEdgeFactor);
+    std::printf("  maxCalculatedEdgeFactor=%d\n", maxCalculatedEdgeFactor);
     std::printf("  cameraDistanceScale=%g\n", cameraDistanceScale);
     std::printf("  fixedEdgeRate=%d (fallback)\n", fixedEdgeRate);
     std::printf("  ptexFaces=%d\n", ptexFaceCount);

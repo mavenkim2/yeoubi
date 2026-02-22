@@ -1,9 +1,15 @@
 #include "io/usd/instance_dag_build.h"
+#include "io/usd/load.h"
+#include "scene/scene.h"
 
+#include <pxr/base/gf/matrix4d.h>
+#include <pxr/base/gf/vec3d.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/stage.h>
 
+#include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 
@@ -104,6 +110,31 @@ def Xform "TopInst" (
 }
 )USDA";
 
+static const char *kPointInstancerTransformFixture = R"USDA(#usda 1.0
+def Xform "World"
+{
+    double3 xformOp:translate = (10, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def PointInstancer "PI"
+    {
+        def Scope "Prototypes"
+        {
+            def Xform "ProtoA"
+            {
+                double3 xformOp:translate = (0, 5, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+
+        rel prototypes = [</World/PI/Prototypes/ProtoA>]
+        int[] protoIndices = [0, 0]
+        point3f[] positions = [(1, 0, 0), (0, 2, 0)]
+        float3[] scales = [(2, 2, 2), (1, 3, 1)]
+    }
+}
+)USDA";
+
 static pxr::UsdStageRefPtr CreateStageFromUsda(const char *usda, std::string *error)
 {
     pxr::UsdStageRefPtr stage = pxr::UsdStage::CreateInMemory();
@@ -127,6 +158,51 @@ static pxr::UsdStageRefPtr CreateStageFromUsda(const char *usda, std::string *er
     }
 
     return stage;
+}
+
+static ybi::float3x4 ConvertAffineTransformForTest(const pxr::GfMatrix4d &m)
+{
+    const pxr::GfMatrix4d t = m.GetTranspose();
+    const pxr::GfVec4d r0 = t.GetRow(0);
+    const pxr::GfVec4d r1 = t.GetRow(1);
+    const pxr::GfVec4d r2 = t.GetRow(2);
+    return ybi::float3x4(static_cast<float>(r0[0]),
+                         static_cast<float>(r0[1]),
+                         static_cast<float>(r0[2]),
+                         static_cast<float>(r0[3]),
+                         static_cast<float>(r1[0]),
+                         static_cast<float>(r1[1]),
+                         static_cast<float>(r1[2]),
+                         static_cast<float>(r1[3]),
+                         static_cast<float>(r2[0]),
+                         static_cast<float>(r2[1]),
+                         static_cast<float>(r2[2]),
+                         static_cast<float>(r2[3]));
+}
+
+static bool MatrixNear(const ybi::float3x4 &actual,
+                       const ybi::float3x4 &expected,
+                       float eps,
+                       const char *label)
+{
+    for (int r = 0; r < 3; r++)
+    {
+        for (int c = 0; c < 4; c++)
+        {
+            if (std::fabs(actual.m[r][c] - expected.m[r][c]) > eps)
+            {
+                std::fprintf(stderr,
+                             "%s: matrix mismatch at [%d][%d], got %.6f expected %.6f\n",
+                             label,
+                             r,
+                             c,
+                             actual.m[r][c],
+                             expected.m[r][c]);
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 static bool CheckCommonDAGInvariants(const ybi::USDBuildSceneDAG &dag, std::string *error)
@@ -156,6 +232,85 @@ static bool CheckCommonDAGInvariants(const ybi::USDBuildSceneDAG &dag, std::stri
             }
         }
     }
+    return true;
+}
+
+static bool RunPointInstancerTransformLoadTest()
+{
+    const std::string fixturePath = "tests/io/_tmp_point_instancer_transform_fixture.usda";
+    {
+        std::ofstream fixtureFile(fixturePath, std::ios::out | std::ios::binary);
+        if (!fixtureFile.is_open())
+        {
+            std::fprintf(stderr, "PointInstancerTransforms: failed to open fixture file\n");
+            return false;
+        }
+        fixtureFile << kPointInstancerTransformFixture;
+    }
+
+    ybi::ScenePool scenePool = {};
+    ybi::LoadUSDScene(&scenePool, fixturePath);
+    std::remove(fixturePath.c_str());
+
+    if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
+    {
+        std::fprintf(stderr, "PointInstancerTransforms: invalid scene pool after LoadUSDScene\n");
+        return false;
+    }
+
+    const ybi::Scene &root = *scenePool.scenes[scenePool.rootSceneIndex];
+    if (root.instances.size() != 2)
+    {
+        std::fprintf(stderr,
+                     "PointInstancerTransforms: expected 2 root instances, got %zu\n",
+                     root.instances.size());
+        return false;
+    }
+    if (root.instances[0].childSceneIndex >= root.childScenes.size() ||
+        root.instances[1].childSceneIndex >= root.childScenes.size())
+    {
+        std::fprintf(stderr,
+                     "PointInstancerTransforms: childSceneIndex out of range in root scene\n");
+        return false;
+    }
+    if (root.childScenes[root.instances[0].childSceneIndex] !=
+        root.childScenes[root.instances[1].childSceneIndex])
+    {
+        std::fprintf(stderr,
+                     "PointInstancerTransforms: expected both instances to reference same child "
+                     "scene pointer\n");
+        return false;
+    }
+
+    pxr::GfMatrix4d pointInstancerLocalToWorld(1.0);
+    pointInstancerLocalToWorld.SetTranslateOnly(pxr::GfVec3d(10.0, 0.0, 0.0));
+
+    pxr::GfMatrix4d prototypeLocalToParent(1.0);
+    prototypeLocalToParent.SetTranslateOnly(pxr::GfVec3d(0.0, 5.0, 0.0));
+
+    pxr::GfMatrix4d t0(1.0);
+    t0.SetTranslateOnly(pxr::GfVec3d(1.0, 0.0, 0.0));
+    pxr::GfMatrix4d s0(1.0);
+    s0.SetScale(pxr::GfVec3d(2.0, 2.0, 2.0));
+    const ybi::float3x4 expected0 = ConvertAffineTransformForTest(
+        pointInstancerLocalToWorld * t0 * s0 * prototypeLocalToParent);
+
+    pxr::GfMatrix4d t1(1.0);
+    t1.SetTranslateOnly(pxr::GfVec3d(0.0, 2.0, 0.0));
+    pxr::GfMatrix4d s1(1.0);
+    s1.SetScale(pxr::GfVec3d(1.0, 3.0, 1.0));
+    const ybi::float3x4 expected1 = ConvertAffineTransformForTest(
+        pointInstancerLocalToWorld * t1 * s1 * prototypeLocalToParent);
+
+    if (!MatrixNear(root.instances[0].parentFromLocal, expected0, 1e-4f, "PointInstancer[0]"))
+    {
+        return false;
+    }
+    if (!MatrixNear(root.instances[1].parentFromLocal, expected1, 1e-4f, "PointInstancer[1]"))
+    {
+        return false;
+    }
+
     return true;
 }
 
@@ -350,6 +505,10 @@ int main()
         failed++;
     }
     if (!RunNestedInstancingTest())
+    {
+        failed++;
+    }
+    if (!RunPointInstancerTransformLoadTest())
     {
         failed++;
     }
