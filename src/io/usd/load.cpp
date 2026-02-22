@@ -20,6 +20,7 @@
 #include <pxr/base/vt/types.h>
 #include <pxr/base/vt/value.h>
 #include <pxr/usd/sdf/path.h>
+#include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/valueTypeName.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
@@ -193,44 +194,91 @@ static int AddMaterialToMap(std::unordered_map<std::string, int> &materialMap,
 }
 
 // NOTE: For shade inputs that most likely have a single UsdUVTexture
-static pxr::UsdShadeShader HandleExpectedUVTexture(const pxr::UsdShadeInput &input)
+static bool TryGetSingleConnectedShader(const pxr::UsdShadeInput &input,
+                                        pxr::UsdShadeShader &shaderOut)
 {
-    pxr::TfToken token;
-
     auto sources = input.GetConnectedSources();
-    pxr::UsdShadeShader shader;
+    if (sources.size() != 1)
+    {
+        // TODO: handle multiple or zero sources for a shading input.
+        printf("Texture gather: unsupported source count (%zu) for input %s\n",
+               sources.size(),
+               input.GetBaseName().GetText());
+        return false;
+    }
 
-    if (sources.size() == 1)
+    pxr::UsdPrim sourcePrim = sources[0].source.GetPrim();
+    if (!sourcePrim.IsA<pxr::UsdShadeShader>())
     {
-        pxr::UsdPrim sourcePrim = sources[0].source.GetPrim();
-        if (sourcePrim.IsA<pxr::UsdShadeShader>())
-        {
-            pxr::UsdShadeShader connectedShader(sourcePrim);
-            pxr::TfToken newTok;
-            connectedShader.GetShaderId(&newTok);
-            if (newTok == pxr::TfToken("UsdUVTexture"))
-            {
-                shader = connectedShader;
-            }
-            else
-            {
-                printf("Expected UsdUvTexture, other cases not handled yet\n");
-                YBI_ASSERT(0);
-            }
-        }
-        else
-        {
-            printf("Expected UsdShadeShader, other cases not handled yet. Type name is: %s\n",
-                   sourcePrim.GetTypeName().GetText());
-            YBI_ASSERT(0);
-        }
+        // TODO: handle non-shader source nodes (e.g. nodegraphs/other source types).
+        printf("Texture gather: unsupported source prim type %s for input %s\n",
+               sourcePrim.GetTypeName().GetText(),
+               input.GetBaseName().GetText());
+        return false;
     }
-    else
+    shaderOut = pxr::UsdShadeShader(sourcePrim);
+    return true;
+}
+
+static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input, std::string &outPath)
+{
+    outPath.clear();
+
+    pxr::UsdShadeShader sourceShader;
+    if (!TryGetSingleConnectedShader(input, sourceShader))
     {
-        printf("Expected one source, other cases not handled yet\n");
-        YBI_ASSERT(0);
+        return false;
     }
-    return shader;
+
+    pxr::TfToken shaderId;
+    sourceShader.GetShaderId(&shaderId);
+    if (shaderId != pxr::TfToken("UsdUVTexture"))
+    {
+        // TODO: support non-UsdUVTexture image producers (MaterialX image nodes, etc.).
+        printf("Texture gather: unsupported shader node type %s at %s\n",
+               shaderId.GetText(),
+               sourceShader.GetPath().GetText());
+        return false;
+    }
+
+    pxr::UsdShadeInput fileInput = sourceShader.GetInput(pxr::TfToken("file"));
+    if (!fileInput)
+    {
+        // TODO: support alternate file-bearing texture nodes/ports.
+        printf("Texture gather: UsdUVTexture missing 'file' input at %s\n",
+               sourceShader.GetPath().GetText());
+        return false;
+    }
+
+    pxr::SdfAssetPath assetPath;
+    if (!fileInput.Get(&assetPath))
+    {
+        // TODO: support connected/indirected file inputs.
+        printf("Texture gather: could not read 'file' value at %s\n",
+               sourceShader.GetPath().GetText());
+        return false;
+    }
+
+    outPath = assetPath.GetResolvedPath();
+    if (outPath.empty())
+    {
+        outPath = assetPath.GetAssetPath();
+    }
+    if (outPath.empty())
+    {
+        printf("Texture gather: empty texture file path at %s\n", sourceShader.GetPath().GetText());
+        return false;
+    }
+
+    return true;
+}
+
+static void AppendUniqueTexturePath(std::vector<std::string> &paths, const std::string &path)
+{
+    if (std::find(paths.begin(), paths.end(), path) == paths.end())
+    {
+        paths.push_back(path);
+    }
 }
 
 static PrimvarInterpolation ConvertPrimvarInterpolation(pxr::TfToken &token)
@@ -870,32 +918,56 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 
     printf("num materials: %zi\n", materials.size());
 
+    struct MaterialImageTextures
+    {
+        std::string materialPath;
+        std::vector<std::string> imageTextures;
+    };
+    std::vector<MaterialImageTextures> materialTextures;
+    materialTextures.reserve(materials.size());
+
     for (pxr::UsdShadeMaterial &material : materials)
     {
+        MaterialImageTextures info = {};
+        info.materialPath = material.GetPath().GetString();
+
         if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
         {
             pxr::TfToken token;
             if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
             {
-                if (pxr::UsdShadeInput diffuseInput =
-                        shader.GetInput(pxr::TfToken("diffuseColor")))
+                for (const pxr::UsdShadeInput &input : shader.GetInputs())
                 {
-                    // pxr::UsdShadeShader uvTextureShader = HandleExpectedUVTexture(diffuseInput);
-                }
-                if (pxr::UsdShadeInput normalInput = shader.GetInput(pxr::TfToken("normal")))
-                {
-                    pxr::UsdShadeShader uvTextureShader = HandleExpectedUVTexture(normalInput);
-
-                    if (uvTextureShader)
+                    std::string texturePath;
+                    if (TryGetImageTexturePath(input, texturePath))
                     {
+                        AppendUniqueTexturePath(info.imageTextures, texturePath);
                     }
                 }
             }
             else
             {
-                printf("material is not a usdpreviewsurface\n");
-                YBI_ASSERT(0);
+                // TODO: support non-UsdPreviewSurface material networks.
+                printf("Texture gather: material %s uses unsupported surface shader %s\n",
+                       material.GetPath().GetText(),
+                       token.GetText());
             }
+        }
+        else
+        {
+            printf("Texture gather: material %s has no surface source\n", material.GetPath().GetText());
+        }
+        materialTextures.push_back(std::move(info));
+    }
+
+    for (const MaterialImageTextures &info : materialTextures)
+    {
+        printf("material %s image textures: %zu\n",
+               info.materialPath.c_str(),
+               info.imageTextures.size());
+        for (const std::string &path : info.imageTextures)
+        {
+            printf("  %s\n", path.c_str());
         }
     }
 
