@@ -103,6 +103,40 @@ bool CUDADevice::SupportsGrids() const
 #endif
 }
 
+CUdeviceptr CUDADevice::MemAllocBytes(size_t numBytes)
+{
+    YBI_ASSERT(numBytes != 0);
+    totalAllocated += numBytes;
+    CUdeviceptr ptr = 0;
+    CUDA_ASSERT(cuMemAlloc(&ptr, numBytes));
+    return ptr;
+}
+
+void CUDADevice::MemFreeBytes(CUdeviceptr ptr)
+{
+    if (!ptr)
+    {
+        return;
+    }
+    CUDA_ASSERT(cuMemFree(ptr));
+}
+
+void CUDADevice::MemcpyToDevice(CUdeviceptr dst, const void *src, size_t numBytes)
+{
+    YBI_ASSERT(dst);
+    YBI_ASSERT(src);
+    YBI_ASSERT(numBytes);
+    CUDA_ASSERT(cuMemcpyHtoD(dst, src, numBytes));
+}
+
+void CUDADevice::MemcpyToHost(void *dst, CUdeviceptr src, size_t numBytes)
+{
+    YBI_ASSERT(dst);
+    YBI_ASSERT(src);
+    YBI_ASSERT(numBytes);
+    CUDA_ASSERT(cuMemcpyDtoH(dst, src, numBytes));
+}
+
 void CUDADevice::CreateGridClusterTemplates()
 {
 #if (OPTIX_VERSION >= 90000)

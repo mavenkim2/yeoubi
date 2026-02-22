@@ -85,7 +85,12 @@ struct CUDADevice
     bool CreateOptixPrimaryPipeline(const std::string &ptx);
     void DestroyOptixPrimaryPipeline();
 
-    void BuildBVH(ScenePool *scenePool);
+    CUdeviceptr MemAllocBytes(size_t numBytes);
+    void MemFreeBytes(CUdeviceptr ptr);
+    void MemcpyToDevice(CUdeviceptr dst, const void *src, size_t numBytes);
+    void MemcpyToHost(void *dst, CUdeviceptr src, size_t numBytes);
+
+    void BuildBVH(Scene *scene);
     void CreateGridClusterTemplates();
 };
 
