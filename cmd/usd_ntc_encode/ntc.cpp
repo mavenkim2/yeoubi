@@ -123,6 +123,38 @@ std::string LowerExt(const std::string &path)
     return ext;
 }
 
+std::string ResolveUdimTilePath(const std::string &path)
+{
+    const std::string tokenUpper = "<UDIM>";
+    const std::string tokenLower = "<udim>";
+
+    size_t pos = path.find(tokenUpper);
+    size_t tokenLen = tokenUpper.size();
+    if (pos == std::string::npos)
+    {
+        pos = path.find(tokenLower);
+        tokenLen = tokenLower.size();
+    }
+    if (pos == std::string::npos)
+    {
+        return path;
+    }
+
+    for (int tile = 1001; tile <= 1199; ++tile)
+    {
+        std::string candidate = path;
+        candidate.replace(pos, tokenLen, std::to_string(tile));
+        if (std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    std::string fallback = path;
+    fallback.replace(pos, tokenLen, "1001");
+    return fallback;
+}
+
 bool MakeError(ntc::Status status, std::string &out)
 {
     out = std::string(ntc::StatusToString(status)) + ": " + ntc::GetLastErrorMessage();
@@ -160,23 +192,23 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
 {
     out = {};
     out.inputName = inputName;
-    out.texturePath = texture.texturePath;
+    out.texturePath = ResolveUdimTilePath(texture.texturePath);
 
-    if (!std::filesystem::exists(texture.texturePath))
+    if (!std::filesystem::exists(out.texturePath))
     {
-        reason = "texture file not found: " + texture.texturePath;
+        reason = "texture file not found: " + out.texturePath;
         return false;
     }
 
     const int numChannels = InferChannelCount(inputName, texture);
     const std::vector<int> srcChannels = BuildSourceChannels(inputName, texture, numChannels);
 
-    if (LowerExt(texture.texturePath) == ".exr")
+    if (LowerExt(out.texturePath) == ".exr")
     {
         std::vector<float> rgba;
         int width = 0;
         int height = 0;
-        if (!LoadExrRgba(texture.texturePath, width, height, rgba, reason))
+        if (!LoadExrRgba(out.texturePath, width, height, rgba, reason))
         {
             return false;
         }
@@ -204,10 +236,10 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
     int width = 0;
     int height = 0;
     int channelsInFile = 0;
-    unsigned char *pixels = stbi_load(texture.texturePath.c_str(), &width, &height, &channelsInFile, 4);
+    unsigned char *pixels = stbi_load(out.texturePath.c_str(), &width, &height, &channelsInFile, 4);
     if (!pixels)
     {
-        reason = "stbi_load failed for " + texture.texturePath;
+        reason = "stbi_load failed for " + out.texturePath;
         const char *stbReason = stbi_failure_reason();
         if (stbReason)
         {

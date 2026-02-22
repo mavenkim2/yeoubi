@@ -1,6 +1,7 @@
 #include "shared.h"
 
 #include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -97,6 +98,39 @@ std::string JsonEscape(const std::string &s)
 std::string ToPortablePath(const std::string &path)
 {
     return fs::path(path).generic_string();
+}
+
+fs::path GetStageBaseDir(const pxr::UsdStageRefPtr &stage)
+{
+    if (!stage)
+    {
+        return {};
+    }
+    pxr::SdfLayerHandle root = stage->GetRootLayer();
+    if (!root)
+    {
+        return {};
+    }
+    std::string rootPath = root->GetRealPath();
+    if (rootPath.empty())
+    {
+        rootPath = root->GetIdentifier();
+    }
+    if (rootPath.empty())
+    {
+        return {};
+    }
+    return fs::path(rootPath).parent_path();
+}
+
+std::string ResolveTexturePath(const fs::path &stageBaseDir, const std::string &path)
+{
+    fs::path p(path);
+    if (p.is_absolute() || stageBaseDir.empty())
+    {
+        return p.lexically_normal().string();
+    }
+    return (stageBaseDir / p).lexically_normal().string();
 }
 
 bool IsSrgbInput(const std::string &inputName)
@@ -322,6 +356,7 @@ bool ParseCli(int argc, char **argv, Cli &out)
 
 std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage)
 {
+    const fs::path stageBaseDir = GetStageBaseDir(stage);
     std::unordered_map<std::string, pxr::UsdShadeMaterial> uniqueMaterials;
 
     const pxr::Usd_PrimFlagsPredicate pred =
@@ -377,6 +412,7 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
             std::string reason;
             if (TryGetUVTextureFile(input, texture, reason))
             {
+                texture.texturePath = ResolveTexturePath(stageBaseDir, texture.texturePath);
                 item.channels.emplace(input.GetBaseName().GetString(), std::move(texture));
             }
             else
