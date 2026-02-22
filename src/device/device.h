@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 YBI_NAMESPACE_BEGIN
@@ -19,6 +20,8 @@ enum class DeviceKind : uint32_t
 struct Device
 {
     virtual ~Device() = default;
+
+    static Device *CreateDevice(DeviceKind kind, std::unique_ptr<Device> &storage);
 
     virtual DeviceKind GetKind() const = 0;
     virtual void BuildBVH(Scene *scene) = 0;

@@ -1,4 +1,3 @@
-#include "device/cuda_device.h"
 #include "device/device.h"
 #include "io/usd/load.h"
 #include "scene/scene.h"
@@ -63,23 +62,6 @@ static CliOptions ParseCli(int argc, char **argv)
     return options;
 }
 
-static Device *CreateDevice(DeviceKind kind, std::unique_ptr<Device> &storage)
-{
-    if (kind == DeviceKind::CPU)
-    {
-        fprintf(stderr, "CPU device backend not implemented yet.\n");
-        return nullptr;
-    }
-
-#if defined(WITH_CUDA) && defined(WITH_OPTIX)
-    storage = std::make_unique<CUDADevice>();
-    return storage.get();
-#else
-    (void)storage;
-    fprintf(stderr, "GPU backend requires WITH_CUDA and WITH_OPTIX.\n");
-    return nullptr;
-#endif
-}
 } // namespace
 
 int main(int argc, char **argv)
@@ -95,7 +77,7 @@ int main(int argc, char **argv)
     }
 
     std::unique_ptr<Device> deviceStorage;
-    Device *device = CreateDevice(options.deviceKind, deviceStorage);
+    Device *device = Device::CreateDevice(options.deviceKind, deviceStorage);
     if (!device)
     {
         return 1;

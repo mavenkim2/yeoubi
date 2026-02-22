@@ -19,6 +19,7 @@ set (YBI_SOURCE "")
 list (APPEND YBI_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/src)
 list (APPEND YBI_SOURCE 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
