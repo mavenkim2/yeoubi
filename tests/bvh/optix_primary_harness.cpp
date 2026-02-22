@@ -724,6 +724,8 @@ ComputeBounds(const Curves &curves, ybi::float3 &boundsMinOut, ybi::float3 &boun
 struct MeshAccelData
 {
     OptixTraversableHandle gasHandle = {};
+    const Mesh *sourceMesh = nullptr;
+    unsigned int refIndex = std::numeric_limits<unsigned int>::max();
     CUdeviceptr positionsBuffer = 0;
     CUdeviceptr indicesBuffer = 0;
     int numPositions = 0;
@@ -741,14 +743,22 @@ struct CurveAccelData
 
 struct FlattenedSceneData
 {
+    struct MeshUploadJob
+    {
+        const Mesh *mesh = nullptr;
+        unsigned int refIndex = std::numeric_limits<unsigned int>::max();
+    };
+
     std::vector<OptixInstance> instances;
     std::vector<LaunchParams::InstanceGeomRef> refs;
+    std::vector<MeshUploadJob> meshUploadJobs;
     std::vector<CUdeviceptr> ownedBuffers;
     ybi::float3 boundsMin = ybi::make_float3(std::numeric_limits<float>::max());
     ybi::float3 boundsMax = ybi::make_float3(-std::numeric_limits<float>::max());
 };
 
 static constexpr unsigned int kHitgroupSbtOffset = 0u;
+static constexpr unsigned int kInvalidInstanceRefId = ((1u << 24) - 1u);
 
 static ybi::float3x4 IdentityTransform3x4()
 {
@@ -917,6 +927,7 @@ BuildSceneAccelData(CUDADevice *device, HostMemoryArena &hostArena, Scene *scene
 
         MeshAccelData &meshAccel = out.meshAccels[meshIndex];
         meshAccel.gasHandle = BuildTriangleGASFromMesh(device, hostArena, mesh);
+        meshAccel.sourceMesh = &mesh;
         meshAccel.numPositions = (int)mesh.positions.size();
         meshAccel.numIndices = (int)mesh.indices.size();
         ComputeBounds(mesh, meshAccel.boundsMin, meshAccel.boundsMax);
@@ -939,25 +950,6 @@ BuildSceneAccelData(CUDADevice *device, HostMemoryArena &hostArena, Scene *scene
         ComputeBounds(curves, curveAccel.boundsMin, curveAccel.boundsMax);
         hostArena.Clear();
         device->deviceArena->Clear();
-    }
-
-    for (size_t meshIndex = 0; meshIndex < scene->meshes.size(); meshIndex++)
-    {
-        Mesh &mesh = scene->meshes[meshIndex];
-        MeshAccelData &meshAccel = out.meshAccels[meshIndex];
-        if (!meshAccel.gasHandle)
-        {
-            continue;
-        }
-
-        CUDA_ASSERT(
-            cuMemAlloc(&meshAccel.positionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemAlloc(&meshAccel.indicesBuffer, sizeof(int) * mesh.indices.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(meshAccel.positionsBuffer,
-                                 mesh.positions.data(),
-                                 sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(
-            meshAccel.indicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
     }
 
     return out;
@@ -986,15 +978,12 @@ static void AppendSceneAccelInstances(const Scene &scene,
         OptixInstance optixInstance = {};
         SetInstanceDefaults(optixInstance);
         CopyTransform(worldFromMesh3x4, optixInstance.transform);
-        optixInstance.instanceId = (unsigned int)out.refs.size();
+        YBI_ASSERT(meshAccel.refIndex != std::numeric_limits<unsigned int>::max());
+        optixInstance.instanceId = meshAccel.refIndex;
         YBI_ASSERT(optixInstance.instanceId < (1u << 24));
         optixInstance.sbtOffset = kHitgroupSbtOffset;
         optixInstance.traversableHandle = meshAccel.gasHandle;
         out.instances.push_back(optixInstance);
-        out.refs.push_back({(unsigned long long)meshAccel.positionsBuffer,
-                            (unsigned long long)meshAccel.indicesBuffer,
-                            meshAccel.numPositions,
-                            meshAccel.numIndices});
 
         ExpandTransformedBounds(out.boundsMin,
                                 out.boundsMax,
@@ -1018,12 +1007,11 @@ static void AppendSceneAccelInstances(const Scene &scene,
         OptixInstance optixInstance = {};
         SetInstanceDefaults(optixInstance);
         CopyTransform(worldFromCurve3x4, optixInstance.transform);
-        optixInstance.instanceId = (unsigned int)out.refs.size();
+        optixInstance.instanceId = kInvalidInstanceRefId;
         YBI_ASSERT(optixInstance.instanceId < (1u << 24));
         optixInstance.sbtOffset = kHitgroupSbtOffset;
         optixInstance.traversableHandle = curveAccel.gasHandle;
         out.instances.push_back(optixInstance);
-        out.refs.push_back({0ull, 0ull, 0, 0});
 
         ExpandTransformedBounds(out.boundsMin,
                                 out.boundsMax,
@@ -1073,6 +1061,31 @@ BuildFlattenedUSDScene(CUDADevice *device, HostMemoryArena &hostArena, ScenePool
     YBI_ASSERT(rootScene != nullptr);
 
     const size_t rootAccelIndex = getSceneAccelIndex(rootScene);
+
+    for (const Instance &instance : rootScene->instances)
+    {
+        YBI_ASSERT(instance.childSceneIndex < rootScene->childScenes.size());
+        Scene *childScene = rootScene->childScenes[instance.childSceneIndex];
+        YBI_ASSERT(childScene != nullptr);
+        (void)getSceneAccelIndex(childScene);
+    }
+
+    unsigned int nextRefIndex = 0;
+    for (SceneAccelData &sceneAccels : allSceneAccels)
+    {
+        for (MeshAccelData &meshAccel : sceneAccels.meshAccels)
+        {
+            if (!meshAccel.gasHandle || meshAccel.sourceMesh == nullptr)
+            {
+                continue;
+            }
+            meshAccel.refIndex = nextRefIndex;
+            result.meshUploadJobs.push_back({meshAccel.sourceMesh, meshAccel.refIndex});
+            nextRefIndex++;
+        }
+    }
+    result.refs.resize(nextRefIndex);
+
     AppendSceneAccelInstances(
         *rootScene, allSceneAccels[rootAccelIndex], ybi::float4x4::Identity(), result);
 
@@ -1088,21 +1101,34 @@ BuildFlattenedUSDScene(CUDADevice *device, HostMemoryArena &hostArena, ScenePool
             *childScene, allSceneAccels[childAccelIndex], worldFromChild, result);
     }
 
-    for (const SceneAccelData &sceneAccels : allSceneAccels)
-    {
-        for (const MeshAccelData &meshAccel : sceneAccels.meshAccels)
-        {
-            if (meshAccel.positionsBuffer)
-            {
-                result.ownedBuffers.push_back(meshAccel.positionsBuffer);
-            }
-            if (meshAccel.indicesBuffer)
-            {
-                result.ownedBuffers.push_back(meshAccel.indicesBuffer);
-            }
-        }
-    }
     return result;
+}
+
+static void UploadFlattenedMeshRefs(CUDADevice *device, FlattenedSceneData &flattened)
+{
+    YBI_ASSERT(device);
+    for (const FlattenedSceneData::MeshUploadJob &job : flattened.meshUploadJobs)
+    {
+        YBI_ASSERT(job.mesh);
+        YBI_ASSERT(job.refIndex < flattened.refs.size());
+        const Mesh &mesh = *job.mesh;
+
+        CUdeviceptr positionsBuffer = 0;
+        CUdeviceptr indicesBuffer = 0;
+        CUDA_ASSERT(cuMemAlloc(&positionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(cuMemAlloc(&indicesBuffer, sizeof(int) * mesh.indices.size()));
+        CUDA_ASSERT(cuMemcpyHtoD(
+            positionsBuffer, mesh.positions.data(), sizeof(ybi::float3) * mesh.positions.size()));
+        CUDA_ASSERT(
+            cuMemcpyHtoD(indicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
+
+        flattened.refs[job.refIndex] = {(unsigned long long)positionsBuffer,
+                                        (unsigned long long)indicesBuffer,
+                                        (int)mesh.positions.size(),
+                                        (int)mesh.indices.size()};
+        flattened.ownedBuffers.push_back(positionsBuffer);
+        flattened.ownedBuffers.push_back(indicesBuffer);
+    }
 }
 
 static void RenderTraversable(OptixPipeline pipeline,
@@ -1455,22 +1481,27 @@ int main(int argc, char **argv)
 
         FlattenedSceneData flattened =
             BuildFlattenedUSDScene(&device, hostArena, &flattenedScenePool);
-        if (flattened.instances.empty() || flattened.refs.empty())
+        if (flattened.instances.empty())
         {
-            fprintf(
-                stderr, "USD scene produced no mesh instances: %s\n", options.inputPath.c_str());
+            fprintf(stderr, "USD scene produced no instances: %s\n", options.inputPath.c_str());
             return 1;
         }
-        YBI_ASSERT(flattened.instances.size() == flattened.refs.size());
 
         OptixTraversableHandle rootIAS = BuildTopLevelIAS(&device, hostArena, flattened.instances);
 
+        UploadFlattenedMeshRefs(&device, flattened);
+
         CUdeviceptr instanceGeomRefsBuffer = 0;
-        CUDA_ASSERT(cuMemAlloc(&instanceGeomRefsBuffer,
-                               flattened.refs.size() * sizeof(LaunchParams::InstanceGeomRef)));
-        CUDA_ASSERT(cuMemcpyHtoD(instanceGeomRefsBuffer,
-                                 flattened.refs.data(),
-                                 flattened.refs.size() * sizeof(LaunchParams::InstanceGeomRef)));
+        if (!flattened.refs.empty())
+        {
+            CUDA_ASSERT(cuMemAlloc(&instanceGeomRefsBuffer,
+                                   flattened.refs.size() *
+                                       sizeof(LaunchParams::InstanceGeomRef)));
+            CUDA_ASSERT(cuMemcpyHtoD(instanceGeomRefsBuffer,
+                                     flattened.refs.data(),
+                                     flattened.refs.size() *
+                                         sizeof(LaunchParams::InstanceGeomRef)));
+        }
 
         std::optional<RenderCameraOverride> usdCamera = std::nullopt;
         if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
@@ -1503,7 +1534,10 @@ int main(int argc, char **argv)
                           options.cameraPosition,
                           options.lookAt);
         printf("Wrote %s\n", options.outputPath.c_str());
-        CUDA_ASSERT(cuMemFree(instanceGeomRefsBuffer));
+        if (instanceGeomRefsBuffer)
+        {
+            CUDA_ASSERT(cuMemFree(instanceGeomRefsBuffer));
+        }
         for (CUdeviceptr buffer : flattened.ownedBuffers)
         {
             CUDA_ASSERT(cuMemFree(buffer));
