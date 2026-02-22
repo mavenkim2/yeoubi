@@ -2,6 +2,7 @@
 
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -15,16 +16,6 @@
 
 namespace
 {
-
-std::string AssetPathToString(const pxr::SdfAssetPath &asset)
-{
-    std::string resolved = asset.GetResolvedPath();
-    if (!resolved.empty())
-    {
-        return resolved;
-    }
-    return asset.GetAssetPath();
-}
 
 bool IsConnected(const pxr::UsdShadeInput &input)
 {
@@ -100,37 +91,46 @@ std::string ToPortablePath(const std::string &path)
     return fs::path(path).generic_string();
 }
 
-fs::path GetStageBaseDir(const pxr::UsdStageRefPtr &stage)
+std::string ResolveAssetPath(const pxr::UsdShadeInput &fileInput, const pxr::SdfAssetPath &assetPath)
 {
-    if (!stage)
+    if (!assetPath.GetResolvedPath().empty())
     {
-        return {};
+        return assetPath.GetResolvedPath();
     }
-    pxr::SdfLayerHandle root = stage->GetRootLayer();
-    if (!root)
-    {
-        return {};
-    }
-    std::string rootPath = root->GetRealPath();
-    if (rootPath.empty())
-    {
-        rootPath = root->GetIdentifier();
-    }
-    if (rootPath.empty())
-    {
-        return {};
-    }
-    return fs::path(rootPath).parent_path();
-}
 
-std::string ResolveTexturePath(const fs::path &stageBaseDir, const std::string &path)
-{
-    fs::path p(path);
-    if (p.is_absolute() || stageBaseDir.empty())
+    const std::string raw = assetPath.GetAssetPath();
+    if (raw.empty())
     {
-        return p.lexically_normal().string();
+        return {};
     }
-    return (stageBaseDir / p).lexically_normal().string();
+
+    const auto stack = fileInput.GetAttr().GetPropertyStack();
+    for (const auto &spec : stack)
+    {
+        if (!spec)
+        {
+            continue;
+        }
+        pxr::SdfLayerHandle layer = spec->GetLayer();
+        if (!layer)
+        {
+            continue;
+        }
+
+        std::string resolved = pxr::SdfResolveAssetPathRelativeToLayer(layer, raw);
+        if (!resolved.empty())
+        {
+            return resolved;
+        }
+
+        std::string anchored = pxr::SdfComputeAssetPathRelativeToLayer(layer, raw);
+        if (!anchored.empty())
+        {
+            return anchored;
+        }
+    }
+
+    return raw;
 }
 
 bool IsSrgbInput(const std::string &inputName)
@@ -236,7 +236,7 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
         return false;
     }
 
-    const std::string path = AssetPathToString(fileAsset);
+    const std::string path = ResolveAssetPath(fileInput, fileAsset);
     if (path.empty())
     {
         reasonOut = "empty texture path";
@@ -356,7 +356,6 @@ bool ParseCli(int argc, char **argv, Cli &out)
 
 std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage)
 {
-    const fs::path stageBaseDir = GetStageBaseDir(stage);
     std::unordered_map<std::string, pxr::UsdShadeMaterial> uniqueMaterials;
 
     const pxr::Usd_PrimFlagsPredicate pred =
@@ -412,7 +411,6 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
             std::string reason;
             if (TryGetUVTextureFile(input, texture, reason))
             {
-                texture.texturePath = ResolveTexturePath(stageBaseDir, texture.texturePath);
                 item.channels.emplace(input.GetBaseName().GetString(), std::move(texture));
             }
             else

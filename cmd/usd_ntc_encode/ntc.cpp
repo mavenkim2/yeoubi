@@ -334,6 +334,7 @@ bool EncodeMaterial(ntc::IContext *context,
     desc.mips = 1;
 
     ntc::TextureSetFeatures features = {};
+    features.stagingBytesPerPixel = 16; // allow up to float4 transfers through host staging
 
     ntc::TextureSetWrapper textureSet(context);
     ntc::Status status = context->CreateTextureSet(desc, features, textureSet.ptr());
