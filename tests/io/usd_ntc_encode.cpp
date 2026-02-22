@@ -6,6 +6,8 @@
 #include <pxr/usd/usdShade/shader.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -22,20 +24,28 @@ struct Cli
 {
     std::string usdPath;
     std::string outDir;
-    std::string ntcCli;
+    std::string ntcCli = "ntc-cli";
+    float bitsPerPixel = 4.0f;
+    bool noEncode = false;
+};
+
+struct ChannelTexture
+{
+    std::string texturePath;
+    std::string swizzle;
 };
 
 struct MaterialChannels
 {
     std::string materialPath;
-    std::unordered_map<std::string, std::string> channels;
+    std::unordered_map<std::string, ChannelTexture> channels;
 };
 
 void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
-                 "Usage: %s <entry.usd[a|c]> <out_dir> [--ntc-cli <path>]\n"
-                 "Writes one manifest per material and optionally runs NTC CLI per material.\n",
+                 "Usage: %s <entry.usd[a|c]> <out_dir> [--ntc-cli <path>] [--bits-per-pixel <bpp>] [--no-encode]\n"
+                 "Writes one NTC JSON manifest per material and invokes ntc-cli per material.\n",
                  exe);
 }
 
@@ -62,6 +72,26 @@ bool ParseCli(int argc, char **argv, Cli &out)
             out.ntcCli = argv[++i];
             continue;
         }
+        if (arg == "--bits-per-pixel")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "Missing value for --bits-per-pixel\n");
+                return false;
+            }
+            out.bitsPerPixel = std::strtof(argv[++i], nullptr);
+            if (!(out.bitsPerPixel > 0.0f))
+            {
+                std::fprintf(stderr, "Invalid --bits-per-pixel value\n");
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--no-encode")
+        {
+            out.noEncode = true;
+            continue;
+        }
         std::fprintf(stderr, "Unknown option: %s\n", arg.c_str());
         return false;
     }
@@ -83,11 +113,139 @@ bool IsConnected(const pxr::UsdShadeInput &input)
     return !input.GetConnectedSources().empty();
 }
 
+std::string OutputNameToSwizzle(const pxr::TfToken &sourceName)
+{
+    const std::string name = sourceName.GetString();
+    if (name == "r")
+    {
+        return "R";
+    }
+    if (name == "g")
+    {
+        return "G";
+    }
+    if (name == "b")
+    {
+        return "B";
+    }
+    if (name == "a")
+    {
+        return "A";
+    }
+    if (name == "rgb")
+    {
+        return "RGB";
+    }
+    if (name == "rgba")
+    {
+        return "RGBA";
+    }
+    return "";
+}
+
+std::string JsonEscape(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s)
+    {
+        if (c == '\\')
+        {
+            out += "\\\\";
+        }
+        else if (c == '"')
+        {
+            out += "\\\"";
+        }
+        else if (c == '\n')
+        {
+            out += "\\n";
+        }
+        else if (c == '\r')
+        {
+            out += "\\r";
+        }
+        else if (c == '\t')
+        {
+            out += "\\t";
+        }
+        else
+        {
+            out += c;
+        }
+    }
+    return out;
+}
+
+std::string ToPortablePath(const std::string &path)
+{
+    return fs::path(path).generic_string();
+}
+
+std::string SemanticLabelForInput(const std::string &inputName)
+{
+    if (inputName == "diffuseColor")
+    {
+        return "Albedo";
+    }
+    if (inputName == "emissiveColor")
+    {
+        return "Emissive";
+    }
+    if (inputName == "normal")
+    {
+        return "Normal";
+    }
+    if (inputName == "roughness")
+    {
+        return "Roughness";
+    }
+    if (inputName == "metallic")
+    {
+        return "Metalness";
+    }
+    if (inputName == "occlusion")
+    {
+        return "Occlusion";
+    }
+    if (inputName == "opacity")
+    {
+        return "Alpha";
+    }
+    if (inputName == "specularColor")
+    {
+        return "SpecularColor";
+    }
+    return "";
+}
+
+std::string SemanticRangeForInput(const std::string &inputName, const std::string &swizzle)
+{
+    if (!swizzle.empty())
+    {
+        return swizzle;
+    }
+    if (inputName == "roughness" || inputName == "metallic" || inputName == "occlusion")
+    {
+        return "R";
+    }
+    if (inputName == "opacity")
+    {
+        return "A";
+    }
+    return "RGB";
+}
+
+bool IsSrgbInput(const std::string &inputName)
+{
+    return inputName == "diffuseColor" || inputName == "emissiveColor";
+}
+
 bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
-                         std::string &pathOut,
+                         ChannelTexture &out,
                          std::string &reasonOut)
 {
-    pathOut.clear();
+    out = {};
     reasonOut.clear();
 
     auto sources = input.GetConnectedSources();
@@ -130,6 +288,8 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
         return false;
     }
 
+    out.swizzle = OutputNameToSwizzle(sources[0].sourceName);
+
     const std::string path = AssetPathToString(fileAsset);
     if (path.empty())
     {
@@ -137,7 +297,7 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
         return false;
     }
 
-    pathOut = path;
+    out.texturePath = path;
     return true;
 }
 
@@ -212,11 +372,11 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
                 continue;
             }
 
-            std::string texturePath;
+            ChannelTexture texture = {};
             std::string reason;
-            if (TryGetUVTextureFile(input, texturePath, reason))
+            if (TryGetUVTextureFile(input, texture, reason))
             {
-                item.channels.emplace(input.GetBaseName().GetString(), texturePath);
+                item.channels.emplace(input.GetBaseName().GetString(), std::move(texture));
             }
             else
             {
@@ -244,22 +404,57 @@ bool WriteManifest(const fs::path &path, const MaterialChannels &mat)
         return false;
     }
 
-    out << "material " << mat.materialPath << "\n";
-    out << "channel_count " << mat.channels.size() << "\n";
+    std::vector<std::pair<std::string, ChannelTexture>> sorted(mat.channels.begin(), mat.channels.end());
+    std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
+        return a.first < b.first;
+    });
 
-    std::vector<std::pair<std::string, std::string>> sorted(mat.channels.begin(), mat.channels.end());
-    std::sort(sorted.begin(), sorted.end());
-    for (const auto &kv : sorted)
+    out << "{\n";
+    out << "  \"textures\": [\n";
+    for (size_t i = 0; i < sorted.size(); ++i)
     {
-        out << "channel " << kv.first << " " << kv.second << "\n";
+        const auto &kv = sorted[i];
+        const std::string semantic = SemanticLabelForInput(kv.first);
+        const std::string range = SemanticRangeForInput(kv.first, kv.second.swizzle);
+
+        out << "    {\n";
+        out << "      \"fileName\": \"" << JsonEscape(ToPortablePath(kv.second.texturePath)) << "\",\n";
+        out << "      \"name\": \"" << JsonEscape(kv.first) << "\",\n";
+        if (!kv.second.swizzle.empty())
+        {
+            out << "      \"channelSwizzle\": \"" << kv.second.swizzle << "\",\n";
+        }
+        out << "      \"isSRGB\": " << (IsSrgbInput(kv.first) ? "true" : "false");
+        if (!semantic.empty())
+        {
+            out << ",\n";
+            out << "      \"semantics\": {\n";
+            out << "        \"" << semantic << "\": \"" << range << "\"\n";
+            out << "      }\n";
+        }
+        else
+        {
+            out << "\n";
+        }
+        out << "    }";
+        if (i + 1 < sorted.size())
+        {
+            out << ",";
+        }
+        out << "\n";
     }
+    out << "  ]\n";
+    out << "}\n";
     return true;
 }
 
-int RunNtc(const std::string &ntcCli, const fs::path &manifestPath, const fs::path &outPath)
+int RunNtc(const std::string &ntcCli, const fs::path &manifestPath, const fs::path &outPath, float bitsPerPixel)
 {
-    std::string cmd = "\"" + ntcCli + "\" encode --manifest \"" + manifestPath.string() +
-                      "\" --output \"" + outPath.string() + "\"";
+    char bppBuf[64];
+    std::snprintf(bppBuf, sizeof(bppBuf), "%.3f", bitsPerPixel);
+    std::string cmd = "\"" + ntcCli + "\" --loadManifest \"" + manifestPath.string() +
+                      "\" --generateMips --compress --bitsPerPixel " + bppBuf +
+                      " --decompress --saveCompressed \"" + outPath.string() + "\"";
     return std::system(cmd.c_str());
 }
 
@@ -289,6 +484,11 @@ int main(int argc, char **argv)
     int encodeFailCount = 0;
     int withChannels = 0;
 
+    if (!cli.noEncode)
+    {
+        std::printf("NTC encode executable: %s\n", cli.ntcCli.c_str());
+    }
+
     for (const MaterialChannels &mat : materials)
     {
         if (mat.channels.empty())
@@ -298,7 +498,7 @@ int main(int argc, char **argv)
         ++withChannels;
 
         const std::string base = Sanitize(mat.materialPath);
-        const fs::path manifestPath = fs::path(cli.outDir) / (base + ".ntc_manifest.txt");
+        const fs::path manifestPath = fs::path(cli.outDir) / (base + ".ntc_manifest.json");
         const fs::path ntcOutPath = fs::path(cli.outDir) / (base + ".ntc");
 
         if (!WriteManifest(manifestPath, mat))
@@ -313,9 +513,9 @@ int main(int argc, char **argv)
                     mat.channels.size(),
                     manifestPath.string().c_str());
 
-        if (!cli.ntcCli.empty())
+        if (!cli.noEncode)
         {
-            const int rc = RunNtc(cli.ntcCli, manifestPath, ntcOutPath);
+            const int rc = RunNtc(cli.ntcCli, manifestPath, ntcOutPath, cli.bitsPerPixel);
             if (rc == 0)
             {
                 ++encodedCount;
@@ -329,7 +529,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            std::printf("  dry-run (set --ntc-cli to encode)\n");
+            std::printf("  dry-run (--no-encode)\n");
         }
     }
 
