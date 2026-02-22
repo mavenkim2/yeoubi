@@ -4,6 +4,7 @@
 
 #include <libntc/ntc.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -35,6 +36,13 @@ struct MaterialChannels
     std::unordered_map<std::string, ChannelTexture> channels;
 };
 
+struct EncodeStats
+{
+    uint64_t sourceFileBytes = 0;
+    uint64_t decodedBytes = 0;
+    uint64_t ntcBytes = 0;
+};
+
 void PrintUsage(const char *exe);
 bool ParseCli(int argc, char **argv, Cli &out);
 
@@ -50,5 +58,6 @@ bool EncodeMaterial(ntc::IContext *context,
                     int stepsPerIter,
                     int materialIndex,
                     int materialCount,
+                    EncodeStats &outStats,
                     float &outActualBpp,
                     std::string &errorOut);

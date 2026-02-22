@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -29,6 +31,8 @@ struct LoadedChannel
     int width = 0;
     int height = 0;
     int numChannels = 0;
+    uint64_t sourceFileBytes = 0;
+    uint64_t decodedBytes = 0;
     std::vector<unsigned char> unorm8;
     std::vector<float> float32;
 };
@@ -199,6 +203,12 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
         reason = "texture file not found: " + out.texturePath;
         return false;
     }
+    std::error_code fileSizeEc;
+    out.sourceFileBytes = std::filesystem::file_size(out.texturePath, fileSizeEc);
+    if (fileSizeEc)
+    {
+        out.sourceFileBytes = 0;
+    }
 
     const int numChannels = InferChannelCount(inputName, texture);
     const std::vector<int> srcChannels = BuildSourceChannels(inputName, texture, numChannels);
@@ -219,6 +229,7 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
         out.height = height;
         out.numChannels = numChannels;
         out.float32.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * static_cast<size_t>(numChannels));
+        out.decodedBytes = static_cast<uint64_t>(out.float32.size()) * sizeof(float);
 
         const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
         for (size_t i = 0; i < pixelCount; ++i)
@@ -256,6 +267,7 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
     out.height = height;
     out.numChannels = numChannels;
     out.unorm8.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * static_cast<size_t>(numChannels));
+    out.decodedBytes = static_cast<uint64_t>(out.unorm8.size());
 
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
     for (size_t i = 0; i < pixelCount; ++i)
@@ -281,9 +293,19 @@ bool EncodeMaterial(ntc::IContext *context,
                     int stepsPerIter,
                     int materialIndex,
                     int materialCount,
+                    EncodeStats &outStats,
                     float &outActualBpp,
                     std::string &errorOut)
 {
+    outStats = {};
+    const auto t0 = std::chrono::steady_clock::now();
+    std::fprintf(stderr,
+                 "NTC stage: [%d/%d] load textures: %s\n",
+                 materialIndex,
+                 materialCount,
+                 mat.materialPath.c_str());
+    std::fflush(stderr);
+
     std::vector<std::pair<std::string, ChannelTexture>> sorted(mat.channels.begin(), mat.channels.end());
     std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
         return a.first < b.first;
@@ -313,6 +335,7 @@ bool EncodeMaterial(ntc::IContext *context,
     const int width = loaded[0].width;
     const int height = loaded[0].height;
     int totalChannels = 0;
+    std::unordered_set<std::string> uniqueTexturePaths;
     for (const LoadedChannel &ch : loaded)
     {
         if (ch.width != width || ch.height != height)
@@ -321,6 +344,11 @@ bool EncodeMaterial(ntc::IContext *context,
             return false;
         }
         totalChannels += ch.numChannels;
+        outStats.decodedBytes += ch.decodedBytes;
+        if (uniqueTexturePaths.insert(ch.texturePath).second)
+        {
+            outStats.sourceFileBytes += ch.sourceFileBytes;
+        }
     }
 
     if (totalChannels <= 0 || totalChannels > NTC_MAX_CHANNELS)
@@ -328,6 +356,17 @@ bool EncodeMaterial(ntc::IContext *context,
         errorOut = "total channels out of range (1..16)";
         return false;
     }
+    std::fprintf(stderr,
+                 "NTC stage: [%d/%d] textures loaded: %zu, dims=%dx%d, channels=%d, source=%.2f MiB, decoded=%.2f MiB\n",
+                 materialIndex,
+                 materialCount,
+                 loaded.size(),
+                 width,
+                 height,
+                 totalChannels,
+                 static_cast<double>(outStats.sourceFileBytes) / (1024.0 * 1024.0),
+                 static_cast<double>(outStats.decodedBytes) / (1024.0 * 1024.0));
+    std::fflush(stderr);
 
     ntc::TextureSetDesc desc = {};
     desc.width = width;
@@ -339,6 +378,8 @@ bool EncodeMaterial(ntc::IContext *context,
     features.stagingBytesPerPixel = 16; // allow up to float4 transfers through host staging
 
     ntc::TextureSetWrapper textureSet(context);
+    std::fprintf(stderr, "NTC stage: [%d/%d] setup texture set\n", materialIndex, materialCount);
+    std::fflush(stderr);
     ntc::Status status = context->CreateTextureSet(desc, features, textureSet.ptr());
     if (status != ntc::Status::Ok)
     {
@@ -359,6 +400,8 @@ bool EncodeMaterial(ntc::IContext *context,
     }
 
     int firstChannel = 0;
+    std::fprintf(stderr, "NTC stage: [%d/%d] upload channels\n", materialIndex, materialCount);
+    std::fflush(stderr);
     for (const LoadedChannel &ch : loaded)
     {
         ntc::ITextureMetadata *meta = textureSet->AddTexture();
@@ -424,6 +467,13 @@ bool EncodeMaterial(ntc::IContext *context,
     {
         return MakeError(status, errorOut);
     }
+    std::fprintf(stderr,
+                 "NTC stage: [%d/%d] start compression (steps=%d, stepPerIter=%d)\n",
+                 materialIndex,
+                 materialCount,
+                 settings.trainingSteps,
+                 settings.stepsPerIteration);
+    std::fflush(stderr);
 
     ntc::CompressionStats stats = {};
     int nextPercentPrint = 0;
@@ -451,6 +501,7 @@ bool EncodeMaterial(ntc::IContext *context,
                              std::max(0, materialCount - materialIndex),
                              done,
                              settings.trainingSteps);
+                std::fflush(stderr);
                 nextPercentPrint += 10;
             }
         }
@@ -466,12 +517,30 @@ bool EncodeMaterial(ntc::IContext *context,
     {
         return MakeError(status, errorOut);
     }
+    std::fprintf(stderr, "NTC stage: [%d/%d] finalize compression\n", materialIndex, materialCount);
+    std::fflush(stderr);
 
     status = textureSet->SaveToFile(outPath.string().c_str());
     if (status != ntc::Status::Ok)
     {
         return MakeError(status, errorOut);
     }
+    std::error_code ntcSizeEc;
+    outStats.ntcBytes = fs::file_size(outPath, ntcSizeEc);
+    if (ntcSizeEc)
+    {
+        outStats.ntcBytes = 0;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    std::fprintf(stderr,
+                 "NTC stage: [%d/%d] done %s in %lld ms, ntc=%.2f MiB\n",
+                 materialIndex,
+                 materialCount,
+                 outPath.string().c_str(),
+                 static_cast<long long>(elapsedMs),
+                 static_cast<double>(outStats.ntcBytes) / (1024.0 * 1024.0));
+    std::fflush(stderr);
 
     return true;
 }
