@@ -2,6 +2,8 @@
 
 #if defined(WITH_EMBREE)
 
+#include "util/aligned_malloc.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,7 +37,8 @@ DeviceKind CPUDevice::GetKind() const
 DeviceMemoryView<uint8_t> CPUDevice::AllocBytes(size_t numBytes)
 {
     YBI_ASSERT(numBytes != 0);
-    uint8_t *ptr = (uint8_t *)std::malloc(numBytes);
+    constexpr size_t kCPUDeviceAlignment = 64;
+    uint8_t *ptr = (uint8_t *)util::AlignedAlloc(numBytes, kCPUDeviceAlignment);
     YBI_ASSERT(ptr);
     totalAllocated += numBytes;
     return {ptr, numBytes};
@@ -48,7 +51,7 @@ void CPUDevice::FreeBytes(DeviceMemoryView<uint8_t> &view)
         return;
     }
     totalAllocated -= view.numBytes();
-    std::free(view.data());
+    util::AlignedFree(view.data());
     view = {};
 }
 
@@ -85,4 +88,3 @@ void CPUDevice::BuildBVH(Scene *scene)
 YBI_NAMESPACE_END
 
 #endif
-
