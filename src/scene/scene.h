@@ -53,6 +53,7 @@ struct Mesh
     Array<float3> positions;
     Array<int> indices;
     float3x4 parentFromLocal;
+    uint32_t refIndex = UINT32_MAX;
 
     Mesh() = default;
     ~Mesh() = default;
@@ -178,9 +179,6 @@ struct Scene
     Scene &operator=(const Scene &) = delete;
     Scene(Scene &&other) noexcept;
     Scene &operator=(Scene &&other) noexcept = delete;
-
-    int GetNumPrimitives(int collectionIndex) const;
-    ConstCollectionRange GetPrimitivesInCollection(int collectionIndex) const;
 };
 
 struct ScenePool
@@ -190,6 +188,13 @@ struct ScenePool
     Camera camera;
 };
 
+struct SceneMeshUploadRef
+{
+    const Mesh *mesh = nullptr;
+    uint32_t refIndex = 0;
+};
+
 bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string *error = nullptr);
+void CollectScenePoolMeshUploadRefs(ScenePool *scenePool, std::vector<SceneMeshUploadRef> *out);
 
 YBI_NAMESPACE_END

@@ -13,18 +13,7 @@ BVH::BVH() : flags(BVHFlags(0)) {}
 
 static float3x4 GetIdentityTransform()
 {
-    return float3x4(1.0f,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    1.0f,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    1.0f,
-                    0.0f);
+    return float3x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 }
 
 static void SetError(std::string *error, const std::string &message)
@@ -201,7 +190,8 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
                 SetError(error, "FlattenScenePoolToRootChildren: null child scene");
                 return false;
             }
-            const float4x4 worldFromChild = mul(entry.worldFromScene, ToFloat4x4(instance.parentFromLocal));
+            const float4x4 worldFromChild =
+                mul(entry.worldFromScene, ToFloat4x4(instance.parentFromLocal));
             stack.push_back({child, worldFromChild});
         }
 
@@ -241,6 +231,29 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
     src->scenes.clear();
     src->rootSceneIndex = 0;
     return true;
+}
+
+void CollectScenePoolMeshUploadRefs(ScenePool *scenePool, std::vector<SceneMeshUploadRef> *out)
+{
+    YBI_ASSERT(scenePool);
+    YBI_ASSERT(out);
+    out->clear();
+
+    uint32_t nextRefIndex = 0;
+    for (std::unique_ptr<Scene> &scenePtr : scenePool->scenes)
+    {
+        Scene *scene = scenePtr.get();
+        if (!scene)
+        {
+            continue;
+        }
+        for (Mesh &mesh : scene->meshes)
+        {
+            mesh.refIndex = nextRefIndex;
+            out->push_back({&mesh, nextRefIndex});
+            nextRefIndex++;
+        }
+    }
 }
 
 Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx)
@@ -323,10 +336,8 @@ Instance::Instance(const float3x4 &parentFromLocal, uint32_t childSceneIndex)
 }
 
 Scene::Scene(Scene &&other) noexcept
-    : bvh(other.bvh), bvhHandle(other.bvhHandle),
-      meshes(std::move(other.meshes)),
-      curves(std::move(other.curves)),
-      instances(std::move(other.instances)),
+    : bvh(other.bvh), bvhHandle(other.bvhHandle), meshes(std::move(other.meshes)),
+      curves(std::move(other.curves)), instances(std::move(other.instances)),
       childScenes(std::move(other.childScenes)),
       micropolygonMeshes(std::move(other.micropolygonMeshes)),
       subdivisionMeshes(std::move(other.subdivisionMeshes)),
@@ -334,24 +345,6 @@ Scene::Scene(Scene &&other) noexcept
       primitiveCollections(std::move(other.primitiveCollections)),
       attributes(std::move(other.attributes)), device(other.device)
 {
-}
-
-int Scene::GetNumPrimitives(int collectionIndex) const
-{
-    return primitiveCollections[collectionIndex + 1] - primitiveCollections[collectionIndex];
-}
-
-ConstCollectionRange Scene::GetPrimitivesInCollection(int collectionIndex) const
-{
-    if (collectionIndex < 0 || collectionIndex >= (int)primitiveCollections.size() - 1)
-    {
-        return {nullptr, nullptr};
-    }
-
-    int startOffset = primitiveCollections[collectionIndex];
-    int endOffset = primitiveCollections[collectionIndex + 1];
-
-    return {&primitives[startOffset], &primitives[endOffset]};
 }
 
 YBI_NAMESPACE_END

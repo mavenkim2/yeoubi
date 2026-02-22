@@ -289,7 +289,7 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
                                                     directCallableStackSizeFromTraversal,
                                                     directCallableStackSizeFromState,
                                                     continuationStackSize,
-                                                    1),
+                                                    8),
                           "optixPipelineSetStackSize"))
     {
         DestroyOptixPrimaryPipeline();
@@ -415,6 +415,8 @@ static void SetOptixInstanceDefaults(OptixInstance &instance)
     instance.flags = OPTIX_INSTANCE_FLAG_NONE;
 }
 
+static constexpr unsigned int kInvalidInstanceId = ((1u << 24) - 1u);
+
 static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
                                             CUDAMemoryArena &deviceArena,
                                             OptixAccelBuildOptions buildOptions,
@@ -493,8 +495,7 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
                                                   CUDAMemoryArena &deviceArena,
                                                   Mesh &mesh,
                                                   uint32_t numMotionKeys,
-                                                  OptixAccelBuildOptions &options,
-                                                  bool includePreTransform)
+                                                  OptixAccelBuildOptions &options)
 {
     (void)cudaDevice;
     (void)options;
@@ -508,7 +509,6 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     DeviceMemoryView<float3> deviceVertices =
         deviceArena.PushArray<float3>(numVertices * numMotionKeys);
     DeviceMemoryView<int> deviceIndices = deviceArena.PushArray<int>(numIndices);
-    DeviceMemoryView<float> preTransform = {};
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
     {
@@ -525,15 +525,6 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceIndices.data()), mesh.indices.data(), deviceIndices.numBytes()));
 
-    if (includePreTransform)
-    {
-        preTransform = deviceArena.PushArray<float>(12);
-        float hostPreTransform[12] = {};
-        CopyTransformMatrix(mesh.parentFromLocal, hostPreTransform);
-        CUDA_ASSERT(cuMemcpyHtoD(
-            CUdeviceptr(preTransform.data()), hostPreTransform, sizeof(hostPreTransform)));
-    }
-
     MemoryView<unsigned int> geometryFlags = hostArena.PushArray<unsigned int>(1);
     geometryFlags[0] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
 
@@ -549,9 +540,9 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     triangleArray.numIndexTriplets = numIndices / 3;
     triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     triangleArray.indexStrideInBytes = sizeof(int) * 3;
-    triangleArray.preTransform = includePreTransform ? CUdeviceptr(preTransform.data()) : 0;
-    triangleArray.transformFormat = includePreTransform ? OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12
-                                                        : OPTIX_TRANSFORM_FORMAT_NONE;
+    // Contract: no preTransform usage in GAS build inputs; transforms come from IAS instances.
+    triangleArray.preTransform = 0;
+    triangleArray.transformFormat = OPTIX_TRANSFORM_FORMAT_NONE;
     triangleArray.flags = geometryFlags.data();
     triangleArray.numSbtRecords = 1;
 
@@ -663,102 +654,6 @@ static OptixBuildInput GetOptiXInstanceBuildInput(CUDAMemoryArena &deviceArena,
     return input;
 }
 
-static OptixTraversableHandle
-BuildSceneGeometryGAS(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Scene *scene)
-{
-    const uint32_t numMotionKeys = 1;
-    OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
-
-    std::vector<OptixBuildInput> buildInputs;
-    buildInputs.reserve(scene->meshes.size() + scene->curves.size());
-
-    for (Mesh &mesh : scene->meshes)
-    {
-        buildInputs.push_back(GetOptiXTriangleBuildInput(
-            cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options, true));
-    }
-
-    for (Curves &curves : scene->curves)
-    {
-        buildInputs.push_back(GetOptiXCurveBuildInput(
-            cudaDevice, hostArena, *cudaDevice->deviceArena, curves, numMotionKeys, options));
-    }
-
-    if (buildInputs.empty())
-    {
-        return {};
-    }
-
-    return BuildOptixBVH(cudaDevice,
-                         *cudaDevice->deviceArena,
-                         options,
-                         buildInputs.data(),
-                         (uint32_t)buildInputs.size());
-}
-
-static OptixTraversableHandle BuildSceneInstanceIAS(CUDADevice *cudaDevice,
-                                                    HostMemoryArena &hostArena,
-                                                    Scene *scene,
-                                                    OptixTraversableHandle localGeometryHandle)
-{
-    const bool hasLocalGeometry = localGeometryHandle != OptixTraversableHandle(0);
-    const size_t numInstances = scene->instances.size() + (hasLocalGeometry ? 1 : 0);
-    if (numInstances == 0)
-    {
-        return {};
-    }
-
-    MemoryView<OptixInstance> hostInstances = hostArena.PushArray<OptixInstance>(numInstances);
-
-    size_t instanceWriteIndex = 0;
-    if (hasLocalGeometry)
-    {
-        OptixInstance &localGeometryInstance = hostInstances[instanceWriteIndex++];
-        SetOptixInstanceDefaults(localGeometryInstance);
-
-        static const float3x4 identity = {
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-        };
-        CopyTransformMatrix(identity, localGeometryInstance.transform);
-        localGeometryInstance.instanceId = (unsigned int)(instanceWriteIndex - 1);
-        localGeometryInstance.sbtOffset = 0;
-        localGeometryInstance.traversableHandle = localGeometryHandle;
-    }
-
-    for (const Instance &instance : scene->instances)
-    {
-        YBI_ASSERT(instance.childSceneIndex < scene->childScenes.size());
-        Scene *childScene = scene->childScenes[instance.childSceneIndex];
-        YBI_ASSERT(childScene);
-        YBI_ASSERT(childScene->bvhHandle != 0);
-
-        OptixInstance &optixInstance = hostInstances[instanceWriteIndex++];
-        SetOptixInstanceDefaults(optixInstance);
-        CopyTransformMatrix(instance.parentFromLocal, optixInstance.transform);
-        optixInstance.instanceId = (unsigned int)(instanceWriteIndex - 1);
-        optixInstance.sbtOffset = 0;
-        optixInstance.traversableHandle = (OptixTraversableHandle)childScene->bvhHandle;
-    }
-
-    OptixBuildInput buildInput =
-        GetOptiXInstanceBuildInput(*cudaDevice->deviceArena, hostInstances);
-    const uint32_t numMotionKeys = 1;
-    OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
-
-    return BuildOptixBVH(cudaDevice, *cudaDevice->deviceArena, options, &buildInput, 1);
-}
-
 OptixTraversableHandle
 BuildTriangleGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Mesh &mesh)
 {
@@ -768,7 +663,7 @@ BuildTriangleGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, Mes
     OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
 
     OptixBuildInput buildInput = GetOptiXTriangleBuildInput(
-        cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options, false);
+        cudaDevice, hostArena, *cudaDevice->deviceArena, mesh, numMotionKeys, options);
     OptixTraversableHandle handle =
         BuildOptixBVH(cudaDevice, *cudaDevice->deviceArena, options, &buildInput, 1);
 
@@ -821,36 +716,102 @@ BuildCurveGASFromCurves(CUDADevice *cudaDevice,
     return handle;
 }
 
-// TODO: handle the case where cuda is enabled but optix isn't
-void CUDADevice::BuildBVH(ScenePool *scenePool)
+void CUDADevice::BuildBVH(Scene *scene)
 {
-    YBI_ASSERT(scenePool);
+    YBI_ASSERT(scene);
 
     CUDA_ASSERT(cuCtxPushCurrent(cudaContext));
 
     HostMemoryArena hostArena;
+    std::vector<OptixInstance> sceneInstances;
+    sceneInstances.reserve(scene->meshes.size() + scene->curves.size() + scene->instances.size());
 
-    for (const std::unique_ptr<Scene> &scenePtr : scenePool->scenes)
+    for (Mesh &mesh : scene->meshes)
     {
-        Scene *scene = scenePtr.get();
-        YBI_ASSERT(scene);
-
-        scene->bvhHandle = 0;
-
-        OptixTraversableHandle localGeometryHandle = BuildSceneGeometryGAS(this, hostArena, scene);
-        OptixTraversableHandle sceneHandle = localGeometryHandle;
-
-        if (!scene->instances.empty())
+        if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
         {
-            sceneHandle = BuildSceneInstanceIAS(this, hostArena, scene, localGeometryHandle);
+            continue;
         }
 
-        scene->bvhHandle = (Scene::BVHHandle)sceneHandle;
+        OptixTraversableHandle meshHandle = BuildTriangleGASFromMesh(this, hostArena, mesh);
+        if (!meshHandle)
+        {
+            continue;
+        }
+
+        OptixInstance optixInstance = {};
+        SetOptixInstanceDefaults(optixInstance);
+        CopyTransformMatrix(mesh.parentFromLocal, optixInstance.transform);
+        YBI_ASSERT(mesh.refIndex != UINT32_MAX);
+        YBI_ASSERT(mesh.refIndex < (1u << 24));
+        optixInstance.instanceId = mesh.refIndex;
+        optixInstance.sbtOffset = 0;
+        optixInstance.traversableHandle = meshHandle;
+        sceneInstances.push_back(optixInstance);
 
         hostArena.Clear();
         deviceArena->Clear();
     }
 
+    for (Curves &curves : scene->curves)
+    {
+        if (curves.GetNumVertices() == 0 || curves.GetNumCurves() == 0)
+        {
+            continue;
+        }
+
+        OptixTraversableHandle curvesHandle = BuildCurveGASFromCurves(this, hostArena, curves);
+        if (!curvesHandle)
+        {
+            continue;
+        }
+
+        OptixInstance optixInstance = {};
+        SetOptixInstanceDefaults(optixInstance);
+        CopyTransformMatrix(curves.parentFromLocal, optixInstance.transform);
+        optixInstance.instanceId = kInvalidInstanceId;
+        optixInstance.sbtOffset = 0;
+        optixInstance.traversableHandle = curvesHandle;
+        sceneInstances.push_back(optixInstance);
+
+        hostArena.Clear();
+        deviceArena->Clear();
+    }
+
+    for (const Instance &instance : scene->instances)
+    {
+        YBI_ASSERT(instance.childSceneIndex < scene->childScenes.size());
+        Scene *childScene = scene->childScenes[instance.childSceneIndex];
+        YBI_ASSERT(childScene);
+        YBI_ASSERT(childScene->bvhHandle != 0);
+
+        OptixInstance optixInstance = {};
+        SetOptixInstanceDefaults(optixInstance);
+        CopyTransformMatrix(instance.parentFromLocal, optixInstance.transform);
+        optixInstance.instanceId = kInvalidInstanceId;
+        optixInstance.sbtOffset = 0;
+        optixInstance.traversableHandle = (OptixTraversableHandle)childScene->bvhHandle;
+        sceneInstances.push_back(optixInstance);
+    }
+
+    OptixTraversableHandle sceneHandle = {};
+    if (!sceneInstances.empty())
+    {
+        MemoryView<OptixInstance> hostInstances =
+            hostArena.PushArray<OptixInstance>(sceneInstances.size());
+        memcpy(hostInstances.data(),
+               sceneInstances.data(),
+               sceneInstances.size() * sizeof(OptixInstance));
+        OptixBuildInput buildInput =
+            GetOptiXInstanceBuildInput(*deviceArena, hostInstances);
+        const uint32_t numMotionKeys = 1;
+        OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
+        sceneHandle = BuildOptixBVH(this, *deviceArena, options, &buildInput, 1);
+    }
+    scene->bvhHandle = (Scene::BVHHandle)sceneHandle;
+
+    hostArena.Clear();
+    deviceArena->Clear();
     CUDA_ASSERT(cuCtxPopCurrent(0));
 }
 
