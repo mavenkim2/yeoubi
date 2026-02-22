@@ -4,6 +4,7 @@ project (yeoubi)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+option(WITH_EMBREE "Enable Embree CPU backend" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
 
@@ -100,6 +101,20 @@ endif()
 if (MESHOPTIMIZER_FOUND)
     list (APPEND YBI_DEPENDENCIES ${MESHOPTIMIZER_LIBRARY})
     list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${MESHOPTIMIZER_INCLUDE_DIR})
+endif()
+
+if (WITH_EMBREE)
+    find_package(Embree MODULE)
+    if (EMBREE_FOUND)
+        list (APPEND YBI_DEPENDENCIES ${EMBREE_LIBRARIES})
+        list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${EMBREE_INCLUDE_DIRS})
+        list (APPEND YBI_COMPILE_DEFINITIONS WITH_EMBREE YBI_EMBREE_VERSION_MAJOR=${EMBREE_VERSION_MAJOR})
+        list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp)
+        list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp)
+        message (STATUS "Embree Found: ${EMBREE_INCLUDE_DIRS} ${EMBREE_VERSION}")
+    else()
+        message(STATUS "Embree not found; CPU Embree backend disabled.")
+    endif()
 endif()
 
 # OS Specific
