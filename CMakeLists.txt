@@ -7,6 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(WITH_EMBREE "Enable Embree CPU backend" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
+include(CheckLanguage)
+check_language(CUDA)
+set(YBI_HAS_CUDA OFF)
+if (CMAKE_CUDA_COMPILER)
+    set(YBI_HAS_CUDA ON)
+endif()
 
 set (YBI_DEPENDENCIES "")
 set (YBI_INCLUDE_DIRECTORIES "")
@@ -97,17 +103,21 @@ if (WITH_USD)
     target_include_directories(yeoubi_usd_instance_dag_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_usd_instance_dag_test PRIVATE ${OPENUSD_LIBRARIES})
 
-    add_executable(yeoubi_usd_ntc_encode
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_ntc_encode.cpp)
-    target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
-    if (WIN32)
-        target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if (YBI_HAS_CUDA)
+        add_executable(yeoubi_usd_ntc_encode
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_ntc_encode.cpp)
+        target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
+        if (WIN32)
+            target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        endif()
+        target_include_directories(yeoubi_usd_ntc_encode PRIVATE
+            ${YBI_INCLUDE_DIRECTORIES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        target_include_directories(yeoubi_usd_ntc_encode SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+        target_link_libraries(yeoubi_usd_ntc_encode PRIVATE ${OPENUSD_LIBRARIES})
+    else()
+        message(STATUS "CUDA not found; yeoubi_usd_ntc_encode disabled.")
     endif()
-    target_include_directories(yeoubi_usd_ntc_encode PRIVATE
-        ${YBI_INCLUDE_DIRECTORIES}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    target_include_directories(yeoubi_usd_ntc_encode SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-    target_link_libraries(yeoubi_usd_ntc_encode PRIVATE ${OPENUSD_LIBRARIES})
 endif()
 
 if (MESHOPTIMIZER_FOUND)
@@ -137,9 +147,7 @@ endif()
 
 # Hardware Specific
 # TODO: check_language for CUDA only works on MSVC?
-include(CheckLanguage)
-check_language(CUDA)
-if (CMAKE_CUDA_COMPILER)
+if (YBI_HAS_CUDA)
     set(YBI_MIN_OPTIX_VERSION 70300)
     find_package(CUDAToolkit REQUIRED)
     enable_language(CUDA)

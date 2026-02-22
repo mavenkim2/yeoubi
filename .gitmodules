@@ -7,3 +7,6 @@
 [submodule "src/third_party/embree"]
 	path = src/third_party/embree
 	url = https://github.com/RenderKit/embree.git
+[submodule "src/third_party/RTXNTC"]
+	path = src/third_party/RTXNTC
+	url = https://github.com/NVIDIA-RTX/RTXNTC.git
