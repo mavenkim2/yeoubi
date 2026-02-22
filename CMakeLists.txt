@@ -103,20 +103,23 @@ if (WITH_USD)
     target_include_directories(yeoubi_usd_instance_dag_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_usd_instance_dag_test PRIVATE ${OPENUSD_LIBRARIES})
 
-    if (YBI_HAS_CUDA)
+    if (YBI_HAS_CUDA AND WITH_NTC)
         add_executable(yeoubi_usd_ntc_encode
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_ntc_encode.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/main.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp)
         target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
             target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
         endif()
         target_include_directories(yeoubi_usd_ntc_encode PRIVATE
             ${YBI_INCLUDE_DIRECTORIES}
+            ${NTC_INCLUDE_DIRS}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         target_include_directories(yeoubi_usd_ntc_encode SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-        target_link_libraries(yeoubi_usd_ntc_encode PRIVATE ${OPENUSD_LIBRARIES})
+        target_link_libraries(yeoubi_usd_ntc_encode PRIVATE ${OPENUSD_LIBRARIES} ${NTC_LIBRARIES})
     else()
-        message(STATUS "CUDA not found; yeoubi_usd_ntc_encode disabled.")
+        message(STATUS "CUDA/NTC not found; yeoubi_usd_ntc_encode disabled.")
     endif()
 endif()
 
