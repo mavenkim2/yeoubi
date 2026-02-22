@@ -202,3 +202,21 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     target_include_directories(yeoubi_optix_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_optix_harness PRIVATE ${YBI_DEPENDENCIES})
 endif()
+
+if (WITH_USD AND WITH_EMBREE AND EMBREE_FOUND)
+    add_executable(yeoubi_embree_harness
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/embree_primary_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
+    target_compile_definitions(yeoubi_embree_harness PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_embree_harness PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    target_include_directories(yeoubi_embree_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_embree_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_embree_harness PRIVATE ${OPENUSD_LIBRARIES} ${EMBREE_LIBRARIES})
+endif()
