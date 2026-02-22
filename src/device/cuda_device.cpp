@@ -1,10 +1,36 @@
 #include "device/cuda_device.h"
 #include "cuda.h"
+#include <cstdio>
 #include <cstdlib>
 
 YBI_NAMESPACE_BEGIN
 
 #if defined(WITH_CUDA) && defined(WITH_OPTIX)
+
+namespace
+{
+#if (OPTIX_VERSION >= 90000)
+static bool QueryOptixUIntProperty(OptixDeviceContext context,
+                                   OptixDeviceProperty property,
+                                   const char *propertyName,
+                                   unsigned int &valueOut)
+{
+    const OptixResult result =
+        optixDeviceContextGetProperty(context, property, &valueOut, sizeof(valueOut));
+    if (result == OPTIX_SUCCESS)
+    {
+        return true;
+    }
+
+    fprintf(stderr,
+            "OptiX property query failed: %s -> %s (%s)\n",
+            propertyName,
+            optixGetErrorName(result),
+            optixGetErrorString(result));
+    return false;
+}
+#endif
+} // namespace
 
 CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
 {
@@ -55,6 +81,44 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
         std::abort();
     }
 
+#if (OPTIX_VERSION >= 90000)
+    unsigned int clusterAccelFlags = OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL_FLAG_NONE;
+    if (QueryOptixUIntProperty(optixDeviceContext,
+                               OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL,
+                               "OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL",
+                               clusterAccelFlags))
+    {
+        supportsClusterAccel =
+            (clusterAccelFlags & OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL_FLAG_STANDARD) != 0;
+    }
+
+    if (supportsClusterAccel)
+    {
+        unsigned int maxTriangles = 0;
+        unsigned int maxVertices = 0;
+        const bool gotTriangles = QueryOptixUIntProperty(optixDeviceContext,
+                                                         OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES,
+                                                         "OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_TRIANGLES",
+                                                         maxTriangles);
+        const bool gotVertices = QueryOptixUIntProperty(optixDeviceContext,
+                                                        OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES,
+                                                        "OPTIX_DEVICE_PROPERTY_LIMIT_MAX_CLUSTER_VERTICES",
+                                                        maxVertices);
+        if (gotTriangles && gotVertices)
+        {
+            clusterAccelLimits.maxTrianglesPerCluster = maxTriangles;
+            clusterAccelLimits.maxVerticesPerCluster = maxVertices;
+        }
+        else
+        {
+            supportsClusterAccel = false;
+            clusterAccelLimits = {};
+            fprintf(stderr,
+                    "OptiX cluster acceleration disabled: missing required cluster limits.\n");
+        }
+    }
+#endif
+
     void *mem = util::AlignedAlloc(sizeof(CUDAMemoryArena), alignof(CUDAMemoryArena));
     YBI_ASSERT(mem != nullptr);
     deviceArena.reset(new (mem) CUDAMemoryArena());
@@ -102,9 +166,27 @@ void CUDADevice::Free(DeviceMemoryView<T> &view)
 bool CUDADevice::SupportsGrids() const
 {
 #if (OPTIX_VERSION >= 90000)
-    return true;
+    return supportsClusterAccel;
 #else
     return false;
+#endif
+}
+
+bool CUDADevice::SupportsClusterAccel() const
+{
+#if (OPTIX_VERSION >= 90000)
+    return supportsClusterAccel;
+#else
+    return false;
+#endif
+}
+
+ClusterAccelerationStructureLimits CUDADevice::GetClusterAccelerationStructureLimits() const
+{
+#if (OPTIX_VERSION >= 90000)
+    return clusterAccelLimits;
+#else
+    return {};
 #endif
 }
 
@@ -156,6 +238,12 @@ size_t CUDADevice::GetBVHAllocatedBytes() const
 void CUDADevice::CreateGridClusterTemplates()
 {
 #if (OPTIX_VERSION >= 90000)
+    if (!SupportsClusterAccel())
+    {
+        fprintf(stderr, "OptiX cluster acceleration not supported by this device/context.\n");
+        return;
+    }
+
     const int minDim = 2;
     const int maxDim = 8;
     const int widthDim = maxDim - minDim + 1;

@@ -43,8 +43,8 @@ struct OptixPrimaryPipelineState
 
 struct ClusterAccelerationStructureLimits
 {
-    uint32_t maxTrianglesPerCluster;
-    uint32_t maxVerticesPerCluster;
+    uint32_t maxTrianglesPerCluster = 0;
+    uint32_t maxVerticesPerCluster = 0;
 };
 
 struct CUDAMemoryArenaDeleter
@@ -70,6 +70,8 @@ struct CUDADevice : Device
 
 #if (OPTIX_VERSION >= 90000)
     Array<OptixTraversableHandle> gridClusterTemplateHandles;
+    bool supportsClusterAccel = false;
+    ClusterAccelerationStructureLimits clusterAccelLimits;
 #endif
 
     OptixPrimaryPipelineState optixPrimaryPipeline;
@@ -93,6 +95,8 @@ struct CUDADevice : Device
     template <typename T>
     void Free(DeviceMemoryView<T> &view);
     bool SupportsGrids() const;
+    bool SupportsClusterAccel() const;
+    ClusterAccelerationStructureLimits GetClusterAccelerationStructureLimits() const;
 
     bool CreateOptixPrimaryPipeline(const std::string &ptx);
     void DestroyOptixPrimaryPipeline();

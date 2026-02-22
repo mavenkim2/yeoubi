@@ -139,6 +139,9 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
     pipelineCompileOptions.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE |
                                                     OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_LINEAR |
                                                     OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_CUBIC_BSPLINE;
+#if (OPTIX_VERSION >= 90000)
+    pipelineCompileOptions.allowClusteredGeometry = SupportsClusterAccel() ? 1 : 0;
+#endif
     pipelineCompileOptions.numPayloadValues = 1;
     pipelineCompileOptions.numAttributeValues = 4;
     pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
@@ -675,6 +678,17 @@ OptixTraversableHandle
 BuildClusterGASFromMesh(CUDADevice *cudaDevice, HostMemoryArena &hostArena, const Mesh &mesh)
 {
 #if (OPTIX_VERSION >= 90000)
+    if (!cudaDevice || !cudaDevice->SupportsClusterAccel())
+    {
+        static bool warnedUnsupportedClusterAccel = false;
+        if (!warnedUnsupportedClusterAccel)
+        {
+            fprintf(stderr, "Cluster GAS disabled: OptiX cluster acceleration not supported.\n");
+            warnedUnsupportedClusterAccel = true;
+        }
+        return {};
+    }
+
     CUDA_ASSERT(cuCtxPushCurrent(cudaDevice->cudaContext));
     MeshletClustersResult clusterResult = ClusterizeTest(mesh);
     YBI_ASSERT(clusterResult.meshletCount > 0);

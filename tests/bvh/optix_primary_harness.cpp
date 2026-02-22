@@ -771,44 +771,51 @@ int main(int argc, char **argv)
         else
         {
 #if (OPTIX_VERSION >= 90000)
-            printf("optix_harness: building cluster gas\n");
-            fflush(stdout);
-            OptixTraversableHandle clusterHandle =
-                BuildClusterGASFromMesh(&device, hostArena, mesh);
-            if (clusterHandle)
+            if (!device.SupportsClusterAccel())
             {
-                OptixInstance rootInstance = {};
-                SetInstanceDefaults(rootInstance);
-                const ybi::float3x4 identity = IdentityTransform3x4();
-                CopyTransform(identity, rootInstance.transform);
-                rootInstance.instanceId = 0;
-                rootInstance.sbtOffset = kHitgroupSbtOffset;
-                rootInstance.traversableHandle = clusterHandle;
-
-                const std::vector<OptixInstance> rootInstances = {rootInstance};
-                OptixTraversableHandle rootIAS =
-                    BuildTopLevelIAS(&device, hostArena, rootInstances);
-
-                printf("optix_harness: rendering cluster ias\n");
-                fflush(stdout);
-                RenderTraversable(pipeline,
-                                  sbt,
-                                  rootIAS,
-                                  meshBoundsMin,
-                                  meshBoundsMax,
-                                  options.outputPath.c_str(),
-                                  options.integrator,
-                                  options.spp,
-                                  instanceGeomRefsBuffer,
-                                  1,
-                                  std::nullopt,
-                                  options.cameraPosition,
-                                  options.lookAt);
-                printf("Wrote %s\n", options.outputPath.c_str());
+                printf("Cluster GAS not supported on this OptiX device/context.\n");
             }
             else
             {
-                printf("Cluster handle invalid; skipped cluster render.\n");
+                printf("optix_harness: building cluster gas\n");
+                fflush(stdout);
+                OptixTraversableHandle clusterHandle =
+                    BuildClusterGASFromMesh(&device, hostArena, mesh);
+                if (clusterHandle)
+                {
+                    OptixInstance rootInstance = {};
+                    SetInstanceDefaults(rootInstance);
+                    const ybi::float3x4 identity = IdentityTransform3x4();
+                    CopyTransform(identity, rootInstance.transform);
+                    rootInstance.instanceId = 0;
+                    rootInstance.sbtOffset = kHitgroupSbtOffset;
+                    rootInstance.traversableHandle = clusterHandle;
+
+                    const std::vector<OptixInstance> rootInstances = {rootInstance};
+                    OptixTraversableHandle rootIAS =
+                        BuildTopLevelIAS(&device, hostArena, rootInstances);
+
+                    printf("optix_harness: rendering cluster ias\n");
+                    fflush(stdout);
+                    RenderTraversable(pipeline,
+                                      sbt,
+                                      rootIAS,
+                                      meshBoundsMin,
+                                      meshBoundsMax,
+                                      options.outputPath.c_str(),
+                                      options.integrator,
+                                      options.spp,
+                                      instanceGeomRefsBuffer,
+                                      1,
+                                      std::nullopt,
+                                      options.cameraPosition,
+                                      options.lookAt);
+                    printf("Wrote %s\n", options.outputPath.c_str());
+                }
+                else
+                {
+                    printf("Cluster handle invalid; skipped cluster render.\n");
+                }
             }
 #else
             printf("Cluster GAS not supported on this OptiX version.\n");
