@@ -1,5 +1,6 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
+#include "../io/obj_mesh_io.h"
 #include "scene/scene.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
@@ -18,9 +19,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
-#include <sstream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <optix_stubs.h>
@@ -406,87 +405,6 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
 {
     const int strideInBytes = width * 4;
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
-}
-
-static bool ParseObjIndex(const std::string &token, int &indexOut)
-{
-    const size_t slashPos = token.find('/');
-    const std::string indexText =
-        slashPos == std::string::npos ? token : token.substr(0, slashPos);
-    if (indexText.empty())
-    {
-        return false;
-    }
-    indexOut = std::stoi(indexText);
-    return true;
-}
-
-static Mesh LoadObjMesh(const std::string &path)
-{
-    std::ifstream input(path);
-    if (!input.is_open())
-    {
-        fprintf(stderr, "Failed to open OBJ: %s\n", path.c_str());
-        std::abort();
-    }
-
-    std::vector<ybi::float3> positions;
-    std::vector<int> indices;
-    std::string line;
-    while (std::getline(input, line))
-    {
-        if (line.empty() || line[0] == '#')
-        {
-            continue;
-        }
-        std::istringstream ss(line);
-        std::string tag;
-        ss >> tag;
-        if (tag == "v")
-        {
-            float x, y, z;
-            ss >> x >> y >> z;
-            positions.push_back(ybi::make_float3(x, y, z));
-            continue;
-        }
-        if (tag == "f")
-        {
-            std::vector<int> face;
-            std::string token;
-            while (ss >> token)
-            {
-                int idx = 0;
-                if (!ParseObjIndex(token, idx))
-                {
-                    continue;
-                }
-                if (idx < 0)
-                {
-                    idx = static_cast<int>(positions.size()) + idx;
-                }
-                else
-                {
-                    idx = idx - 1;
-                }
-                face.push_back(idx);
-            }
-
-            if (face.size() >= 3)
-            {
-                const int i0 = face[0];
-                for (size_t i = 1; i + 1 < face.size(); i++)
-                {
-                    indices.push_back(i0);
-                    indices.push_back(face[i]);
-                    indices.push_back(face[i + 1]);
-                }
-            }
-        }
-    }
-
-    Array<ybi::float3> meshPositions(positions);
-    Array<int> meshIndices(indices);
-    return Mesh(std::move(meshPositions), std::move(meshIndices));
 }
 
 static std::string ExtractJsonArray(const std::string &text, const std::string &key)
@@ -969,7 +887,7 @@ int main(int argc, char **argv)
     {
         printf("optix_harness: loading obj %s\n", options.inputPath.c_str());
         fflush(stdout);
-        Mesh mesh = LoadObjMesh(options.inputPath);
+        Mesh mesh = testio::LoadObjMesh(options.inputPath);
         printf("optix_harness: obj loaded verts=%zu tris=%zu\n",
                mesh.positions.size(),
                mesh.indices.size() / 3);
