@@ -72,6 +72,11 @@ CUDADevice::~CUDADevice()
     }
 }
 
+DeviceKind CUDADevice::GetKind() const
+{
+    return DeviceKind::GPU;
+}
+
 template <typename T>
 DeviceMemoryView<T> CUDADevice::Alloc(size_t count)
 {
@@ -103,38 +108,49 @@ bool CUDADevice::SupportsGrids() const
 #endif
 }
 
-CUdeviceptr CUDADevice::MemAllocBytes(size_t numBytes)
+DeviceMemoryView<uint8_t> CUDADevice::AllocBytes(size_t numBytes)
 {
     YBI_ASSERT(numBytes != 0);
     totalAllocated += numBytes;
     CUdeviceptr ptr = 0;
     CUDA_ASSERT(cuMemAlloc(&ptr, numBytes));
-    return ptr;
+    return {(uint8_t *)ptr, numBytes};
 }
 
-void CUDADevice::MemFreeBytes(CUdeviceptr ptr)
+void CUDADevice::FreeBytes(DeviceMemoryView<uint8_t> &view)
 {
-    if (!ptr)
+    if (view.data() == nullptr || view.size() == 0)
     {
         return;
     }
-    CUDA_ASSERT(cuMemFree(ptr));
+    totalAllocated -= view.numBytes();
+    CUDA_ASSERT(cuMemFree(CUdeviceptr(view.data())));
+    view = {};
 }
 
-void CUDADevice::MemcpyToDevice(CUdeviceptr dst, const void *src, size_t numBytes)
+void CUDADevice::CopyBytesToDevice(DeviceMemoryView<uint8_t> dst,
+                                   const void *src,
+                                   size_t numBytes)
 {
-    YBI_ASSERT(dst);
+    YBI_ASSERT(dst.data());
     YBI_ASSERT(src);
-    YBI_ASSERT(numBytes);
-    CUDA_ASSERT(cuMemcpyHtoD(dst, src, numBytes));
+    YBI_ASSERT(numBytes <= dst.numBytes());
+    CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(dst.data()), src, numBytes));
 }
 
-void CUDADevice::MemcpyToHost(void *dst, CUdeviceptr src, size_t numBytes)
+void CUDADevice::CopyBytesToHost(void *dst,
+                                 DeviceMemoryView<const uint8_t> src,
+                                 size_t numBytes)
 {
     YBI_ASSERT(dst);
-    YBI_ASSERT(src);
-    YBI_ASSERT(numBytes);
-    CUDA_ASSERT(cuMemcpyDtoH(dst, src, numBytes));
+    YBI_ASSERT(src.data());
+    YBI_ASSERT(numBytes <= src.numBytes());
+    CUDA_ASSERT(cuMemcpyDtoH(dst, CUdeviceptr(src.data()), numBytes));
+}
+
+size_t CUDADevice::GetBVHAllocatedBytes() const
+{
+    return bvhTotalAllocated;
 }
 
 void CUDADevice::CreateGridClusterTemplates()

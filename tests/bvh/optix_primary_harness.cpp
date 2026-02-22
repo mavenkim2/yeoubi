@@ -467,7 +467,7 @@ static void SetInstanceDefaults(OptixInstance &instance)
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
-    std::vector<CUdeviceptr> ownedBuffers;
+    std::vector<DeviceMemoryView<uint8_t>> ownedBuffers;
 };
 
 static OptixTraversableHandle BuildTopLevelIAS(CUDADevice *device,
@@ -542,13 +542,13 @@ static UploadedMeshRefs UploadScenePoolMeshRefs(
 
         const size_t positionsBytes = sizeof(ybi::float3) * mesh.positions.size();
         const size_t indicesBytes = sizeof(int) * mesh.indices.size();
-        CUdeviceptr positionsBuffer = device->MemAllocBytes(positionsBytes);
-        CUdeviceptr indicesBuffer = device->MemAllocBytes(indicesBytes);
-        device->MemcpyToDevice(positionsBuffer, mesh.positions.data(), positionsBytes);
-        device->MemcpyToDevice(indicesBuffer, mesh.indices.data(), indicesBytes);
+        DeviceMemoryView<uint8_t> positionsBuffer = device->AllocBytes(positionsBytes);
+        DeviceMemoryView<uint8_t> indicesBuffer = device->AllocBytes(indicesBytes);
+        device->CopyBytesToDevice(positionsBuffer, mesh.positions.data(), positionsBytes);
+        device->CopyBytesToDevice(indicesBuffer, mesh.indices.data(), indicesBytes);
 
-        out.refs[job.refIndex] = {(unsigned long long)positionsBuffer,
-                                  (unsigned long long)indicesBuffer,
+        out.refs[job.refIndex] = {(unsigned long long)positionsBuffer.data(),
+                                  (unsigned long long)indicesBuffer.data(),
                                   (int)mesh.positions.size(),
                                   (int)mesh.indices.size()};
         out.ownedBuffers.push_back(positionsBuffer);
@@ -925,13 +925,13 @@ int main(int argc, char **argv)
 
         UploadedMeshRefs uploadedRefs = UploadScenePoolMeshRefs(&device, meshUploadRefs);
 
-        CUdeviceptr instanceGeomRefsBuffer = 0;
+        DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
         if (!uploadedRefs.refs.empty())
         {
             const size_t refsBytes =
                 uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
-            instanceGeomRefsBuffer = device.MemAllocBytes(refsBytes);
-            device.MemcpyToDevice(instanceGeomRefsBuffer, uploadedRefs.refs.data(), refsBytes);
+            instanceGeomRefsBuffer = device.AllocBytes(refsBytes);
+            device.CopyBytesToDevice(instanceGeomRefsBuffer, uploadedRefs.refs.data(), refsBytes);
         }
 
         std::optional<RenderCameraOverride> usdCamera = std::nullopt;
@@ -963,19 +963,19 @@ int main(int argc, char **argv)
                           options.outputPath.c_str(),
                           options.integrator,
                           options.spp,
-                          instanceGeomRefsBuffer,
+                          (CUdeviceptr)instanceGeomRefsBuffer.data(),
                           (int)uploadedRefs.refs.size(),
                           usdCamera,
                           options.cameraPosition,
                           options.lookAt);
         printf("Wrote %s\n", options.outputPath.c_str());
-        if (instanceGeomRefsBuffer)
+        if (instanceGeomRefsBuffer.data())
         {
-            device.MemFreeBytes(instanceGeomRefsBuffer);
+            device.FreeBytes(instanceGeomRefsBuffer);
         }
-        for (CUdeviceptr buffer : uploadedRefs.ownedBuffers)
+        for (DeviceMemoryView<uint8_t> &buffer : uploadedRefs.ownedBuffers)
         {
-            device.MemFreeBytes(buffer);
+            device.FreeBytes(buffer);
         }
     }
     hostArena.Clear();

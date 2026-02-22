@@ -4,6 +4,7 @@
 
 #include "device/cuda_assert.h"
 #include "device/cuda_device_memory_arena.h"
+#include "device/device.h"
 #include "scene/clusterizer.h"
 #include "scene/micropolygon_mesh.h"
 #include "util/aligned_malloc.h"
@@ -58,7 +59,7 @@ struct CUDAMemoryArenaDeleter
     }
 };
 
-struct CUDADevice
+struct CUDADevice : Device
 {
     CUdevice device;
     CUcontext cudaContext;
@@ -76,6 +77,17 @@ struct CUDADevice
     CUDADevice();
     ~CUDADevice();
 
+    DeviceKind GetKind() const override;
+    DeviceMemoryView<uint8_t> AllocBytes(size_t numBytes) override;
+    void FreeBytes(DeviceMemoryView<uint8_t> &view) override;
+    void CopyBytesToDevice(DeviceMemoryView<uint8_t> dst,
+                           const void *src,
+                           size_t numBytes) override;
+    void CopyBytesToHost(void *dst,
+                         DeviceMemoryView<const uint8_t> src,
+                         size_t numBytes) override;
+    size_t GetBVHAllocatedBytes() const override;
+
     template <typename T>
     DeviceMemoryView<T> Alloc(size_t size);
     template <typename T>
@@ -85,12 +97,7 @@ struct CUDADevice
     bool CreateOptixPrimaryPipeline(const std::string &ptx);
     void DestroyOptixPrimaryPipeline();
 
-    CUdeviceptr MemAllocBytes(size_t numBytes);
-    void MemFreeBytes(CUdeviceptr ptr);
-    void MemcpyToDevice(CUdeviceptr dst, const void *src, size_t numBytes);
-    void MemcpyToHost(void *dst, CUdeviceptr src, size_t numBytes);
-
-    void BuildBVH(Scene *scene);
+    void BuildBVH(Scene *scene) override;
     void CreateGridClusterTemplates();
 };
 
