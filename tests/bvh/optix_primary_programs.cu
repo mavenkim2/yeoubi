@@ -70,6 +70,8 @@ extern "C"
     __constant__ LaunchParams params;
 }
 
+__device__ unsigned int g_try_sample_logged = 0u;
+
 static __forceinline__ __device__ float3 Normalize3(const float3 &v)
 {
     const float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z + 1e-20f);
@@ -405,6 +407,10 @@ extern "C" __global__ void __closesthit__primary()
             if (!sampled)
             {
                 color = MakeFlatAlbedo(instanceId);
+            }
+            else if (atomicCAS(&g_try_sample_logged, 0u, 1u) == 0u)
+            {
+                printf("TrySampleMaterialTexture succeeded\n");
             }
         }
     }
