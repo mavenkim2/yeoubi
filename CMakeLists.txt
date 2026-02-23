@@ -107,7 +107,8 @@ if (WITH_USD)
         add_executable(yeoubi_usd_ntc_encode
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/main.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
         target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
             target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
