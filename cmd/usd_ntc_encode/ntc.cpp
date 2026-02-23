@@ -13,9 +13,6 @@
 #include <unordered_set>
 #include <vector>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
 #define TINYEXR_IMPLEMENTATION
 #include <tinyexr.h>
 
@@ -167,29 +164,119 @@ bool MakeError(ntc::Status status, std::string &out)
 
 bool LoadExrRgba(const std::string &path, int &width, int &height, std::vector<float> &rgba, std::string &reason)
 {
-    float *raw = nullptr;
-    const char *err = nullptr;
     width = 0;
     height = 0;
+    auto AssignRgbaAndFree = [&](float *rawData, int w, int h) {
+        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+        rgba.assign(rawData, rawData + pixelCount * 4);
+        std::free(rawData);
+        width = w;
+        height = h;
+    };
 
-    const int rc = LoadEXR(&raw, &width, &height, path.c_str(), &err);
-    if (rc != TINYEXR_SUCCESS || !raw)
+    float *raw = nullptr;
+    const char *err = nullptr;
+    int rc = LoadEXR(&raw, &width, &height, path.c_str(), &err);
+    if (rc == TINYEXR_SUCCESS && raw)
+    {
+        AssignRgbaAndFree(raw, width, height);
+        return true;
+    }
+
+    std::string primaryError;
+    if (err)
+    {
+        primaryError = err;
+        FreeEXRErrorMessage(err);
+        err = nullptr;
+    }
+
+    if (rc != TINYEXR_ERROR_LAYER_NOT_FOUND)
     {
         reason = "LoadEXR failed for " + path;
-        if (err)
+        if (!primaryError.empty())
         {
-            reason += " (";
-            reason += err;
-            reason += ")";
-            FreeEXRErrorMessage(err);
+            reason += " (" + primaryError + ")";
         }
         return false;
     }
 
-    const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-    rgba.assign(raw, raw + pixelCount * 4);
-    std::free(raw);
-    return true;
+    const char **layerNames = nullptr;
+    int numLayers = 0;
+    const char *layersErr = nullptr;
+    rc = EXRLayers(path.c_str(), &layerNames, &numLayers, &layersErr);
+    if (rc != TINYEXR_SUCCESS || !layerNames || numLayers <= 0)
+    {
+        reason = "LoadEXR failed for " + path;
+        if (!primaryError.empty())
+        {
+            reason += " (" + primaryError + ")";
+        }
+        if (layersErr)
+        {
+            reason += " [EXRLayers: ";
+            reason += layersErr;
+            reason += "]";
+            FreeEXRErrorMessage(layersErr);
+        }
+        if (layerNames)
+        {
+            for (int i = 0; i < numLayers; ++i)
+            {
+                if (layerNames[i])
+                {
+                    std::free((void *)layerNames[i]);
+                }
+            }
+            std::free((void *)layerNames);
+        }
+        return false;
+    }
+
+    std::string layerError;
+    for (int i = 0; i < numLayers; ++i)
+    {
+        float *layerRaw = nullptr;
+        int layerWidth = 0;
+        int layerHeight = 0;
+        const char *layerErr = nullptr;
+        const int layerRc =
+            LoadEXRWithLayer(&layerRaw, &layerWidth, &layerHeight, path.c_str(), layerNames[i], &layerErr);
+        if (layerRc == TINYEXR_SUCCESS && layerRaw)
+        {
+            AssignRgbaAndFree(layerRaw, layerWidth, layerHeight);
+            for (int j = 0; j < numLayers; ++j)
+            {
+                if (layerNames[j])
+                {
+                    std::free((void *)layerNames[j]);
+                }
+            }
+            std::free((void *)layerNames);
+            return true;
+        }
+        if (layerErr)
+        {
+            layerError = layerErr;
+            FreeEXRErrorMessage(layerErr);
+        }
+    }
+
+    for (int i = 0; i < numLayers; ++i)
+    {
+        if (layerNames[i])
+        {
+            std::free((void *)layerNames[i]);
+        }
+    }
+    std::free((void *)layerNames);
+
+    reason = "LoadEXRWithLayer failed for " + path;
+    if (!layerError.empty())
+    {
+        reason += " (" + layerError + ")";
+    }
+    return false;
 }
 
 bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, LoadedChannel &out, std::string &reason)
@@ -244,43 +331,9 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
         return true;
     }
 
-    int width = 0;
-    int height = 0;
-    int channelsInFile = 0;
-    unsigned char *pixels = stbi_load(out.texturePath.c_str(), &width, &height, &channelsInFile, 4);
-    if (!pixels)
-    {
-        reason = "stbi_load failed for " + out.texturePath;
-        const char *stbReason = stbi_failure_reason();
-        if (stbReason)
-        {
-            reason += " (";
-            reason += stbReason;
-            reason += ")";
-        }
-        return false;
-    }
-
-    out.channelFormat = ntc::ChannelFormat::UNORM8;
-    out.isSrgb = IsSrgbInput(inputName);
-    out.width = width;
-    out.height = height;
-    out.numChannels = numChannels;
-    out.unorm8.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * static_cast<size_t>(numChannels));
-    out.decodedBytes = static_cast<uint64_t>(out.unorm8.size());
-
-    const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-    for (size_t i = 0; i < pixelCount; ++i)
-    {
-        for (int c = 0; c < numChannels; ++c)
-        {
-            const int src = std::clamp(srcChannels[c], 0, 3);
-            out.unorm8[i * static_cast<size_t>(numChannels) + static_cast<size_t>(c)] = pixels[i * 4 + static_cast<size_t>(src)];
-        }
-    }
-
-    stbi_image_free(pixels);
-    return true;
+    // STB path intentionally disabled; only EXR inputs handled for now.
+    reason = "non-EXR texture loading is disabled: " + out.texturePath;
+    return false;
 }
 
 } // namespace
