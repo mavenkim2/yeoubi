@@ -55,8 +55,13 @@ struct LaunchParams
     {
         unsigned long long positions;
         unsigned long long indices;
+        unsigned long long texcoords;
+        unsigned long long texcoordIndices;
         int numPositions;
         int numIndices;
+        int numTexcoords;
+        int numTexcoordIndices;
+        int materialIndex;
     };
 
     struct WireframeConfig
@@ -547,10 +552,30 @@ static UploadedMeshRefs UploadScenePoolMeshRefs(
         device->CopyBytesToDevice(positionsBuffer, mesh.positions.data(), positionsBytes);
         device->CopyBytesToDevice(indicesBuffer, mesh.indices.data(), indicesBytes);
 
+        DeviceMemoryView<uint8_t> texcoordsBuffer = {};
+        DeviceMemoryView<uint8_t> texcoordIndicesBuffer = {};
+        if (mesh.texcoords.size() > 0 && mesh.texcoordIndices.size() > 0)
+        {
+            const size_t texcoordsBytes = sizeof(ybi::float2) * mesh.texcoords.size();
+            const size_t texcoordIndicesBytes = sizeof(int) * mesh.texcoordIndices.size();
+            texcoordsBuffer = device->AllocBytes(texcoordsBytes);
+            texcoordIndicesBuffer = device->AllocBytes(texcoordIndicesBytes);
+            device->CopyBytesToDevice(texcoordsBuffer, mesh.texcoords.data(), texcoordsBytes);
+            device->CopyBytesToDevice(
+                texcoordIndicesBuffer, mesh.texcoordIndices.data(), texcoordIndicesBytes);
+            out.ownedBuffers.push_back(texcoordsBuffer);
+            out.ownedBuffers.push_back(texcoordIndicesBuffer);
+        }
+
         out.refs[job.refIndex] = {(unsigned long long)positionsBuffer.data(),
                                   (unsigned long long)indicesBuffer.data(),
+                                  (unsigned long long)texcoordsBuffer.data(),
+                                  (unsigned long long)texcoordIndicesBuffer.data(),
                                   (int)mesh.positions.size(),
-                                  (int)mesh.indices.size()};
+                                  (int)mesh.indices.size(),
+                                  (int)mesh.texcoords.size(),
+                                  (int)mesh.texcoordIndices.size(),
+                                  mesh.materialIndex};
         out.ownedBuffers.push_back(positionsBuffer);
         out.ownedBuffers.push_back(indicesBuffer);
     }
@@ -719,8 +744,13 @@ int main(int argc, char **argv)
         const LaunchParams::InstanceGeomRef meshRef = {
             (unsigned long long)meshPositionsBuffer,
             (unsigned long long)meshIndicesBuffer,
+            0ull,
+            0ull,
             (int)mesh.positions.size(),
             (int)mesh.indices.size(),
+            0,
+            0,
+            -1,
         };
         CUDA_ASSERT(cuMemAlloc(&instanceGeomRefsBuffer, sizeof(LaunchParams::InstanceGeomRef)));
         CUDA_ASSERT(

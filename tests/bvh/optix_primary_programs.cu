@@ -7,8 +7,13 @@ struct LaunchParams
     {
         unsigned long long positions;
         unsigned long long indices;
+        unsigned long long texcoords;
+        unsigned long long texcoordIndices;
         int numPositions;
         int numIndices;
+        int numTexcoords;
+        int numTexcoordIndices;
+        int materialIndex;
     };
 
     struct WireframeConfig
@@ -42,6 +47,12 @@ struct HitgroupData
     unsigned long long indices;
     int numPositions;
     int numIndices;
+};
+
+struct float2_simple
+{
+    float x;
+    float y;
 };
 
 extern "C"
@@ -321,6 +332,36 @@ extern "C" __global__ void __closesthit__primary()
     {
         const float2 bary = optixGetTriangleBarycentrics();
         const float3 barycentrics = make_float3(1.0f - bary.x - bary.y, bary.x, bary.y);
+        const unsigned int instanceId = optixGetInstanceId();
+        if (params.instanceGeomRefs != 0ull && instanceId < (unsigned int)params.instanceGeomRefCount)
+        {
+            const LaunchParams::InstanceGeomRef *refs =
+                reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+            const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+            const int primitiveIndex = int(optixGetPrimitiveIndex());
+            const int triCornerBase = primitiveIndex * 3;
+            if (ref.texcoords != 0ull && ref.texcoordIndices != 0ull && triCornerBase + 2 < ref.numTexcoordIndices)
+            {
+                const float2_simple *texcoords =
+                    reinterpret_cast<const float2_simple *>(ref.texcoords);
+                const int *tcIndices = reinterpret_cast<const int *>(ref.texcoordIndices);
+                const int t0 = tcIndices[triCornerBase + 0];
+                const int t1 = tcIndices[triCornerBase + 1];
+                const int t2 = tcIndices[triCornerBase + 2];
+                if (t0 >= 0 && t0 < ref.numTexcoords && t1 >= 0 && t1 < ref.numTexcoords &&
+                    t2 >= 0 && t2 < ref.numTexcoords)
+                {
+                    const float2_simple uv0 = texcoords[t0];
+                    const float2_simple uv1 = texcoords[t1];
+                    const float2_simple uv2 = texcoords[t2];
+                    const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y + uv2.x * barycentrics.z;
+                    const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y + uv2.y * barycentrics.z;
+                    const float uu = u - floorf(u);
+                    const float vv = v - floorf(v);
+                    color = make_float3(uu, vv, 1.0f - uu);
+                }
+            }
+        }
         const float edgeDistance = fminf(barycentrics.x, fminf(barycentrics.y, barycentrics.z));
         const float edgeAlpha =
             1.0f - SmoothStep(params.wireframe.lineWidth,
