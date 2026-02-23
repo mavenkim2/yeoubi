@@ -78,8 +78,7 @@ static __forceinline__ __device__ float3 Normalize3(const float3 &v)
 
 static __forceinline__ __device__ float3 Cross3(const float3 &a, const float3 &b)
 {
-    return make_float3(
-        a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
 }
 
 static __forceinline__ __device__ unsigned int Hash32(unsigned int x)
@@ -100,7 +99,8 @@ static __forceinline__ __device__ float Random01(unsigned int &state)
 
 static __forceinline__ __device__ void BuildOrthonormalBasis(const float3 &n, float3 &t, float3 &b)
 {
-    const float3 up = fabsf(n.z) < 0.999f ? make_float3(0.0f, 0.0f, 1.0f) : make_float3(0.0f, 1.0f, 0.0f);
+    const float3 up =
+        fabsf(n.z) < 0.999f ? make_float3(0.0f, 0.0f, 1.0f) : make_float3(0.0f, 1.0f, 0.0f);
     t = Normalize3(Cross3(up, n));
     b = Normalize3(Cross3(n, t));
 }
@@ -115,9 +115,11 @@ static __forceinline__ __device__ float3 SampleCosineHemisphere(float u1, float 
     return make_float3(x, y, z);
 }
 
-static __forceinline__ __device__ float3 FaceForward(const float3 &normal, const float3 &referenceDirection)
+static __forceinline__ __device__ float3 FaceForward(const float3 &normal,
+                                                     const float3 &referenceDirection)
 {
-    const float d = normal.x * referenceDirection.x + normal.y * referenceDirection.y + normal.z * referenceDirection.z;
+    const float d = normal.x * referenceDirection.x + normal.y * referenceDirection.y +
+                    normal.z * referenceDirection.z;
     if (d < 0.0f)
     {
         return normal;
@@ -143,10 +145,20 @@ static __forceinline__ __device__ float3 SkyColor(const float3 &direction)
                        (1.0f - t) * top.z + t * bottom.z);
 }
 
-static __forceinline__ __device__ bool TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
-                                                                unsigned int primitiveIndex,
-                                                                const float3 &barycentrics,
-                                                                float3 &outColor)
+static __forceinline__ __device__ float3 MakeFlatAlbedo(unsigned int id)
+{
+    const unsigned int h = Hash32(id + 1u);
+    const float r = 0.2f + 0.8f * float(h & 0xFFu) / 255.0f;
+    const float g = 0.2f + 0.8f * float((h >> 8) & 0xFFu) / 255.0f;
+    const float b = 0.2f + 0.8f * float((h >> 16) & 0xFFu) / 255.0f;
+    return make_float3(r, g, b);
+}
+
+static __forceinline__ __device__ bool
+TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
+                         unsigned int primitiveIndex,
+                         const float3 &barycentrics,
+                         float3 &outColor)
 {
     if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
         geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
@@ -191,27 +203,11 @@ static __forceinline__ __device__ bool TrySampleMaterialTexture(const LaunchPara
     const float uu = u - floorf(u);
     const float vv = v - floorf(v);
 
-    const cudaTextureObject_t textureObject = static_cast<cudaTextureObject_t>(textureRef.textureObject);
+    const cudaTextureObject_t textureObject =
+        static_cast<cudaTextureObject_t>(textureRef.textureObject);
     const float4 sample = tex2D<float4>(textureObject, uu, vv);
     outColor = make_float3(sample.x, sample.y, sample.z);
     return true;
-}
-
-// Kept for debug parity with previous shader mode; intentionally unused.
-static __forceinline__ __device__ float3 ShadeBarycentric(const float3 &barycentrics,
-                                                          unsigned int primitive)
-{
-    const float hash = (float)((primitive * 1664525u + 1013904223u) & 255u) / 255.0f;
-    return make_float3(0.25f + 0.6f * barycentrics.x + 0.15f * hash,
-                       0.25f + 0.6f * barycentrics.y + 0.1f * (1.0f - hash),
-                       0.25f + 0.6f * barycentrics.z);
-}
-
-static __forceinline__ __device__ float SmoothStep(float edge0, float edge1, float x)
-{
-    const float denom = fmaxf(edge1 - edge0, 1e-6f);
-    const float t = fminf(fmaxf((x - edge0) / denom, 0.0f), 1.0f);
-    return t * t * (3.0f - 2.0f * t);
 }
 
 static __forceinline__ __device__ float3 ComputeDirection(const uint3 &launchIndex,
@@ -247,10 +243,8 @@ static __forceinline__ __device__ unsigned int TraceColor(const float3 &origin,
     return packedColor;
 }
 
-static __forceinline__ __device__ unsigned int TraceOcclusion(const float3 &origin,
-                                                              const float3 &direction,
-                                                              float tMin,
-                                                              float tMax)
+static __forceinline__ __device__ unsigned int
+TraceOcclusion(const float3 &origin, const float3 &direction, float tMin, float tMax)
 {
     unsigned int hit = 0x80000000u;
     optixTrace(params.traversable,
@@ -315,25 +309,27 @@ extern "C" __global__ void __closesthit__primary()
     {
         const int spp = max(params.spp, 1);
         const uint3 launchIndex = optixGetLaunchIndex();
-        unsigned int rngState = Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u);
+        unsigned int rngState =
+            Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u);
 
         const float3 rayOrigin = optixGetWorldRayOrigin();
         const float3 rayDirection = Normalize3(optixGetWorldRayDirection());
         const float tHit = optixGetRayTmax();
-        const float3 hitPoint =
-            make_float3(rayOrigin.x + rayDirection.x * tHit,
-                        rayOrigin.y + rayDirection.y * tHit,
-                        rayOrigin.z + rayDirection.z * tHit);
+        const float3 hitPoint = make_float3(rayOrigin.x + rayDirection.x * tHit,
+                                            rayOrigin.y + rayDirection.y * tHit,
+                                            rayOrigin.z + rayDirection.z * tHit);
         float3 normal = Normalize3(make_float3(-rayDirection.x, -rayDirection.y, -rayDirection.z));
         const unsigned int hitKind = optixGetHitKind();
         if (hitKind == OPTIX_HIT_KIND_TRIANGLE_FRONT_FACE ||
             hitKind == OPTIX_HIT_KIND_TRIANGLE_BACK_FACE)
         {
             const unsigned int instanceId = optixGetInstanceId();
-            if (params.instanceGeomRefs != 0ull && instanceId < (unsigned int)params.instanceGeomRefCount)
+            if (params.instanceGeomRefs != 0ull &&
+                instanceId < (unsigned int)params.instanceGeomRefCount)
             {
                 const LaunchParams::InstanceGeomRef *refs =
-                    reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+                    reinterpret_cast<const LaunchParams::InstanceGeomRef *>(
+                        params.instanceGeomRefs);
                 const LaunchParams::InstanceGeomRef ref = refs[instanceId];
                 const int primitiveIndex = int(optixGetPrimitiveIndex());
                 const int indexBase = primitiveIndex * 3;
@@ -369,9 +365,10 @@ extern "C" __global__ void __closesthit__primary()
             const float u1 = Random01(rngState);
             const float u2 = Random01(rngState);
             const float3 local = SampleCosineHemisphere(u1, u2);
-            const float3 sampleDir = Normalize3(make_float3(tangent.x * local.x + bitangent.x * local.y + normal.x * local.z,
-                                                            tangent.y * local.x + bitangent.y * local.y + normal.y * local.z,
-                                                            tangent.z * local.x + bitangent.z * local.y + normal.z * local.z));
+            const float3 sampleDir = Normalize3(
+                make_float3(tangent.x * local.x + bitangent.x * local.y + normal.x * local.z,
+                            tangent.y * local.x + bitangent.y * local.y + normal.y * local.z,
+                            tangent.z * local.x + bitangent.z * local.y + normal.z * local.z));
             const float3 sampleOrigin = make_float3(hitPoint.x + normal.x * params.aoBias,
                                                     hitPoint.y + normal.y * params.aoBias,
                                                     hitPoint.z + normal.z * params.aoBias);
@@ -389,7 +386,7 @@ extern "C" __global__ void __closesthit__primary()
         return;
     }
 
-    float3 color = make_float3(0.86f, 0.86f, 0.86f);
+    float3 color = make_float3(0.7f, 0.7f, 0.7f);
     const unsigned int hitKind = optixGetHitKind();
     if (hitKind == OPTIX_HIT_KIND_TRIANGLE_FRONT_FACE ||
         hitKind == OPTIX_HIT_KIND_TRIANGLE_BACK_FACE)
@@ -397,56 +394,23 @@ extern "C" __global__ void __closesthit__primary()
         const float2 bary = optixGetTriangleBarycentrics();
         const float3 barycentrics = make_float3(1.0f - bary.x - bary.y, bary.x, bary.y);
         const unsigned int instanceId = optixGetInstanceId();
-        if (params.instanceGeomRefs != 0ull && instanceId < (unsigned int)params.instanceGeomRefCount)
+        if (params.instanceGeomRefs != 0ull &&
+            instanceId < (unsigned int)params.instanceGeomRefCount)
         {
             const LaunchParams::InstanceGeomRef *refs =
                 reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
             const LaunchParams::InstanceGeomRef ref = refs[instanceId];
-            const bool sampled = TrySampleMaterialTexture(ref, optixGetPrimitiveIndex(), barycentrics, color);
-            if (!sampled && ref.texcoords != 0ull && ref.texcoordIndices != 0ull)
+            const bool sampled =
+                TrySampleMaterialTexture(ref, optixGetPrimitiveIndex(), barycentrics, color);
+            if (!sampled)
             {
-                const int primitiveIndex = int(optixGetPrimitiveIndex());
-                const int triCornerBase = primitiveIndex * 3;
-                if (triCornerBase + 2 < ref.numTexcoordIndices)
-                {
-                    const float2_simple *texcoords =
-                        reinterpret_cast<const float2_simple *>(ref.texcoords);
-                    const int *tcIndices = reinterpret_cast<const int *>(ref.texcoordIndices);
-                    const int t0 = tcIndices[triCornerBase + 0];
-                    const int t1 = tcIndices[triCornerBase + 1];
-                    const int t2 = tcIndices[triCornerBase + 2];
-                    if (t0 >= 0 && t0 < ref.numTexcoords && t1 >= 0 && t1 < ref.numTexcoords &&
-                        t2 >= 0 && t2 < ref.numTexcoords)
-                    {
-                        const float2_simple uv0 = texcoords[t0];
-                        const float2_simple uv1 = texcoords[t1];
-                        const float2_simple uv2 = texcoords[t2];
-                        const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y +
-                                        uv2.x * barycentrics.z;
-                        const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y +
-                                        uv2.y * barycentrics.z;
-                        const float uu = u - floorf(u);
-                        const float vv = v - floorf(v);
-                        color = make_float3(uu, vv, 1.0f - uu);
-                    }
-                }
+                color = MakeFlatAlbedo(instanceId);
             }
         }
-        const float edgeDistance = fminf(barycentrics.x, fminf(barycentrics.y, barycentrics.z));
-        const float edgeAlpha =
-            1.0f - SmoothStep(params.wireframe.lineWidth,
-                              params.wireframe.lineWidth + params.wireframe.lineFeather,
-                              edgeDistance);
-        const float edgeValue = fminf(fmaxf(params.wireframe.edgeDarkness, 0.0f), 1.0f);
-        const float3 edgeColor = make_float3(edgeValue, edgeValue, edgeValue);
-        color = make_float3(color.x * (1.0f - edgeAlpha) + edgeColor.x * edgeAlpha,
-                            color.y * (1.0f - edgeAlpha) + edgeColor.y * edgeAlpha,
-                            color.z * (1.0f - edgeAlpha) + edgeColor.z * edgeAlpha);
-        (void)ShadeBarycentric(barycentrics, optixGetPrimitiveIndex());
     }
     else
     {
-        color = make_float3(0.95f, 0.90f, 0.72f);
+        color = make_float3(0.7f, 0.7f, 0.7f);
     }
     optixSetPayload_0(PackColor(color.x, color.y, color.z));
 }
