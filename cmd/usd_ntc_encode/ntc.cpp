@@ -14,10 +14,10 @@
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include "third_party/stb_image.h"
 
 #define TINYEXR_IMPLEMENTATION
-#include <tinyexr.h>
+#include "third_party/tinyexr.h"
 
 namespace
 {

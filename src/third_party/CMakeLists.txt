@@ -43,9 +43,6 @@ if (WITH_NTC AND CMAKE_CUDA_COMPILER AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/RTX
         set(NTC_LIBRARIES libntc PARENT_SCOPE)
         set(NTC_INCLUDE_DIRS
             "${CMAKE_CURRENT_SOURCE_DIR}/RTXNTC/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tinyexr"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tinyexr/deps/miniz"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tinyexr/examples/common"
             PARENT_SCOPE)
         message(STATUS "Found RTX NTC target!")
     endif()
