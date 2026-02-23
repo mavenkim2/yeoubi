@@ -156,7 +156,7 @@ static RTCScene BuildCurveLeafScene(RTCDevice embreeDevice, const Curves &curves
     }
     YBI_ASSERT(segmentOut == totalSegments);
 
-    rtcSetGeometryTessellationRate(curveGeometry, 4.0f);
+    rtcSetGeometryTessellationRate(curveGeometry, 1.0f);
     rtcCommitGeometry(curveGeometry);
     rtcAttachGeometry(leafScene, curveGeometry);
     rtcReleaseGeometry(curveGeometry);
