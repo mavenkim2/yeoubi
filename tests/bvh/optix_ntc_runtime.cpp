@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -104,6 +105,18 @@ int FindBestAlbedoTexture(ntc::ITextureSet *textureSet)
         }
     }
     return fallback;
+}
+
+std::string FindDiffuseTexturePath(const ybi::ScenePool::MaterialInfo &material)
+{
+    for (const ybi::ScenePool::MaterialTextureInput &input : material.textureInputs)
+    {
+        if (input.inputName == "diffuseColor")
+        {
+            return input.texturePath;
+        }
+    }
+    return "";
 }
 
 void ExpandToRgba(const std::vector<unsigned char> &src,
@@ -273,6 +286,7 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
     }
 
     int loadedCount = 0;
+    std::unordered_map<std::string, size_t> decodedByDiffusePath;
     for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
     {
         const ybi::ScenePool::MaterialInfo &material = materials[materialIndex];
@@ -286,6 +300,11 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
         if (DecodeOneMaterial(context, ntcPath, (*outTextures)[materialIndex], decodeError))
         {
             loadedCount++;
+            const std::string diffusePath = FindDiffuseTexturePath(material);
+            if (!diffusePath.empty())
+            {
+                decodedByDiffusePath.emplace(diffusePath, materialIndex);
+            }
             std::printf("NTC runtime: material %zu -> %s (%dx%d, texture=%s)\n",
                         materialIndex,
                         ntcPath.string().c_str(),
@@ -299,6 +318,34 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
                     materialIndex,
                     ntcPath.string().c_str(),
                     decodeError.c_str());
+    }
+
+    for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
+    {
+        if ((*outTextures)[materialIndex].valid)
+        {
+            continue;
+        }
+        const std::string diffusePath = FindDiffuseTexturePath(materials[materialIndex]);
+        if (diffusePath.empty())
+        {
+            continue;
+        }
+        auto found = decodedByDiffusePath.find(diffusePath);
+        if (found == decodedByDiffusePath.end())
+        {
+            continue;
+        }
+        const size_t sourceIndex = found->second;
+        if (sourceIndex >= outTextures->size() || !(*outTextures)[sourceIndex].valid)
+        {
+            continue;
+        }
+        (*outTextures)[materialIndex] = (*outTextures)[sourceIndex];
+        loadedCount++;
+        std::printf("NTC runtime: material %zu aliased to material %zu (diffuse path match)\n",
+                    materialIndex,
+                    sourceIndex);
     }
 
     std::printf("NTC runtime: decoded %d/%zu material textures from %s\n",
