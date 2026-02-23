@@ -4,7 +4,10 @@
 
 #include "scene/scene.h"
 #include "util/assert.h"
+#include "util/float4.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -52,6 +55,114 @@ static RTCScene BuildTriangleLeafScene(RTCDevice embreeDevice, const Mesh &mesh)
     rtcCommitScene(leafScene);
     return leafScene;
 }
+
+static float ResolveCurveWidth(const Curves &curves,
+                               const Array<float> &widths,
+                               uint32_t curveIndex,
+                               uint32_t vertexIndex)
+{
+    if (widths.size() == 0)
+    {
+        return 0.01f;
+    }
+    if (widths.size() == curves.GetNumVertices())
+    {
+        return widths[vertexIndex];
+    }
+    if (widths.size() == curves.GetNumCurves())
+    {
+        return widths[curveIndex];
+    }
+    return widths[0];
+}
+
+static RTCScene BuildCurveLeafScene(RTCDevice embreeDevice, const Curves &curves)
+{
+    YBI_ASSERT(embreeDevice);
+    YBI_ASSERT(curves.GetNumVertices() > 0);
+    YBI_ASSERT(curves.GetNumCurves() > 0);
+
+    const Array<float3> &positions = curves.GetVertices();
+    const Array<float> &widths = curves.GetWidths();
+    const uint32_t numVertices = static_cast<uint32_t>(curves.GetNumVertices());
+
+    uint32_t totalSegments = 0;
+    for (uint32_t curveIndex = 0; curveIndex < curves.GetNumCurves(); curveIndex++)
+    {
+        uint32_t start = 0;
+        uint32_t count = 0;
+        curves.GetCurveRange(curveIndex, start, count);
+        if (count >= 4)
+        {
+            totalSegments += count - 3;
+        }
+    }
+
+    if (totalSegments == 0)
+    {
+        return nullptr;
+    }
+
+    RTCScene leafScene = rtcNewScene(embreeDevice);
+    YBI_ASSERT(leafScene);
+
+    RTCGeometry curveGeometry = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE);
+    YBI_ASSERT(curveGeometry);
+
+    float4 *vertexBuffer = static_cast<float4 *>(rtcSetNewGeometryBuffer(curveGeometry,
+                                                                          RTC_BUFFER_TYPE_VERTEX,
+                                                                          0,
+                                                                          RTC_FORMAT_FLOAT4,
+                                                                          sizeof(float4),
+                                                                          numVertices));
+    uint32_t *indexBuffer = static_cast<uint32_t *>(rtcSetNewGeometryBuffer(curveGeometry,
+                                                                             RTC_BUFFER_TYPE_INDEX,
+                                                                             0,
+                                                                             RTC_FORMAT_UINT,
+                                                                             sizeof(uint32_t),
+                                                                             totalSegments));
+    YBI_ASSERT(vertexBuffer);
+    YBI_ASSERT(indexBuffer);
+
+    for (uint32_t curveIndex = 0; curveIndex < curves.GetNumCurves(); curveIndex++)
+    {
+        uint32_t start = 0;
+        uint32_t count = 0;
+        curves.GetCurveRange(curveIndex, start, count);
+        for (uint32_t localVertex = 0; localVertex < count; localVertex++)
+        {
+            const uint32_t vertexIndex = start + localVertex;
+            const float3 p = positions[vertexIndex];
+            const float width = std::max(0.0f, ResolveCurveWidth(curves, widths, curveIndex, vertexIndex));
+            vertexBuffer[vertexIndex] = make_float4(p.x, p.y, p.z, width * 0.5f);
+        }
+    }
+
+    uint32_t segmentOut = 0;
+    for (uint32_t curveIndex = 0; curveIndex < curves.GetNumCurves(); curveIndex++)
+    {
+        uint32_t start = 0;
+        uint32_t count = 0;
+        curves.GetCurveRange(curveIndex, start, count);
+        if (count < 4)
+        {
+            continue;
+        }
+        const uint32_t numSegments = count - 3;
+        for (uint32_t segmentIndex = 0; segmentIndex < numSegments; segmentIndex++)
+        {
+            indexBuffer[segmentOut++] = start + segmentIndex;
+        }
+    }
+    YBI_ASSERT(segmentOut == totalSegments);
+
+    rtcSetGeometryTessellationRate(curveGeometry, 4.0f);
+    rtcCommitGeometry(curveGeometry);
+    rtcAttachGeometry(leafScene, curveGeometry);
+    rtcReleaseGeometry(curveGeometry);
+    rtcCommitScene(leafScene);
+    return leafScene;
+}
 } // namespace
 
 void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
@@ -93,18 +204,36 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
         rtcReleaseScene(leafScene);
     }
 
-    static bool warnedCurves = false;
     for (const Curves &curves : scene->curves)
     {
         if (curves.GetNumVertices() == 0 || curves.GetNumCurves() == 0)
         {
             continue;
         }
-        if (!warnedCurves)
+
+        RTCScene leafScene = BuildCurveLeafScene(cpuDevice->embreeDevice, curves);
+        if (!leafScene)
         {
-            fprintf(stderr, "Embree CPU path: curve geometry build TODO; skipping curves.\n");
-            warnedCurves = true;
+            static bool warnedEmptySegments = false;
+            if (!warnedEmptySegments)
+            {
+                fprintf(stderr, "Embree CPU path: curve primitive has no valid segments; skipping.\n");
+                warnedEmptySegments = true;
+            }
+            continue;
         }
+
+        RTCGeometry instance = rtcNewGeometry(cpuDevice->embreeDevice, RTC_GEOMETRY_TYPE_INSTANCE);
+        YBI_ASSERT(instance);
+        rtcSetGeometryInstancedScene(instance, leafScene);
+        float transform[12] = {};
+        CopyTransformMatrix(curves.parentFromLocal, transform);
+        rtcSetGeometryTransform(instance, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform);
+        rtcCommitGeometry(instance);
+        rtcAttachGeometry(embreeScene, instance);
+        rtcReleaseGeometry(instance);
+
+        rtcReleaseScene(leafScene);
     }
 
     static bool warnedMissingChild = false;
@@ -144,4 +273,3 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
 YBI_NAMESPACE_END
 
 #endif
-
