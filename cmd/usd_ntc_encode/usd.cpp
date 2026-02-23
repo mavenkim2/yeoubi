@@ -3,6 +3,7 @@
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/layerUtils.h>
+#include <pxr/usd/sdf/valueTypeName.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/mesh.h>
@@ -329,7 +330,7 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
 void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
-                 "Usage: %s <entry.usd[a|c]> <out_dir> [--bits-per-pixel <bpp>] [--training-steps <n>] [--steps-per-iter <n>] [--cuda-device <n>] [--max-materials <n>] [--purposes <csv>] [--no-encode]\n",
+                 "Usage: %s <entry.usd[a|c]> <out_dir> [--out-usd path] [--bits-per-pixel <bpp>] [--training-steps <n>] [--steps-per-iter <n>] [--cuda-device <n>] [--max-materials <n>] [--purposes <csv>] [--no-encode]\n",
                  exe);
 }
 
@@ -360,6 +361,16 @@ bool ParseCli(int argc, char **argv, Cli &out)
                 std::fprintf(stderr, "Invalid --bits-per-pixel\n");
                 return false;
             }
+            continue;
+        }
+        if (arg == "--out-usd")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "Missing value for --out-usd\n");
+                return false;
+            }
+            out.outUsdPath = argv[++i];
             continue;
         }
         if (arg == "--training-steps")
@@ -553,6 +564,72 @@ std::string Sanitize(const std::string &s)
         out = "material";
     }
     return out;
+}
+
+bool WriteNtcBindingsToUsd(const pxr::UsdStageRefPtr &stage,
+                           const std::unordered_map<std::string, std::string> &materialToNtcFile,
+                           const std::string &outUsdPath,
+                           std::string *outError)
+{
+    if (!stage)
+    {
+        if (outError)
+        {
+            *outError = "null USD stage";
+        }
+        return false;
+    }
+    if (outUsdPath.empty())
+    {
+        if (outError)
+        {
+            *outError = "empty output USD path";
+        }
+        return false;
+    }
+
+    const pxr::TfToken fileToken("ybi:ntc:diffuseFile");
+    const pxr::TfToken texNameToken("ybi:ntc:diffuseTextureName");
+    int authoredCount = 0;
+    for (const auto &kv : materialToNtcFile)
+    {
+        const std::string &materialPath = kv.first;
+        const std::string &ntcFile = kv.second;
+        if (materialPath.empty() || ntcFile.empty())
+        {
+            continue;
+        }
+
+        pxr::UsdPrim materialPrim = stage->GetPrimAtPath(pxr::SdfPath(materialPath));
+        if (!materialPrim || !materialPrim.IsA<pxr::UsdShadeMaterial>())
+        {
+            std::printf("NTC USD write: material missing %s\n", materialPath.c_str());
+            continue;
+        }
+
+        pxr::UsdAttribute fileAttr = materialPrim.CreateAttribute(
+            fileToken, pxr::SdfValueTypeNames->Asset, true);
+        fileAttr.Set(pxr::SdfAssetPath(ntcFile));
+
+        pxr::UsdAttribute texNameAttr = materialPrim.CreateAttribute(
+            texNameToken, pxr::SdfValueTypeNames->String, true);
+        texNameAttr.Set(std::string("diffuseColor"));
+        authoredCount++;
+    }
+
+    if (!stage->Export(outUsdPath))
+    {
+        if (outError)
+        {
+            *outError = "stage export failed: " + outUsdPath;
+        }
+        return false;
+    }
+
+    std::printf("NTC USD write: authored bindings=%d exported=%s\n",
+                authoredCount,
+                outUsdPath.c_str());
+    return true;
 }
 
 bool WriteManifest(const fs::path &path, const MaterialChannels &mat)

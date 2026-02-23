@@ -115,7 +115,6 @@ struct CliOptions
     std::optional<ybi::float3> cameraPosition;
     std::optional<ybi::float3> lookAt;
     int spp = 1;
-    std::string ntcDir;
 };
 
 struct RenderCameraOverride
@@ -259,7 +258,7 @@ static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valu
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
-           "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z] [--ntc-dir path]\n",
+           "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
@@ -267,7 +266,6 @@ static void PrintUsage(const char *exeName)
     printf("  --spp samples per pixel for ao integrator\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
-    printf("  --ntc-dir optional directory with <sanitizedMaterialPath>.ntc files\n");
 }
 
 static CliOptions ParseCli(int argc, char **argv)
@@ -351,16 +349,6 @@ static CliOptions ParseCli(int argc, char **argv)
             }
             options.lookAt = value;
             i += 3;
-            continue;
-        }
-        if (arg == "--ntc-dir")
-        {
-            if (i + 1 >= argc)
-            {
-                PrintUsage(argv[0]);
-                std::abort();
-            }
-            options.ntcDir = argv[++i];
             continue;
         }
         if (arg == "--help" || arg == "-h")
@@ -621,47 +609,39 @@ int main(int argc, char **argv)
     int materialTextureRefCount = 0;
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
     testbvh::UploadedMaterialTextures uploadedMaterialTextures = {};
-    if (!options.ntcDir.empty())
+    std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
+    std::string ntcError;
+    const bool ok =
+        testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &decodedTextures, &ntcError);
+    if (!ok)
     {
-        std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
-        std::string ntcError;
-        const bool ok = testbvh::DecodeNtcDiffuseTextures(
-            scenePool.materials, options.ntcDir, &decodedTextures, &ntcError);
-        if (!ok)
-        {
-            fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
-            return 1;
-        }
-
-        if (!testbvh::UploadDecodedTexturesToCuda(
-                decodedTextures, &uploadedMaterialTextures, &ntcError))
-        {
-            fprintf(stderr, "NTC runtime upload failed: %s\n", ntcError.c_str());
-            return 1;
-        }
-        if (!uploadedMaterialTextures.refs.empty())
-        {
-            std::vector<LaunchParams::MaterialTextureRef> launchRefs(
-                uploadedMaterialTextures.refs.size());
-            for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
-            {
-                const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
-                launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
-            }
-            const size_t refsBytes =
-                launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
-            materialTextureRefsBuffer = device.AllocBytes(refsBytes);
-            device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
-            materialTextureRefCount = static_cast<int>(launchRefs.size());
-        }
-    }
-#else
-    if (!options.ntcDir.empty())
-    {
-        fprintf(stderr,
-                "NTC runtime decode requested but harness was built without WITH_NTC support.\n");
+        fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
         return 1;
     }
+
+    if (!testbvh::UploadDecodedTexturesToCuda(decodedTextures, &uploadedMaterialTextures, &ntcError))
+    {
+        fprintf(stderr, "NTC runtime upload failed: %s\n", ntcError.c_str());
+        return 1;
+    }
+    if (!uploadedMaterialTextures.refs.empty())
+    {
+        std::vector<LaunchParams::MaterialTextureRef> launchRefs(
+            uploadedMaterialTextures.refs.size());
+        for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
+        {
+            const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
+            launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
+        }
+        const size_t refsBytes =
+            launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
+        materialTextureRefsBuffer = device.AllocBytes(refsBytes);
+        device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
+        materialTextureRefCount = static_cast<int>(launchRefs.size());
+    }
+#else
+    fprintf(stderr,
+            "NTC runtime decode skipped: harness built without WITH_NTC support.\n");
 #endif
 
     Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();

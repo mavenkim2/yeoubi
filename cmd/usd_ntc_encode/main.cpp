@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -54,6 +55,17 @@ int main(int argc, char **argv)
     std::fprintf(stderr, "NTC stage: open USD done\n");
 
     std::filesystem::create_directories(cli.outDir);
+    if (cli.outUsdPath.empty())
+    {
+        const fs::path inPath(cli.usdPath);
+        const std::string stem = inPath.stem().string();
+        cli.outUsdPath = (fs::path(cli.outDir) / (stem + ".ntc.usda")).string();
+    }
+    fs::path outUsdDir = fs::path(cli.outUsdPath).parent_path();
+    if (!outUsdDir.empty())
+    {
+        std::filesystem::create_directories(outUsdDir);
+    }
 
     std::fprintf(stderr, "NTC stage: collect material textures\n");
     std::fprintf(stderr, "NTC stage: purposes=");
@@ -86,6 +98,7 @@ int main(int argc, char **argv)
     int manifestCount = 0;
     int encodedCount = 0;
     int encodeFailCount = 0;
+    std::unordered_map<std::string, std::string> materialToNtcFile;
     int withChannels = 0;
     uint64_t totalSourceFileBytes = 0;
     uint64_t totalDecodedBytes = 0;
@@ -155,6 +168,7 @@ int main(int argc, char **argv)
                                reason))
             {
                 ++encodedCount;
+                materialToNtcFile[mat.materialPath] = ntcOutPath.filename().string();
                 totalSourceFileBytes += encodeStats.sourceFileBytes;
                 totalDecodedBytes += encodeStats.decodedBytes;
                 totalNtcBytes += encodeStats.ntcBytes;
@@ -195,6 +209,23 @@ int main(int argc, char **argv)
                     ToMiB(totalSourceFileBytes),
                     ToMiB(totalDecodedBytes),
                     ToMiB(totalNtcBytes));
+        if (!materialToNtcFile.empty())
+        {
+            std::string writeError;
+            if (!WriteNtcBindingsToUsd(stage, materialToNtcFile, cli.outUsdPath, &writeError))
+            {
+                std::fprintf(stderr, "Failed to write NTC bindings to USD: %s\n", writeError.c_str());
+                return 1;
+            }
+        }
+        else
+        {
+            std::printf("NTC USD write: skipped (no encoded material bindings)\n");
+        }
+    }
+    else
+    {
+        std::printf("NTC USD write: skipped in --no-encode mode\n");
     }
 
     return 0;

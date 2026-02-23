@@ -4,7 +4,6 @@
 #include <libntc/wrappers.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -16,23 +15,6 @@ namespace testbvh
 {
 namespace
 {
-
-std::string Sanitize(const std::string &s)
-{
-    std::string out = s;
-    for (char &c : out)
-    {
-        if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.'))
-        {
-            c = '_';
-        }
-    }
-    if (out.empty())
-    {
-        return "material";
-    }
-    return out;
-}
 
 std::string NtcStatusString(ntc::Status status)
 {
@@ -250,7 +232,6 @@ bool DecodeOneMaterial(ntc::IContext *context,
 } // namespace
 
 bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &materials,
-                              const std::string &ntcDir,
                               std::vector<DecodedMaterialTexture> *outTextures,
                               std::string *outError)
 {
@@ -265,10 +246,6 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
 
     outTextures->clear();
     outTextures->resize(materials.size());
-    if (ntcDir.empty())
-    {
-        return true;
-    }
 
     ntc::ContextParameters contextParams = {};
     contextParams.cudaDevice = 0;
@@ -287,12 +264,21 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
 
     int loadedCount = 0;
     std::unordered_map<std::string, size_t> decodedByDiffusePath;
+    int withNtcPath = 0;
     for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
     {
         const ybi::ScenePool::MaterialInfo &material = materials[materialIndex];
-        const fs::path ntcPath = fs::path(ntcDir) / (Sanitize(material.materialPath) + ".ntc");
+        if (material.ntcDiffuseFile.empty())
+        {
+            continue;
+        }
+        withNtcPath++;
+        const fs::path ntcPath(material.ntcDiffuseFile);
         if (!fs::exists(ntcPath))
         {
+            std::printf("NTC runtime: material %zu missing file from USD (%s)\n",
+                        materialIndex,
+                        ntcPath.string().c_str());
             continue;
         }
 
@@ -351,7 +337,8 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
     std::printf("NTC runtime: decoded %d/%zu material textures from %s\n",
                 loadedCount,
                 materials.size(),
-                ntcDir.c_str());
+                "USD material attributes");
+    std::printf("NTC runtime: materials with ntc path: %d\n", withNtcPath);
     return true;
 }
 

@@ -36,7 +36,6 @@ struct UploadedMaterialTextures
 };
 
 bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &materials,
-                              const std::string &ntcDir,
                               std::vector<DecodedMaterialTexture> *outTextures,
                               std::string *outError);
 

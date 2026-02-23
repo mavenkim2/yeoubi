@@ -198,6 +198,8 @@ struct ScenePool
     {
         std::string materialPath;
         std::vector<MaterialTextureInput> textureInputs;
+        std::string ntcDiffuseFile;
+        std::string ntcDiffuseTextureName;
     };
 
     std::vector<std::unique_ptr<Scene>> scenes;

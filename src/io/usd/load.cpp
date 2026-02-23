@@ -318,6 +318,51 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
     return true;
 }
 
+static void ReadNtcMaterialInfo(const pxr::UsdShadeMaterial &material,
+                                ScenePool::MaterialInfo *outInfo)
+{
+    YBI_ASSERT(outInfo);
+    outInfo->ntcDiffuseFile.clear();
+    outInfo->ntcDiffuseTextureName.clear();
+
+    const pxr::UsdPrim materialPrim = material.GetPrim();
+    if (!materialPrim)
+    {
+        return;
+    }
+
+    const pxr::UsdAttribute ntcFileAttr =
+        materialPrim.GetAttribute(pxr::TfToken("ybi:ntc:diffuseFile"));
+    if (ntcFileAttr)
+    {
+        pxr::SdfAssetPath assetPath;
+        if (ntcFileAttr.Get(&assetPath))
+        {
+            outInfo->ntcDiffuseFile = assetPath.GetResolvedPath();
+            if (outInfo->ntcDiffuseFile.empty())
+            {
+                outInfo->ntcDiffuseFile = assetPath.GetAssetPath();
+            }
+        }
+        else
+        {
+            // Back-compat if authored as plain string.
+            ntcFileAttr.Get(&outInfo->ntcDiffuseFile);
+        }
+    }
+
+    const pxr::UsdAttribute ntcTextureNameAttr =
+        materialPrim.GetAttribute(pxr::TfToken("ybi:ntc:diffuseTextureName"));
+    if (ntcTextureNameAttr)
+    {
+        ntcTextureNameAttr.Get(&outInfo->ntcDiffuseTextureName);
+    }
+    if (!outInfo->ntcDiffuseFile.empty() && outInfo->ntcDiffuseTextureName.empty())
+    {
+        outInfo->ntcDiffuseTextureName = "diffuseColor";
+    }
+}
+
 static void AppendUniqueTexturePath(std::vector<std::string> &paths, const std::string &path)
 {
     if (std::find(paths.begin(), paths.end(), path) == paths.end())
@@ -1095,6 +1140,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
     {
         ScenePool::MaterialInfo info = {};
         info.materialPath = material.GetPath().GetString();
+        ReadNtcMaterialInfo(material, &info);
         std::vector<std::string> uniqueTexturePaths;
 
         if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
@@ -1140,6 +1186,12 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
         for (const ScenePool::MaterialTextureInput &textureInput : info.textureInputs)
         {
             printf("  %s (%s)\n", textureInput.texturePath.c_str(), textureInput.inputName.c_str());
+        }
+        if (!info.ntcDiffuseFile.empty())
+        {
+            printf("  ntc diffuse: %s (%s)\n",
+                   info.ntcDiffuseFile.c_str(),
+                   info.ntcDiffuseTextureName.c_str());
         }
     }
     scenePool->materials = std::move(materialTextures);

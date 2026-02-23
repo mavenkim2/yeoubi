@@ -16,6 +16,7 @@ struct Cli
 {
     std::string usdPath;
     std::string outDir;
+    std::string outUsdPath;
     float bitsPerPixel = 4.0f;
     int trainingSteps = 1000;
     int stepsPerIter = 100;
@@ -49,6 +50,10 @@ bool ParseCli(int argc, char **argv, Cli &out);
 
 std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage,
                                                       const std::vector<std::string> &purposes);
+bool WriteNtcBindingsToUsd(const pxr::UsdStageRefPtr &stage,
+                           const std::unordered_map<std::string, std::string> &materialToNtcFile,
+                           const std::string &outUsdPath,
+                           std::string *outError);
 std::string Sanitize(const std::string &s);
 bool WriteManifest(const fs::path &path, const MaterialChannels &mat);
 
