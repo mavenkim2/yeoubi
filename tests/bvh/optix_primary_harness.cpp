@@ -26,6 +26,10 @@
 
 using namespace ybi;
 
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+#include "optix_ntc_runtime.h"
+#endif
+
 #ifndef YBI_OPTIX_PRIMARY_PTX_PATH
 #define YBI_OPTIX_PRIMARY_PTX_PATH ""
 #endif
@@ -112,6 +116,7 @@ struct CliOptions
     std::optional<ybi::float3> cameraPosition;
     std::optional<ybi::float3> lookAt;
     int spp = 1;
+    std::string ntcDir;
 };
 
 struct RenderCameraOverride
@@ -255,7 +260,7 @@ static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valu
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--type triangle|cluster|curve|usd] [--file path] [--out path] "
-           "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z]\n",
+           "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z] [--ntc-dir path]\n",
            exeName);
     printf("  --type triangle|cluster|curve|usd\n");
     printf("  --file OBJ path for triangle/cluster; JSON path for curve; USDA/USD path for usd\n");
@@ -264,6 +269,7 @@ static void PrintUsage(const char *exeName)
     printf("  --spp samples per pixel for ao integrator\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
+    printf("  --ntc-dir optional directory with <sanitizedMaterialPath>.ntc files\n");
 }
 
 static CliOptions ParseCli(int argc, char **argv)
@@ -386,6 +392,16 @@ static CliOptions ParseCli(int argc, char **argv)
             }
             options.lookAt = value;
             i += 3;
+            continue;
+        }
+        if (arg == "--ntc-dir")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.ntcDir = argv[++i];
             continue;
         }
         if (arg == "--help" || arg == "-h")
@@ -941,6 +957,28 @@ int main(int argc, char **argv)
                     options.inputPath.c_str());
             return 1;
         }
+
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+        if (!options.ntcDir.empty())
+        {
+            std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
+            std::string ntcError;
+            const bool ok = testbvh::DecodeNtcDiffuseTextures(
+                scenePool.materials, options.ntcDir, &decodedTextures, &ntcError);
+            if (!ok)
+            {
+                fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
+                return 1;
+            }
+        }
+#else
+        if (!options.ntcDir.empty())
+        {
+            fprintf(stderr,
+                    "NTC runtime decode requested but harness was built without WITH_NTC support.\n");
+            return 1;
+        }
+#endif
 
         Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
         YBI_ASSERT(rootScene);

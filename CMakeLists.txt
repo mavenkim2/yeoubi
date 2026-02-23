@@ -224,6 +224,14 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     target_include_directories(yeoubi_optix_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
     target_include_directories(yeoubi_optix_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_optix_harness PRIVATE ${YBI_DEPENDENCIES})
+
+    if (WITH_NTC)
+        target_sources(yeoubi_optix_harness PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_ntc_runtime.cpp)
+        target_compile_definitions(yeoubi_optix_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
+        target_include_directories(yeoubi_optix_harness PRIVATE ${NTC_INCLUDE_DIRS})
+        target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})
+    endif()
 endif()
 
 if (WITH_USD AND WITH_EMBREE AND EMBREE_FOUND)
