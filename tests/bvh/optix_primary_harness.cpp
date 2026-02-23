@@ -1,7 +1,5 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
-#include "../io/curve_json_io.h"
-#include "../io/obj_mesh_io.h"
 #include "scene/scene.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
@@ -103,14 +101,6 @@ struct LaunchParams
     int materialTextureRefCount;
 };
 
-enum class RenderType
-{
-    Triangle,
-    Cluster,
-    Curve,
-    USD
-};
-
 enum class IntegratorType
 {
     Primary,
@@ -119,10 +109,9 @@ enum class IntegratorType
 
 struct CliOptions
 {
-    RenderType type = RenderType::Triangle;
     IntegratorType integrator = IntegratorType::Primary;
-    std::string inputPath = "tests/bvh/out/stoat_body_selected.obj";
-    std::string outputPath = "optix_triangle_gas.png";
+    std::string inputPath;
+    std::string outputPath = "optix_usd_scene.png";
     std::optional<ybi::float3> cameraPosition;
     std::optional<ybi::float3> lookAt;
     int spp = 1;
@@ -269,11 +258,10 @@ static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valu
 
 static void PrintUsage(const char *exeName)
 {
-    printf("Usage: %s [--type triangle|cluster|curve|usd] [--file path] [--out path] "
+    printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z] [--ntc-dir path]\n",
            exeName);
-    printf("  --type triangle|cluster|curve|usd\n");
-    printf("  --file OBJ path for triangle/cluster; JSON path for curve; USDA/USD path for usd\n");
+    printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
     printf("  --integrator primary|ao\n");
     printf("  --spp samples per pixel for ao integrator\n");
@@ -288,45 +276,6 @@ static CliOptions ParseCli(int argc, char **argv)
     for (int i = 1; i < argc; i++)
     {
         const std::string arg = argv[i];
-        if (arg == "--type")
-        {
-            if (i + 1 >= argc)
-            {
-                PrintUsage(argv[0]);
-                std::abort();
-            }
-            const std::string value = argv[++i];
-            if (value == "triangle")
-            {
-                options.type = RenderType::Triangle;
-                if (options.outputPath == "optix_triangle_gas.png")
-                {
-                    options.outputPath = "optix_triangle_gas.png";
-                }
-            }
-            else if (value == "cluster")
-            {
-                options.type = RenderType::Cluster;
-                options.outputPath = "optix_cluster_gas.png";
-            }
-            else if (value == "curve")
-            {
-                options.type = RenderType::Curve;
-                options.inputPath = "tests/bvh/out/selected_curve.json";
-                options.outputPath = "optix_curve_gas.png";
-            }
-            else if (value == "usd")
-            {
-                options.type = RenderType::USD;
-                options.outputPath = "optix_usd_scene.png";
-            }
-            else
-            {
-                PrintUsage(argv[0]);
-                std::abort();
-            }
-            continue;
-        }
         if (arg == "--file")
         {
             if (i + 1 >= argc)
@@ -428,6 +377,11 @@ static CliOptions ParseCli(int argc, char **argv)
     {
         options.spp = 1;
     }
+    if (options.inputPath.empty())
+    {
+        PrintUsage(argv[0]);
+        std::abort();
+    }
 
     return options;
 }
@@ -438,121 +392,11 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
 }
 
-static void ComputeBounds(const Mesh &mesh, ybi::float3 &boundsMinOut, ybi::float3 &boundsMaxOut)
-{
-    ybi::float3 boundsMin = ybi::make_float3(std::numeric_limits<float>::max());
-    ybi::float3 boundsMax = ybi::make_float3(-std::numeric_limits<float>::max());
-    for (size_t i = 0; i < mesh.positions.size(); i++)
-    {
-        const ybi::float3 p = mesh.positions[i];
-        boundsMin.x = std::min(boundsMin.x, p.x);
-        boundsMin.y = std::min(boundsMin.y, p.y);
-        boundsMin.z = std::min(boundsMin.z, p.z);
-        boundsMax.x = std::max(boundsMax.x, p.x);
-        boundsMax.y = std::max(boundsMax.y, p.y);
-        boundsMax.z = std::max(boundsMax.z, p.z);
-    }
-    boundsMinOut = boundsMin;
-    boundsMaxOut = boundsMax;
-}
-
-static void
-ComputeBounds(const Curves &curves, ybi::float3 &boundsMinOut, ybi::float3 &boundsMaxOut)
-{
-    ybi::float3 boundsMin = ybi::make_float3(std::numeric_limits<float>::max());
-    ybi::float3 boundsMax = ybi::make_float3(-std::numeric_limits<float>::max());
-    const Array<ybi::float3> &positions = curves.GetVertices();
-    for (size_t i = 0; i < positions.size(); i++)
-    {
-        const ybi::float3 p = positions[i];
-        boundsMin.x = std::min(boundsMin.x, p.x);
-        boundsMin.y = std::min(boundsMin.y, p.y);
-        boundsMin.z = std::min(boundsMin.z, p.z);
-        boundsMax.x = std::max(boundsMax.x, p.x);
-        boundsMax.y = std::max(boundsMax.y, p.y);
-        boundsMax.z = std::max(boundsMax.z, p.z);
-    }
-    boundsMinOut = boundsMin;
-    boundsMaxOut = boundsMax;
-}
-
-static constexpr unsigned int kHitgroupSbtOffset = 0u;
-
-static ybi::float3x4 IdentityTransform3x4()
-{
-    return ybi::float3x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
-}
-
-static void CopyTransform(const ybi::float3x4 &transform, float dst[12])
-{
-    std::memcpy(dst, transform.m, sizeof(float) * 12);
-}
-
-static void SetInstanceDefaults(OptixInstance &instance)
-{
-    std::memset(&instance, 0, sizeof(instance));
-    instance.visibilityMask = 0xFFu;
-    instance.flags = OPTIX_INSTANCE_FLAG_NONE;
-}
-
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
     std::vector<DeviceMemoryView<uint8_t>> ownedBuffers;
 };
-
-static OptixTraversableHandle BuildTopLevelIAS(CUDADevice *device,
-                                               HostMemoryArena &hostArena,
-                                               const std::vector<OptixInstance> &instances)
-{
-    YBI_ASSERT(!instances.empty());
-    CUDA_ASSERT(cuCtxPushCurrent(device->cudaContext));
-
-    DeviceMemoryView<OptixInstance> deviceInstances =
-        device->deviceArena->PushArray<OptixInstance>(instances.size());
-    CUDA_ASSERT(cuMemcpyHtoD(
-        CUdeviceptr(deviceInstances.data()), instances.data(), deviceInstances.numBytes()));
-
-    OptixBuildInput buildInput = {};
-    buildInput.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
-    buildInput.instanceArray.instances = CUdeviceptr(deviceInstances.data());
-    buildInput.instanceArray.numInstances = (unsigned int)instances.size();
-
-    OptixAccelBuildOptions options = {};
-    options.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
-    options.operation = OPTIX_BUILD_OPERATION_BUILD;
-    options.motionOptions.numKeys = 1;
-    options.motionOptions.flags = 0;
-    options.motionOptions.timeBegin = 0.0f;
-    options.motionOptions.timeEnd = 1.0f;
-
-    OptixAccelBufferSizes sizes = {};
-    OPTIX_CHECK(optixAccelComputeMemoryUsage(
-        device->optixDeviceContext, &options, &buildInput, 1, &sizes));
-
-    DeviceMemoryView<uint8_t> tempBuffer = device->deviceArena->PushArray<uint8_t>(
-        sizes.tempSizeInBytes, OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT);
-    DeviceMemoryView<uint8_t> outputBuffer = device->Alloc<uint8_t>(sizes.outputSizeInBytes);
-
-    OptixTraversableHandle outputHandle = {};
-    OPTIX_CHECK(optixAccelBuild(device->optixDeviceContext,
-                                0,
-                                &options,
-                                &buildInput,
-                                1,
-                                CUdeviceptr(tempBuffer.data()),
-                                sizes.tempSizeInBytes,
-                                CUdeviceptr(outputBuffer.data()),
-                                sizes.outputSizeInBytes,
-                                &outputHandle,
-                                nullptr,
-                                0));
-    CUDA_ASSERT(cuStreamSynchronize(0));
-    CUDA_ASSERT(cuCtxPopCurrent(0));
-    hostArena.Clear();
-    device->deviceArena->Clear();
-    return outputHandle;
-}
 
 static UploadedMeshRefs UploadScenePoolMeshRefs(
     CUDADevice *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
@@ -744,368 +588,162 @@ int main(int argc, char **argv)
     printf("optix_harness: pipeline created\n");
     fflush(stdout);
 
-    if (options.type == RenderType::Triangle || options.type == RenderType::Cluster)
+    printf("optix_harness: loading usd scene %s\n", options.inputPath.c_str());
+    fflush(stdout);
+
+    ScenePool scenePool = {};
+    LoadUSDScene(&scenePool, options.inputPath);
+    if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
     {
-        printf("optix_harness: loading obj %s\n", options.inputPath.c_str());
-        fflush(stdout);
-        Mesh mesh = testio::LoadObjMesh(options.inputPath);
-        printf("optix_harness: obj loaded verts=%zu tris=%zu\n",
-               mesh.positions.size(),
-               mesh.indices.size() / 3);
-        fflush(stdout);
-        if (mesh.positions.size() == 0 || mesh.indices.size() == 0)
-        {
-            fprintf(stderr, "OBJ has no geometry: %s\n", options.inputPath.c_str());
-            return 1;
-        }
-        ybi::float3 meshBoundsMin, meshBoundsMax;
-        ComputeBounds(mesh, meshBoundsMin, meshBoundsMax);
-
-        CUdeviceptr meshPositionsBuffer = 0;
-        CUdeviceptr meshIndicesBuffer = 0;
-        CUdeviceptr instanceGeomRefsBuffer = 0;
-        CUDA_ASSERT(cuMemAlloc(&meshPositionsBuffer, sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemAlloc(&meshIndicesBuffer, sizeof(int) * mesh.indices.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(meshPositionsBuffer,
-                                 mesh.positions.data(),
-                                 sizeof(ybi::float3) * mesh.positions.size()));
-        CUDA_ASSERT(cuMemcpyHtoD(
-            meshIndicesBuffer, mesh.indices.data(), sizeof(int) * mesh.indices.size()));
-        const LaunchParams::InstanceGeomRef meshRef = {
-            (unsigned long long)meshPositionsBuffer,
-            (unsigned long long)meshIndicesBuffer,
-            0ull,
-            0ull,
-            (int)mesh.positions.size(),
-            (int)mesh.indices.size(),
-            0,
-            0,
-            -1,
-        };
-        CUDA_ASSERT(cuMemAlloc(&instanceGeomRefsBuffer, sizeof(LaunchParams::InstanceGeomRef)));
-        CUDA_ASSERT(
-            cuMemcpyHtoD(instanceGeomRefsBuffer, &meshRef, sizeof(LaunchParams::InstanceGeomRef)));
-
-        if (options.type == RenderType::Triangle)
-        {
-            printf("optix_harness: building triangle gas\n");
-            fflush(stdout);
-            OptixTraversableHandle triangleHandle =
-                BuildTriangleGASFromMesh(&device, hostArena, mesh);
-            if (triangleHandle)
-            {
-                OptixInstance rootInstance = {};
-                SetInstanceDefaults(rootInstance);
-                const ybi::float3x4 identity = IdentityTransform3x4();
-                CopyTransform(identity, rootInstance.transform);
-                rootInstance.instanceId = 0;
-                rootInstance.sbtOffset = kHitgroupSbtOffset;
-                rootInstance.traversableHandle = triangleHandle;
-
-                const std::vector<OptixInstance> rootInstances = {rootInstance};
-                OptixTraversableHandle rootIAS =
-                    BuildTopLevelIAS(&device, hostArena, rootInstances);
-
-                printf("optix_harness: rendering triangle ias\n");
-                fflush(stdout);
-                RenderTraversable(pipeline,
-                                  sbt,
-                                  rootIAS,
-                                  meshBoundsMin,
-                                  meshBoundsMax,
-                                  options.outputPath.c_str(),
-                                  options.integrator,
-                                  options.spp,
-                                  instanceGeomRefsBuffer,
-                                  1,
-                                  0,
-                                  0,
-                                  std::nullopt,
-                                  options.cameraPosition,
-                                  options.lookAt);
-                printf("Wrote %s\n", options.outputPath.c_str());
-            }
-            else
-            {
-                printf("Triangle handle invalid; skipped triangle render.\n");
-            }
-        }
-        else
-        {
-#if (OPTIX_VERSION >= 90000)
-            if (!device.SupportsClusterAccel())
-            {
-                printf("Cluster GAS not supported on this OptiX device/context.\n");
-            }
-            else
-            {
-                printf("optix_harness: building cluster gas\n");
-                fflush(stdout);
-                OptixTraversableHandle clusterHandle =
-                    BuildClusterGASFromMesh(&device, hostArena, mesh);
-                if (clusterHandle)
-                {
-                    OptixInstance rootInstance = {};
-                    SetInstanceDefaults(rootInstance);
-                    const ybi::float3x4 identity = IdentityTransform3x4();
-                    CopyTransform(identity, rootInstance.transform);
-                    rootInstance.instanceId = 0;
-                    rootInstance.sbtOffset = kHitgroupSbtOffset;
-                    rootInstance.traversableHandle = clusterHandle;
-
-                    const std::vector<OptixInstance> rootInstances = {rootInstance};
-                    OptixTraversableHandle rootIAS =
-                        BuildTopLevelIAS(&device, hostArena, rootInstances);
-
-                    printf("optix_harness: rendering cluster ias\n");
-                    fflush(stdout);
-                    RenderTraversable(pipeline,
-                                      sbt,
-                                      rootIAS,
-                                      meshBoundsMin,
-                                      meshBoundsMax,
-                                      options.outputPath.c_str(),
-                                      options.integrator,
-                                      options.spp,
-                                      instanceGeomRefsBuffer,
-                                      1,
-                                      0,
-                                      0,
-                                      std::nullopt,
-                                      options.cameraPosition,
-                                      options.lookAt);
-                    printf("Wrote %s\n", options.outputPath.c_str());
-                }
-                else
-                {
-                    printf("Cluster handle invalid; skipped cluster render.\n");
-                }
-            }
-#else
-            printf("Cluster GAS not supported on this OptiX version.\n");
-#endif
-        }
-
-        CUDA_ASSERT(cuMemFree(instanceGeomRefsBuffer));
-        CUDA_ASSERT(cuMemFree(meshIndicesBuffer));
-        CUDA_ASSERT(cuMemFree(meshPositionsBuffer));
+        fprintf(stderr,
+                "Failed to load USD scene or invalid root: %s\n",
+                options.inputPath.c_str());
+        return 1;
     }
-    else if (options.type == RenderType::Curve)
+
+    ScenePool flattenedScenePool = {};
+    std::string flattenError;
+    if (!FlattenScenePoolToRootChildren(&scenePool, &flattenedScenePool, &flattenError))
     {
-        printf("optix_harness: loading curve json %s\n", options.inputPath.c_str());
-        fflush(stdout);
-        Curves curves = testio::LoadCurveJson(options.inputPath);
-        printf("optix_harness: curve loaded verts=%zu curves=%zu\n",
-               curves.GetNumVertices(),
-               curves.GetNumCurves());
-        fflush(stdout);
-        if (curves.GetNumVertices() > 0 && curves.GetNumCurves() > 0)
-        {
-            ybi::float3 curveBoundsMin, curveBoundsMax;
-            ComputeBounds(curves, curveBoundsMin, curveBoundsMax);
-            OptixTraversableHandle curveHandle =
-                BuildCurveGASFromCurves(&device, hostArena, curves);
-            if (curveHandle)
-            {
-                OptixInstance rootInstance = {};
-                SetInstanceDefaults(rootInstance);
-                const ybi::float3x4 identity = IdentityTransform3x4();
-                CopyTransform(identity, rootInstance.transform);
-                rootInstance.instanceId = 0;
-                rootInstance.sbtOffset = kHitgroupSbtOffset;
-                rootInstance.traversableHandle = curveHandle;
-
-                const std::vector<OptixInstance> rootInstances = {rootInstance};
-                OptixTraversableHandle rootIAS =
-                    BuildTopLevelIAS(&device, hostArena, rootInstances);
-
-                RenderTraversable(pipeline,
-                                  sbt,
-                                  rootIAS,
-                                  curveBoundsMin,
-                                  curveBoundsMax,
-                                  options.outputPath.c_str(),
-                                  options.integrator,
-                                  options.spp,
-                                  0,
-                                  0,
-                                  0,
-                                  0,
-                                  std::nullopt,
-                                  options.cameraPosition,
-                                  options.lookAt);
-                printf("Wrote %s\n", options.outputPath.c_str());
-            }
-            else
-            {
-                printf("Curve handle invalid; skipped curve render.\n");
-            }
-        }
-        else
-        {
-            printf("Curve JSON empty or invalid; skipped curve render: %s\n",
-                   options.inputPath.c_str());
-        }
+        fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
+        return 1;
     }
-    else
+    if (flattenedScenePool.scenes.empty() ||
+        flattenedScenePool.rootSceneIndex >= flattenedScenePool.scenes.size())
     {
-        printf("optix_harness: loading usd scene %s\n", options.inputPath.c_str());
-        fflush(stdout);
+        fprintf(stderr,
+                "Flattened ScenePool invalid for USD scene: %s\n",
+                options.inputPath.c_str());
+        return 1;
+    }
 
-        ScenePool scenePool = {};
-        LoadUSDScene(&scenePool, options.inputPath);
-        if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
-        {
-            fprintf(stderr,
-                    "Failed to load USD scene or invalid root: %s\n",
-                    options.inputPath.c_str());
-            return 1;
-        }
-
-        ScenePool flattenedScenePool = {};
-        std::string flattenError;
-        if (!FlattenScenePoolToRootChildren(&scenePool, &flattenedScenePool, &flattenError))
-        {
-            fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
-            return 1;
-        }
-        if (flattenedScenePool.scenes.empty() ||
-            flattenedScenePool.rootSceneIndex >= flattenedScenePool.scenes.size())
-        {
-            fprintf(stderr,
-                    "Flattened ScenePool invalid for USD scene: %s\n",
-                    options.inputPath.c_str());
-            return 1;
-        }
-
-        DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
-        int materialTextureRefCount = 0;
+    DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
+    int materialTextureRefCount = 0;
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-        testbvh::UploadedMaterialTextures uploadedMaterialTextures = {};
-        if (!options.ntcDir.empty())
+    testbvh::UploadedMaterialTextures uploadedMaterialTextures = {};
+    if (!options.ntcDir.empty())
+    {
+        std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
+        std::string ntcError;
+        const bool ok = testbvh::DecodeNtcDiffuseTextures(
+            scenePool.materials, options.ntcDir, &decodedTextures, &ntcError);
+        if (!ok)
         {
-            std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
-            std::string ntcError;
-            const bool ok = testbvh::DecodeNtcDiffuseTextures(
-                scenePool.materials, options.ntcDir, &decodedTextures, &ntcError);
-            if (!ok)
-            {
-                fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
-                return 1;
-            }
-
-            if (!testbvh::UploadDecodedTexturesToCuda(
-                    decodedTextures, &uploadedMaterialTextures, &ntcError))
-            {
-                fprintf(stderr, "NTC runtime upload failed: %s\n", ntcError.c_str());
-                return 1;
-            }
-            if (!uploadedMaterialTextures.refs.empty())
-            {
-                std::vector<LaunchParams::MaterialTextureRef> launchRefs(
-                    uploadedMaterialTextures.refs.size());
-                for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
-                {
-                    const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
-                    launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
-                }
-                const size_t refsBytes =
-                    launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
-                materialTextureRefsBuffer = device.AllocBytes(refsBytes);
-                device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
-                materialTextureRefCount = static_cast<int>(launchRefs.size());
-            }
-        }
-#else
-        if (!options.ntcDir.empty())
-        {
-            fprintf(stderr,
-                    "NTC runtime decode requested but harness was built without WITH_NTC support.\n");
-            return 1;
-        }
-#endif
-
-        Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
-        YBI_ASSERT(rootScene);
-
-        std::vector<SceneMeshUploadRef> meshUploadRefs;
-        CollectScenePoolMeshUploadRefs(&flattenedScenePool, &meshUploadRefs);
-
-        for (const std::unique_ptr<Scene> &scenePtr : flattenedScenePool.scenes)
-        {
-            Scene *scene = scenePtr.get();
-            YBI_ASSERT(scene);
-            device.BuildBVH(scene);
-        }
-        if (rootScene->bvhHandle == 0)
-        {
-            fprintf(stderr, "USD root scene BVH is invalid: %s\n", options.inputPath.c_str());
+            fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
             return 1;
         }
 
-        UploadedMeshRefs uploadedRefs = UploadScenePoolMeshRefs(&device, meshUploadRefs);
-
-        DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
-        if (!uploadedRefs.refs.empty())
+        if (!testbvh::UploadDecodedTexturesToCuda(
+                decodedTextures, &uploadedMaterialTextures, &ntcError))
         {
+            fprintf(stderr, "NTC runtime upload failed: %s\n", ntcError.c_str());
+            return 1;
+        }
+        if (!uploadedMaterialTextures.refs.empty())
+        {
+            std::vector<LaunchParams::MaterialTextureRef> launchRefs(
+                uploadedMaterialTextures.refs.size());
+            for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
+            {
+                const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
+                launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
+            }
             const size_t refsBytes =
-                uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
-            instanceGeomRefsBuffer = device.AllocBytes(refsBytes);
-            device.CopyBytesToDevice(instanceGeomRefsBuffer, uploadedRefs.refs.data(), refsBytes);
+                launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
+            materialTextureRefsBuffer = device.AllocBytes(refsBytes);
+            device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
+            materialTextureRefCount = static_cast<int>(launchRefs.size());
         }
-
-        std::optional<RenderCameraOverride> usdCamera = std::nullopt;
-        if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
-        {
-            usdCamera = BuildUsdRenderCamera(flattenedScenePool.camera);
-            if (usdCamera.has_value())
-            {
-                printf("optix_harness: using usd camera viewport=%dx%d\n",
-                       usdCamera->width,
-                       usdCamera->height);
-            }
-            else
-            {
-                fprintf(stderr, "USD camera missing/invalid: %s\n", options.inputPath.c_str());
-                return 1;
-            }
-            fflush(stdout);
-        }
-
-        const ybi::float3 dummyBoundsMin = ybi::make_float3(-1.0f, -1.0f, -1.0f);
-        const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
-
-        RenderTraversable(pipeline,
-                          sbt,
-                          (OptixTraversableHandle)rootScene->bvhHandle,
-                          dummyBoundsMin,
-                          dummyBoundsMax,
-                          options.outputPath.c_str(),
-                          options.integrator,
-                          options.spp,
-                          (CUdeviceptr)instanceGeomRefsBuffer.data(),
-                          (int)uploadedRefs.refs.size(),
-                          (CUdeviceptr)materialTextureRefsBuffer.data(),
-                          materialTextureRefCount,
-                          usdCamera,
-                          options.cameraPosition,
-                          options.lookAt);
-        printf("Wrote %s\n", options.outputPath.c_str());
-        if (instanceGeomRefsBuffer.data())
-        {
-            device.FreeBytes(instanceGeomRefsBuffer);
-        }
-        if (materialTextureRefsBuffer.data())
-        {
-            device.FreeBytes(materialTextureRefsBuffer);
-        }
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-        testbvh::DestroyUploadedTextures(&uploadedMaterialTextures);
+    }
+#else
+    if (!options.ntcDir.empty())
+    {
+        fprintf(stderr,
+                "NTC runtime decode requested but harness was built without WITH_NTC support.\n");
+        return 1;
+    }
 #endif
-        for (DeviceMemoryView<uint8_t> &buffer : uploadedRefs.ownedBuffers)
+
+    Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
+    YBI_ASSERT(rootScene);
+
+    std::vector<SceneMeshUploadRef> meshUploadRefs;
+    CollectScenePoolMeshUploadRefs(&flattenedScenePool, &meshUploadRefs);
+
+    for (const std::unique_ptr<Scene> &scenePtr : flattenedScenePool.scenes)
+    {
+        Scene *scene = scenePtr.get();
+        YBI_ASSERT(scene);
+        device.BuildBVH(scene);
+    }
+    if (rootScene->bvhHandle == 0)
+    {
+        fprintf(stderr, "USD root scene BVH is invalid: %s\n", options.inputPath.c_str());
+        return 1;
+    }
+
+    UploadedMeshRefs uploadedRefs = UploadScenePoolMeshRefs(&device, meshUploadRefs);
+
+    DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
+    if (!uploadedRefs.refs.empty())
+    {
+        const size_t refsBytes =
+            uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
+        instanceGeomRefsBuffer = device.AllocBytes(refsBytes);
+        device.CopyBytesToDevice(instanceGeomRefsBuffer, uploadedRefs.refs.data(), refsBytes);
+    }
+
+    std::optional<RenderCameraOverride> usdCamera = std::nullopt;
+    if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
+    {
+        usdCamera = BuildUsdRenderCamera(flattenedScenePool.camera);
+        if (usdCamera.has_value())
         {
-            device.FreeBytes(buffer);
+            printf("optix_harness: using usd camera viewport=%dx%d\n",
+                   usdCamera->width,
+                   usdCamera->height);
         }
+        else
+        {
+            fprintf(stderr, "USD camera missing/invalid: %s\n", options.inputPath.c_str());
+            return 1;
+        }
+        fflush(stdout);
+    }
+
+    const ybi::float3 dummyBoundsMin = ybi::make_float3(-1.0f, -1.0f, -1.0f);
+    const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
+
+    RenderTraversable(pipeline,
+                      sbt,
+                      (OptixTraversableHandle)rootScene->bvhHandle,
+                      dummyBoundsMin,
+                      dummyBoundsMax,
+                      options.outputPath.c_str(),
+                      options.integrator,
+                      options.spp,
+                      (CUdeviceptr)instanceGeomRefsBuffer.data(),
+                      (int)uploadedRefs.refs.size(),
+                      (CUdeviceptr)materialTextureRefsBuffer.data(),
+                      materialTextureRefCount,
+                      usdCamera,
+                      options.cameraPosition,
+                      options.lookAt);
+    printf("Wrote %s\n", options.outputPath.c_str());
+    if (instanceGeomRefsBuffer.data())
+    {
+        device.FreeBytes(instanceGeomRefsBuffer);
+    }
+    if (materialTextureRefsBuffer.data())
+    {
+        device.FreeBytes(materialTextureRefsBuffer);
+    }
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+    testbvh::DestroyUploadedTextures(&uploadedMaterialTextures);
+#endif
+    for (DeviceMemoryView<uint8_t> &buffer : uploadedRefs.ownedBuffers)
+    {
+        device.FreeBytes(buffer);
     }
     hostArena.Clear();
     device.deviceArena->Clear();
