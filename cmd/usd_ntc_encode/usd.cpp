@@ -16,7 +16,6 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 
 namespace
 {
@@ -129,45 +128,6 @@ std::string OutputNameToSwizzle(const pxr::TfToken &sourceName)
     return "";
 }
 
-std::string JsonEscape(const std::string &s)
-{
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s)
-    {
-        if (c == '\\')
-        {
-            out += "\\\\";
-        }
-        else if (c == '"')
-        {
-            out += "\\\"";
-        }
-        else if (c == '\n')
-        {
-            out += "\\n";
-        }
-        else if (c == '\r')
-        {
-            out += "\\r";
-        }
-        else if (c == '\t')
-        {
-            out += "\\t";
-        }
-        else
-        {
-            out += c;
-        }
-    }
-    return out;
-}
-
-std::string ToPortablePath(const std::string &path)
-{
-    return fs::path(path).generic_string();
-}
-
 std::string ResolveAssetPath(const pxr::UsdShadeInput &fileInput, const pxr::SdfAssetPath &assetPath)
 {
     if (!assetPath.GetResolvedPath().empty())
@@ -208,65 +168,6 @@ std::string ResolveAssetPath(const pxr::UsdShadeInput &fileInput, const pxr::Sdf
     }
 
     return raw;
-}
-
-bool IsSrgbInput(const std::string &inputName)
-{
-    return inputName == "diffuseColor" || inputName == "emissiveColor";
-}
-
-std::string SemanticLabelForInput(const std::string &inputName)
-{
-    if (inputName == "diffuseColor")
-    {
-        return "Albedo";
-    }
-    if (inputName == "emissiveColor")
-    {
-        return "Emissive";
-    }
-    if (inputName == "normal")
-    {
-        return "Normal";
-    }
-    if (inputName == "roughness")
-    {
-        return "Roughness";
-    }
-    if (inputName == "metallic")
-    {
-        return "Metalness";
-    }
-    if (inputName == "occlusion")
-    {
-        return "Occlusion";
-    }
-    if (inputName == "opacity")
-    {
-        return "Alpha";
-    }
-    if (inputName == "specularColor")
-    {
-        return "SpecularColor";
-    }
-    return "";
-}
-
-std::string SemanticRangeForInput(const std::string &inputName, const std::string &swizzle)
-{
-    if (!swizzle.empty())
-    {
-        return swizzle;
-    }
-    if (inputName == "roughness" || inputName == "metallic" || inputName == "occlusion")
-    {
-        return "R";
-    }
-    if (inputName == "opacity")
-    {
-        return "A";
-    }
-    return "RGB";
 }
 
 bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
@@ -626,60 +527,8 @@ bool WriteNtcBindingsToUsd(const pxr::UsdStageRefPtr &stage,
         return false;
     }
 
-    std::printf("NTC USD write: authored bindings=%d exported=%s\n",
+std::printf("NTC USD write: authored bindings=%d exported=%s\n",
                 authoredCount,
                 outUsdPath.c_str());
-    return true;
-}
-
-bool WriteManifest(const fs::path &path, const MaterialChannels &mat)
-{
-    std::ofstream out(path);
-    if (!out.is_open())
-    {
-        return false;
-    }
-
-    std::vector<std::pair<std::string, ChannelTexture>> sorted(mat.channels.begin(), mat.channels.end());
-    std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
-        return a.first < b.first;
-    });
-
-    out << "{\n";
-    out << "  \"textures\": [\n";
-    for (size_t i = 0; i < sorted.size(); ++i)
-    {
-        const auto &kv = sorted[i];
-        const std::string semantic = SemanticLabelForInput(kv.first);
-        const std::string range = SemanticRangeForInput(kv.first, kv.second.swizzle);
-
-        out << "    {\n";
-        out << "      \"fileName\": \"" << JsonEscape(ToPortablePath(kv.second.texturePath)) << "\",\n";
-        out << "      \"name\": \"" << JsonEscape(kv.first) << "\",\n";
-        if (!kv.second.swizzle.empty())
-        {
-            out << "      \"channelSwizzle\": \"" << kv.second.swizzle << "\",\n";
-        }
-        out << "      \"isSRGB\": " << (IsSrgbInput(kv.first) ? "true" : "false");
-        if (!semantic.empty())
-        {
-            out << ",\n";
-            out << "      \"semantics\": {\n";
-            out << "        \"" << semantic << "\": \"" << range << "\"\n";
-            out << "      }\n";
-        }
-        else
-        {
-            out << "\n";
-        }
-        out << "    }";
-        if (i + 1 < sorted.size())
-        {
-            out << ",";
-        }
-        out << "\n";
-    }
-    out << "  ]\n";
-    out << "}\n";
     return true;
 }

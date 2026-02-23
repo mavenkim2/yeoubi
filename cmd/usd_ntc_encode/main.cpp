@@ -95,7 +95,6 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "NTC stage: create NTC context done\n");
     }
 
-    int manifestCount = 0;
     int encodedCount = 0;
     int encodeFailCount = 0;
     std::unordered_map<std::string, std::string> materialToNtcFile;
@@ -135,20 +134,8 @@ int main(int argc, char **argv)
         ++processed;
 
         const std::string base = Sanitize(mat.materialPath);
-        const fs::path manifestPath = fs::path(cli.outDir) / (base + ".ntc_manifest.json");
         const fs::path ntcOutPath = fs::path(cli.outDir) / (base + ".ntc");
-
-        if (!WriteManifest(manifestPath, mat))
-        {
-            std::fprintf(stderr, "Failed to write manifest: %s\n", manifestPath.string().c_str());
-            return 1;
-        }
-        ++manifestCount;
-
-        std::printf("material %s channels=%zu manifest=%s\n",
-                    mat.materialPath.c_str(),
-                    mat.channels.size(),
-                    manifestPath.string().c_str());
+        std::printf("material %s channels=%zu\n", mat.materialPath.c_str(), mat.channels.size());
 
         if (!cli.noEncode)
         {
@@ -197,10 +184,9 @@ int main(int argc, char **argv)
         PrintProgress(processed, totalToProcess);
     }
 
-    std::printf("NTC summary materials=%zu materialsWithChannels=%d manifests=%d encoded=%d encodeFailed=%d\n",
+    std::printf("NTC summary materials=%zu materialsWithChannels=%d encoded=%d encodeFailed=%d\n",
                 materials.size(),
                 withChannels,
-                manifestCount,
                 encodedCount,
                 encodeFailCount);
     if (!cli.noEncode)

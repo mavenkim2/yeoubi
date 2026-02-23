@@ -55,7 +55,6 @@ bool WriteNtcBindingsToUsd(const pxr::UsdStageRefPtr &stage,
                            const std::string &outUsdPath,
                            std::string *outError);
 std::string Sanitize(const std::string &s);
-bool WriteManifest(const fs::path &path, const MaterialChannels &mat);
 
 bool EncodeMaterial(ntc::IContext *context,
                     const MaterialChannels &mat,
