@@ -76,6 +76,14 @@ struct LaunchParams
         float padding;
     };
 
+    struct MaterialTextureRef
+    {
+        unsigned long long textureObject;
+        int width;
+        int height;
+        int valid;
+    };
+
     OptixTraversableHandle traversable;
     CUdeviceptr image;
     int width;
@@ -91,6 +99,8 @@ struct LaunchParams
     float aoMaxDistance;
     unsigned long long instanceGeomRefs;
     int instanceGeomRefCount;
+    unsigned long long materialTextureRefs;
+    int materialTextureRefCount;
 };
 
 enum class RenderType
@@ -608,6 +618,8 @@ static void RenderTraversable(OptixPipeline pipeline,
                               int spp,
                               CUdeviceptr instanceGeomRefsBuffer,
                               int instanceGeomRefCount,
+                              CUdeviceptr materialTextureRefsBuffer,
+                              int materialTextureRefCount,
                               const std::optional<RenderCameraOverride> &cameraOverride,
                               const std::optional<ybi::float3> &cameraPositionOverride,
                               const std::optional<ybi::float3> &lookAtOverride)
@@ -670,6 +682,8 @@ static void RenderTraversable(OptixPipeline pipeline,
     params.aoMaxDistance = 0.25f * diagonal;
     params.instanceGeomRefs = (unsigned long long)instanceGeomRefsBuffer;
     params.instanceGeomRefCount = instanceGeomRefCount;
+    params.materialTextureRefs = (unsigned long long)materialTextureRefsBuffer;
+    params.materialTextureRefCount = materialTextureRefCount;
 
     CUdeviceptr paramsBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&paramsBuffer, sizeof(LaunchParams)));
@@ -804,6 +818,8 @@ int main(int argc, char **argv)
                                   options.spp,
                                   instanceGeomRefsBuffer,
                                   1,
+                                  0,
+                                  0,
                                   std::nullopt,
                                   options.cameraPosition,
                                   options.lookAt);
@@ -853,6 +869,8 @@ int main(int argc, char **argv)
                                       options.spp,
                                       instanceGeomRefsBuffer,
                                       1,
+                                      0,
+                                      0,
                                       std::nullopt,
                                       options.cameraPosition,
                                       options.lookAt);
@@ -911,6 +929,8 @@ int main(int argc, char **argv)
                                   options.spp,
                                   0,
                                   0,
+                                  0,
+                                  0,
                                   std::nullopt,
                                   options.cameraPosition,
                                   options.lookAt);
@@ -958,7 +978,10 @@ int main(int argc, char **argv)
             return 1;
         }
 
+        DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
+        int materialTextureRefCount = 0;
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+        testbvh::UploadedMaterialTextures uploadedMaterialTextures = {};
         if (!options.ntcDir.empty())
         {
             std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
@@ -969,6 +992,28 @@ int main(int argc, char **argv)
             {
                 fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
                 return 1;
+            }
+
+            if (!testbvh::UploadDecodedTexturesToCuda(
+                    decodedTextures, &uploadedMaterialTextures, &ntcError))
+            {
+                fprintf(stderr, "NTC runtime upload failed: %s\n", ntcError.c_str());
+                return 1;
+            }
+            if (!uploadedMaterialTextures.refs.empty())
+            {
+                std::vector<LaunchParams::MaterialTextureRef> launchRefs(
+                    uploadedMaterialTextures.refs.size());
+                for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
+                {
+                    const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
+                    launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
+                }
+                const size_t refsBytes =
+                    launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
+                materialTextureRefsBuffer = device.AllocBytes(refsBytes);
+                device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
+                materialTextureRefCount = static_cast<int>(launchRefs.size());
             }
         }
 #else
@@ -1040,6 +1085,8 @@ int main(int argc, char **argv)
                           options.spp,
                           (CUdeviceptr)instanceGeomRefsBuffer.data(),
                           (int)uploadedRefs.refs.size(),
+                          (CUdeviceptr)materialTextureRefsBuffer.data(),
+                          materialTextureRefCount,
                           usdCamera,
                           options.cameraPosition,
                           options.lookAt);
@@ -1048,6 +1095,13 @@ int main(int argc, char **argv)
         {
             device.FreeBytes(instanceGeomRefsBuffer);
         }
+        if (materialTextureRefsBuffer.data())
+        {
+            device.FreeBytes(materialTextureRefsBuffer);
+        }
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+        testbvh::DestroyUploadedTextures(&uploadedMaterialTextures);
+#endif
         for (DeviceMemoryView<uint8_t> &buffer : uploadedRefs.ownedBuffers)
         {
             device.FreeBytes(buffer);

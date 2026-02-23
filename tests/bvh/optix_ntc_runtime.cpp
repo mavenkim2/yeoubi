@@ -45,6 +45,16 @@ std::string NtcStatusString(ntc::Status status)
     return out;
 }
 
+bool CheckCuda(cudaError_t result, std::string &outError, const char *callName)
+{
+    if (result == cudaSuccess)
+    {
+        return true;
+    }
+    outError = std::string(callName) + " failed: " + cudaGetErrorString(result);
+    return false;
+}
+
 int FindTextureByName(ntc::ITextureSet *textureSet, const char *name)
 {
     const int textureCount = textureSet->GetTextureCount();
@@ -296,6 +306,126 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
                 materials.size(),
                 ntcDir.c_str());
     return true;
+}
+
+bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &decodedTextures,
+                                 UploadedMaterialTextures *outTextures,
+                                 std::string *outError)
+{
+    if (!outTextures)
+    {
+        if (outError)
+        {
+            *outError = "UploadDecodedTexturesToCuda: null outTextures";
+        }
+        return false;
+    }
+
+    DestroyUploadedTextures(outTextures);
+    outTextures->refs.resize(decodedTextures.size());
+
+    for (size_t i = 0; i < decodedTextures.size(); ++i)
+    {
+        const DecodedMaterialTexture &src = decodedTextures[i];
+        if (!src.valid || src.width <= 0 || src.height <= 0 || src.rgba8.empty())
+        {
+            continue;
+        }
+
+        cudaChannelFormatDesc channelDesc =
+            cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
+        cudaArray_t array = nullptr;
+        std::string error;
+        if (!CheckCuda(cudaMallocArray(&array, &channelDesc, src.width, src.height), error, "cudaMallocArray"))
+        {
+            if (outError)
+            {
+                *outError = error;
+            }
+            DestroyUploadedTextures(outTextures);
+            return false;
+        }
+
+        if (!CheckCuda(cudaMemcpy2DToArray(array,
+                                           0,
+                                           0,
+                                           src.rgba8.data(),
+                                           static_cast<size_t>(src.width) * 4u,
+                                           static_cast<size_t>(src.width) * 4u,
+                                           src.height,
+                                           cudaMemcpyHostToDevice),
+                       error,
+                       "cudaMemcpy2DToArray"))
+        {
+            cudaFreeArray(array);
+            if (outError)
+            {
+                *outError = error;
+            }
+            DestroyUploadedTextures(outTextures);
+            return false;
+        }
+
+        cudaResourceDesc resourceDesc = {};
+        resourceDesc.resType = cudaResourceTypeArray;
+        resourceDesc.res.array.array = array;
+
+        cudaTextureDesc textureDesc = {};
+        textureDesc.addressMode[0] = cudaAddressModeWrap;
+        textureDesc.addressMode[1] = cudaAddressModeWrap;
+        textureDesc.filterMode = cudaFilterModePoint;
+        textureDesc.readMode = cudaReadModeNormalizedFloat;
+        textureDesc.normalizedCoords = 1;
+
+        cudaTextureObject_t textureObject = 0;
+        if (!CheckCuda(cudaCreateTextureObject(&textureObject, &resourceDesc, &textureDesc, nullptr),
+                       error,
+                       "cudaCreateTextureObject"))
+        {
+            cudaFreeArray(array);
+            if (outError)
+            {
+                *outError = error;
+            }
+            DestroyUploadedTextures(outTextures);
+            return false;
+        }
+
+        outTextures->arrays.push_back(array);
+        outTextures->textureObjects.push_back(textureObject);
+        MaterialTextureRef &dstRef = outTextures->refs[i];
+        dstRef.textureObject = static_cast<unsigned long long>(textureObject);
+        dstRef.width = src.width;
+        dstRef.height = src.height;
+        dstRef.valid = 1;
+    }
+
+    return true;
+}
+
+void DestroyUploadedTextures(UploadedMaterialTextures *textures)
+{
+    if (!textures)
+    {
+        return;
+    }
+    for (cudaTextureObject_t textureObject : textures->textureObjects)
+    {
+        if (textureObject != 0)
+        {
+            cudaDestroyTextureObject(textureObject);
+        }
+    }
+    for (cudaArray_t array : textures->arrays)
+    {
+        if (array)
+        {
+            cudaFreeArray(array);
+        }
+    }
+    textures->textureObjects.clear();
+    textures->arrays.clear();
+    textures->refs.clear();
 }
 
 } // namespace testbvh
