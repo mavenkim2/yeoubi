@@ -71,6 +71,7 @@ extern "C"
 }
 
 __device__ unsigned int g_try_sample_logged = 0u;
+__device__ unsigned int g_try_sample_fail_mask = 0u;
 
 static __forceinline__ __device__ float3 Normalize3(const float3 &v)
 {
@@ -165,16 +166,41 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
         geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
     {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 0);
+        if ((prev & (1u << 0)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[0]: material ref invalid ptr=%llu count=%d mat=%d\n",
+                   params.materialTextureRefs,
+                   params.materialTextureRefCount,
+                   geomRef.materialIndex);
+        }
         return false;
     }
     if (geomRef.texcoords == 0ull || geomRef.texcoordIndices == 0ull)
     {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 1);
+        if ((prev & (1u << 1)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[1]: texcoord buffers missing tc=%llu tci=%llu nTc=%d nTci=%d\n",
+                   geomRef.texcoords,
+                   geomRef.texcoordIndices,
+                   geomRef.numTexcoords,
+                   geomRef.numTexcoordIndices);
+        }
         return false;
     }
 
     const int triCornerBase = int(primitiveIndex) * 3;
     if (triCornerBase + 2 >= geomRef.numTexcoordIndices)
     {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 2);
+        if ((prev & (1u << 2)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[2]: tri texcoord range prim=%u base=%d count=%d\n",
+                   primitiveIndex,
+                   triCornerBase,
+                   geomRef.numTexcoordIndices);
+        }
         return false;
     }
 
@@ -185,6 +211,15 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     if (t0 < 0 || t0 >= geomRef.numTexcoords || t1 < 0 || t1 >= geomRef.numTexcoords || t2 < 0 ||
         t2 >= geomRef.numTexcoords)
     {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 3);
+        if ((prev & (1u << 3)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[3]: tc index out of range (%d,%d,%d) nTc=%d\n",
+                   t0,
+                   t1,
+                   t2,
+                   geomRef.numTexcoords);
+        }
         return false;
     }
 
@@ -193,6 +228,14 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     const LaunchParams::MaterialTextureRef textureRef = materialRefs[geomRef.materialIndex];
     if (textureRef.textureObject == 0ull || textureRef.valid == 0)
     {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
+        if ((prev & (1u << 4)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[4]: texture ref invalid obj=%llu valid=%d mat=%d\n",
+                   textureRef.textureObject,
+                   textureRef.valid,
+                   geomRef.materialIndex);
+        }
         return false;
     }
 
