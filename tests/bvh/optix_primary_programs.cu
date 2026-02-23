@@ -24,6 +24,14 @@ struct LaunchParams
         float padding;
     };
 
+    struct MaterialTextureRef
+    {
+        unsigned long long textureObject;
+        int width;
+        int height;
+        int valid;
+    };
+
     OptixTraversableHandle traversable;
     unsigned long long image;
     int width;
@@ -39,6 +47,8 @@ struct LaunchParams
     float aoMaxDistance;
     unsigned long long instanceGeomRefs;
     int instanceGeomRefCount;
+    unsigned long long materialTextureRefs;
+    int materialTextureRefCount;
 };
 
 struct HitgroupData
@@ -131,6 +141,60 @@ static __forceinline__ __device__ float3 SkyColor(const float3 &direction)
     return make_float3((1.0f - t) * top.x + t * bottom.x,
                        (1.0f - t) * top.y + t * bottom.y,
                        (1.0f - t) * top.z + t * bottom.z);
+}
+
+static __forceinline__ __device__ bool TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
+                                                                unsigned int primitiveIndex,
+                                                                const float3 &barycentrics,
+                                                                float3 &outColor)
+{
+    if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
+        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
+    {
+        return false;
+    }
+    if (geomRef.texcoords == 0ull || geomRef.texcoordIndices == 0ull)
+    {
+        return false;
+    }
+
+    const int triCornerBase = int(primitiveIndex) * 3;
+    if (triCornerBase + 2 >= geomRef.numTexcoordIndices)
+    {
+        return false;
+    }
+
+    const int *tcIndices = reinterpret_cast<const int *>(geomRef.texcoordIndices);
+    const int t0 = tcIndices[triCornerBase + 0];
+    const int t1 = tcIndices[triCornerBase + 1];
+    const int t2 = tcIndices[triCornerBase + 2];
+    if (t0 < 0 || t0 >= geomRef.numTexcoords || t1 < 0 || t1 >= geomRef.numTexcoords || t2 < 0 ||
+        t2 >= geomRef.numTexcoords)
+    {
+        return false;
+    }
+
+    const LaunchParams::MaterialTextureRef *materialRefs =
+        reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
+    const LaunchParams::MaterialTextureRef textureRef = materialRefs[geomRef.materialIndex];
+    if (textureRef.textureObject == 0ull || textureRef.valid == 0)
+    {
+        return false;
+    }
+
+    const float2_simple *texcoords = reinterpret_cast<const float2_simple *>(geomRef.texcoords);
+    const float2_simple uv0 = texcoords[t0];
+    const float2_simple uv1 = texcoords[t1];
+    const float2_simple uv2 = texcoords[t2];
+    const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y + uv2.x * barycentrics.z;
+    const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y + uv2.y * barycentrics.z;
+    const float uu = u - floorf(u);
+    const float vv = v - floorf(v);
+
+    const cudaTextureObject_t textureObject = static_cast<cudaTextureObject_t>(textureRef.textureObject);
+    const float4 sample = tex2D<float4>(textureObject, uu, vv);
+    outColor = make_float3(sample.x, sample.y, sample.z);
+    return true;
 }
 
 // Kept for debug parity with previous shader mode; intentionally unused.
@@ -338,27 +402,33 @@ extern "C" __global__ void __closesthit__primary()
             const LaunchParams::InstanceGeomRef *refs =
                 reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
             const LaunchParams::InstanceGeomRef ref = refs[instanceId];
-            const int primitiveIndex = int(optixGetPrimitiveIndex());
-            const int triCornerBase = primitiveIndex * 3;
-            if (ref.texcoords != 0ull && ref.texcoordIndices != 0ull && triCornerBase + 2 < ref.numTexcoordIndices)
+            const bool sampled = TrySampleMaterialTexture(ref, optixGetPrimitiveIndex(), barycentrics, color);
+            if (!sampled && ref.texcoords != 0ull && ref.texcoordIndices != 0ull)
             {
-                const float2_simple *texcoords =
-                    reinterpret_cast<const float2_simple *>(ref.texcoords);
-                const int *tcIndices = reinterpret_cast<const int *>(ref.texcoordIndices);
-                const int t0 = tcIndices[triCornerBase + 0];
-                const int t1 = tcIndices[triCornerBase + 1];
-                const int t2 = tcIndices[triCornerBase + 2];
-                if (t0 >= 0 && t0 < ref.numTexcoords && t1 >= 0 && t1 < ref.numTexcoords &&
-                    t2 >= 0 && t2 < ref.numTexcoords)
+                const int primitiveIndex = int(optixGetPrimitiveIndex());
+                const int triCornerBase = primitiveIndex * 3;
+                if (triCornerBase + 2 < ref.numTexcoordIndices)
                 {
-                    const float2_simple uv0 = texcoords[t0];
-                    const float2_simple uv1 = texcoords[t1];
-                    const float2_simple uv2 = texcoords[t2];
-                    const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y + uv2.x * barycentrics.z;
-                    const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y + uv2.y * barycentrics.z;
-                    const float uu = u - floorf(u);
-                    const float vv = v - floorf(v);
-                    color = make_float3(uu, vv, 1.0f - uu);
+                    const float2_simple *texcoords =
+                        reinterpret_cast<const float2_simple *>(ref.texcoords);
+                    const int *tcIndices = reinterpret_cast<const int *>(ref.texcoordIndices);
+                    const int t0 = tcIndices[triCornerBase + 0];
+                    const int t1 = tcIndices[triCornerBase + 1];
+                    const int t2 = tcIndices[triCornerBase + 2];
+                    if (t0 >= 0 && t0 < ref.numTexcoords && t1 >= 0 && t1 < ref.numTexcoords &&
+                        t2 >= 0 && t2 < ref.numTexcoords)
+                    {
+                        const float2_simple uv0 = texcoords[t0];
+                        const float2_simple uv1 = texcoords[t1];
+                        const float2_simple uv2 = texcoords[t2];
+                        const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y +
+                                        uv2.x * barycentrics.z;
+                        const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y +
+                                        uv2.y * barycentrics.z;
+                        const float uu = u - floorf(u);
+                        const float vv = v - floorf(v);
+                        color = make_float3(uu, vv, 1.0f - uu);
+                    }
                 }
             }
         }
