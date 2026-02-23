@@ -4,7 +4,7 @@
 #include "scene/attributes.h"
 #include "scene/scene.h"
 #include "util/assert.h"
-// #include "util/float2.h"
+#include "util/float2.h"
 #include "util/float3.h"
 #include "util/float3x4.h"
 #include "util/float4.h"
@@ -220,9 +220,45 @@ static bool TryGetSingleConnectedShader(const pxr::UsdShadeInput &input,
     return true;
 }
 
-static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input, std::string &outPath)
+static std::string OutputNameToSwizzle(const pxr::TfToken &sourceName)
+{
+    const std::string name = sourceName.GetString();
+    if (name == "r")
+    {
+        return "R";
+    }
+    if (name == "g")
+    {
+        return "G";
+    }
+    if (name == "b")
+    {
+        return "B";
+    }
+    if (name == "a")
+    {
+        return "A";
+    }
+    if (name == "rgb")
+    {
+        return "RGB";
+    }
+    if (name == "rgba")
+    {
+        return "RGBA";
+    }
+    return "";
+}
+
+static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
+                                   std::string &outPath,
+                                   std::string *outSwizzle)
 {
     outPath.clear();
+    if (outSwizzle)
+    {
+        outSwizzle->clear();
+    }
 
     pxr::UsdShadeShader sourceShader;
     if (!TryGetSingleConnectedShader(input, sourceShader))
@@ -270,6 +306,15 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input, std::string 
         return false;
     }
 
+    if (outSwizzle)
+    {
+        auto sources = input.GetConnectedSources();
+        if (sources.size() == 1)
+        {
+            outSwizzle->assign(OutputNameToSwizzle(sources[0].sourceName));
+        }
+    }
+
     return true;
 }
 
@@ -279,6 +324,131 @@ static void AppendUniqueTexturePath(std::vector<std::string> &paths, const std::
     {
         paths.push_back(path);
     }
+}
+
+static int GetMaterialIndex(const std::unordered_map<std::string, int> &materialMap,
+                            const pxr::UsdShadeMaterial &material)
+{
+    if (!material)
+    {
+        return -1;
+    }
+    const std::string materialPath = material.GetPath().GetString();
+    auto it = materialMap.find(materialPath);
+    if (it == materialMap.end())
+    {
+        return -1;
+    }
+    return it->second;
+}
+
+static bool BuildTriangulatedMeshTexcoords(const pxr::UsdGeomMesh &mesh,
+                                           const pxr::VtIntArray &faceCounts,
+                                           const pxr::VtIntArray &faceIndices,
+                                           int numTriangles,
+                                           Array<float2> *outTexcoords,
+                                           Array<int> *outTexcoordIndices)
+{
+    YBI_ASSERT(outTexcoords);
+    YBI_ASSERT(outTexcoordIndices);
+
+    pxr::UsdGeomPrimvarsAPI primvars(mesh);
+    pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
+    if (!stPrimvar)
+    {
+        return false;
+    }
+
+    pxr::VtVec2fArray stValues;
+    if (!stPrimvar.Get(&stValues, 0.0))
+    {
+        return false;
+    }
+    if (stValues.empty())
+    {
+        return false;
+    }
+
+    pxr::VtIntArray stIndices;
+    const bool hasExplicitIndices = stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, 0.0);
+    const pxr::TfToken interpolation = stPrimvar.GetInterpolation();
+
+    Array<float2> texcoords(stValues);
+    Array<int> triTexcoordIndices(static_cast<size_t>(numTriangles) * 3u);
+
+    int faceIndexOffset = 0;
+    int triIndexOffset = 0;
+    for (int faceCount : faceCounts)
+    {
+        int faceTc[4] = {-1, -1, -1, -1};
+        if (faceCount < 3 || faceCount > 4)
+        {
+            return false;
+        }
+
+        for (int corner = 0; corner < faceCount; corner++)
+        {
+            const int cornerIndex = faceIndexOffset + corner;
+            int tcIndex = -1;
+            if (hasExplicitIndices)
+            {
+                if (cornerIndex < 0 || cornerIndex >= static_cast<int>(stIndices.size()))
+                {
+                    return false;
+                }
+                tcIndex = stIndices[cornerIndex];
+            }
+            else if (interpolation == pxr::UsdGeomTokens->faceVarying)
+            {
+                tcIndex = cornerIndex;
+            }
+            else
+            {
+                if (cornerIndex < 0 || cornerIndex >= static_cast<int>(faceIndices.size()))
+                {
+                    return false;
+                }
+                tcIndex = faceIndices[cornerIndex];
+            }
+
+            if (tcIndex < 0 || tcIndex >= static_cast<int>(texcoords.size()))
+            {
+                return false;
+            }
+            faceTc[corner] = tcIndex;
+        }
+
+        if (faceCount == 3)
+        {
+            triTexcoordIndices[triIndexOffset++] = faceTc[0];
+            triTexcoordIndices[triIndexOffset++] = faceTc[1];
+            triTexcoordIndices[triIndexOffset++] = faceTc[2];
+        }
+        else
+        {
+            triTexcoordIndices[triIndexOffset++] = faceTc[0];
+            triTexcoordIndices[triIndexOffset++] = faceTc[1];
+            triTexcoordIndices[triIndexOffset++] = faceTc[2];
+            triTexcoordIndices[triIndexOffset++] = faceTc[0];
+            triTexcoordIndices[triIndexOffset++] = faceTc[2];
+            triTexcoordIndices[triIndexOffset++] = faceTc[3];
+        }
+        faceIndexOffset += faceCount;
+    }
+
+    outTexcoords->Resize(texcoords.size());
+    if (texcoords.size() > 0)
+    {
+        memcpy(outTexcoords->data(), texcoords.data(), sizeof(float2) * texcoords.size());
+    }
+    outTexcoordIndices->Resize(triTexcoordIndices.size());
+    if (triTexcoordIndices.size() > 0)
+    {
+        memcpy(outTexcoordIndices->data(),
+               triTexcoordIndices.data(),
+               sizeof(int) * triTexcoordIndices.size());
+    }
+    return true;
 }
 
 static PrimvarInterpolation ConvertPrimvarInterpolation(pxr::TfToken &token)
@@ -918,18 +1088,14 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 
     printf("num materials: %zi\n", materials.size());
 
-    struct MaterialImageTextures
-    {
-        std::string materialPath;
-        std::vector<std::string> imageTextures;
-    };
-    std::vector<MaterialImageTextures> materialTextures;
+    std::vector<ScenePool::MaterialInfo> materialTextures;
     materialTextures.reserve(materials.size());
 
     for (pxr::UsdShadeMaterial &material : materials)
     {
-        MaterialImageTextures info = {};
+        ScenePool::MaterialInfo info = {};
         info.materialPath = material.GetPath().GetString();
+        std::vector<std::string> uniqueTexturePaths;
 
         if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
         {
@@ -939,9 +1105,15 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 for (const pxr::UsdShadeInput &input : shader.GetInputs())
                 {
                     std::string texturePath;
-                    if (TryGetImageTexturePath(input, texturePath))
+                    std::string swizzle;
+                    if (TryGetImageTexturePath(input, texturePath, &swizzle))
                     {
-                        AppendUniqueTexturePath(info.imageTextures, texturePath);
+                        AppendUniqueTexturePath(uniqueTexturePaths, texturePath);
+                        ScenePool::MaterialTextureInput textureInput = {};
+                        textureInput.inputName = input.GetBaseName().GetString();
+                        textureInput.texturePath = texturePath;
+                        textureInput.swizzle = swizzle;
+                        info.textureInputs.push_back(std::move(textureInput));
                     }
                 }
             }
@@ -960,16 +1132,17 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
         materialTextures.push_back(std::move(info));
     }
 
-    for (const MaterialImageTextures &info : materialTextures)
+    for (const ScenePool::MaterialInfo &info : materialTextures)
     {
         printf("material %s image textures: %zu\n",
                info.materialPath.c_str(),
-               info.imageTextures.size());
-        for (const std::string &path : info.imageTextures)
+               info.textureInputs.size());
+        for (const ScenePool::MaterialTextureInput &textureInput : info.textureInputs)
         {
-            printf("  %s\n", path.c_str());
+            printf("  %s (%s)\n", textureInput.texturePath.c_str(), textureInput.inputName.c_str());
         }
     }
+    scenePool->materials = std::move(materialTextures);
 
     int total = 0;
     for (size_t sceneIndex = 0; sceneIndex < buildSceneDAG.scenes.size(); sceneIndex++)
@@ -1002,6 +1175,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
             }
 
             pxr::UsdGeomMesh mesh(prim);
+            const pxr::UsdShadeMaterial material = GetPrimMaterial(mesh.GetPrim());
+            const int materialIndex = GetMaterialIndex(materialMap, material);
             pxr::VtVec3fArray positions;
             pxr::VtIntArray faceIndices;
             pxr::VtIntArray faceCounts;
@@ -1050,6 +1225,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 
             Array<float3> finalPositions(positions);
             Array<int> finalIndices(3 * numTriangles);
+            Array<float2> finalTexcoords;
+            Array<int> finalTexcoordIndices;
 
             int inputOffset = 0;
             int finalOffset = 0;
@@ -1087,8 +1264,30 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 }
             }
 
+            const bool hasTexcoords = BuildTriangulatedMeshTexcoords(
+                mesh, faceCounts, faceIndices, numTriangles, &finalTexcoords, &finalTexcoordIndices);
+
             outScene->meshes.emplace_back(
                 std::move(finalPositions), std::move(finalIndices), meshRef.parentFromLocal);
+            Mesh &outMesh = outScene->meshes.back();
+            outMesh.materialIndex = materialIndex;
+            if (hasTexcoords)
+            {
+                outMesh.texcoords.Resize(finalTexcoords.size());
+                if (finalTexcoords.size() > 0)
+                {
+                    memcpy(outMesh.texcoords.data(),
+                           finalTexcoords.data(),
+                           sizeof(float2) * finalTexcoords.size());
+                }
+                outMesh.texcoordIndices.Resize(finalTexcoordIndices.size());
+                if (finalTexcoordIndices.size() > 0)
+                {
+                    memcpy(outMesh.texcoordIndices.data(),
+                           finalTexcoordIndices.data(),
+                           sizeof(int) * finalTexcoordIndices.size());
+                }
+            }
         }
     }
 

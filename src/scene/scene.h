@@ -4,6 +4,7 @@
 #include "scene/micropolygon_mesh.h"
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
+#include "util/float2.h"
 #include "util/float3x4.h"
 #include "util/float4x4.h"
 #include "util/host_memory_arena.h"
@@ -52,8 +53,11 @@ struct Mesh
 {
     Array<float3> positions;
     Array<int> indices;
+    Array<float2> texcoords;
+    Array<int> texcoordIndices;
     float3x4 parentFromLocal;
     uint32_t refIndex = UINT32_MAX;
+    int materialIndex = -1;
 
     Mesh() = default;
     ~Mesh() = default;
@@ -183,9 +187,23 @@ struct Scene
 
 struct ScenePool
 {
+    struct MaterialTextureInput
+    {
+        std::string inputName;
+        std::string texturePath;
+        std::string swizzle;
+    };
+
+    struct MaterialInfo
+    {
+        std::string materialPath;
+        std::vector<MaterialTextureInput> textureInputs;
+    };
+
     std::vector<std::unique_ptr<Scene>> scenes;
     uint32_t rootSceneIndex = 0;
     Camera camera;
+    std::vector<MaterialInfo> materials;
 };
 
 struct SceneMeshUploadRef
