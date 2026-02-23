@@ -21,6 +21,7 @@ struct Cli
     int stepsPerIter = 100;
     int cudaDevice = 0;
     int maxMaterials = 0;
+    std::vector<std::string> purposes = {"default", "render"};
     bool noEncode = false;
 };
 
@@ -46,7 +47,8 @@ struct EncodeStats
 void PrintUsage(const char *exe);
 bool ParseCli(int argc, char **argv, Cli &out);
 
-std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage);
+std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage,
+                                                      const std::vector<std::string> &purposes);
 std::string Sanitize(const std::string &s);
 bool WriteManifest(const fs::path &path, const MaterialChannels &mat);
 

@@ -4,6 +4,9 @@
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/imageable.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/shader.h>
@@ -20,6 +23,79 @@ namespace
 bool IsConnected(const pxr::UsdShadeInput &input)
 {
     return !input.GetConnectedSources().empty();
+}
+
+bool ParsePurposeList(const std::string &csv, std::vector<std::string> &outPurposes)
+{
+    outPurposes.clear();
+    size_t begin = 0;
+    while (begin <= csv.size())
+    {
+        const size_t comma = csv.find(',', begin);
+        const size_t end = (comma == std::string::npos) ? csv.size() : comma;
+        size_t b = begin;
+        while (b < end && std::isspace((unsigned char)csv[b]))
+        {
+            ++b;
+        }
+        size_t e = end;
+        while (e > b && std::isspace((unsigned char)csv[e - 1]))
+        {
+            --e;
+        }
+        std::string token = csv.substr(b, e - b);
+        for (char &c : token)
+        {
+            c = (char)std::tolower((unsigned char)c);
+        }
+        if (!token.empty())
+        {
+            if (token != "default" && token != "render" && token != "proxy" &&
+                token != "guide")
+            {
+                return false;
+            }
+            if (std::find(outPurposes.begin(), outPurposes.end(), token) == outPurposes.end())
+            {
+                outPurposes.push_back(token);
+            }
+        }
+        if (comma == std::string::npos)
+        {
+            break;
+        }
+        begin = comma + 1;
+    }
+    return !outPurposes.empty();
+}
+
+bool IsPurposeAllowed(const pxr::TfToken &purpose, const std::vector<std::string> &allowedPurposes)
+{
+    const char *name = "";
+    if (purpose == pxr::UsdGeomTokens->default_)
+    {
+        name = "default";
+    }
+    else if (purpose == pxr::UsdGeomTokens->render)
+    {
+        name = "render";
+    }
+    else if (purpose == pxr::UsdGeomTokens->proxy)
+    {
+        name = "proxy";
+    }
+    else if (purpose == pxr::UsdGeomTokens->guide)
+    {
+        name = "guide";
+    }
+    for (const std::string &allowed : allowedPurposes)
+    {
+        if (allowed == name)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string OutputNameToSwizzle(const pxr::TfToken &sourceName)
@@ -253,7 +329,7 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
 void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
-                 "Usage: %s <entry.usd[a|c]> <out_dir> [--bits-per-pixel <bpp>] [--training-steps <n>] [--steps-per-iter <n>] [--cuda-device <n>] [--max-materials <n>] [--no-encode]\n",
+                 "Usage: %s <entry.usd[a|c]> <out_dir> [--bits-per-pixel <bpp>] [--training-steps <n>] [--steps-per-iter <n>] [--cuda-device <n>] [--max-materials <n>] [--purposes <csv>] [--no-encode]\n",
                  exe);
 }
 
@@ -341,6 +417,21 @@ bool ParseCli(int argc, char **argv, Cli &out)
             }
             continue;
         }
+        if (arg == "--purposes")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "Missing value for --purposes\n");
+                return false;
+            }
+            if (!ParsePurposeList(argv[++i], out.purposes))
+            {
+                std::fprintf(stderr,
+                             "Invalid --purposes. expected comma-separated values from: default,render,proxy,guide\n");
+                return false;
+            }
+            continue;
+        }
         if (arg == "--no-encode")
         {
             out.noEncode = true;
@@ -354,7 +445,8 @@ bool ParseCli(int argc, char **argv, Cli &out)
     return true;
 }
 
-std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage)
+std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage,
+                                                      const std::vector<std::string> &purposes)
 {
     std::unordered_map<std::string, pxr::UsdShadeMaterial> uniqueMaterials;
 
@@ -362,6 +454,21 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
         pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
     for (const pxr::UsdPrim &prim : stage->GetPseudoRoot().GetFilteredDescendants(pred))
     {
+        if (!prim.IsA<pxr::UsdGeomMesh>() || prim.IsInPrototype())
+        {
+            continue;
+        }
+        pxr::UsdGeomImageable imageable(prim);
+        if (!imageable)
+        {
+            continue;
+        }
+        const pxr::TfToken purpose = imageable.ComputePurpose();
+        if (!IsPurposeAllowed(purpose, purposes))
+        {
+            continue;
+        }
+
         pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
         pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->full);
         if (!material)

@@ -56,7 +56,13 @@ int main(int argc, char **argv)
     std::filesystem::create_directories(cli.outDir);
 
     std::fprintf(stderr, "NTC stage: collect material textures\n");
-    const std::vector<MaterialChannels> materials = CollectMaterialChannels(stage);
+    std::fprintf(stderr, "NTC stage: purposes=");
+    for (size_t i = 0; i < cli.purposes.size(); ++i)
+    {
+        std::fprintf(stderr, "%s%s", i ? "," : "", cli.purposes[i].c_str());
+    }
+    std::fprintf(stderr, "\n");
+    const std::vector<MaterialChannels> materials = CollectMaterialChannels(stage, cli.purposes);
     std::fprintf(stderr, "NTC stage: collect material textures done (%zu materials)\n", materials.size());
 
     ntc::ContextWrapper context;
