@@ -4,13 +4,15 @@
 #include <cstdint>
 #include <unordered_map>
 
+inline constexpr int SUBDIV_EDGE_FACTOR_NON_UNIFORM = -1;
+inline constexpr int SUBDIV_EDGE_FACTOR_UNINITIALIZED = -2;
+
 struct SubdivisionEdge
 {
     int v0 = -1;
     int v1 = -1;
     int midpointVertex = -1;
-    int tmaxEdgeFactor = -1;
-    bool tmaxComputed = false;
+    int tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
     int faceCount = 0;
     int firstFace = -1;
     int secondFace = -1;

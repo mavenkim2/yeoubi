@@ -95,16 +95,21 @@ static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRe
     return values;
 }
 
-static pxr::GfVec3f EvaluateLimitPosition(const Far::PatchMap &patchMap,
-                                          const Far::PatchTable &patchTable,
-                                          const std::vector<LimitEvalVertex> &limitValues,
-                                          int ptexFaceId,
-                                          const pxr::GfVec2f &uv)
+static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
+                                  const Far::PatchTable &patchTable,
+                                  const std::vector<LimitEvalVertex> &limitValues,
+                                  int ptexFaceId,
+                                  const pxr::GfVec2f &uv,
+                                  pxr::GfVec3f *outP)
 {
+    if (!outP)
+    {
+        return false;
+    }
     const Far::PatchTable::PatchHandle *handle = patchMap.FindPatch(ptexFaceId, uv[0], uv[1]);
     if (!handle)
     {
-        return pxr::GfVec3f(0.0f);
+        return false;
     }
 
     float pWeights[20] = {0.0f};
@@ -116,7 +121,8 @@ static pxr::GfVec3f EvaluateLimitPosition(const Far::PatchMap &patchMap,
     {
         p += limitValues[cvs[i]].p * pWeights[i];
     }
-    return p;
+    *outP = p;
+    return true;
 }
 
 static pxr::GfVec2f ProjectToScreen(const pxr::GfVec3f &p,
@@ -171,14 +177,22 @@ static int ComputeDiagSplitPatchEdgeTMax(const Far::PatchMap &patchMap,
     }
 
     float maxLi = 0.0f;
-    const pxr::GfVec3f p0 = EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart);
+    pxr::GfVec3f p0(0.0f);
+    if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
+    {
+        return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
+    }
     pxr::GfVec2f prev = ProjectToScreen(
         p0, eye, lookAt, viewportWidth, viewportHeight, verticalFovDegrees);
     for (int i = 1; i < sampleStepsN; ++i)
     {
         const float t = float(i) / float(sampleStepsN - 1);
         const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
-        const pxr::GfVec3f p = EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv);
+        pxr::GfVec3f p(0.0f);
+        if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
+        {
+            return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
+        }
         const pxr::GfVec2f s =
             ProjectToScreen(p, eye, lookAt, viewportWidth, viewportHeight, verticalFovDegrees);
         const pxr::GfVec2f d = s - prev;
@@ -227,7 +241,7 @@ static int ComputePatchEdgeTMaxFactors(const std::vector<SubdivisionPatch> &patc
             }
 
             SubdivisionEdge &edge = it->second;
-            if (edge.tmaxComputed)
+            if (edge.tmaxEdgeFactor != SUBDIV_EDGE_FACTOR_UNINITIALIZED)
             {
                 continue;
             }
@@ -245,7 +259,6 @@ static int ComputePatchEdgeTMaxFactors(const std::vector<SubdivisionPatch> &patc
                                                                 viewportWidth,
                                                                 viewportHeight,
                                                                 verticalFovDegrees);
-            edge.tmaxComputed = true;
             computedCount++;
         }
     }
@@ -617,7 +630,7 @@ static int CountEdgesWithComputedTMax(const SubdivisionEdgeMap &edgeMap)
     int count = 0;
     for (const auto &it : edgeMap)
     {
-        if (it.second.tmaxComputed)
+        if (it.second.tmaxEdgeFactor != SUBDIV_EDGE_FACTOR_UNINITIALIZED)
         {
             count++;
         }
