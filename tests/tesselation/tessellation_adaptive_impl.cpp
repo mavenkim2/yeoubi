@@ -21,6 +21,83 @@ struct TriMesh
     std::vector<int> indices;
 };
 
+struct SubdivisionEdge
+{
+    int v0 = -1;
+    int v1 = -1;
+    int faceCount = 0;
+    int firstFace = -1;
+    int secondFace = -1;
+    bool boundary = false;
+    bool nonManifold = false;
+};
+
+using SubdivisionEdgeMap = std::unordered_map<uint64_t, SubdivisionEdge>;
+
+static uint64_t MakeEdgeKey(int v0, int v1)
+{
+    const int lo = std::min(v0, v1);
+    const int hi = std::max(v0, v1);
+    return (uint64_t(uint32_t(lo)) << 32) | uint64_t(uint32_t(hi));
+}
+
+static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
+{
+    SubdivisionEdgeMap edgeMap;
+    edgeMap.reserve(m.faceVertexIndices.size());
+
+    size_t cursor = 0;
+    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    {
+        const int n = m.faceVertexCounts[f];
+        if (n < 2 || cursor + n > m.faceVertexIndices.size())
+        {
+            cursor += std::max(0, n);
+            continue;
+        }
+
+        for (int i = 0; i < n; ++i)
+        {
+            const int a = m.faceVertexIndices[cursor + i];
+            const int b = m.faceVertexIndices[cursor + ((i + 1) % n)];
+            const uint64_t key = MakeEdgeKey(a, b);
+            SubdivisionEdge &edge = edgeMap[key];
+            if (edge.faceCount == 0)
+            {
+                edge.v0 = std::min(a, b);
+                edge.v1 = std::max(a, b);
+                edge.firstFace = int(f);
+            }
+            else if (edge.faceCount == 1)
+            {
+                edge.secondFace = int(f);
+            }
+            edge.faceCount++;
+        }
+        cursor += n;
+    }
+
+    for (auto &kv : edgeMap)
+    {
+        SubdivisionEdge &edge = kv.second;
+        edge.boundary = (edge.faceCount == 1);
+        edge.nonManifold = (edge.faceCount > 2);
+    }
+
+    return edgeMap;
+}
+
+static const SubdivisionEdge *FindSubdivisionEdge(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
+{
+    const uint64_t key = MakeEdgeKey(v0, v1);
+    const auto it = edgeMap.find(key);
+    if (it == edgeMap.end())
+    {
+        return nullptr;
+    }
+    return &it->second;
+}
+
 struct CreasePairs
 {
     std::vector<int> pairs;
@@ -171,41 +248,30 @@ static TriMesh BuildTriangulatedControlCage(const SelectedSubdivMesh &m)
     return mesh;
 }
 
-static int CountControlCageEdgesWithOver2FacesFromIndices(const SelectedSubdivMesh &m)
+static int CountNonManifoldEdges(const SubdivisionEdgeMap &edgeMap)
 {
-    std::unordered_map<uint64_t, int> edgeUseCount;
-    edgeUseCount.reserve(m.faceVertexIndices.size());
-
-    size_t cursor = 0;
-    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    int count = 0;
+    for (const auto &it : edgeMap)
     {
-        const int n = m.faceVertexCounts[f];
-        if (n < 2 || cursor + n > m.faceVertexIndices.size())
+        if (it.second.nonManifold)
         {
-            cursor += std::max(0, n);
-            continue;
-        }
-        for (int i = 0; i < n; ++i)
-        {
-            const int a = m.faceVertexIndices[cursor + i];
-            const int b = m.faceVertexIndices[cursor + ((i + 1) % n)];
-            const int lo = std::min(a, b);
-            const int hi = std::max(a, b);
-            const uint64_t key = (uint64_t(uint32_t(lo)) << 32) | uint64_t(uint32_t(hi));
-            edgeUseCount[key]++;
-        }
-        cursor += n;
-    }
-
-    int over2 = 0;
-    for (const auto &it : edgeUseCount)
-    {
-        if (it.second > 2)
-        {
-            over2++;
+            count++;
         }
     }
-    return over2;
+    return count;
+}
+
+static int CountBoundaryEdges(const SubdivisionEdgeMap &edgeMap)
+{
+    int count = 0;
+    for (const auto &it : edgeMap)
+    {
+        if (it.second.boundary)
+        {
+            count++;
+        }
+    }
+    return count;
 }
 
 int main(int argc, char **argv)
@@ -264,7 +330,8 @@ int main(int argc, char **argv)
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
         SchemeFromString(m.subdivisionScheme), sdcOptions);
 
-    const int edgesWithOver2Faces = CountControlCageEdgesWithOver2FacesFromIndices(m);
+    const SubdivisionEdgeMap edgeMap = BuildSubdivisionEdgeMap(m);
+    const int edgesWithOver2Faces = CountNonManifoldEdges(edgeMap);
     if (edgesWithOver2Faces > 0)
     {
         std::fprintf(
@@ -321,6 +388,9 @@ int main(int argc, char **argv)
     std::printf("  refinedMaxLevel=%d patches=%d\n",
                 refiner->GetMaxLevel(),
                 patchTable->GetNumPatchesTotal());
+    std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
+                edgeMap.size(),
+                CountBoundaryEdges(edgeMap));
     std::printf("  controlCageEdgesWithOver2Faces=%d\n", edgesWithOver2Faces);
 
     delete patchTable;
