@@ -24,6 +24,11 @@ struct Cli
     int maxMaterials = 0;
     std::vector<std::string> purposes = {"default", "render"};
     bool noEncode = false;
+    bool prepareTiles = false;
+    int tileSize = 128;
+    int tileVerifyCount = 4;
+    bool tileVerifyPass = true;
+    float tileVerifyEps = 0.0f;
 };
 
 struct ChannelTexture
@@ -67,3 +72,7 @@ bool EncodeMaterial(ntc::IContext *context,
                     EncodeStats &outStats,
                     float &outActualBpp,
                     std::string &errorOut);
+
+bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &materials,
+                                      const Cli &cli,
+                                      std::string *outError);

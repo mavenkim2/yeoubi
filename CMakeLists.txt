@@ -109,6 +109,7 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tiles.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
         target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
@@ -120,6 +121,18 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         target_include_directories(yeoubi_usd_ntc_encode SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
         target_link_libraries(yeoubi_usd_ntc_encode PRIVATE ${OPENUSD_LIBRARIES} ${NTC_LIBRARIES})
+
+        add_executable(yeoubi_tile_verify
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_verify.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
+        target_compile_definitions(yeoubi_tile_verify PRIVATE ${YBI_COMPILE_DEFINITIONS})
+        if (WIN32)
+            target_compile_definitions(yeoubi_tile_verify PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        endif()
+        target_include_directories(yeoubi_tile_verify PRIVATE
+            ${YBI_INCLUDE_DIRECTORIES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz)
     else()
         message(STATUS "CUDA/NTC not found; yeoubi_usd_ntc_encode disabled.")
     endif()

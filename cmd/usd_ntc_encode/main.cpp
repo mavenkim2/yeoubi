@@ -77,6 +77,17 @@ int main(int argc, char **argv)
     const std::vector<MaterialChannels> materials = CollectMaterialChannels(stage, cli.purposes);
     std::fprintf(stderr, "NTC stage: collect material textures done (%zu materials)\n", materials.size());
 
+    if (cli.prepareTiles)
+    {
+        std::string tileError;
+        if (!PrepareTexturesForStreamingTiles(materials, cli, &tileError))
+        {
+            std::fprintf(stderr, "Tile prep failed: %s\n", tileError.c_str());
+            return 1;
+        }
+        return 0;
+    }
+
     ntc::ContextWrapper context;
     if (!cli.noEncode)
     {
