@@ -346,6 +346,7 @@ static std::vector<SubdivisionPatch> DiagSplitPatches(const SelectedSubdivMesh &
             const int v1 = patch.verts[n];
             SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1);
 
+            int mid = edge.midpointVertex;
             int t = edgeFactor[e];
             float alpha = 0.5f;
             int leftFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
@@ -353,12 +354,25 @@ static std::vector<SubdivisionPatch> DiagSplitPatches(const SelectedSubdivMesh &
             if (t != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
             {
                 t = std::max(1, t);
-                leftFactor = std::max(1, t / 2);
-                rightFactor = std::max(1, t - leftFactor);
-                alpha = float(leftFactor) / float(t);
+                if (mid >= 0)
+                {
+                    SubdivisionEdge &existingA = GetOrCreateEdge(edgeMap, v0, mid);
+                    SubdivisionEdge &existingB = GetOrCreateEdge(edgeMap, mid, v1);
+                    if (existingA.tmaxEdgeFactor >= 1 && existingB.tmaxEdgeFactor >= 1)
+                    {
+                        leftFactor = existingA.tmaxEdgeFactor;
+                        rightFactor = existingB.tmaxEdgeFactor;
+                        t = leftFactor + rightFactor;
+                    }
+                }
+                if (leftFactor < 1 || rightFactor < 1)
+                {
+                    leftFactor = std::max(1, t / 2);
+                    rightFactor = std::max(1, t - leftFactor);
+                }
+                alpha = float(leftFactor) / float(leftFactor + rightFactor);
             }
 
-            int mid = edge.midpointVertex;
             if (mid < 0)
             {
                 mid = nextGeneratedVertexId++;
