@@ -223,6 +223,8 @@ static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap,
         SubdivisionEdge edge = {};
         edge.v0 = v0;
         edge.v1 = v1;
+        edge.sampleVStart = v0;
+        edge.sampleVEnd = v1;
         edge.storedPtexFaceId = ptexFaceId;
         edge.storedUv0 = uv0;
         edge.storedUv1 = uv1;
@@ -230,6 +232,26 @@ static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap,
         it = edgeMap.emplace(key, edge).first;
     }
     return it->second;
+}
+
+static void SetEdgeSampleParams(SubdivisionEdge &edge,
+                                int vStart,
+                                int vEnd,
+                                int ptexFaceId,
+                                const pxr::GfVec2f &uvStart,
+                                const pxr::GfVec2f &uvEnd,
+                                bool overwrite)
+{
+    if (!overwrite && edge.hasStoredPatchParams && edge.sampleVStart >= 0 && edge.sampleVEnd >= 0)
+    {
+        return;
+    }
+    edge.sampleVStart = vStart;
+    edge.sampleVEnd = vEnd;
+    edge.storedPtexFaceId = ptexFaceId;
+    edge.storedUv0 = uvStart;
+    edge.storedUv1 = uvEnd;
+    edge.hasStoredPatchParams = (ptexFaceId >= 0);
 }
 
 static int GetEdgeFactor(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
@@ -301,6 +323,13 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
         if (edge.tmaxEdgeFactor >= 1)
         {
             edge.transitionedUninitializedToUniform = true;
+            SetEdgeSampleParams(edge,
+                                patch.verts[edgeIndex],
+                                patch.verts[next],
+                                patch.ptexFaceId,
+                                patch.uv[edgeIndex],
+                                patch.uv[next],
+                                /*overwrite*/ true);
             if (edge.tmaxEdgeFactor >= 2)
             {
                 const int splitPosStored = edge.tmaxEdgeFactor / 2;
@@ -322,6 +351,17 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
         {
             (*computedCountOut)++;
         }
+    }
+    else if (edge.tmaxEdgeFactor >= 1)
+    {
+        edge.tmaxEdgeFactor = std::min(edge.tmaxEdgeFactor, 2);
+        SetEdgeSampleParams(edge,
+                            patch.verts[edgeIndex],
+                            patch.verts[next],
+                            patch.ptexFaceId,
+                            patch.uv[edgeIndex],
+                            patch.uv[next],
+                            /*overwrite*/ false);
     }
     return edge.tmaxEdgeFactor;
 }
@@ -443,8 +483,13 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
             SubdivisionEdge &opp = GetOrCreateEdge(
                 edgeMap, ov0, ov1, patch.ptexFaceId, patch.uv[oppositeEdge], patch.uv[ovn]);
             opp.tmaxEdgeFactor = 2;
-            opp.edgeVertexIndexStart = nextGeneratedVertexId++;
-            opp.midpointVertex = opp.edgeVertexIndexStart;
+            SetEdgeSampleParams(
+                opp, ov0, ov1, patch.ptexFaceId, patch.uv[oppositeEdge], patch.uv[ovn], true);
+            if (opp.edgeVertexIndexStart < 0 || opp.midpointVertex < 0)
+            {
+                opp.edgeVertexIndexStart = nextGeneratedVertexId++;
+                opp.midpointVertex = opp.edgeVertexIndexStart;
+            }
             edgeFactor[oppositeEdge] = 2;
         }
 
@@ -480,15 +525,17 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
                     // NOTE: these are technically wrong when child edge factor is 1, but the
                     // lookup won't use edgeVertexIndexStart in that case.
                     SubdivisionEdge &edgeA = GetOrCreateEdge(
-                        edgeMap, edge.v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
+                        edgeMap, v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
                     SubdivisionEdge &edgeB = GetOrCreateEdge(
-                        edgeMap, mid, edge.v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
+                        edgeMap, mid, v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
                     edgeA.tmaxEdgeFactor = splitPosStored;
                     edgeA.edgeVertexIndexStart = edge.edgeVertexIndexStart;
                     edgeA.midpointVertex =
                         edgeA.tmaxEdgeFactor > 1
                             ? edgeA.edgeVertexIndexStart + (edgeA.tmaxEdgeFactor / 2) - 1
                             : -1;
+                    SetEdgeSampleParams(
+                        edgeA, v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i], true);
 
                     edgeB.tmaxEdgeFactor = t - splitPosStored;
                     edgeB.edgeVertexIndexStart = edge.edgeVertexIndexStart + splitPosStored;
@@ -496,6 +543,8 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
                         edgeB.tmaxEdgeFactor > 1
                             ? edgeB.edgeVertexIndexStart + (edgeB.tmaxEdgeFactor / 2) - 1
                             : -1;
+                    SetEdgeSampleParams(
+                        edgeB, mid, v1, patch.ptexFaceId, splitUV[i], patch.uv[n], true);
 
                     edgeA.boundary = edge.boundary;
                     edgeB.boundary = edge.boundary;
@@ -942,7 +991,8 @@ static bool VerifyInitializedUniformEdgesHaveStoredPatchParams(const Subdivision
         {
             badUniformFactor++;
         }
-        if (!edge.hasStoredPatchParams || edge.storedPtexFaceId < 0)
+        if (!edge.hasStoredPatchParams || edge.storedPtexFaceId < 0 || edge.sampleVStart < 0 ||
+            edge.sampleVEnd < 0)
         {
             missingStoredParams++;
         }
@@ -996,11 +1046,13 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         const SubdivisionEdge &edge = it.second;
         maxVertexId = std::max(maxVertexId, edge.v0);
         maxVertexId = std::max(maxVertexId, edge.v1);
+        maxVertexId = std::max(maxVertexId, edge.sampleVStart);
+        maxVertexId = std::max(maxVertexId, edge.sampleVEnd);
         maxVertexId = std::max(maxVertexId, edge.midpointVertex);
         if (edge.edgeVertexIndexStart >= 0 && edge.tmaxEdgeFactor >= 2)
         {
-            maxVertexId =
-                std::max(maxVertexId, edge.edgeVertexIndexStart + (std::min(edge.tmaxEdgeFactor, 2) - 2));
+            maxVertexId = std::max(
+                maxVertexId, edge.edgeVertexIndexStart + (std::min(edge.tmaxEdgeFactor, 2) - 2));
         }
     }
     if (maxVertexId < 0)
@@ -1026,8 +1078,8 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
 
         YBI_ASSERT(edge.hasStoredPatchParams);
         YBI_ASSERT(edge.storedPtexFaceId >= 0);
-        YBI_ASSERT(edge.v0 >= 0 && edge.v0 < int(sharedPos.size()));
-        YBI_ASSERT(edge.v1 >= 0 && edge.v1 < int(sharedPos.size()));
+        YBI_ASSERT(edge.sampleVStart >= 0 && edge.sampleVStart < int(sharedPos.size()));
+        YBI_ASSERT(edge.sampleVEnd >= 0 && edge.sampleVEnd < int(sharedPos.size()));
 
         int t = edge.tmaxEdgeFactor;
         YBI_ASSERT(t >= 1);
@@ -1053,11 +1105,11 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
             int vertexId = -1;
             if (k == 0)
             {
-                vertexId = edge.v0;
+                vertexId = edge.sampleVStart;
             }
             else if (k == t)
             {
-                vertexId = edge.v1;
+                vertexId = edge.sampleVEnd;
             }
             else
             {
@@ -1104,7 +1156,8 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         return it->second;
     };
 
-    auto getOrientedEdgeVertexId = [&](const SubdivisionEdge &edge, int a, int b, int t, int k) -> int {
+    auto getOrientedEdgeVertexId =
+        [&](const SubdivisionEdge &edge, int a, int b, int t, int k) -> int {
         YBI_ASSERT(t >= 1);
         YBI_ASSERT(k >= 0 && k <= t);
         const bool forward = (edge.v0 == a && edge.v1 == b);

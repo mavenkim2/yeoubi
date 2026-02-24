@@ -12,6 +12,8 @@ struct SubdivisionEdge
 {
     int v0 = -1;
     int v1 = -1;
+    int sampleVStart = -1;
+    int sampleVEnd = -1;
     int midpointVertex = -1;
     int edgeVertexIndexStart = -1;
     int storedPtexFaceId = -1;
