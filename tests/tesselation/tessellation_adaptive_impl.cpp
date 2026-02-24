@@ -1,6 +1,9 @@
 #include "io/usd_subdiv_json_io.h"
+#include "tesselation/edge_map_validation.h"
+#include "tesselation/subdivision_patch_types.h"
 
 #include <opensubdiv/far/patchTableFactory.h>
+#include <opensubdiv/far/ptexIndices.h>
 #include <opensubdiv/far/topologyDescriptor.h>
 #include <opensubdiv/far/topologyRefinerFactory.h>
 
@@ -20,26 +23,6 @@ struct TriMesh
     pxr::VtVec3fArray positions;
     std::vector<int> indices;
 };
-
-struct SubdivisionEdge
-{
-    int v0 = -1;
-    int v1 = -1;
-    int faceCount = 0;
-    int firstFace = -1;
-    int secondFace = -1;
-    bool boundary = false;
-    bool nonManifold = false;
-};
-
-using SubdivisionEdgeMap = std::unordered_map<uint64_t, SubdivisionEdge>;
-
-static uint64_t MakeEdgeKey(int v0, int v1)
-{
-    const int lo = std::min(v0, v1);
-    const int hi = std::max(v0, v1);
-    return (uint64_t(uint32_t(lo)) << 32) | uint64_t(uint32_t(hi));
-}
 
 static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
 {
@@ -87,15 +70,129 @@ static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
     return edgeMap;
 }
 
-static const SubdivisionEdge *FindSubdivisionEdge(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
+static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap, int v0, int v1)
 {
     const uint64_t key = MakeEdgeKey(v0, v1);
-    const auto it = edgeMap.find(key);
-    if (it == edgeMap.end())
+    SubdivisionEdge &edge = edgeMap[key];
+    if (edge.v0 < 0 || edge.v1 < 0)
     {
-        return nullptr;
+        edge.v0 = std::min(v0, v1);
+        edge.v1 = std::max(v0, v1);
     }
-    return &it->second;
+    return edge;
+}
+
+static int GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap,
+                                       int v0,
+                                       int v1,
+                                       int &nextVertexId)
+{
+    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1);
+    if (edge.midpointVertex < 0)
+    {
+        edge.midpointVertex = nextVertexId++;
+    }
+    return edge.midpointVertex;
+}
+
+static void AddEdgeUse(SubdivisionEdgeMap &edgeMap, int v0, int v1, int faceId)
+{
+    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1);
+    if (edge.faceCount == 0)
+    {
+        edge.firstFace = faceId;
+    }
+    else if (edge.faceCount == 1)
+    {
+        edge.secondFace = faceId;
+    }
+    edge.faceCount++;
+}
+
+static void FinalizeEdgeFlags(SubdivisionEdgeMap &edgeMap)
+{
+    for (auto &kv : edgeMap)
+    {
+        SubdivisionEdge &edge = kv.second;
+        edge.boundary = (edge.faceCount == 1);
+        edge.nonManifold = (edge.faceCount > 2);
+    }
+}
+
+static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdivMesh &m,
+                                                             const Far::TopologyRefiner &refiner,
+                                                             SubdivisionEdgeMap &edgeMap,
+                                                             int &nextVertexId)
+{
+    std::vector<SubdivisionPatch> patches;
+    patches.reserve(m.faceVertexCounts.size());
+
+    Far::PtexIndices ptexIndices(refiner);
+    std::vector<int> faceCenterVertex(m.faceVertexCounts.size(), -1);
+
+    size_t cursor = 0;
+    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    {
+        const int n = m.faceVertexCounts[f];
+        if (n < 3 || cursor + n > m.faceVertexIndices.size())
+        {
+            cursor += std::max(0, n);
+            continue;
+        }
+
+        const int basePtexFaceId = ptexIndices.GetFaceId(int(f));
+        if (n == 4)
+        {
+            SubdivisionPatch patch = {};
+            patch.verts[0] = m.faceVertexIndices[cursor + 0];
+            patch.verts[1] = m.faceVertexIndices[cursor + 1];
+            patch.verts[2] = m.faceVertexIndices[cursor + 2];
+            patch.verts[3] = m.faceVertexIndices[cursor + 3];
+            patch.coarseFace = int(f);
+            patch.quadrant = 0;
+            patch.ptexFaceId = basePtexFaceId;
+            patches.push_back(patch);
+        }
+        else
+        {
+            if (faceCenterVertex[f] < 0)
+            {
+                faceCenterVertex[f] = nextVertexId++;
+            }
+            const int center = faceCenterVertex[f];
+
+            for (int i = 0; i < n; ++i)
+            {
+                const int v = m.faceVertexIndices[cursor + i];
+                const int vNext = m.faceVertexIndices[cursor + ((i + 1) % n)];
+                const int vPrev = m.faceVertexIndices[cursor + ((i + n - 1) % n)];
+                const int midNext = GetOrAllocateMidpointVertex(edgeMap, v, vNext, nextVertexId);
+                const int midPrev = GetOrAllocateMidpointVertex(edgeMap, vPrev, v, nextVertexId);
+
+                SubdivisionPatch patch = {};
+                patch.verts[0] = v;
+                patch.verts[1] = midNext;
+                patch.verts[2] = center;
+                patch.verts[3] = midPrev;
+                patch.coarseFace = int(f);
+                patch.quadrant = i;
+                patch.ptexFaceId = basePtexFaceId + i;
+                const int patchId = int(patches.size());
+                patches.push_back(patch);
+
+                // Only generated edges for non-quad quadrangulation.
+                AddEdgeUse(edgeMap, v, midNext, patchId);
+                AddEdgeUse(edgeMap, midNext, center, patchId);
+                AddEdgeUse(edgeMap, center, midPrev, patchId);
+                AddEdgeUse(edgeMap, midPrev, v, patchId);
+            }
+        }
+
+        cursor += n;
+    }
+
+    FinalizeEdgeFlags(edgeMap);
+    return patches;
 }
 
 struct CreasePairs
@@ -274,6 +371,19 @@ static int CountBoundaryEdges(const SubdivisionEdgeMap &edgeMap)
     return count;
 }
 
+static int CountEdgesWithMidpointVertex(const SubdivisionEdgeMap &edgeMap)
+{
+    int count = 0;
+    for (const auto &it : edgeMap)
+    {
+        if (it.second.midpointVertex >= 0)
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2)
@@ -330,7 +440,7 @@ int main(int argc, char **argv)
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
         SchemeFromString(m.subdivisionScheme), sdcOptions);
 
-    const SubdivisionEdgeMap edgeMap = BuildSubdivisionEdgeMap(m);
+    SubdivisionEdgeMap edgeMap = BuildSubdivisionEdgeMap(m);
     const int edgesWithOver2Faces = CountNonManifoldEdges(edgeMap);
     if (edgesWithOver2Faces > 0)
     {
@@ -345,6 +455,28 @@ int main(int argc, char **argv)
     if (!refiner)
     {
         std::fprintf(stderr, "Failed to create TopologyRefiner\n");
+        return 1;
+    }
+
+    int nextGeneratedVertexId = int(m.points.size());
+    const std::vector<SubdivisionPatch> patches =
+        BuildSubdivisionPatches(m, *refiner, edgeMap, nextGeneratedVertexId);
+    const EdgeMapChecks edgeChecks = RunEdgeMapChecks(m, patches, edgeMap);
+    if (!edgeChecks.ok)
+    {
+        std::fprintf(stderr,
+                     "Edge map checks failed:"
+                     " missingNgonMidpoints=%d"
+                     " duplicateMidpointVertices=%d"
+                     " missingGeneratedPatchEdges=%d"
+                     " badBoundaryFlags=%d"
+                     " badNonManifoldFlags=%d\n",
+                     edgeChecks.missingNgonMidpoints,
+                     edgeChecks.duplicateMidpointVertices,
+                     edgeChecks.missingGeneratedPatchEdges,
+                     edgeChecks.badBoundaryFlags,
+                     edgeChecks.badNonManifoldFlags);
+        delete refiner;
         return 1;
     }
 
@@ -388,6 +520,11 @@ int main(int argc, char **argv)
     std::printf("  refinedMaxLevel=%d patches=%d\n",
                 refiner->GetMaxLevel(),
                 patchTable->GetNumPatchesTotal());
+    std::printf("  subdivisionPatches=%zu generatedVertexCount=%d midpointEdges=%d\n",
+                patches.size(),
+                nextGeneratedVertexId - int(m.points.size()),
+                CountEdgesWithMidpointVertex(edgeMap));
+    std::printf("  edgeMapChecks=ok\n");
     std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
                 edgeMap.size(),
                 CountBoundaryEdges(edgeMap));

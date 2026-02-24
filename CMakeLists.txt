@@ -68,23 +68,20 @@ if (WITH_USD)
     target_include_directories(yeoubi_usd_extract SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_usd_extract PRIVATE ${OPENUSD_LIBRARIES})
 
-    # add_executable(yeoubi_tessellation
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/edge_factor_runtime.cpp
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/diag_split_runtime.cpp
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/diag_split_detail.cpp
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/edge_rate_obj_io.cpp
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_mesh_io.cpp
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_subdiv_json_io.cpp)
-    # target_compile_definitions(yeoubi_tessellation PRIVATE ${YBI_COMPILE_DEFINITIONS})
-    # if (WIN32)
-    #     target_compile_definitions(yeoubi_tessellation PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-    # endif()
-    # target_include_directories(yeoubi_tessellation PRIVATE
-    #     ${YBI_INCLUDE_DIRECTORIES}
-    #     ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    # target_include_directories(yeoubi_tessellation SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-    # target_link_libraries(yeoubi_tessellation PRIVATE ${OPENUSD_LIBRARIES})
+    add_executable(yeoubi_tessellation_adaptive_impl
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/tessellation_adaptive_impl.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/edge_map_validation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_subdiv_json_io.cpp)
+    target_compile_definitions(yeoubi_tessellation_adaptive_impl PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_tessellation_adaptive_impl PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    target_include_directories(yeoubi_tessellation_adaptive_impl PRIVATE
+        ${YBI_INCLUDE_DIRECTORIES}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_include_directories(yeoubi_tessellation_adaptive_impl SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_tessellation_adaptive_impl PRIVATE ${OPENUSD_LIBRARIES})
 
     add_executable(yeoubi_usd_instance_dag_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_instance_dag_test.cpp
