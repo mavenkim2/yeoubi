@@ -1,5 +1,6 @@
 #include <optix.h>
 #include <optix_device.h>
+#include <assert.h>
 
 struct LaunchParams
 {
@@ -193,8 +194,12 @@ static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParam
     const int maxY = max(textureHeight - 1, 0);
     const int texelX = ClampInt(int(floorf(uu * float(textureWidth))), 0, maxX);
     const int texelY = ClampInt(int(floorf(vv * float(textureHeight))), 0, maxY);
-    const unsigned int tileX = (unsigned int)ClampInt(texelX / tileSize, 0, 511);
-    const unsigned int tileY = (unsigned int)ClampInt(texelY / tileSize, 0, 511);
+    const int tileXInt = texelX / tileSize;
+    const int tileYInt = texelY / tileSize;
+    assert(tileXInt >= 0 && tileXInt <= 511);
+    assert(tileYInt >= 0 && tileYInt <= 511);
+    const unsigned int tileX = (unsigned int)tileXInt;
+    const unsigned int tileY = (unsigned int)tileYInt;
 
     const int udimU = int(floorf(u));
     const int udimV = int(floorf(v));
