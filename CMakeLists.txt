@@ -186,20 +186,24 @@ target_link_libraries(yeoubi PRIVATE ${YBI_DEPENDENCIES})
 
 if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     list(GET CUDAToolkit_INCLUDE_DIRS 0 YBI_CUDA_INCLUDE_DIR)
+    set(YBI_OPTIX_PTX_GPU_ARCH "compute_89")
+    message(STATUS "OptiX PTX compile arch: ${YBI_OPTIX_PTX_GPU_ARCH}")
     set(YBI_OPTIX_PRIMARY_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/optix_primary_programs.ptx")
     add_custom_command(
         OUTPUT "${YBI_OPTIX_PRIMARY_PTX_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
             --ptx
-            "--gpu-architecture=compute_75"
+            "--gpu-architecture=${YBI_OPTIX_PTX_GPU_ARCH}"
             "--std=c++14"
             "--use_fast_math"
             "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
             "-I${OPTIX_INCLUDE_DIR}"
             "-I${YBI_CUDA_INCLUDE_DIR}"
+            "-I${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/RTXNTC/libraries/RTXNTC-Library/include"
             "-o" "${YBI_OPTIX_PRIMARY_PTX_PATH}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
         VERBATIM)
     add_custom_target(yeoubi_optix_primary_programs_ptx DEPENDS "${YBI_OPTIX_PRIMARY_PTX_PATH}")
 

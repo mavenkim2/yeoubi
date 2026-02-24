@@ -258,7 +258,8 @@ static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valu
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
-           "[--integrator primary|ao] [--spp N] [--cam-pos x y z] [--look-at x y z]\n",
+           "[--integrator primary|ao] [--spp N] "
+           "[--cam-pos x y z] [--look-at x y z]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
@@ -611,8 +612,7 @@ int main(int argc, char **argv)
     testbvh::UploadedMaterialTextures uploadedMaterialTextures = {};
     std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
     std::string ntcError;
-    const bool ok =
-        testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &decodedTextures, &ntcError);
+    const bool ok = testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &decodedTextures, &ntcError);
     if (!ok)
     {
         fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
@@ -626,15 +626,13 @@ int main(int argc, char **argv)
     }
     if (!uploadedMaterialTextures.refs.empty())
     {
-        std::vector<LaunchParams::MaterialTextureRef> launchRefs(
-            uploadedMaterialTextures.refs.size());
+        std::vector<LaunchParams::MaterialTextureRef> launchRefs(uploadedMaterialTextures.refs.size());
         for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
         {
             const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
             launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
         }
-        const size_t refsBytes =
-            launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
+        const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
         materialTextureRefsBuffer = device.AllocBytes(refsBytes);
         device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
         materialTextureRefCount = static_cast<int>(launchRefs.size());
