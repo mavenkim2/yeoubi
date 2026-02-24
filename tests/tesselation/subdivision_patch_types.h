@@ -13,6 +13,7 @@ struct SubdivisionEdge
     int v0 = -1;
     int v1 = -1;
     int midpointVertex = -1;
+    int edgeVertexIndexStart = -1;
     int tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
     int faceCount = 0;
     int firstFace = -1;
