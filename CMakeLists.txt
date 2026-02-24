@@ -54,6 +54,16 @@ if (WITH_USD)
 endif()
 
 if (WITH_USD)
+    add_executable(yeoubi_usd_add_look_camera
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_add_look_camera.cpp)
+    target_compile_definitions(yeoubi_usd_add_look_camera PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_usd_add_look_camera PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    target_include_directories(yeoubi_usd_add_look_camera PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_usd_add_look_camera SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_usd_add_look_camera PRIVATE ${OPENUSD_LIBRARIES})
+
     add_executable(yeoubi_usd_extract
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_extract.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
