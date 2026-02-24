@@ -16,6 +16,7 @@
 - One logical change per commit; if message needs "and", split commits.
 - No mixed concerns: behavior change, refactor, formatting, and renames in separate commits.
 - Stage surgically: use `git add -p`; review staged diff before commit.
+- Before atomic commits, explicitly stage newly created files (e.g. `git add <new-file>`).
 - Each commit must pass relevant checks for touched code (tests/lint/build subset).
 - Keep commit size reviewable; large/mechanical changes isolated in dedicated commit.
 - After any successful code change + verify, always make atomic commit(s) immediately.
