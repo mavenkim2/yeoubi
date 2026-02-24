@@ -14,10 +14,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <optix_stubs.h>
@@ -99,6 +101,12 @@ struct LaunchParams
     int instanceGeomRefCount;
     unsigned long long materialTextureRefs;
     int materialTextureRefCount;
+    unsigned long long feedbackKeys;
+    unsigned long long feedbackStats;
+    int feedbackCapacity;
+    int feedbackSamplePercent;
+    int feedbackTileSize;
+    int currentSpp;
 };
 
 enum class IntegratorType
@@ -264,7 +272,7 @@ static void PrintUsage(const char *exeName)
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
     printf("  --integrator primary|ao\n");
-    printf("  --spp samples per pixel for ao integrator\n");
+    printf("  --spp spp passes; feedback dumped after each pass\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
 }
@@ -362,10 +370,6 @@ static CliOptions ParseCli(int argc, char **argv)
         std::abort();
     }
 
-    if (options.integrator == IntegratorType::Primary)
-    {
-        options.spp = 1;
-    }
     if (options.inputPath.empty())
     {
         PrintUsage(argv[0]);
@@ -467,6 +471,26 @@ static void RenderTraversable(OptixPipeline pipeline,
     printf("render: image buffer allocated\n");
     fflush(stdout);
 
+    const int sppPassCount = std::max(1, spp);
+    const int feedbackCapacity = std::max(1, width * height);
+    const size_t feedbackKeysBytes =
+        static_cast<size_t>(feedbackCapacity) * sizeof(unsigned long long);
+    const size_t feedbackStatsBytes = 2u * sizeof(unsigned int);
+    CUdeviceptr feedbackKeysBuffer = 0;
+    CUdeviceptr feedbackStatsBuffer = 0;
+    CUDA_ASSERT(cuMemAlloc(&feedbackKeysBuffer, feedbackKeysBytes));
+    CUDA_ASSERT(cuMemAlloc(&feedbackStatsBuffer, feedbackStatsBytes));
+
+    std::filesystem::path feedbackDir = std::filesystem::path(outputFile);
+    feedbackDir += ".feedback";
+    std::error_code feedbackEc;
+    std::filesystem::create_directories(feedbackDir, feedbackEc);
+    if (feedbackEc)
+    {
+        fprintf(stderr, "Failed to create feedback dir: %s\n", feedbackDir.string().c_str());
+        std::abort();
+    }
+
     const ybi::float3 center = (boundsMin + boundsMax) * 0.5f;
     const ybi::float3 extent = boundsMax - boundsMin;
     const float diagonal = std::max(0.001f, ybi::length(extent));
@@ -517,25 +541,98 @@ static void RenderTraversable(OptixPipeline pipeline,
     params.instanceGeomRefCount = instanceGeomRefCount;
     params.materialTextureRefs = (unsigned long long)materialTextureRefsBuffer;
     params.materialTextureRefCount = materialTextureRefCount;
+    params.feedbackKeys = (unsigned long long)feedbackKeysBuffer;
+    params.feedbackStats = (unsigned long long)feedbackStatsBuffer;
+    params.feedbackCapacity = feedbackCapacity;
+    params.feedbackSamplePercent = 10;
+    params.feedbackTileSize = 128;
+    params.currentSpp = 0;
 
     CUdeviceptr paramsBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&paramsBuffer, sizeof(LaunchParams)));
-    CUDA_ASSERT(cuMemcpyHtoD(paramsBuffer, &params, sizeof(LaunchParams)));
-    printf("render: params uploaded\n");
+    printf("render: params buffer allocated\n");
     fflush(stdout);
 
-    OPTIX_CHECK(
-        optixLaunch(pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
-    printf("render: launch returned\n");
-    fflush(stdout);
-    CUDA_ASSERT(cuStreamSynchronize(0));
-    printf("render: stream synced\n");
-    fflush(stdout);
+    std::vector<uint8_t> hostPassImage(imageSize, 0);
+    std::vector<float> accumRgb(static_cast<size_t>(width) * static_cast<size_t>(height) * 3u, 0.0f);
+    std::vector<unsigned long long> feedbackKeysHost(feedbackCapacity, 0ull);
+    unsigned int feedbackStatsHost[2] = {0u, 0u};
+    unsigned int feedbackStatsZero[2] = {0u, 0u};
 
-    std::vector<uint8_t> hostImage(imageSize);
-    CUDA_ASSERT(cuMemcpyDtoH(hostImage.data(), imageBuffer, imageSize));
-    printf("render: copied image to host\n");
-    fflush(stdout);
+    for (int sppIndex = 0; sppIndex < sppPassCount; ++sppIndex)
+    {
+        params.spp = integrator == IntegratorType::AO ? 1 : 1;
+        params.currentSpp = sppIndex;
+        CUDA_ASSERT(cuMemcpyHtoD(paramsBuffer, &params, sizeof(LaunchParams)));
+        CUDA_ASSERT(cuMemcpyHtoD(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes));
+
+        OPTIX_CHECK(
+            optixLaunch(pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
+        CUDA_ASSERT(cuStreamSynchronize(0));
+
+        CUDA_ASSERT(cuMemcpyDtoH(hostPassImage.data(), imageBuffer, imageSize));
+        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            accumRgb[i * 3 + 0] += hostPassImage[i * 4 + 0] / 255.0f;
+            accumRgb[i * 3 + 1] += hostPassImage[i * 4 + 1] / 255.0f;
+            accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
+        }
+
+        CUDA_ASSERT(cuMemcpyDtoH(feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes));
+        const unsigned int sampledCount = feedbackStatsHost[0];
+        const unsigned int overflowCount = feedbackStatsHost[1];
+        const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
+        if (copyCount > 0)
+        {
+            CUDA_ASSERT(cuMemcpyDtoH(
+                feedbackKeysHost.data(), feedbackKeysBuffer, size_t(copyCount) * sizeof(unsigned long long)));
+        }
+
+        std::unordered_map<unsigned long long, unsigned int> histogram;
+        histogram.reserve(copyCount);
+        for (unsigned int i = 0; i < copyCount; ++i)
+        {
+            histogram[feedbackKeysHost[i]] += 1u;
+        }
+
+        char feedbackFileName[256];
+        std::snprintf(feedbackFileName, sizeof(feedbackFileName), "spp_%04d.txt", sppIndex);
+        const std::filesystem::path feedbackPath = feedbackDir / feedbackFileName;
+        std::FILE *feedbackFile = std::fopen(feedbackPath.string().c_str(), "w");
+        if (!feedbackFile)
+        {
+            fprintf(stderr, "Failed to write feedback file: %s\n", feedbackPath.string().c_str());
+            std::abort();
+        }
+        std::fprintf(feedbackFile,
+                     "spp=%d sampled=%u stored=%u overflow=%u unique=%zu\n",
+                     sppIndex,
+                     sampledCount,
+                     copyCount,
+                     overflowCount,
+                     histogram.size());
+        for (const auto &it : histogram)
+        {
+            std::fprintf(feedbackFile, "%llu %u\n", it.first, it.second);
+        }
+        std::fclose(feedbackFile);
+    }
+
+    std::vector<uint8_t> hostImage(imageSize, 0);
+    const float invSpp = 1.0f / float(sppPassCount);
+    for (size_t i = 0, pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height); i < pixelCount;
+         ++i)
+    {
+        const float r = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 0] * invSpp));
+        const float g = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 1] * invSpp));
+        const float b = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 2] * invSpp));
+        hostImage[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f + 0.5f);
+        hostImage[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f + 0.5f);
+        hostImage[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f + 0.5f);
+        hostImage[i * 4 + 3] = 255u;
+    }
+
     const bool writeOk = SavePNG(outputFile, hostImage, width, height);
     printf("render: save returned=%d file=%s\n", writeOk ? 1 : 0, outputFile);
     fflush(stdout);
@@ -545,6 +642,8 @@ static void RenderTraversable(OptixPipeline pipeline,
     }
 
     CUDA_ASSERT(cuMemFree(paramsBuffer));
+    CUDA_ASSERT(cuMemFree(feedbackStatsBuffer));
+    CUDA_ASSERT(cuMemFree(feedbackKeysBuffer));
     CUDA_ASSERT(cuMemFree(imageBuffer));
     printf("render: end\n");
     fflush(stdout);

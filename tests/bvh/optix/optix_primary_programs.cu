@@ -49,6 +49,12 @@ struct LaunchParams
     int instanceGeomRefCount;
     unsigned long long materialTextureRefs;
     int materialTextureRefCount;
+    unsigned long long feedbackKeys;
+    unsigned long long feedbackStats;
+    int feedbackCapacity;
+    int feedbackSamplePercent;
+    int feedbackTileSize;
+    int currentSpp;
 };
 
 struct HitgroupData
@@ -136,6 +142,81 @@ static __forceinline__ __device__ unsigned int PackColor(float r, float g, float
     const unsigned int gu = (unsigned int)(fminf(fmaxf(g, 0.0f), 1.0f) * 255.0f + 0.5f);
     const unsigned int bu = (unsigned int)(fminf(fmaxf(b, 0.0f), 1.0f) * 255.0f + 0.5f);
     return ru | (gu << 8) | (bu << 16);
+}
+
+static __forceinline__ __device__ int ClampInt(int v, int lo, int hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static __forceinline__ __device__ unsigned long long PackFeedbackKey(unsigned int tileX,
+                                                                     unsigned int tileY,
+                                                                     unsigned int udimBits,
+                                                                     unsigned int textureId,
+                                                                     unsigned int mip)
+{
+    return (static_cast<unsigned long long>(tileX & 0x1ffu) << 0u) |
+           (static_cast<unsigned long long>(tileY & 0x1ffu) << 9u) |
+           (static_cast<unsigned long long>(udimBits & 0x7fu) << 18u) |
+           (static_cast<unsigned long long>(textureId & 0x7fffffu) << 25u) |
+           (static_cast<unsigned long long>(mip & 0xfu) << 48u);
+}
+
+static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParams::InstanceGeomRef &geomRef,
+                                                               unsigned int primitiveIndex,
+                                                               float u,
+                                                               float v,
+                                                               float uu,
+                                                               float vv,
+                                                               int textureWidth,
+                                                               int textureHeight)
+{
+    if (params.feedbackKeys == 0ull || params.feedbackStats == 0ull || params.feedbackCapacity <= 0 ||
+        params.feedbackSamplePercent <= 0)
+    {
+        return;
+    }
+
+    const uint3 launchIndex = optixGetLaunchIndex();
+    unsigned int seed =
+        Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u ^
+               (primitiveIndex + 1u) * 83492791u ^
+               (static_cast<unsigned int>(params.currentSpp) + 1u) * 2654435761u ^
+               (static_cast<unsigned int>(max(geomRef.materialIndex, 0)) + 1u) * 374761393u);
+    if ((seed % 100u) >= (unsigned int)params.feedbackSamplePercent)
+    {
+        return;
+    }
+
+    const int tileSize = max(params.feedbackTileSize, 1);
+    const int maxX = max(textureWidth - 1, 0);
+    const int maxY = max(textureHeight - 1, 0);
+    const int texelX = ClampInt(int(floorf(uu * float(textureWidth))), 0, maxX);
+    const int texelY = ClampInt(int(floorf(vv * float(textureHeight))), 0, maxY);
+    const unsigned int tileX = (unsigned int)ClampInt(texelX / tileSize, 0, 511);
+    const unsigned int tileY = (unsigned int)ClampInt(texelY / tileSize, 0, 511);
+
+    const int udimU = int(floorf(u));
+    const int udimV = int(floorf(v));
+    const int udim = 1001 + udimU + 10 * udimV;
+    const unsigned int udimBits = (unsigned int)ClampInt(udim - 1001, 0, 127);
+
+    const unsigned int textureId =
+        (unsigned int)ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u));
+    const unsigned int mip = 0u;
+    const unsigned long long key = PackFeedbackKey(tileX, tileY, udimBits, textureId, mip);
+
+    unsigned int *stats = reinterpret_cast<unsigned int *>(params.feedbackStats);
+    unsigned long long *keys = reinterpret_cast<unsigned long long *>(params.feedbackKeys);
+    const unsigned int index = atomicAdd(&stats[0], 1u);
+    if (index < (unsigned int)params.feedbackCapacity)
+    {
+        keys[index] = key;
+    }
+    else
+    {
+        atomicAdd(&stats[1], 1u);
+    }
 }
 
 static __forceinline__ __device__ float3 SkyColor(const float3 &direction)
@@ -252,6 +333,8 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
         static_cast<cudaTextureObject_t>(textureRef.textureObject);
     const float4 sample = tex2D<float4>(textureObject, uu, vv);
     outColor = make_float3(sample.x, sample.y, sample.z);
+    TryWriteTextureFeedback(
+        geomRef, primitiveIndex, u, v, uu, vv, textureRef.width, textureRef.height);
     return true;
 }
 
@@ -354,8 +437,9 @@ extern "C" __global__ void __closesthit__primary()
     {
         const int spp = max(params.spp, 1);
         const uint3 launchIndex = optixGetLaunchIndex();
-        unsigned int rngState =
-            Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u);
+        unsigned int rngState = Hash32((launchIndex.x + 1u) * 73856093u ^
+                                       (launchIndex.y + 1u) * 19349663u ^
+                                       (static_cast<unsigned int>(params.currentSpp) + 1u) * 83492791u);
 
         const float3 rayOrigin = optixGetWorldRayOrigin();
         const float3 rayDirection = Normalize3(optixGetWorldRayDirection());
