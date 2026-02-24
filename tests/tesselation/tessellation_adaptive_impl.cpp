@@ -115,6 +115,47 @@ static int ComputeDiagSplitEdgeRateTFromScreenSamples(const std::vector<pxr::GfV
         segmentPixelLengths, targetPixelSpacing, splitThreshold, outIsNonUniform, outTMin, outTMax);
 }
 
+static int ComputePatchEdgeTMaxFactorsBasic(const std::vector<SubdivisionPatch> &patches,
+                                            SubdivisionEdgeMap &edgeMap,
+                                            float targetPixelSpacing,
+                                            int splitThreshold)
+{
+    // Local patch UV domain starts at unit quad corners.
+    const pxr::GfVec2f patchUVs[4] = {
+        pxr::GfVec2f(0.0f, 0.0f),
+        pxr::GfVec2f(1.0f, 0.0f),
+        pxr::GfVec2f(1.0f, 1.0f),
+        pxr::GfVec2f(0.0f, 1.0f)};
+
+    int computedCount = 0;
+    for (const SubdivisionPatch &patch : patches)
+    {
+        for (int edgeIndex = 0; edgeIndex < 4; ++edgeIndex)
+        {
+            const int next = (edgeIndex + 1) & 3;
+            const uint64_t key = MakeEdgeKey(patch.verts[edgeIndex], patch.verts[next]);
+            auto it = edgeMap.find(key);
+            if (it == edgeMap.end())
+            {
+                continue;
+            }
+
+            SubdivisionEdge &edge = it->second;
+            if (edge.tmaxComputed)
+            {
+                continue;
+            }
+
+            const std::vector<pxr::GfVec2f> samples = {patchUVs[edgeIndex], patchUVs[next]};
+            edge.tmaxEdgeFactor = ComputeDiagSplitEdgeRateTFromScreenSamples(
+                samples, targetPixelSpacing, splitThreshold, nullptr, nullptr, nullptr);
+            edge.tmaxComputed = true;
+            computedCount++;
+        }
+    }
+    return computedCount;
+}
+
 static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
 {
     SubdivisionEdgeMap edgeMap;
@@ -475,6 +516,19 @@ static int CountEdgesWithMidpointVertex(const SubdivisionEdgeMap &edgeMap)
     return count;
 }
 
+static int CountEdgesWithComputedTMax(const SubdivisionEdgeMap &edgeMap)
+{
+    int count = 0;
+    for (const auto &it : edgeMap)
+    {
+        if (it.second.tmaxComputed)
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2)
@@ -552,6 +606,8 @@ int main(int argc, char **argv)
     int nextGeneratedVertexId = int(m.points.size());
     const std::vector<SubdivisionPatch> patches =
         BuildSubdivisionPatches(m, *refiner, edgeMap, nextGeneratedVertexId);
+    const int tmaxComputedEdges =
+        ComputePatchEdgeTMaxFactorsBasic(patches, edgeMap, /*targetPixelSpacing*/ 0.25f, 2);
     const EdgeMapChecks edgeChecks = RunEdgeMapChecks(m, patches, edgeMap);
     if (!edgeChecks.ok)
     {
@@ -615,6 +671,9 @@ int main(int argc, char **argv)
                 patches.size(),
                 nextGeneratedVertexId - int(m.points.size()),
                 CountEdgesWithMidpointVertex(edgeMap));
+    std::printf("  edgeTMaxComputed=%d totalComputedEdges=%d\n",
+                tmaxComputedEdges,
+                CountEdgesWithComputedTMax(edgeMap));
     std::printf("  edgeMapChecks=ok\n");
     std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
                 edgeMap.size(),

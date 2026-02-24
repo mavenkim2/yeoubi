@@ -9,6 +9,8 @@ struct SubdivisionEdge
     int v0 = -1;
     int v1 = -1;
     int midpointVertex = -1;
+    int tmaxEdgeFactor = -1;
+    bool tmaxComputed = false;
     int faceCount = 0;
     int firstFace = -1;
     int secondFace = -1;
