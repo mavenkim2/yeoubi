@@ -208,7 +208,12 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     return tMax;
 }
 
-static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap, int v0, int v1)
+static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap,
+                                        int v0,
+                                        int v1,
+                                        int ptexFaceId,
+                                        const pxr::GfVec2f &uv0,
+                                        const pxr::GfVec2f &uv1)
 {
     const uint64_t key = MakeEdgeKey(v0, v1);
     auto it = edgeMap.find(key);
@@ -217,98 +222,49 @@ static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap, int v0, int
         SubdivisionEdge edge = {};
         edge.v0 = v0;
         edge.v1 = v1;
+        edge.storedPtexFaceId = ptexFaceId;
+        edge.storedUv0 = uv0;
+        edge.storedUv1 = uv1;
+        edge.hasStoredPatchParams = (ptexFaceId >= 0);
         it = edgeMap.emplace(key, edge).first;
     }
     return it->second;
 }
 
-static int ComputeUniformSplitPosStored(const SubdivisionEdge &edge)
+static int GetEdgeFactor(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
 {
-    YBI_ASSERT(edge.tmaxEdgeFactor >= 2);
-    YBI_ASSERT(edge.edgeVertexIndexStart >= 0);
-    YBI_ASSERT(edge.midpointVertex >= 0);
-    const int splitPos = edge.midpointVertex - edge.edgeVertexIndexStart + 1;
-    YBI_ASSERT(splitPos >= 1 && splitPos < edge.tmaxEdgeFactor);
-    return splitPos;
+    const uint64_t key = MakeEdgeKey(v0, v1);
+    const auto it = edgeMap.find(key);
+    YBI_ERROR(it != edgeMap.end(), "Missing edge factor lookup for edge (%d, %d)\n", v0, v1);
+    return it->second.tmaxEdgeFactor;
 }
 
-static void InitializeUniformChildEdgeRangeFromParent(const SubdivisionEdge &parent,
-                                                      int splitPosStored,
-                                                      int childFactor,
-                                                      SubdivisionEdge *child)
-{
-    YBI_ASSERT(child);
-    YBI_ASSERT(parent.tmaxEdgeFactor >= 2);
-    YBI_ASSERT(parent.edgeVertexIndexStart >= 0);
-
-    const int p0 = parent.v0;
-    const int p1 = parent.v1;
-    const int mid = parent.midpointVertex;
-
-    const bool usesLeft =
-        (child->v0 == p0 && child->v1 == mid) || (child->v0 == mid && child->v1 == p0);
-    const bool usesRight =
-        (child->v0 == mid && child->v1 == p1) || (child->v0 == p1 && child->v1 == mid);
-    YBI_ASSERT(usesLeft || usesRight);
-    YBI_ASSERT(childFactor >= 1);
-
-    const int intervalInternalCount = childFactor - 1;
-    int expectedStart = -1;
-    if (intervalInternalCount > 0)
-    {
-        const int intervalBase =
-            usesLeft ? parent.edgeVertexIndexStart : (parent.edgeVertexIndexStart + splitPosStored);
-        const bool forward =
-            usesLeft ? (child->v0 == p0 && child->v1 == mid) : (child->v0 == mid && child->v1 == p1);
-        expectedStart = forward ? intervalBase : (intervalBase + intervalInternalCount - 1);
-    }
-
-    if (child->edgeVertexIndexStart < 0)
-    {
-        child->edgeVertexIndexStart = expectedStart;
-    }
-    else if (child->edgeVertexIndexStart != expectedStart && expectedStart >= 0)
-    {
-        // Keep existing range initialization if another patch already established it.
-    }
-
-    if (childFactor >= 2)
-    {
-        if (child->edgeVertexIndexStart < 0)
-        {
-            child->edgeVertexIndexStart = expectedStart;
-        }
-        YBI_ASSERT(child->edgeVertexIndexStart >= 0);
-        child->midpointVertex = child->edgeVertexIndexStart + (childFactor / 2 - 1);
-    }
-    else
-    {
-        child->midpointVertex = -1;
-    }
-}
-
-static int
-EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
-                      const SubdivisionPatch &patch,
-                      int edgeIndex,
-                      SubdivisionEdgeMap &edgeMap,
-                      int &nextGeneratedVertexId,
-                      bool allowQuadCoarseUpgrade,
-                      const Far::PatchMap &patchMap,
-                      const Far::PatchTable &patchTable,
-                      const std::vector<LimitEvalVertex> &limitValues,
-                      int sampleStepsN,
-                      float targetPixelSpacing,
-                      int splitThreshold,
-                      const pxr::GfVec3f &eye,
-                      const pxr::GfVec3f &lookAt,
-                      int viewportWidth,
-                      int viewportHeight,
-                      float verticalFovDegrees,
-                      int *computedCountOut)
+static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
+                                 const SubdivisionPatch &patch,
+                                 int edgeIndex,
+                                 SubdivisionEdgeMap &edgeMap,
+                                 int &nextGeneratedVertexId,
+                                 bool allowQuadCoarseUpgrade,
+                                 const Far::PatchMap &patchMap,
+                                 const Far::PatchTable &patchTable,
+                                 const std::vector<LimitEvalVertex> &limitValues,
+                                 int sampleStepsN,
+                                 float targetPixelSpacing,
+                                 int splitThreshold,
+                                 const pxr::GfVec3f &eye,
+                                 const pxr::GfVec3f &lookAt,
+                                 int viewportWidth,
+                                 int viewportHeight,
+                                 float verticalFovDegrees,
+                                 int *computedCountOut)
 {
     const int next = (edgeIndex + 1) & 3;
-    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, patch.verts[edgeIndex], patch.verts[next]);
+    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap,
+                                            patch.verts[edgeIndex],
+                                            patch.verts[next],
+                                            patch.ptexFaceId,
+                                            patch.uv[edgeIndex],
+                                            patch.uv[next]);
     if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_UNINITIALIZED)
     {
         edge.tmaxEdgeFactor = ComputeDiagSplitPatchEdgeFactor(patchMap,
@@ -338,6 +294,7 @@ EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
         }
         if (edge.tmaxEdgeFactor >= 1)
         {
+            edge.transitionedUninitializedToUniform = true;
             if (edge.tmaxEdgeFactor >= 2)
             {
                 const int splitPosStored = edge.tmaxEdgeFactor / 2;
@@ -363,22 +320,21 @@ EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
     return edge.tmaxEdgeFactor;
 }
 
-static int PrecomputePatchEdgeFactors(
-    const SelectedSubdivMesh &m,
-    const std::vector<SubdivisionPatch> &patches,
-    SubdivisionEdgeMap &edgeMap,
-    int &nextGeneratedVertexId,
-    const Far::PatchMap &patchMap,
-    const Far::PatchTable &patchTable,
-    const std::vector<LimitEvalVertex> &limitValues,
-    int sampleStepsN,
-    float targetPixelSpacing,
-    int splitThreshold,
-    const pxr::GfVec3f &eye,
-    const pxr::GfVec3f &lookAt,
-    int viewportWidth,
-    int viewportHeight,
-    float verticalFovDegrees)
+static int PrecomputePatchEdgeFactors(const SelectedSubdivMesh &m,
+                                      const std::vector<SubdivisionPatch> &patches,
+                                      SubdivisionEdgeMap &edgeMap,
+                                      int &nextGeneratedVertexId,
+                                      const Far::PatchMap &patchMap,
+                                      const Far::PatchTable &patchTable,
+                                      const std::vector<LimitEvalVertex> &limitValues,
+                                      int sampleStepsN,
+                                      float targetPixelSpacing,
+                                      int splitThreshold,
+                                      const pxr::GfVec3f &eye,
+                                      const pxr::GfVec3f &lookAt,
+                                      int viewportWidth,
+                                      int viewportHeight,
+                                      float verticalFovDegrees)
 {
     int computedCount = 0;
     for (const SubdivisionPatch &patch : patches)
@@ -477,12 +433,11 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
         {
             const int ov0 = patch.verts[oppositeEdge];
             const int ov1 = patch.verts[(oppositeEdge + 1) & 3];
-            SubdivisionEdge &opp = GetOrCreateEdge(edgeMap, ov0, ov1);
+            const int ovn = (oppositeEdge + 1) & 3;
+            SubdivisionEdge &opp = GetOrCreateEdge(
+                edgeMap, ov0, ov1, patch.ptexFaceId, patch.uv[oppositeEdge], patch.uv[ovn]);
             opp.tmaxEdgeFactor = 2;
-            if (opp.edgeVertexIndexStart < 0)
-            {
-                opp.edgeVertexIndexStart = nextGeneratedVertexId++;
-            }
+            opp.edgeVertexIndexStart = nextGeneratedVertexId++;
             opp.midpointVertex = opp.edgeVertexIndexStart;
             edgeFactor[oppositeEdge] = 2;
         }
@@ -496,61 +451,74 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
             const int n = (e + 1) & 3;
             const int v0 = patch.verts[e];
             const int v1 = patch.verts[n];
-            SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1);
+            SubdivisionEdge &edge =
+                GetOrCreateEdge(edgeMap, v0, v1, patch.ptexFaceId, patch.uv[e], patch.uv[n]);
 
             int mid = edge.midpointVertex;
             int t = edgeFactor[e];
             float alpha = 0.5f;
-            int leftFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
-            int rightFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
+
             if (t != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
             {
                 YBI_ASSERT(t > 1);
-                if (edge.edgeVertexIndexStart < 0 || mid < 0)
+                const int splitPosStored = t / 2;
+                YBI_ASSERT(mid >= 0);
+                YBI_ASSERT(edge.edgeVertexIndexStart != -1);
+
+                if (!edge.split)
                 {
-                    const int splitPosStored = t / 2;
-                    edge.edgeVertexIndexStart = nextGeneratedVertexId;
-                    nextGeneratedVertexId += (t - 1);
-                    edge.midpointVertex = edge.edgeVertexIndexStart + (splitPosStored - 1);
-                    mid = edge.midpointVertex;
+                    edge.split = true;
+
+                    // NOTE: these are technically wrong when child edge factor is 1, but the
+                    // lookup won't use edgeVertexIndexStart in that case.
+                    SubdivisionEdge &edgeA = GetOrCreateEdge(
+                        edgeMap, edge.v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
+                    SubdivisionEdge &edgeB = GetOrCreateEdge(
+                        edgeMap, mid, edge.v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
+                    edgeA.tmaxEdgeFactor = splitPosStored;
+                    edgeA.edgeVertexIndexStart = edge.edgeVertexIndexStart;
+                    edgeA.midpointVertex =
+                        edgeA.tmaxEdgeFactor > 1
+                            ? edgeA.edgeVertexIndexStart + (edgeA.tmaxEdgeFactor / 2) - 1
+                            : -1;
+
+                    edgeB.tmaxEdgeFactor = t - splitPosStored;
+                    edgeB.edgeVertexIndexStart = edge.edgeVertexIndexStart + splitPosStored;
+                    edgeB.midpointVertex =
+                        edgeB.tmaxEdgeFactor > 1
+                            ? edgeB.edgeVertexIndexStart + (edgeB.tmaxEdgeFactor / 2) - 1
+                            : -1;
+
+                    edgeA.boundary = edge.boundary;
+                    edgeB.boundary = edge.boundary;
                 }
-                const int splitPosStored = ComputeUniformSplitPosStored(edge);
-                const bool localForward = (edge.v0 == v0 && edge.v1 == v1);
-                leftFactor = localForward ? splitPosStored : (t - splitPosStored);
-                rightFactor = t - leftFactor;
-                YBI_ASSERT(leftFactor + rightFactor == t);
-                alpha = float(leftFactor) / float(t);
-            }
-
-            if (mid < 0)
-            {
-                mid = nextGeneratedVertexId++;
-                edge.midpointVertex = mid;
-            }
-            splitVerts[i] = mid;
-            splitUV[i] = patch.uv[e] * (1.0f - alpha) + patch.uv[n] * alpha;
-
-            SubdivisionEdge &edgeA = GetOrCreateEdge(edgeMap, v0, mid);
-            SubdivisionEdge &edgeB = GetOrCreateEdge(edgeMap, mid, v1);
-            edgeA.tmaxEdgeFactor = leftFactor;
-            edgeB.tmaxEdgeFactor = rightFactor;
-            edgeA.boundary = edge.boundary;
-            edgeB.boundary = edge.boundary;
-            if (t != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
-            {
-                const int splitPosStored = ComputeUniformSplitPosStored(edge);
-                InitializeUniformChildEdgeRangeFromParent(edge, splitPosStored, leftFactor, &edgeA);
-                InitializeUniformChildEdgeRangeFromParent(
-                    edge, splitPosStored, rightFactor, &edgeB);
+                int factor = GetEdgeFactor(edgeMap, v0, mid);
+                alpha = float(factor) / float(t);
             }
             else
             {
-                edgeA.edgeVertexIndexStart = -1;
-                edgeB.edgeVertexIndexStart = -1;
+                if (!edge.split)
+                {
+                    edge.split = true;
+                    mid = nextGeneratedVertexId++;
+                    edge.midpointVertex = mid;
+                    SubdivisionEdge &edgeA = GetOrCreateEdge(
+                        edgeMap, v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
+                    SubdivisionEdge &edgeB = GetOrCreateEdge(
+                        edgeMap, mid, v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
+                    edgeA.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
+                    edgeB.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
+                    edgeA.boundary = edge.boundary;
+                    edgeB.boundary = edge.boundary;
+                }
             }
+
+            splitVerts[i] = mid;
+            splitUV[i] = patch.uv[e] * (1.0f - alpha) + patch.uv[n] * alpha;
         }
 
-        SubdivisionEdge &seam = GetOrCreateEdge(edgeMap, splitVerts[0], splitVerts[1]);
+        SubdivisionEdge &seam = GetOrCreateEdge(
+            edgeMap, splitVerts[0], splitVerts[1], patch.ptexFaceId, splitUV[0], splitUV[1]);
         seam.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
         seam.edgeVertexIndexStart = -1;
         seam.boundary = false;
@@ -608,8 +576,23 @@ static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
         {
             const int a = m.faceVertexIndices[cursor + i];
             const int b = m.faceVertexIndices[cursor + ((i + 1) % n)];
-            const uint64_t key = MakeEdgeKey(a, b);
-            SubdivisionEdge &edge = edgeMap[key];
+            pxr::GfVec2f uv0(0.0f, 0.0f);
+            pxr::GfVec2f uv1(0.0f, 0.0f);
+            if (n == 4)
+            {
+                const pxr::GfVec2f cornerUVs[4] = {pxr::GfVec2f(0.0f, 0.0f),
+                                                   pxr::GfVec2f(1.0f, 0.0f),
+                                                   pxr::GfVec2f(1.0f, 1.0f),
+                                                   pxr::GfVec2f(0.0f, 1.0f)};
+                uv0 = cornerUVs[i];
+                uv1 = cornerUVs[(i + 1) % n];
+            }
+            else
+            {
+                uv0 = pxr::GfVec2f(float(i) / float(n), 0.0f);
+                uv1 = pxr::GfVec2f(float(i + 1) / float(n), 0.0f);
+            }
+            SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, a, b, int(f), uv0, uv1);
             if (edge.faceCount == 0)
             {
                 edge.v0 = std::min(a, b);
@@ -635,10 +618,15 @@ static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
     return edgeMap;
 }
 
-static int
-GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap, int v0, int v1, int &nextVertexId)
+static int GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap,
+                                       int v0,
+                                       int v1,
+                                       int ptexFaceId,
+                                       const pxr::GfVec2f &uv0,
+                                       const pxr::GfVec2f &uv1,
+                                       int &nextVertexId)
 {
-    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1);
+    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1, ptexFaceId, uv0, uv1);
     if (edge.midpointVertex < 0)
     {
         edge.midpointVertex = nextVertexId++;
@@ -646,9 +634,15 @@ GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap, int v0, int v1, int &ne
     return edge.midpointVertex;
 }
 
-static void AddEdgeUse(SubdivisionEdgeMap &edgeMap, int v0, int v1, int faceId)
+static void AddEdgeUse(SubdivisionEdgeMap &edgeMap,
+                       int v0,
+                       int v1,
+                       int faceId,
+                       int ptexFaceId,
+                       const pxr::GfVec2f &uv0,
+                       const pxr::GfVec2f &uv1)
 {
-    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1);
+    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1, ptexFaceId, uv0, uv1);
     if (edge.faceCount == 0)
     {
         edge.firstFace = faceId;
@@ -721,8 +715,20 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdi
                 const int v = m.faceVertexIndices[cursor + i];
                 const int vNext = m.faceVertexIndices[cursor + ((i + 1) % n)];
                 const int vPrev = m.faceVertexIndices[cursor + ((i + n - 1) % n)];
-                const int midNext = GetOrAllocateMidpointVertex(edgeMap, v, vNext, nextVertexId);
-                const int midPrev = GetOrAllocateMidpointVertex(edgeMap, vPrev, v, nextVertexId);
+                const int midNext = GetOrAllocateMidpointVertex(edgeMap,
+                                                                v,
+                                                                vNext,
+                                                                basePtexFaceId + i,
+                                                                pxr::GfVec2f(0.0f, 0.0f),
+                                                                pxr::GfVec2f(1.0f, 0.0f),
+                                                                nextVertexId);
+                const int midPrev = GetOrAllocateMidpointVertex(edgeMap,
+                                                                vPrev,
+                                                                v,
+                                                                basePtexFaceId + i,
+                                                                pxr::GfVec2f(0.0f, 1.0f),
+                                                                pxr::GfVec2f(0.0f, 0.0f),
+                                                                nextVertexId);
 
                 SubdivisionPatch patch = {};
                 patch.verts[0] = v;
@@ -740,10 +746,14 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdi
                 patches.push_back(patch);
 
                 // Only generated edges for non-quad quadrangulation.
-                AddEdgeUse(edgeMap, v, midNext, patchId);
-                AddEdgeUse(edgeMap, midNext, center, patchId);
-                AddEdgeUse(edgeMap, center, midPrev, patchId);
-                AddEdgeUse(edgeMap, midPrev, v, patchId);
+                AddEdgeUse(
+                    edgeMap, v, midNext, patchId, patch.ptexFaceId, patch.uv[0], patch.uv[1]);
+                AddEdgeUse(
+                    edgeMap, midNext, center, patchId, patch.ptexFaceId, patch.uv[1], patch.uv[2]);
+                AddEdgeUse(
+                    edgeMap, center, midPrev, patchId, patch.ptexFaceId, patch.uv[2], patch.uv[3]);
+                AddEdgeUse(
+                    edgeMap, midPrev, v, patchId, patch.ptexFaceId, patch.uv[3], patch.uv[0]);
             }
         }
 
@@ -909,19 +919,75 @@ static int CountEdgesWithComputedTMax(const SubdivisionEdgeMap &edgeMap)
     return count;
 }
 
+static bool VerifyInitializedUniformEdgesHaveStoredPatchParams(const SubdivisionEdgeMap &edgeMap,
+                                                               int *missingStoredParamsOut,
+                                                               int *badUniformFactorOut)
+{
+    int missingStoredParams = 0;
+    int badUniformFactor = 0;
+    for (const auto &it : edgeMap)
+    {
+        const SubdivisionEdge &edge = it.second;
+        if (!edge.transitionedUninitializedToUniform)
+        {
+            continue;
+        }
+        if (edge.tmaxEdgeFactor < 1)
+        {
+            badUniformFactor++;
+        }
+        if (!edge.hasStoredPatchParams || edge.storedPtexFaceId < 0)
+        {
+            missingStoredParams++;
+        }
+    }
+
+    if (missingStoredParamsOut)
+    {
+        *missingStoredParamsOut = missingStoredParams;
+    }
+    if (badUniformFactorOut)
+    {
+        *badUniformFactorOut = badUniformFactor;
+    }
+    return (missingStoredParams == 0) && (badUniformFactor == 0);
+}
+
 int main(int argc, char **argv)
 {
+    constexpr float kDefaultPixelSpacing = 1.0f;
+    constexpr int kDefaultSplitThreshold = 1;
+    constexpr int kDefaultSampleSteps = 8;
+
     if (argc < 2)
     {
-        std::fprintf(stderr, "Usage: %s <selected-subdiv.json> [level>=1]\n", argv[0]);
+        std::fprintf(stderr,
+                     "Usage: %s <selected-subdiv.json> [level>=1]"
+                     " [pixelSpacing>0] [splitThreshold>=1] [sampleSteps>=2]\n",
+                     argv[0]);
         return 2;
     }
 
     const std::string inJson = argv[1];
     int level = 1;
+    float pixelSpacing = kDefaultPixelSpacing;
+    int splitThreshold = kDefaultSplitThreshold;
+    int sampleSteps = kDefaultSampleSteps;
     if (argc >= 3)
     {
         level = std::max(1, std::atoi(argv[2]));
+    }
+    if (argc >= 4)
+    {
+        pixelSpacing = std::max(1e-6f, float(std::atof(argv[3])));
+    }
+    if (argc >= 5)
+    {
+        splitThreshold = std::max(1, std::atoi(argv[4]));
+    }
+    if (argc >= 6)
+    {
+        sampleSteps = std::max(2, std::atoi(argv[5]));
     }
 
     SelectedSubdivMesh m = {};
@@ -1032,9 +1098,9 @@ int main(int argc, char **argv)
                                                        patchMap,
                                                        *patchTable,
                                                        limitValues,
-                                                       /*sampleStepsN*/ 8,
-                                                       /*targetPixelSpacing*/ 0.25f,
-                                                       /*splitThreshold*/ 2,
+                                                       sampleSteps,
+                                                       pixelSpacing,
+                                                       splitThreshold,
                                                        eye,
                                                        lookAt,
                                                        /*viewportWidth*/ 1920,
@@ -1048,15 +1114,31 @@ int main(int argc, char **argv)
                          patchMap,
                          *patchTable,
                          limitValues,
-                         /*sampleStepsN*/ 8,
-                         /*targetPixelSpacing*/ 0.25f,
-                         /*splitThreshold*/ 2,
+                         sampleSteps,
+                         pixelSpacing,
+                         splitThreshold,
                          eye,
                          lookAt,
                          /*viewportWidth*/ 1920,
                          /*viewportHeight*/ 1080,
                          /*verticalFovDegrees*/ 45.0f,
                          &tmaxComputedEdges);
+
+    int missingStoredPatchParams = 0;
+    int badUniformFactor = 0;
+    if (!VerifyInitializedUniformEdgesHaveStoredPatchParams(
+            edgeMap, &missingStoredPatchParams, &badUniformFactor))
+    {
+        std::fprintf(stderr,
+                     "Initialized-uniform edge validation failed:"
+                     " missingStoredPatchParams=%d"
+                     " badUniformFactor=%d\n",
+                     missingStoredPatchParams,
+                     badUniformFactor);
+        delete patchTable;
+        delete refiner;
+        return 1;
+    }
 
     std::printf("  levelRequested=%d\n", level);
     std::printf("  refinedMaxLevel=%d patches=%d\n",
@@ -1071,6 +1153,10 @@ int main(int argc, char **argv)
     std::printf("  edgeTMaxComputed=%d totalComputedEdges=%d\n",
                 tmaxComputedEdges,
                 CountEdgesWithComputedTMax(edgeMap));
+    std::printf("  diagSplitConfig pixelSpacing=%.3f splitThreshold=%d sampleSteps=%d\n",
+                pixelSpacing,
+                splitThreshold,
+                sampleSteps);
     std::printf("  edgeMapChecks=ok\n");
     std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
                 edgeMap.size(),

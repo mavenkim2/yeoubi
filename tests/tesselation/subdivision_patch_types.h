@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <unordered_map>
 #include <pxr/base/gf/vec2f.h>
+#include <unordered_map>
 
 inline constexpr int SUBDIV_EDGE_FACTOR_NON_UNIFORM = -1;
 inline constexpr int SUBDIV_EDGE_FACTOR_UNINITIALIZED = -2;
@@ -14,12 +14,19 @@ struct SubdivisionEdge
     int v1 = -1;
     int midpointVertex = -1;
     int edgeVertexIndexStart = -1;
+    int storedPtexFaceId = -1;
+    pxr::GfVec2f storedUv0 = pxr::GfVec2f(0.0f, 0.0f);
+    pxr::GfVec2f storedUv1 = pxr::GfVec2f(0.0f, 0.0f);
+    bool hasStoredPatchParams = false;
+    bool transitionedUninitializedToUniform = false;
     int tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
     int faceCount = 0;
     int firstFace = -1;
     int secondFace = -1;
     bool boundary = false;
     bool nonManifold = false;
+
+    bool split = false;
 };
 
 using SubdivisionEdgeMap = std::unordered_map<uint64_t, SubdivisionEdge>;
