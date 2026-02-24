@@ -1,5 +1,4 @@
 #include "io/usd_subdiv_json_io.h"
-#include "tesselation/diag_split_runtime.h"
 
 #include <opensubdiv/far/patchTableFactory.h>
 #include <opensubdiv/far/topologyDescriptor.h>
@@ -15,6 +14,12 @@
 #include <vector>
 
 using namespace OpenSubdiv;
+
+struct TriMesh
+{
+    pxr::VtVec3fArray positions;
+    std::vector<int> indices;
+};
 
 struct CreasePairs
 {
@@ -119,7 +124,7 @@ static Sdc::Options::TriangleSubdivision TriangleSubFromString(const std::string
     return Sdc::Options::TRI_SUB_CATMARK;
 }
 
-static bool WriteTriObj(const std::string &path, const ybi::tesselation::TriMesh &mesh)
+static bool WriteTriObj(const std::string &path, const TriMesh &mesh)
 {
     std::ofstream out(path);
     if (!out.is_open())
@@ -136,6 +141,34 @@ static bool WriteTriObj(const std::string &path, const ybi::tesselation::TriMesh
             << (mesh.indices[i + 2] + 1) << "\n";
     }
     return true;
+}
+
+static TriMesh BuildTriangulatedControlCage(const SelectedSubdivMesh &m)
+{
+    TriMesh mesh = {};
+    mesh.positions = m.points;
+
+    size_t cursor = 0;
+    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    {
+        const int n = m.faceVertexCounts[f];
+        if (n < 3 || cursor + n > m.faceVertexIndices.size())
+        {
+            cursor += std::max(0, n);
+            continue;
+        }
+
+        const int i0 = m.faceVertexIndices[cursor + 0];
+        for (int i = 1; i + 1 < n; ++i)
+        {
+            mesh.indices.push_back(i0);
+            mesh.indices.push_back(m.faceVertexIndices[cursor + i]);
+            mesh.indices.push_back(m.faceVertexIndices[cursor + i + 1]);
+        }
+        cursor += n;
+    }
+
+    return mesh;
 }
 
 static int CountControlCageEdgesWithOver2FacesFromIndices(const SelectedSubdivMesh &m)
@@ -179,70 +212,20 @@ int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        std::fprintf(stderr,
-                     "Usage: %s <selected-subdiv.json> [level>=1] [out.obj] "
-                     "[--camera-distance-scale s] [--fixed-edge-rate r]\n",
-                     argv[0]);
+        std::fprintf(stderr, "Usage: %s <selected-subdiv.json> [level>=1] [out.obj]\n", argv[0]);
         return 2;
     }
 
     const std::string inJson = argv[1];
     int level = 1;
     std::string outObj;
-    float cameraDistanceScale = 1.0f;
-    int fixedEdgeRate = 8;
-    bool levelSet = false;
-    bool outSet = false;
-    for (int i = 2; i < argc; ++i)
+    if (argc >= 3)
     {
-        const std::string arg = argv[i];
-        if (arg == "--camera-distance-scale")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --camera-distance-scale\n");
-                return 2;
-            }
-            cameraDistanceScale = std::strtof(argv[++i], nullptr);
-            if (!(cameraDistanceScale > 0.0f))
-            {
-                std::fprintf(stderr, "camera-distance-scale must be > 0\n");
-                return 2;
-            }
-            continue;
-        }
-        if (arg == "--fixed-edge-rate")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --fixed-edge-rate\n");
-                return 2;
-            }
-            fixedEdgeRate = std::atoi(argv[++i]);
-            if (fixedEdgeRate < 1)
-            {
-                std::fprintf(stderr, "fixed-edge-rate must be >= 1\n");
-                return 2;
-            }
-            continue;
-        }
-        if (!levelSet)
-        {
-            level = std::max(1, std::atoi(argv[i]));
-            levelSet = true;
-            continue;
-        }
-        if (!outSet)
-        {
-            outObj = argv[i];
-            outSet = true;
-            continue;
-        }
-        std::fprintf(stderr,
-                     "Usage: %s <selected-subdiv.json> [level>=1] [out.obj] "
-                     "[--camera-distance-scale s] [--fixed-edge-rate r]\n",
-                     argv[0]);
-        return 2;
+        level = std::max(1, std::atoi(argv[2]));
+    }
+    if (argc >= 4)
+    {
+        outObj = argv[3];
     }
     if (outObj.empty())
     {
@@ -298,7 +281,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const Far::TopologyLevel &level0 = refiner->GetLevel(0);
     Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(level);
     refiner->RefineAdaptive(adaptiveOptions);
     if (refiner->GetMaxLevel() < level)
@@ -320,49 +302,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    Far::PatchMap patchMap(*patchTable);
-    const ybi::tesselation::RefinedPositions refined =
-        ybi::tesselation::BuildRefinedPositions(*refiner, *patchTable, m.points);
-    const ybi::tesselation::EdgeFactorCamera edgeCamera =
-        ybi::tesselation::BuildEdgeFactorCamera(m.points, camera, cameraDistanceScale);
-    const ybi::tesselation::EdgeFactorSettings edgeSettings = {};
-
-    Far::PtexIndices ptex(*refiner);
-    int ptexFaceCount = 0;
-    std::vector<ybi::tesselation::PtexFaceAdj> ptexFaceAdj;
-    const int uniquePtexEdges = ybi::tesselation::BuildUniquePtexEdgeIds(
-        *refiner, level0, ptex, ptexFaceAdj, ptexFaceCount);
-
-    std::vector<ybi::tesselation::DiagEdgeState> diagEdges = ybi::tesselation::ComputeEdgeFactors(
-        patchMap,
-        *patchTable,
-        refined.values,
-        ptexFaceAdj,
-        ptexFaceCount,
-        uniquePtexEdges,
-        edgeCamera,
-        edgeSettings);
-    ybi::tesselation::ApplyNgonNonUniformConstraint(ptexFaceAdj, ptexFaceCount, diagEdges);
-
-    const ybi::tesselation::DiagSplitBuildResult diagSplit =
-        ybi::tesselation::BuildDiagSplitSubPatches(patchMap,
-                                                   *patchTable,
-                                                   refined.values,
-                                                   ptexFaceAdj,
-                                                   ptexFaceCount,
-                                                   edgeCamera,
-                                                   edgeSettings,
-                                                   diagEdges);
-
-    int skippedSubPatches = 0;
-    const ybi::tesselation::TriMesh triMesh = ybi::tesselation::TessellateDiagSplitSubPatches(
-        patchMap,
-        *patchTable,
-        refined.values,
-        diagSplit.patches,
-        diagEdges,
-        fixedEdgeRate,
-        skippedSubPatches);
+    // TODO: restart adaptive tessellation path from patch params; current fallback writes
+    // triangulated control cage while keeping refiner/patch table creation validated.
+    const TriMesh triMesh = BuildTriangulatedControlCage(m);
     if (!WriteTriObj(outObj, triMesh))
     {
         std::fprintf(stderr, "Failed to write OBJ: %s\n", outObj.c_str());
@@ -371,39 +313,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const std::string edgeRateObj = outObj + ".edge_rates.obj";
-    const std::vector<ybi::testio::EdgeRateDebugLine> edgeRateLines =
-        ybi::tesselation::BuildEdgeRateDebugLines(
-            patchMap, *patchTable, refined.values, ptexFaceAdj, ptexFaceCount, diagEdges);
-    int maxCalculatedEdgeFactor = 0;
-    for (const ybi::tesselation::DiagEdgeState &edge : diagEdges)
-    {
-        maxCalculatedEdgeFactor = std::max(maxCalculatedEdgeFactor, std::max(0, edge.rate));
-    }
-    if (!ybi::testio::WriteEdgeRateDebugObj(
-            edgeRateObj, edgeRateLines, edgeSettings.minRate, edgeSettings.maxRate))
-    {
-        std::fprintf(stderr, "Failed to write edge-rate debug OBJ: %s\n", edgeRateObj.c_str());
-        delete patchTable;
-        delete refiner;
-        return 1;
-    }
-
-    std::printf("Wrote adaptive level-%d OBJ: %s\n", level, outObj.c_str());
-    std::printf("Wrote edge-rate debug OBJ: %s\n", edgeRateObj.c_str());
-    std::printf("  diagSplitSubPatches verts=%zu tris=%zu\n",
+    std::printf("Wrote fallback adaptive OBJ (control cage triangulation): %s\n", outObj.c_str());
+    std::printf("  levelRequested=%d\n", level);
+    std::printf("  fallback verts=%zu tris=%zu\n",
                 triMesh.positions.size(),
                 triMesh.indices.size() / 3);
-    std::printf("  skippedPtexFaces=%d\n", diagSplit.skippedPtexFaces);
-    std::printf("  diagSubPatches=%zu splits=%d maxDepth=%d skippedSubPatches=%d\n",
-                diagSplit.patches.size(),
-                diagSplit.splitCount,
-                diagSplit.maxDepthReached,
-                skippedSubPatches);
-    std::printf("  maxCalculatedEdgeFactor=%d\n", maxCalculatedEdgeFactor);
-    std::printf("  cameraDistanceScale=%g\n", cameraDistanceScale);
-    std::printf("  fixedEdgeRate=%d (fallback)\n", fixedEdgeRate);
-    std::printf("  ptexFaces=%d\n", ptexFaceCount);
+    std::printf("  refinedMaxLevel=%d patches=%d\n",
+                refiner->GetMaxLevel(),
+                patchTable->GetNumPatchesTotal());
     std::printf("  controlCageEdgesWithOver2Faces=%d\n", edgesWithOver2Faces);
 
     delete patchTable;
