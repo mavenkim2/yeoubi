@@ -6,8 +6,10 @@
 #include <opensubdiv/far/ptexIndices.h>
 #include <opensubdiv/far/topologyDescriptor.h>
 #include <opensubdiv/far/topologyRefinerFactory.h>
+#include <pxr/base/gf/vec2f.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +25,95 @@ struct TriMesh
     pxr::VtVec3fArray positions;
     std::vector<int> indices;
 };
+
+static int ComputeDiagSplitEdgeRateT(const std::vector<float> &segmentPixelLengths,
+                                     float targetPixelSpacing,
+                                     int splitThreshold,
+                                     bool *outIsNonUniform,
+                                     int *outTMin,
+                                     int *outTMax)
+{
+    if (outIsNonUniform)
+    {
+        *outIsNonUniform = false;
+    }
+    if (outTMin)
+    {
+        *outTMin = 1;
+    }
+    if (outTMax)
+    {
+        *outTMax = 1;
+    }
+    if (targetPixelSpacing <= 0.0f)
+    {
+        return 1;
+    }
+
+    float sumL = 0.0f;
+    float maxL = 0.0f;
+    for (float l : segmentPixelLengths)
+    {
+        const float clamped = std::max(0.0f, l);
+        sumL += clamped;
+        maxL = std::max(maxL, clamped);
+    }
+    const int sampleCount = int(segmentPixelLengths.size()) + 1;
+    const int tMin = std::max(1, int(std::ceil(sumL / targetPixelSpacing)));
+    const int tMax =
+        std::max(1, int(std::ceil((float(sampleCount) * maxL) / targetPixelSpacing)));
+    const bool nonUniform = (tMax - tMin) >= splitThreshold;
+
+    if (outIsNonUniform)
+    {
+        *outIsNonUniform = nonUniform;
+    }
+    if (outTMin)
+    {
+        *outTMin = tMin;
+    }
+    if (outTMax)
+    {
+        *outTMax = tMax;
+    }
+    return tMax;
+}
+
+static int ComputeDiagSplitEdgeRateTFromScreenSamples(const std::vector<pxr::GfVec2f> &screenSamples,
+                                                      float targetPixelSpacing,
+                                                      int splitThreshold,
+                                                      bool *outIsNonUniform,
+                                                      int *outTMin,
+                                                      int *outTMax)
+{
+    if (screenSamples.size() < 2)
+    {
+        if (outIsNonUniform)
+        {
+            *outIsNonUniform = false;
+        }
+        if (outTMin)
+        {
+            *outTMin = 1;
+        }
+        if (outTMax)
+        {
+            *outTMax = 1;
+        }
+        return 1;
+    }
+
+    std::vector<float> segmentPixelLengths;
+    segmentPixelLengths.reserve(screenSamples.size() - 1);
+    for (size_t i = 1; i < screenSamples.size(); ++i)
+    {
+        const pxr::GfVec2f d = screenSamples[i] - screenSamples[i - 1];
+        segmentPixelLengths.push_back(std::sqrt(d[0] * d[0] + d[1] * d[1]));
+    }
+
+    return ComputeDiagSplitEdgeRateT(
+        segmentPixelLengths, targetPixelSpacing, splitThreshold, outIsNonUniform, outTMin, outTMax);
+}
 
 static SubdivisionEdgeMap BuildSubdivisionEdgeMap(const SelectedSubdivMesh &m)
 {
