@@ -953,17 +953,121 @@ static bool VerifyInitializedUniformEdgesHaveStoredPatchParams(const Subdivision
     return (missingStoredParams == 0) && (badUniformFactor == 0);
 }
 
+static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leafPatches,
+                                       const SubdivisionEdgeMap &edgeMap,
+                                       const Far::PatchMap &patchMap,
+                                       const Far::PatchTable &patchTable,
+                                       const std::vector<LimitEvalVertex> &limitValues,
+                                       const std::string &outObjPath,
+                                       int *outVertexCount,
+                                       int *outTriangleCount)
+{
+    if (outVertexCount)
+    {
+        *outVertexCount = 0;
+    }
+    if (outTriangleCount)
+    {
+        *outTriangleCount = 0;
+    }
+
+    FILE *f = std::fopen(outObjPath.c_str(), "w");
+    if (!f)
+    {
+        return false;
+    }
+
+    int vertexCount = 0;
+    int triangleCount = 0;
+    for (const SubdivisionPatch &patch : leafPatches)
+    {
+        const int e0 = GetEdgeFactor(edgeMap, patch.verts[0], patch.verts[1]);
+        const int e1 = GetEdgeFactor(edgeMap, patch.verts[1], patch.verts[2]);
+        const int e2 = GetEdgeFactor(edgeMap, patch.verts[2], patch.verts[3]);
+        const int e3 = GetEdgeFactor(edgeMap, patch.verts[3], patch.verts[0]);
+
+        YBI_ASSERT(e0 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
+        YBI_ASSERT(e1 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
+        YBI_ASSERT(e2 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
+        YBI_ASSERT(e3 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
+        YBI_ASSERT(e0 >= 1 && e1 >= 1 && e2 >= 1 && e3 >= 1);
+
+        const int nu = std::max(e0, e2);
+        const int nv = std::max(e1, e3);
+        if (nu <= 1 || nv <= 1)
+        {
+            continue;
+        }
+
+        const int cols = nu - 1;
+        const int rows = nv - 1;
+        const int baseVertex = vertexCount + 1;
+        for (int iv = 1; iv < nv; ++iv)
+        {
+            const float sv = float(iv) / float(nv);
+            for (int iu = 1; iu < nu; ++iu)
+            {
+                const float su = float(iu) / float(nu);
+                const pxr::GfVec2f uvBottom = patch.uv[0] * (1.0f - su) + patch.uv[1] * su;
+                const pxr::GfVec2f uvTop = patch.uv[3] * (1.0f - su) + patch.uv[2] * su;
+                const pxr::GfVec2f uv = uvBottom * (1.0f - sv) + uvTop * sv;
+
+                pxr::GfVec3f p(0.0f);
+                if (!EvaluateLimitPosition(
+                        patchMap, patchTable, limitValues, patch.ptexFaceId, uv, &p))
+                {
+                    std::fclose(f);
+                    return false;
+                }
+                std::fprintf(f, "v %.9g %.9g %.9g\n", double(p[0]), double(p[1]), double(p[2]));
+                vertexCount++;
+            }
+        }
+
+        if (cols < 2 || rows < 2)
+        {
+            continue;
+        }
+
+        for (int y = 0; y < rows - 1; ++y)
+        {
+            for (int x = 0; x < cols - 1; ++x)
+            {
+                const int i00 = baseVertex + y * cols + x;
+                const int i10 = i00 + 1;
+                const int i01 = i00 + cols;
+                const int i11 = i01 + 1;
+                std::fprintf(f, "f %d %d %d\n", i00, i10, i11);
+                std::fprintf(f, "f %d %d %d\n", i00, i11, i01);
+                triangleCount += 2;
+            }
+        }
+    }
+
+    std::fclose(f);
+    if (outVertexCount)
+    {
+        *outVertexCount = vertexCount;
+    }
+    if (outTriangleCount)
+    {
+        *outTriangleCount = triangleCount;
+    }
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     constexpr float kDefaultPixelSpacing = 1.0f;
     constexpr int kDefaultSplitThreshold = 1;
     constexpr int kDefaultSampleSteps = 8;
+    const std::string kDefaultInnerGridObj = "tests/bvh/out/diagsplit_leaf_inner_grid.obj";
 
     if (argc < 2)
     {
         std::fprintf(stderr,
                      "Usage: %s <selected-subdiv.json> [level>=1]"
-                     " [pixelSpacing>0] [splitThreshold>=1] [sampleSteps>=2]\n",
+                     " [pixelSpacing>0] [splitThreshold>=1] [sampleSteps>=2] [outObjPath]\n",
                      argv[0]);
         return 2;
     }
@@ -973,6 +1077,7 @@ int main(int argc, char **argv)
     float pixelSpacing = kDefaultPixelSpacing;
     int splitThreshold = kDefaultSplitThreshold;
     int sampleSteps = kDefaultSampleSteps;
+    std::string outObjPath = kDefaultInnerGridObj;
     if (argc >= 3)
     {
         level = std::max(1, std::atoi(argv[2]));
@@ -988,6 +1093,10 @@ int main(int argc, char **argv)
     if (argc >= 6)
     {
         sampleSteps = std::max(2, std::atoi(argv[5]));
+    }
+    if (argc >= 7)
+    {
+        outObjPath = argv[6];
     }
 
     SelectedSubdivMesh m = {};
@@ -1140,6 +1249,17 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    int innerGridVerts = 0;
+    int innerGridTris = 0;
+    if (!WriteLeafPatchInnerGridObj(
+            splitPatches, edgeMap, patchMap, *patchTable, limitValues, outObjPath, &innerGridVerts, &innerGridTris))
+    {
+        std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", outObjPath.c_str());
+        delete patchTable;
+        delete refiner;
+        return 1;
+    }
+
     std::printf("  levelRequested=%d\n", level);
     std::printf("  refinedMaxLevel=%d patches=%d\n",
                 refiner->GetMaxLevel(),
@@ -1157,6 +1277,10 @@ int main(int argc, char **argv)
                 pixelSpacing,
                 splitThreshold,
                 sampleSteps);
+    std::printf("  innerGridObj path=%s verts=%d tris=%d\n",
+                outObjPath.c_str(),
+                innerGridVerts,
+                innerGridTris);
     std::printf("  edgeMapChecks=ok\n");
     std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
                 edgeMap.size(),
