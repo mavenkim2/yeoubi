@@ -385,6 +385,31 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
 }
 
+static unsigned int FeedbackTileX(unsigned long long key)
+{
+    return static_cast<unsigned int>((key >> 0u) & 0x1ffull);
+}
+
+static unsigned int FeedbackTileY(unsigned long long key)
+{
+    return static_cast<unsigned int>((key >> 9u) & 0x1ffull);
+}
+
+static unsigned int FeedbackUdim(unsigned long long key)
+{
+    return 1001u + static_cast<unsigned int>((key >> 18u) & 0x7full);
+}
+
+static unsigned int FeedbackTextureId(unsigned long long key)
+{
+    return static_cast<unsigned int>((key >> 25u) & 0x7fffffull);
+}
+
+static unsigned int FeedbackMip(unsigned long long key)
+{
+    return static_cast<unsigned int>((key >> 48u) & 0xfull);
+}
+
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
@@ -612,9 +637,18 @@ static void RenderTraversable(OptixPipeline pipeline,
                      copyCount,
                      overflowCount,
                      histogram.size());
+        std::fprintf(feedbackFile, "textureId udim tileX tileY mip count\n");
         for (const auto &it : histogram)
         {
-            std::fprintf(feedbackFile, "%llu %u\n", it.first, it.second);
+            const unsigned long long key = it.first;
+            std::fprintf(feedbackFile,
+                         "%u %u %u %u %u %u\n",
+                         FeedbackTextureId(key),
+                         FeedbackUdim(key),
+                         FeedbackTileX(key),
+                         FeedbackTileY(key),
+                         FeedbackMip(key),
+                         it.second);
         }
         std::fclose(feedbackFile);
     }
