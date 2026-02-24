@@ -11,6 +11,9 @@ namespace ybi
 namespace usd_ntc
 {
 
+static constexpr uint32_t kUdimMin = 1001;
+static constexpr uint32_t kUdimMax = 1100;
+
 namespace
 {
 
@@ -53,7 +56,7 @@ bool TryFindUdimDigits(const std::string &path, uint32_t &udim, size_t &digitPos
         }
     }
     udim = static_cast<uint32_t>(std::strtoul(path.substr(digitPos, 4).c_str(), nullptr, 10));
-    return udim >= 1001 && udim <= 1999;
+    return udim >= kUdimMin && udim <= kUdimMax;
 }
 
 std::string StripUdimFromPath(const std::string &path)
@@ -103,7 +106,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
     size_t tokenLen = 0;
     if (FindUdimToken(path, tokenPos, tokenLen))
     {
-        for (uint32_t udim = 1001; udim <= 1999; ++udim)
+        for (uint32_t udim = kUdimMin; udim <= kUdimMax; ++udim)
         {
             std::string candidate = path;
             candidate.replace(tokenPos, tokenLen, std::to_string(udim));
@@ -126,7 +129,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
     {
         const std::string prefix = path.substr(0, digitPos);
         const std::string suffix = path.substr(digitPos + 4);
-        for (uint32_t udim = 1001; udim <= 1999; ++udim)
+        for (uint32_t udim = kUdimMin; udim <= kUdimMax; ++udim)
         {
             const std::string candidate = prefix + std::to_string(udim) + suffix;
             if (std::filesystem::exists(candidate))
@@ -149,7 +152,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
 
     if (std::filesystem::exists(path))
     {
-        out.emplace(1001u, path);
+        out.emplace(kUdimMin, path);
         return true;
     }
 

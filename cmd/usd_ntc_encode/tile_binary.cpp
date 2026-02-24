@@ -12,6 +12,9 @@ namespace ybi
 namespace tilebin
 {
 
+static constexpr uint32_t kUdimMin = 1001;
+static constexpr uint32_t kUdimMax = 1100;
+
 static_assert(std::is_trivially_copyable<TileFileHeader>::value, "TileFileHeader must be POD");
 static_assert(std::is_trivially_copyable<UdimEntry>::value, "UdimEntry must be POD");
 static_assert(std::is_trivially_copyable<TileRecord>::value, "TileRecord must be POD");
@@ -65,7 +68,7 @@ bool ValidateImages(const std::vector<UdimImage> &images, int tileSize, std::str
     std::unordered_set<uint32_t> seen;
     for (const UdimImage &img : images)
     {
-        if (img.udim < 1001 || img.udim > 1999)
+        if (img.udim < kUdimMin || img.udim > kUdimMax)
         {
             if (outError)
             {
@@ -307,7 +310,7 @@ bool ReadTileBinary(const std::filesystem::path &path,
     outImages.reserve(outEntries.size());
     for (const UdimEntry &entry : outEntries)
     {
-        if (entry.udim < 1001 || entry.udim > 1999 || entry.tileSize == 0 ||
+        if (entry.udim < kUdimMin || entry.udim > kUdimMax || entry.tileSize == 0 ||
             entry.tileCount != entry.tileCountX * entry.tileCountY ||
             entry.tileRecordCount != entry.tileCount)
         {

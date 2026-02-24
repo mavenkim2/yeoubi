@@ -15,6 +15,9 @@
 namespace
 {
 
+static constexpr uint32_t kUdimMin = 1001;
+static constexpr uint32_t kUdimMax = 1100;
+
 std::string Sanitize(const std::string &s)
 {
     std::string out = s;
@@ -69,7 +72,7 @@ bool TryFindUdimDigits(const std::string &path, uint32_t &udim, size_t &digitPos
         }
     }
     udim = static_cast<uint32_t>(std::strtoul(path.substr(digitPos, 4).c_str(), nullptr, 10));
-    return udim >= 1001 && udim <= 1999;
+    return udim >= kUdimMin && udim <= kUdimMax;
 }
 
 std::string StripUdimFromPath(const std::string &path)
@@ -328,7 +331,7 @@ int main(int argc, char **argv)
         size_t digitPos = 0;
         if (!TryFindUdimDigits(exrPath, udim, digitPos))
         {
-            udim = 1001;
+            udim = kUdimMin;
         }
     }
 

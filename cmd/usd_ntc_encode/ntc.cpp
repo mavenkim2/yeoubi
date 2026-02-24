@@ -141,7 +141,7 @@ std::string ResolveUdimTilePath(const std::string &path)
         return path;
     }
 
-    for (int tile = 1001; tile <= 1199; ++tile)
+    for (int tile = 1001; tile <= 1100; ++tile)
     {
         std::string candidate = path;
         candidate.replace(pos, tokenLen, std::to_string(tile));
