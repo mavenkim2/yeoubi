@@ -18,3 +18,6 @@
 - Stage surgically: use `git add -p`; review staged diff before commit.
 - Each commit must pass relevant checks for touched code (tests/lint/build subset).
 - Keep commit size reviewable; large/mechanical changes isolated in dedicated commit.
+- After any successful code change + verify, always make atomic commit(s) immediately.
+- If worktree has unrelated changes, stage only touched hunks/files.
+- If verify is blocked/failing, do not commit; report blocker.
