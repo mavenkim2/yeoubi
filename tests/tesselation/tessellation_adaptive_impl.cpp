@@ -3,7 +3,9 @@
 #include "tesselation/subdivision_patch_types.h"
 
 #include <opensubdiv/far/patchTableFactory.h>
+#include <opensubdiv/far/patchMap.h>
 #include <opensubdiv/far/ptexIndices.h>
+#include <opensubdiv/far/primvarRefiner.h>
 #include <opensubdiv/far/topologyDescriptor.h>
 #include <opensubdiv/far/topologyRefinerFactory.h>
 #include <pxr/base/gf/vec2f.h>
@@ -26,33 +28,183 @@ struct TriMesh
     std::vector<int> indices;
 };
 
-static int ComputeDiagSplitPatchEdgeTMax(const std::vector<pxr::GfVec2f> &edgeSamples,
-                                         float targetPixelSpacing)
+struct LimitEvalVertex
 {
-    if (edgeSamples.size() < 2 || targetPixelSpacing <= 0.0f)
+    pxr::GfVec3f p = pxr::GfVec3f(0.0f);
+
+    void Clear()
+    {
+        p = pxr::GfVec3f(0.0f);
+    }
+
+    void AddWithWeight(const LimitEvalVertex &src, float w)
+    {
+        p += src.p * w;
+    }
+};
+
+static float Dot(const pxr::GfVec3f &a, const pxr::GfVec3f &b)
+{
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static pxr::GfVec3f Cross(const pxr::GfVec3f &a, const pxr::GfVec3f &b)
+{
+    return pxr::GfVec3f(
+        a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]);
+}
+
+static pxr::GfVec3f Normalize(const pxr::GfVec3f &v)
+{
+    const float lenSq = Dot(v, v);
+    if (lenSq <= 1e-12f)
+    {
+        return pxr::GfVec3f(0.0f, 0.0f, 1.0f);
+    }
+    return v * (1.0f / std::sqrt(lenSq));
+}
+
+static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRefiner &refiner,
+                                                           const Far::PatchTable &patchTable,
+                                                           const pxr::VtVec3fArray &coarsePoints)
+{
+    const int numRefinerVerts = refiner.GetNumVerticesTotal();
+    const int numLocalPoints = patchTable.GetNumLocalPoints();
+    std::vector<LimitEvalVertex> values(numRefinerVerts + numLocalPoints);
+
+    const int numCoarseVerts = refiner.GetLevel(0).GetNumVertices();
+    const int copyCount = std::min(numCoarseVerts, int(coarsePoints.size()));
+    for (int i = 0; i < copyCount; ++i)
+    {
+        values[i].p = coarsePoints[i];
+    }
+
+    Far::PrimvarRefiner primvarRefiner(refiner);
+    LimitEvalVertex *src = values.data();
+    for (int level = 1; level < refiner.GetNumLevels(); ++level)
+    {
+        LimitEvalVertex *dst = src + refiner.GetLevel(level - 1).GetNumVertices();
+        primvarRefiner.Interpolate(level, src, dst);
+        src = dst;
+    }
+
+    if (numLocalPoints > 0)
+    {
+        patchTable.ComputeLocalPointValues(values.data(), values.data() + numRefinerVerts);
+    }
+    return values;
+}
+
+static pxr::GfVec3f EvaluateLimitPosition(const Far::PatchMap &patchMap,
+                                          const Far::PatchTable &patchTable,
+                                          const std::vector<LimitEvalVertex> &limitValues,
+                                          int ptexFaceId,
+                                          const pxr::GfVec2f &uv)
+{
+    const Far::PatchTable::PatchHandle *handle = patchMap.FindPatch(ptexFaceId, uv[0], uv[1]);
+    if (!handle)
+    {
+        return pxr::GfVec3f(0.0f);
+    }
+
+    float pWeights[20] = {0.0f};
+    patchTable.EvaluateBasis(*handle, uv[0], uv[1], pWeights);
+    Far::ConstIndexArray cvs = patchTable.GetPatchVertices(*handle);
+
+    pxr::GfVec3f p(0.0f);
+    for (int i = 0; i < cvs.size(); ++i)
+    {
+        p += limitValues[cvs[i]].p * pWeights[i];
+    }
+    return p;
+}
+
+static pxr::GfVec2f ProjectToScreen(const pxr::GfVec3f &p,
+                                    const pxr::GfVec3f &eye,
+                                    const pxr::GfVec3f &lookAt,
+                                    int viewportWidth,
+                                    int viewportHeight,
+                                    float verticalFovDegrees)
+{
+    const pxr::GfVec3f forward = Normalize(lookAt - eye);
+    pxr::GfVec3f worldUp(0.0f, 0.0f, 1.0f);
+    if (std::abs(Dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = pxr::GfVec3f(0.0f, 1.0f, 0.0f);
+    }
+    const pxr::GfVec3f right = Normalize(Cross(forward, worldUp));
+    const pxr::GfVec3f up = Normalize(Cross(right, forward));
+
+    const pxr::GfVec3f v = p - eye;
+    const float x = Dot(v, right);
+    const float y = Dot(v, up);
+    const float z = std::max(1e-6f, Dot(v, forward));
+
+    const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
+    const float tanHalfFovY = std::tan(0.5f * fovY);
+    const float aspect = float(viewportWidth) / float(viewportHeight);
+    const float ndcX = x / (z * tanHalfFovY * aspect);
+    const float ndcY = y / (z * tanHalfFovY);
+
+    const float sx = (ndcX * 0.5f + 0.5f) * float(viewportWidth);
+    const float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * float(viewportHeight);
+    return pxr::GfVec2f(sx, sy);
+}
+
+static int ComputeDiagSplitPatchEdgeTMax(const Far::PatchMap &patchMap,
+                                         const Far::PatchTable &patchTable,
+                                         const std::vector<LimitEvalVertex> &limitValues,
+                                         int ptexFaceId,
+                                         const pxr::GfVec2f &uvStart,
+                                         const pxr::GfVec2f &uvEnd,
+                                         int sampleStepsN,
+                                         float targetPixelSpacing,
+                                         const pxr::GfVec3f &eye,
+                                         const pxr::GfVec3f &lookAt,
+                                         int viewportWidth,
+                                         int viewportHeight,
+                                         float verticalFovDegrees)
+{
+    if (sampleStepsN < 2 || targetPixelSpacing <= 0.0f)
     {
         return 1;
     }
 
-    float sumL = 0.0f;
-    float maxL = 0.0f;
-    for (size_t i = 1; i < edgeSamples.size(); ++i)
+    float maxLi = 0.0f;
+    const pxr::GfVec3f p0 = EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart);
+    pxr::GfVec2f prev = ProjectToScreen(
+        p0, eye, lookAt, viewportWidth, viewportHeight, verticalFovDegrees);
+    for (int i = 1; i < sampleStepsN; ++i)
     {
-        const pxr::GfVec2f d = edgeSamples[i] - edgeSamples[i - 1];
-        const float l = std::sqrt(d[0] * d[0] + d[1] * d[1]);
-        const float clamped = std::max(0.0f, l);
-        sumL += clamped;
-        maxL = std::max(maxL, clamped);
+        const float t = float(i) / float(sampleStepsN - 1);
+        const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
+        const pxr::GfVec3f p = EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv);
+        const pxr::GfVec2f s =
+            ProjectToScreen(p, eye, lookAt, viewportWidth, viewportHeight, verticalFovDegrees);
+        const pxr::GfVec2f d = s - prev;
+        const float li = std::sqrt(d[0] * d[0] + d[1] * d[1]);
+        maxLi = std::max(maxLi, li);
+        prev = s;
     }
-    const int sampleCount = int(edgeSamples.size());
+
+    // DiagSplit Figure 8: tmax = ceil((N-1) * max(Li) / R).
     const int tMax =
-        std::max(1, int(std::ceil((float(sampleCount) * maxL) / targetPixelSpacing)));
+        std::max(1, int(std::ceil(float(sampleStepsN - 1) * maxLi / targetPixelSpacing)));
     return tMax;
 }
 
-static int ComputePatchEdgeTMaxFactorsBasic(const std::vector<SubdivisionPatch> &patches,
-                                            SubdivisionEdgeMap &edgeMap,
-                                            float targetPixelSpacing)
+static int ComputePatchEdgeTMaxFactors(const std::vector<SubdivisionPatch> &patches,
+                                       SubdivisionEdgeMap &edgeMap,
+                                       const Far::PatchMap &patchMap,
+                                       const Far::PatchTable &patchTable,
+                                       const std::vector<LimitEvalVertex> &limitValues,
+                                       int sampleStepsN,
+                                       float targetPixelSpacing,
+                                       const pxr::GfVec3f &eye,
+                                       const pxr::GfVec3f &lookAt,
+                                       int viewportWidth,
+                                       int viewportHeight,
+                                       float verticalFovDegrees)
 {
     // Local patch UV domain starts at unit quad corners.
     const pxr::GfVec2f patchUVs[4] = {
@@ -80,8 +232,19 @@ static int ComputePatchEdgeTMaxFactorsBasic(const std::vector<SubdivisionPatch> 
                 continue;
             }
 
-            const std::vector<pxr::GfVec2f> samples = {patchUVs[edgeIndex], patchUVs[next]};
-            edge.tmaxEdgeFactor = ComputeDiagSplitPatchEdgeTMax(samples, targetPixelSpacing);
+            edge.tmaxEdgeFactor = ComputeDiagSplitPatchEdgeTMax(patchMap,
+                                                                patchTable,
+                                                                limitValues,
+                                                                patch.ptexFaceId,
+                                                                patchUVs[edgeIndex],
+                                                                patchUVs[next],
+                                                                sampleStepsN,
+                                                                targetPixelSpacing,
+                                                                eye,
+                                                                lookAt,
+                                                                viewportWidth,
+                                                                viewportHeight,
+                                                                verticalFovDegrees);
             edge.tmaxComputed = true;
             computedCount++;
         }
@@ -539,8 +702,6 @@ int main(int argc, char **argv)
     int nextGeneratedVertexId = int(m.points.size());
     const std::vector<SubdivisionPatch> patches =
         BuildSubdivisionPatches(m, *refiner, edgeMap, nextGeneratedVertexId);
-    const int tmaxComputedEdges =
-        ComputePatchEdgeTMaxFactorsBasic(patches, edgeMap, /*targetPixelSpacing*/ 0.25f);
     const EdgeMapChecks edgeChecks = RunEdgeMapChecks(m, patches, edgeMap);
     if (!edgeChecks.ok)
     {
@@ -580,6 +741,26 @@ int main(int argc, char **argv)
         delete refiner;
         return 1;
     }
+
+    Far::PatchMap patchMap(*patchTable);
+    const std::vector<LimitEvalVertex> limitValues =
+        BuildLimitEvalVertices(*refiner, *patchTable, m.points);
+
+    const pxr::GfVec3f meshCenter = ComputeMeshCenter(m.points);
+    const pxr::GfVec3f eye = camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
+    const pxr::GfVec3f lookAt = camera.found ? camera.meshCenter : meshCenter;
+    const int tmaxComputedEdges = ComputePatchEdgeTMaxFactors(patches,
+                                                              edgeMap,
+                                                              patchMap,
+                                                              *patchTable,
+                                                              limitValues,
+                                                              /*sampleStepsN*/ 8,
+                                                              /*targetPixelSpacing*/ 0.25f,
+                                                              eye,
+                                                              lookAt,
+                                                              /*viewportWidth*/ 1920,
+                                                              /*viewportHeight*/ 1080,
+                                                              /*verticalFovDegrees*/ 45.0f);
 
     // TODO: restart adaptive tessellation path from patch params; current fallback writes
     // triangulated control cage while keeping refiner/patch table creation validated.
