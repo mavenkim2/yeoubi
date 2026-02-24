@@ -105,8 +105,10 @@ if (WITH_USD)
     if (YBI_HAS_CUDA AND WITH_NTC)
         add_executable(yeoubi_usd_ntc_encode
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/main.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/cli.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tiles.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
         target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
@@ -201,14 +203,14 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
             "-I${YBI_CUDA_INCLUDE_DIR}"
             "-I${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/RTXNTC/libraries/RTXNTC-Library/include"
             "-o" "${YBI_OPTIX_PRIMARY_PTX_PATH}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_programs.cu"
         DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_programs.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_programs.cu"
         VERBATIM)
     add_custom_target(yeoubi_optix_primary_programs_ptx DEPENDS "${YBI_OPTIX_PRIMARY_PTX_PATH}")
 
     add_executable(yeoubi_optix_harness
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_primary_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_harness.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
@@ -231,7 +233,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
 
     if (WITH_NTC)
         target_sources(yeoubi_optix_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix_ntc_runtime.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp)
         target_compile_definitions(yeoubi_optix_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
         target_include_directories(yeoubi_optix_harness PRIVATE ${NTC_INCLUDE_DIRS})
         target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})
