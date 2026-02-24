@@ -1,13 +1,12 @@
+#include "tile_binary.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <fstream>
 #include <string>
-#include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #define TINYEXR_IMPLEMENTATION
@@ -15,33 +14,6 @@
 
 namespace
 {
-
-struct TileFileHeader
-{
-    char magic[8];
-    uint32_t version = 1;
-    uint32_t tileSize = 0;
-    uint32_t imageWidth = 0;
-    uint32_t imageHeight = 0;
-    uint32_t channels = 4;
-    uint32_t tileCountX = 0;
-    uint32_t tileCountY = 0;
-    uint32_t tileCount = 0;
-    uint32_t elementType = 1; // 1 = float32
-};
-
-struct TileRecord
-{
-    uint32_t tileX = 0;
-    uint32_t tileY = 0;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint64_t byteOffset = 0;
-    uint64_t byteSize = 0;
-};
-
-static_assert(std::is_trivially_copyable<TileFileHeader>::value, "TileFileHeader must be POD");
-static_assert(std::is_trivially_copyable<TileRecord>::value, "TileRecord must be POD");
 
 std::string Sanitize(const std::string &s)
 {
@@ -55,9 +27,90 @@ std::string Sanitize(const std::string &s)
     }
     if (out.empty())
     {
-        out = "material";
+        out = "texture";
     }
     return out;
+}
+
+bool FindUdimToken(const std::string &path, size_t &pos, size_t &len)
+{
+    pos = path.find("<UDIM>");
+    len = 6;
+    if (pos != std::string::npos)
+    {
+        return true;
+    }
+    pos = path.find("<udim>");
+    len = 6;
+    return pos != std::string::npos;
+}
+
+bool TryFindUdimDigits(const std::string &path, uint32_t &udim, size_t &digitPos)
+{
+    const size_t ext = path.rfind('.');
+    if (ext == std::string::npos || ext < 4)
+    {
+        return false;
+    }
+    digitPos = ext - 4;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        if (!std::isdigit(static_cast<unsigned char>(path[digitPos + i])))
+        {
+            return false;
+        }
+    }
+    if (digitPos > 0)
+    {
+        const char c = path[digitPos - 1];
+        if (!(c == '.' || c == '_' || c == '-'))
+        {
+            return false;
+        }
+    }
+    udim = static_cast<uint32_t>(std::strtoul(path.substr(digitPos, 4).c_str(), nullptr, 10));
+    return udim >= 1001 && udim <= 1999;
+}
+
+std::string StripUdimFromPath(const std::string &path)
+{
+    size_t tokenPos = std::string::npos;
+    size_t tokenLen = 0;
+    if (FindUdimToken(path, tokenPos, tokenLen))
+    {
+        std::string out = path;
+        out.erase(tokenPos, tokenLen);
+        if (tokenPos > 0 && tokenPos < out.size() && out[tokenPos - 1] == '.' && out[tokenPos] == '.')
+        {
+            out.erase(tokenPos - 1, 1);
+        }
+        if (tokenPos > 0 && tokenPos < out.size() &&
+            (out[tokenPos - 1] == '_' || out[tokenPos - 1] == '-') && out[tokenPos] == '.')
+        {
+            out.erase(tokenPos - 1, 1);
+        }
+        return out;
+    }
+
+    uint32_t udim = 0;
+    size_t digitPos = 0;
+    if (TryFindUdimDigits(path, udim, digitPos))
+    {
+        std::string out = path;
+        out.erase(digitPos, 4);
+        if (digitPos > 0 && digitPos < out.size() && out[digitPos - 1] == '.' && out[digitPos] == '.')
+        {
+            out.erase(digitPos - 1, 1);
+        }
+        if (digitPos > 0 && digitPos < out.size() &&
+            (out[digitPos - 1] == '_' || out[digitPos - 1] == '-') && out[digitPos] == '.')
+        {
+            out.erase(digitPos - 1, 1);
+        }
+        return out;
+    }
+
+    return path;
 }
 
 bool LoadExrRgba(const std::string &path, int &width, int &height, std::vector<float> &rgba, std::string &reason)
@@ -86,9 +139,7 @@ bool LoadExrRgba(const std::string &path, int &width, int &height, std::vector<f
     {
         primaryError = err;
         FreeEXRErrorMessage(err);
-        err = nullptr;
     }
-
     if (rc != TINYEXR_ERROR_LAYER_NOT_FOUND)
     {
         reason = "LoadEXR failed for " + path;
@@ -177,106 +228,13 @@ bool LoadExrRgba(const std::string &path, int &width, int &height, std::vector<f
     return false;
 }
 
-bool ReadTileImage(const std::string &tilePath, int &width, int &height, std::vector<float> &rgba, std::string &error)
-{
-    std::ifstream in(tilePath, std::ios::binary);
-    if (!in.is_open())
-    {
-        error = "failed to open tile file: " + tilePath;
-        return false;
-    }
-
-    TileFileHeader header = {};
-    in.read(reinterpret_cast<char *>(&header), sizeof(header));
-    if (!in.good())
-    {
-        error = "failed reading tile header: " + tilePath;
-        return false;
-    }
-    if (std::memcmp(header.magic, "YBITILE1", 8) != 0)
-    {
-        error = "bad tile magic: " + tilePath;
-        return false;
-    }
-    if (header.channels != 4 || header.elementType != 1 || header.tileSize == 0)
-    {
-        error = "unsupported tile format in: " + tilePath;
-        return false;
-    }
-    if (header.tileCount != header.tileCountX * header.tileCountY)
-    {
-        error = "tile count mismatch in: " + tilePath;
-        return false;
-    }
-
-    std::vector<TileRecord> records(header.tileCount);
-    in.read(reinterpret_cast<char *>(records.data()), static_cast<std::streamsize>(records.size() * sizeof(TileRecord)));
-    if (!in.good())
-    {
-        error = "failed reading tile records: " + tilePath;
-        return false;
-    }
-
-    width = static_cast<int>(header.imageWidth);
-    height = static_cast<int>(header.imageHeight);
-    rgba.assign(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u, 0.0f);
-
-    for (const TileRecord &r : records)
-    {
-        if (r.tileX >= header.tileCountX || r.tileY >= header.tileCountY)
-        {
-            error = "tile record out of range in: " + tilePath;
-            return false;
-        }
-        if (r.width == 0 || r.height == 0 || r.width > header.tileSize || r.height > header.tileSize)
-        {
-            error = "tile record size invalid in: " + tilePath;
-            return false;
-        }
-
-        const uint64_t expectedBytes = static_cast<uint64_t>(r.width) * static_cast<uint64_t>(r.height) * 4u * sizeof(float);
-        if (r.byteSize != expectedBytes)
-        {
-            error = "tile byte size mismatch in: " + tilePath;
-            return false;
-        }
-
-        std::vector<float> tile(static_cast<size_t>(r.width) * static_cast<size_t>(r.height) * 4u);
-        in.seekg(static_cast<std::streamoff>(r.byteOffset), std::ios::beg);
-        in.read(reinterpret_cast<char *>(tile.data()), static_cast<std::streamsize>(r.byteSize));
-        if (!in.good())
-        {
-            error = "failed reading tile payload in: " + tilePath;
-            return false;
-        }
-
-        const uint32_t x0 = r.tileX * header.tileSize;
-        const uint32_t y0 = r.tileY * header.tileSize;
-        if (x0 + r.width > header.imageWidth || y0 + r.height > header.imageHeight)
-        {
-            error = "tile bounds overflow in: " + tilePath;
-            return false;
-        }
-
-        for (uint32_t y = 0; y < r.height; ++y)
-        {
-            const float *src = tile.data() + static_cast<size_t>(y) * static_cast<size_t>(r.width) * 4u;
-            float *dst = rgba.data() +
-                         (static_cast<size_t>(y0 + y) * static_cast<size_t>(header.imageWidth) + static_cast<size_t>(x0)) * 4u;
-            std::memcpy(dst, src, static_cast<size_t>(r.width) * 4u * sizeof(float));
-        }
-    }
-
-    return true;
-}
-
 void PrintUsage(const char *exe)
 {
     std::printf("Usage:\n");
-    std::printf("  %s --exr <path.exr> --tiles-bin <path.tiles.bin> [--eps <float>]\n", exe);
-    std::printf("  %s --exr <path.exr> --tiles-dir <dir> [--eps <float>]\n", exe);
+    std::printf("  %s --exr <path.exr> --tiles-bin <path.tiles.bin> [--udim <n>] [--eps <float>]\n", exe);
+    std::printf("  %s --exr <path.exr> --tiles-dir <dir> [--udim <n>] [--eps <float>]\n", exe);
     std::printf("Notes:\n");
-    std::printf("  --tiles-dir auto-resolves to <dir>/<sanitize(exr)>.tiles.bin\n");
+    std::printf("  --tiles-dir auto-resolves to <dir>/<sanitize(strip_udim(exr))>.tiles.bin\n");
 }
 
 } // namespace
@@ -287,6 +245,8 @@ int main(int argc, char **argv)
     std::string tilesBinPath;
     std::string tilesDir;
     float eps = 1e-7f;
+    uint32_t udim = 0;
+    bool udimProvided = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -299,7 +259,6 @@ int main(int argc, char **argv)
             dst = argv[++i];
             return true;
         };
-
         if (arg == "--exr")
         {
             if (!readValue(exrPath))
@@ -334,6 +293,17 @@ int main(int argc, char **argv)
             }
             eps = std::max(0.0f, std::strtof(value.c_str(), nullptr));
         }
+        else if (arg == "--udim")
+        {
+            std::string value;
+            if (!readValue(value))
+            {
+                PrintUsage(argv[0]);
+                return 1;
+            }
+            udim = static_cast<uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
+            udimProvided = true;
+        }
         else if (arg == "--help" || arg == "-h")
         {
             PrintUsage(argv[0]);
@@ -353,6 +323,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (!udimProvided)
+    {
+        size_t digitPos = 0;
+        if (!TryFindUdimDigits(exrPath, udim, digitPos))
+        {
+            udim = 1001;
+        }
+    }
+
     if (tilesBinPath.empty())
     {
         if (tilesDir.empty())
@@ -360,7 +339,7 @@ int main(int argc, char **argv)
             std::printf("missing tiles input: set --tiles-bin or --tiles-dir\n");
             return 1;
         }
-        tilesBinPath = tilesDir + "/" + Sanitize(exrPath) + ".tiles.bin";
+        tilesBinPath = tilesDir + "/" + Sanitize(StripUdimFromPath(exrPath)) + ".tiles.bin";
     }
 
     int exrW = 0;
@@ -373,75 +352,66 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    int tileW = 0;
-    int tileH = 0;
-    std::vector<float> tileRgba;
-    if (!ReadTileImage(tilesBinPath, tileW, tileH, tileRgba, error))
+    ybi::tilebin::TileFileHeader header = {};
+    std::vector<ybi::tilebin::UdimEntry> entries;
+    std::vector<ybi::tilebin::UdimImage> images;
+    if (!ybi::tilebin::ReadTileBinary(tilesBinPath, header, entries, images, &error))
     {
         std::printf("verify failed: %s\n", error.c_str());
         return 2;
     }
 
-    if (exrW != tileW || exrH != tileH || exrRgba.size() != tileRgba.size())
+    const ybi::tilebin::UdimImage *decoded = nullptr;
+    for (const ybi::tilebin::UdimImage &img : images)
     {
-        std::printf("verify failed: dimension mismatch exr=%dx%d tile=%dx%d\n", exrW, exrH, tileW, tileH);
+        if (img.udim == udim)
+        {
+            decoded = &img;
+            break;
+        }
+    }
+    if (!decoded)
+    {
+        std::printf("verify failed: udim %u not found in %s\n", udim, tilesBinPath.c_str());
+        return 2;
+    }
+    if (static_cast<int>(decoded->width) != exrW || static_cast<int>(decoded->height) != exrH)
+    {
+        std::printf("verify failed: dimension mismatch exr=%dx%d tile=%ux%u udim=%u\n",
+                    exrW,
+                    exrH,
+                    decoded->width,
+                    decoded->height,
+                    udim);
         return 2;
     }
 
-    double sumSq = 0.0;
-    double sumAbs = 0.0;
-    float maxAbs = 0.0f;
-    uint64_t mismatchCount = 0;
-    size_t firstMismatch = exrRgba.size();
-    for (size_t i = 0; i < exrRgba.size(); ++i)
-    {
-        const float diff = std::fabs(exrRgba[i] - tileRgba[i]);
-        maxAbs = std::max(maxAbs, diff);
-        sumAbs += diff;
-        sumSq += static_cast<double>(diff) * static_cast<double>(diff);
-        if (diff > eps)
-        {
-            ++mismatchCount;
-            if (firstMismatch == exrRgba.size())
-            {
-                firstMismatch = i;
-            }
-        }
-    }
-
-    const double denom = exrRgba.empty() ? 1.0 : static_cast<double>(exrRgba.size());
-    const double meanAbs = sumAbs / denom;
-    const double rmse = std::sqrt(sumSq / denom);
-    std::printf("verify stats: exr=%s tiles=%s\n", exrPath.c_str(), tilesBinPath.c_str());
+    ybi::tilebin::DiffStats diff = {};
+    const bool ok = ybi::tilebin::DiffImagesExact(exrRgba, decoded->rgba, eps, &diff);
+    std::printf("verify stats: exr=%s tiles=%s udim=%u\n", exrPath.c_str(), tilesBinPath.c_str(), udim);
     std::printf("verify stats: width=%d height=%d channels=4\n", exrW, exrH);
     std::printf("verify stats: eps=%g maxAbs=%.9g meanAbs=%.9g rmse=%.9g mismatches=%llu/%zu\n",
                 eps,
-                maxAbs,
-                meanAbs,
-                rmse,
-                static_cast<unsigned long long>(mismatchCount),
+                diff.maxAbs,
+                diff.meanAbs,
+                diff.rmse,
+                static_cast<unsigned long long>(diff.mismatchCount),
                 exrRgba.size());
 
-    if (firstMismatch < exrRgba.size())
+    if (!ok && diff.firstMismatch < exrRgba.size())
     {
-        const size_t pixel = firstMismatch / 4u;
-        const size_t chan = firstMismatch % 4u;
+        const size_t pixel = diff.firstMismatch / 4u;
+        const size_t chan = diff.firstMismatch % 4u;
         const size_t x = pixel % static_cast<size_t>(exrW);
         const size_t y = pixel / static_cast<size_t>(exrW);
         std::printf("first mismatch: x=%zu y=%zu c=%zu exr=%.9g tile=%.9g\n",
                     x,
                     y,
                     chan,
-                    exrRgba[firstMismatch],
-                    tileRgba[firstMismatch]);
+                    exrRgba[diff.firstMismatch],
+                    decoded->rgba[diff.firstMismatch]);
     }
 
-    if (mismatchCount > 0)
-    {
-        std::printf("verify result: FAIL\n");
-        return 2;
-    }
-
-    std::printf("verify result: PASS\n");
-    return 0;
+    std::printf("verify result: %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 2;
 }

@@ -1,16 +1,15 @@
 #include "shared.h"
+#include "exr_utils.h"
 #include "tile_binary.h"
+#include "udim_utils.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#include <tinyexr.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
@@ -18,45 +17,11 @@
 namespace
 {
 
-struct TextureJob
+struct TextureGroup
 {
-    std::string materialPath;
-    std::string inputName;
-    std::string originalPath;
-    std::string resolvedPath;
+    std::string basePathNoUdim;
+    std::unordered_map<uint32_t, std::string> udimPaths;
 };
-
-std::string ResolveUdimTilePath(const std::string &path)
-{
-    const std::string tokenUpper = "<UDIM>";
-    const std::string tokenLower = "<udim>";
-
-    size_t pos = path.find(tokenUpper);
-    size_t tokenLen = tokenUpper.size();
-    if (pos == std::string::npos)
-    {
-        pos = path.find(tokenLower);
-        tokenLen = tokenLower.size();
-    }
-    if (pos == std::string::npos)
-    {
-        return path;
-    }
-
-    for (int tile = 1001; tile <= 1199; ++tile)
-    {
-        std::string candidate = path;
-        candidate.replace(pos, tokenLen, std::to_string(tile));
-        if (std::filesystem::exists(candidate))
-        {
-            return candidate;
-        }
-    }
-
-    std::string fallback = path;
-    fallback.replace(pos, tokenLen, "1001");
-    return fallback;
-}
 
 std::string LowerExt(const std::string &path)
 {
@@ -66,123 +31,6 @@ std::string LowerExt(const std::string &path)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return ext;
-}
-
-bool LoadExrRgba(const std::string &path, int &width, int &height, std::vector<float> &rgba, std::string &reason)
-{
-    width = 0;
-    height = 0;
-    auto AssignRgbaAndFree = [&](float *rawData, int w, int h) {
-        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
-        rgba.assign(rawData, rawData + pixelCount * 4);
-        std::free(rawData);
-        width = w;
-        height = h;
-    };
-
-    float *raw = nullptr;
-    const char *err = nullptr;
-    int rc = LoadEXR(&raw, &width, &height, path.c_str(), &err);
-    if (rc == TINYEXR_SUCCESS && raw)
-    {
-        AssignRgbaAndFree(raw, width, height);
-        return true;
-    }
-
-    std::string primaryError;
-    if (err)
-    {
-        primaryError = err;
-        FreeEXRErrorMessage(err);
-        err = nullptr;
-    }
-
-    if (rc != TINYEXR_ERROR_LAYER_NOT_FOUND)
-    {
-        reason = "LoadEXR failed for " + path;
-        if (!primaryError.empty())
-        {
-            reason += " (" + primaryError + ")";
-        }
-        return false;
-    }
-
-    const char **layerNames = nullptr;
-    int numLayers = 0;
-    const char *layersErr = nullptr;
-    rc = EXRLayers(path.c_str(), &layerNames, &numLayers, &layersErr);
-    if (rc != TINYEXR_SUCCESS || !layerNames || numLayers <= 0)
-    {
-        reason = "LoadEXR failed for " + path;
-        if (!primaryError.empty())
-        {
-            reason += " (" + primaryError + ")";
-        }
-        if (layersErr)
-        {
-            reason += " [EXRLayers: ";
-            reason += layersErr;
-            reason += "]";
-            FreeEXRErrorMessage(layersErr);
-        }
-        if (layerNames)
-        {
-            for (int i = 0; i < numLayers; ++i)
-            {
-                if (layerNames[i])
-                {
-                    std::free((void *)layerNames[i]);
-                }
-            }
-            std::free((void *)layerNames);
-        }
-        return false;
-    }
-
-    std::string layerError;
-    for (int i = 0; i < numLayers; ++i)
-    {
-        float *layerRaw = nullptr;
-        int layerWidth = 0;
-        int layerHeight = 0;
-        const char *layerErr = nullptr;
-        const int layerRc =
-            LoadEXRWithLayer(&layerRaw, &layerWidth, &layerHeight, path.c_str(), layerNames[i], &layerErr);
-        if (layerRc == TINYEXR_SUCCESS && layerRaw)
-        {
-            AssignRgbaAndFree(layerRaw, layerWidth, layerHeight);
-            for (int j = 0; j < numLayers; ++j)
-            {
-                if (layerNames[j])
-                {
-                    std::free((void *)layerNames[j]);
-                }
-            }
-            std::free((void *)layerNames);
-            return true;
-        }
-        if (layerErr)
-        {
-            layerError = layerErr;
-            FreeEXRErrorMessage(layerErr);
-        }
-    }
-
-    for (int i = 0; i < numLayers; ++i)
-    {
-        if (layerNames[i])
-        {
-            std::free((void *)layerNames[i]);
-        }
-    }
-    std::free((void *)layerNames);
-
-    reason = "LoadEXRWithLayer failed for " + path;
-    if (!layerError.empty())
-    {
-        reason += " (" + layerError + ")";
-    }
-    return false;
 }
 
 void ExtractTileRgbaF32(const std::vector<float> &image,
@@ -210,25 +58,9 @@ void ExtractTileRgbaF32(const std::vector<float> &image,
     }
 }
 
-void ConvertTileToPngRgba8(const std::vector<float> &tile, std::vector<unsigned char> &outRgba8)
-{
-    outRgba8.resize(tile.size());
-    for (size_t i = 0; i < tile.size(); ++i)
-    {
-        const float v = std::min(1.0f, std::max(0.0f, tile[i]));
-        outRgba8[i] = static_cast<unsigned char>(v * 255.0f + 0.5f);
-    }
-}
-
-bool WriteTileImagePng(const fs::path &path, int width, int height, const std::vector<float> &tile)
-{
-    std::vector<unsigned char> rgba8;
-    ConvertTileToPngRgba8(tile, rgba8);
-    return stbi_write_png(path.string().c_str(), width, height, 4, rgba8.data(), width * 4) != 0;
-}
-
 bool WriteTilePreviewImages(const fs::path &verifyDir,
                             const std::string &baseName,
+                            uint32_t udim,
                             int imageWidth,
                             int imageHeight,
                             int tileSize,
@@ -246,11 +78,17 @@ bool WriteTilePreviewImages(const fs::path &verifyDir,
         {
             int tileWidth = 0;
             int tileHeight = 0;
-            ExtractTileRgbaF32(
-                image, imageWidth, imageHeight, tx, ty, tileSize, tilePixels, tileWidth, tileHeight);
-            const fs::path verifyPath =
-                verifyDir / (baseName + "_tile_" + std::to_string(tx) + "_" + std::to_string(ty) + ".png");
-            if (!WriteTileImagePng(verifyPath, tileWidth, tileHeight, tilePixels))
+            ExtractTileRgbaF32(image, imageWidth, imageHeight, tx, ty, tileSize, tilePixels, tileWidth, tileHeight);
+            std::vector<unsigned char> rgba8(tilePixels.size());
+            for (size_t i = 0; i < tilePixels.size(); ++i)
+            {
+                const float v = std::min(1.0f, std::max(0.0f, tilePixels[i]));
+                rgba8[i] = static_cast<unsigned char>(v * 255.0f + 0.5f);
+            }
+            const fs::path verifyPath = verifyDir /
+                                        (baseName + "_udim" + std::to_string(udim) + "_tile_" + std::to_string(tx) + "_" +
+                                         std::to_string(ty) + ".png");
+            if (stbi_write_png(verifyPath.string().c_str(), tileWidth, tileHeight, 4, rgba8.data(), tileWidth * 4) == 0)
             {
                 outError = "failed writing tile verify image: " + verifyPath.string();
                 return false;
@@ -262,32 +100,51 @@ bool WriteTilePreviewImages(const fs::path &verifyDir,
 }
 
 bool VerifyRoundTripTileBinary(const fs::path &tilePath,
-                               int expectedWidth,
-                               int expectedHeight,
-                               const std::vector<float> &sourceRgba,
+                               const std::vector<ybi::tilebin::UdimImage> &sourceImages,
                                float eps,
                                std::string &outError)
 {
     ybi::tilebin::TileFileHeader header = {};
-    std::vector<ybi::tilebin::TileRecord> records;
-    std::vector<float> reconstructed;
-    if (!ybi::tilebin::ReadTileBinary(tilePath, header, records, reconstructed, &outError))
+    std::vector<ybi::tilebin::UdimEntry> entries;
+    std::vector<ybi::tilebin::UdimImage> reconstructed;
+    if (!ybi::tilebin::ReadTileBinary(tilePath, header, entries, reconstructed, &outError))
     {
         return false;
     }
-
-    if (static_cast<int>(header.imageWidth) != expectedWidth || static_cast<int>(header.imageHeight) != expectedHeight)
+    if (sourceImages.size() != reconstructed.size())
     {
-        outError = "tile verify dimension mismatch for " + tilePath.string();
+        outError = "tile verify UDIM count mismatch for " + tilePath.string();
         return false;
     }
 
-    ybi::tilebin::DiffStats diff;
-    if (!ybi::tilebin::DiffImagesExact(sourceRgba, reconstructed, eps, &diff))
+    std::unordered_map<uint32_t, const ybi::tilebin::UdimImage *> sourceByUdim;
+    for (const ybi::tilebin::UdimImage &img : sourceImages)
     {
-        outError = "tile verify mismatch for " + tilePath.string() + " mismatches=" +
-                   std::to_string(diff.mismatchCount) + " maxAbs=" + std::to_string(diff.maxAbs);
-        return false;
+        sourceByUdim.emplace(img.udim, &img);
+    }
+
+    for (const ybi::tilebin::UdimImage &decoded : reconstructed)
+    {
+        const auto it = sourceByUdim.find(decoded.udim);
+        if (it == sourceByUdim.end())
+        {
+            outError = "tile verify missing source udim=" + std::to_string(decoded.udim);
+            return false;
+        }
+        const ybi::tilebin::UdimImage &source = *it->second;
+        if (source.width != decoded.width || source.height != decoded.height)
+        {
+            outError = "tile verify dimension mismatch udim=" + std::to_string(decoded.udim);
+            return false;
+        }
+        ybi::tilebin::DiffStats diff;
+        if (!ybi::tilebin::DiffImagesExact(source.rgba, decoded.rgba, eps, &diff))
+        {
+            outError = "tile verify mismatch udim=" + std::to_string(decoded.udim) +
+                       " mismatches=" + std::to_string(diff.mismatchCount) +
+                       " maxAbs=" + std::to_string(diff.maxAbs);
+            return false;
+        }
     }
     return true;
 }
@@ -320,7 +177,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         return false;
     }
 
-    std::unordered_map<std::string, TextureJob> uniqueTextures;
+    std::unordered_map<std::string, TextureGroup> groups;
     int selectedMaterials = 0;
     for (const MaterialChannels &mat : materials)
     {
@@ -333,55 +190,74 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             break;
         }
         ++selectedMaterials;
+
         for (const auto &kv : mat.channels)
         {
-            TextureJob job = {};
-            job.materialPath = mat.materialPath;
-            job.inputName = kv.first;
-            job.originalPath = kv.second.texturePath;
-            job.resolvedPath = ResolveUdimTilePath(kv.second.texturePath);
-            uniqueTextures.emplace(job.resolvedPath, std::move(job));
+            const std::string &texturePath = kv.second.texturePath;
+            const std::string basePathNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
+            TextureGroup &group = groups[basePathNoUdim];
+            group.basePathNoUdim = basePathNoUdim;
+            std::unordered_map<uint32_t, std::string> discovered;
+            std::string reason;
+            if (!ybi::usd_ntc::CollectUdimPaths(texturePath, discovered, reason))
+            {
+                if (outError)
+                {
+                    *outError = reason;
+                }
+                return false;
+            }
+            for (auto &entry : discovered)
+            {
+                group.udimPaths.emplace(entry.first, std::move(entry.second));
+            }
         }
     }
 
-    std::printf("Tile prep: selected materials=%d unique textures=%zu tileSize=%d verifyCount=%d verifyPass=%s eps=%g\n",
+    std::printf("Tile prep: selected materials=%d textures=%zu tileSize=%d verifyCount=%d verifyPass=%s eps=%g\n",
                 selectedMaterials,
-                uniqueTextures.size(),
+                groups.size(),
                 cli.tileSize,
                 cli.tileVerifyCount,
                 cli.tileVerifyPass ? "on" : "off",
                 cli.tileVerifyEps);
 
     int processed = 0;
-    for (const auto &it : uniqueTextures)
+    for (const auto &entry : groups)
     {
-        const TextureJob &job = it.second;
-        if (LowerExt(job.resolvedPath) != ".exr")
+        const TextureGroup &group = entry.second;
+        if (LowerExt(group.basePathNoUdim) != ".exr")
         {
-            std::printf("Tile prep: skip non-EXR texture %s\n", job.resolvedPath.c_str());
+            std::printf("Tile prep: skip non-EXR texture %s\n", group.basePathNoUdim.c_str());
             continue;
         }
-        int width = 0;
-        int height = 0;
-        std::vector<float> rgba;
-        std::string reason;
-        if (!LoadExrRgba(job.resolvedPath, width, height, rgba, reason))
+
+        std::vector<ybi::tilebin::UdimImage> images;
+        images.reserve(group.udimPaths.size());
+        for (const auto &udimPath : group.udimPaths)
         {
-            if (outError)
+            ybi::tilebin::UdimImage image = {};
+            image.udim = udimPath.first;
+            int width = 0;
+            int height = 0;
+            std::string reason;
+            if (!ybi::usd_ntc::LoadExrRgba(udimPath.second, width, height, image.rgba, reason))
             {
-                *outError = reason;
+                if (outError)
+                {
+                    *outError = reason;
+                }
+                return false;
             }
-            return false;
+            image.width = static_cast<uint32_t>(width);
+            image.height = static_cast<uint32_t>(height);
+            images.push_back(std::move(image));
         }
 
-        const std::string baseName = Sanitize(job.resolvedPath);
+        const std::string baseName = Sanitize(group.basePathNoUdim);
         const fs::path binPath = tileOutDir / (baseName + ".tiles.bin");
-        if (!ybi::tilebin::WriteTileBinary(binPath,
-                                           width,
-                                           height,
-                                           cli.tileSize,
-                                           rgba,
-                                           &reason))
+        std::string reason;
+        if (!ybi::tilebin::WriteTileBinary(binPath, cli.tileSize, images, &reason))
         {
             if (outError)
             {
@@ -390,25 +266,17 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             return false;
         }
 
-        if (!WriteTilePreviewImages(verifyDir,
-                                    baseName,
-                                    width,
-                                    height,
-                                    cli.tileSize,
-                                    rgba,
-                                    cli.tileVerifyCount,
-                                    reason))
+        for (const ybi::tilebin::UdimImage &img : images)
         {
-            if (outError)
-            {
-                *outError = reason;
-            }
-            return false;
-        }
-
-        if (cli.tileVerifyPass)
-        {
-            if (!VerifyRoundTripTileBinary(binPath, width, height, rgba, cli.tileVerifyEps, reason))
+            if (!WriteTilePreviewImages(verifyDir,
+                                        baseName,
+                                        img.udim,
+                                        static_cast<int>(img.width),
+                                        static_cast<int>(img.height),
+                                        cli.tileSize,
+                                        img.rgba,
+                                        cli.tileVerifyCount,
+                                        reason))
             {
                 if (outError)
                 {
@@ -418,14 +286,22 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             }
         }
 
+        if (cli.tileVerifyPass && !VerifyRoundTripTileBinary(binPath, images, cli.tileVerifyEps, reason))
+        {
+            if (outError)
+            {
+                *outError = reason;
+            }
+            return false;
+        }
+
         ++processed;
-        std::printf("Tile prep: [%d/%zu] %s -> %s (%dx%d)\n",
+        std::printf("Tile prep: [%d/%zu] %s -> %s (udims=%zu)\n",
                     processed,
-                    uniqueTextures.size(),
-                    job.resolvedPath.c_str(),
+                    groups.size(),
+                    group.basePathNoUdim.c_str(),
                     binPath.string().c_str(),
-                    width,
-                    height);
+                    images.size());
     }
 
     std::printf("Tile prep: done processed=%d\n", processed);

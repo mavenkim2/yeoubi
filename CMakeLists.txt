@@ -108,6 +108,8 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/cli.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/exr_utils.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tiles.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
@@ -124,6 +126,7 @@ if (WITH_USD)
 
         add_executable(yeoubi_tile_verify
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_verify.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
         target_compile_definitions(yeoubi_tile_verify PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
