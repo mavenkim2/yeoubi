@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <unordered_map>
+#include <pxr/base/gf/vec2f.h>
 
 inline constexpr int SUBDIV_EDGE_FACTOR_NON_UNIFORM = -1;
 inline constexpr int SUBDIV_EDGE_FACTOR_UNINITIALIZED = -2;
@@ -25,6 +26,7 @@ using SubdivisionEdgeMap = std::unordered_map<uint64_t, SubdivisionEdge>;
 struct SubdivisionPatch
 {
     int verts[4] = {-1, -1, -1, -1};
+    pxr::GfVec2f uv[4];
     int coarseFace = -1;
     int quadrant = 0;
     int ptexFaceId = -1;
