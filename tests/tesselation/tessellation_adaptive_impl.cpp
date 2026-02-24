@@ -15,18 +15,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 using namespace OpenSubdiv;
-
-struct TriMesh
-{
-    pxr::VtVec3fArray positions;
-    std::vector<int> indices;
-};
 
 struct LimitEvalVertex
 {
@@ -539,53 +532,6 @@ static Sdc::Options::TriangleSubdivision TriangleSubFromString(const std::string
     return Sdc::Options::TRI_SUB_CATMARK;
 }
 
-static bool WriteTriObj(const std::string &path, const TriMesh &mesh)
-{
-    std::ofstream out(path);
-    if (!out.is_open())
-    {
-        return false;
-    }
-    for (const pxr::GfVec3f &p : mesh.positions)
-    {
-        out << "v " << p[0] << " " << p[1] << " " << p[2] << "\n";
-    }
-    for (int i = 0; i + 2 < int(mesh.indices.size()); i += 3)
-    {
-        out << "f " << (mesh.indices[i + 0] + 1) << " " << (mesh.indices[i + 1] + 1) << " "
-            << (mesh.indices[i + 2] + 1) << "\n";
-    }
-    return true;
-}
-
-static TriMesh BuildTriangulatedControlCage(const SelectedSubdivMesh &m)
-{
-    TriMesh mesh = {};
-    mesh.positions = m.points;
-
-    size_t cursor = 0;
-    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
-    {
-        const int n = m.faceVertexCounts[f];
-        if (n < 3 || cursor + n > m.faceVertexIndices.size())
-        {
-            cursor += std::max(0, n);
-            continue;
-        }
-
-        const int i0 = m.faceVertexIndices[cursor + 0];
-        for (int i = 1; i + 1 < n; ++i)
-        {
-            mesh.indices.push_back(i0);
-            mesh.indices.push_back(m.faceVertexIndices[cursor + i]);
-            mesh.indices.push_back(m.faceVertexIndices[cursor + i + 1]);
-        }
-        cursor += n;
-    }
-
-    return mesh;
-}
-
 static int CountNonManifoldEdges(const SubdivisionEdgeMap &edgeMap)
 {
     int count = 0;
@@ -642,24 +588,15 @@ int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        std::fprintf(stderr, "Usage: %s <selected-subdiv.json> [level>=1] [out.obj]\n", argv[0]);
+        std::fprintf(stderr, "Usage: %s <selected-subdiv.json> [level>=1]\n", argv[0]);
         return 2;
     }
 
     const std::string inJson = argv[1];
     int level = 1;
-    std::string outObj;
     if (argc >= 3)
     {
         level = std::max(1, std::atoi(argv[2]));
-    }
-    if (argc >= 4)
-    {
-        outObj = argv[3];
-    }
-    if (outObj.empty())
-    {
-        outObj = "tests/bvh/out/refined_adaptive_level" + std::to_string(level) + ".obj";
     }
 
     SelectedSubdivMesh m = {};
@@ -775,22 +712,7 @@ int main(int argc, char **argv)
                                                               /*viewportHeight*/ 1080,
                                                               /*verticalFovDegrees*/ 45.0f);
 
-    // TODO: restart adaptive tessellation path from patch params; current fallback writes
-    // triangulated control cage while keeping refiner/patch table creation validated.
-    const TriMesh triMesh = BuildTriangulatedControlCage(m);
-    if (!WriteTriObj(outObj, triMesh))
-    {
-        std::fprintf(stderr, "Failed to write OBJ: %s\n", outObj.c_str());
-        delete patchTable;
-        delete refiner;
-        return 1;
-    }
-
-    std::printf("Wrote fallback adaptive OBJ (control cage triangulation): %s\n", outObj.c_str());
     std::printf("  levelRequested=%d\n", level);
-    std::printf("  fallback verts=%zu tris=%zu\n",
-                triMesh.positions.size(),
-                triMesh.indices.size() / 3);
     std::printf("  refinedMaxLevel=%d patches=%d\n",
                 refiner->GetMaxLevel(),
                 patchTable->GetNumPatchesTotal());
