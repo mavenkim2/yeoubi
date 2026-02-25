@@ -259,8 +259,7 @@ static int GetEdgeFactor(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
     const uint64_t key = MakeEdgeKey(v0, v1);
     const auto it = edgeMap.find(key);
     YBI_ERROR(it != edgeMap.end(), "Missing edge factor lookup for edge (%d, %d)\n", v0, v1);
-    const int t = it->second.tmaxEdgeFactor;
-    return (t >= 1) ? std::min(t, 2) : t;
+    return it->second.tmaxEdgeFactor;
 }
 
 static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
@@ -309,10 +308,6 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
         {
             edge.tmaxEdgeFactor = 1;
         }
-        if (edge.tmaxEdgeFactor >= 1)
-        {
-            edge.tmaxEdgeFactor = std::min(edge.tmaxEdgeFactor, 2);
-        }
         const bool coarseFaceIsQuad = (patch.coarseFace >= 0) &&
                                       (patch.coarseFace < int(m.faceVertexCounts.size())) &&
                                       (m.faceVertexCounts[patch.coarseFace] == 4);
@@ -354,7 +349,6 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
     }
     else if (edge.tmaxEdgeFactor >= 1)
     {
-        edge.tmaxEdgeFactor = std::min(edge.tmaxEdgeFactor, 2);
         SetEdgeSampleParams(edge,
                             patch.verts[edgeIndex],
                             patch.verts[next],
@@ -1179,8 +1173,8 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         maxVertexId = std::max(maxVertexId, edge.midpointVertex);
         if (edge.edgeVertexIndexStart >= 0 && edge.tmaxEdgeFactor >= 2)
         {
-            maxVertexId = std::max(
-                maxVertexId, edge.edgeVertexIndexStart + (std::min(edge.tmaxEdgeFactor, 2) - 2));
+            maxVertexId =
+                std::max(maxVertexId, edge.edgeVertexIndexStart + (edge.tmaxEdgeFactor - 2));
         }
     }
     if (maxVertexId < 0)
@@ -1211,7 +1205,6 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
 
         int t = edge.tmaxEdgeFactor;
         YBI_ASSERT(t >= 1);
-        t = std::min(t, 2);
         if (t > 1)
         {
             YBI_ASSERT(edge.edgeVertexIndexStart >= 0);
