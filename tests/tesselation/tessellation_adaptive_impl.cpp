@@ -1010,6 +1010,7 @@ static bool VerifyInitializedUniformEdgesHaveStoredPatchParams(const Subdivision
 }
 
 static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &leafPatches,
+                                         const SubdivisionEdgeMap &edgeMap,
                                          const Far::PatchMap &patchMap,
                                          const Far::PatchTable &patchTable,
                                          const std::vector<LimitEvalVertex> &limitValues,
@@ -1092,6 +1093,7 @@ static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &le
         objIndex[i] = vertexCount;
     }
 
+    int faceId = 0;
     for (const SubdivisionPatch &patch : leafPatches)
     {
         const int i0 = objIndex[patch.verts[0]];
@@ -1099,8 +1101,28 @@ static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &le
         const int i2 = objIndex[patch.verts[2]];
         const int i3 = objIndex[patch.verts[3]];
         YBI_ASSERT(i0 > 0 && i1 > 0 && i2 > 0 && i3 > 0);
+        const int e0 = GetEdgeFactor(edgeMap, patch.verts[0], patch.verts[1]);
+        const int e1 = GetEdgeFactor(edgeMap, patch.verts[1], patch.verts[2]);
+        const int e2 = GetEdgeFactor(edgeMap, patch.verts[2], patch.verts[3]);
+        const int e3 = GetEdgeFactor(edgeMap, patch.verts[3], patch.verts[0]);
+        std::fprintf(f,
+                     "# face_id %d corner_vertex_ids %d %d %d %d obj_vertex_ids %d %d %d %d edge_factors %d %d %d %d\n",
+                     faceId,
+                     patch.verts[0],
+                     patch.verts[1],
+                     patch.verts[2],
+                     patch.verts[3],
+                     i0,
+                     i1,
+                     i2,
+                     i3,
+                     e0,
+                     e1,
+                     e2,
+                     e3);
         std::fprintf(f, "f %d %d %d %d\n", i0, i1, i2, i3);
         quadCount++;
+        faceId++;
     }
 
     std::fclose(f);
@@ -1662,6 +1684,7 @@ int main(int argc, char **argv)
     int patchQuadVerts = 0;
     int patchQuadCount = 0;
     if (!WriteLeafPatchCornerQuadsObj(splitPatches,
+                                      edgeMap,
                                       patchMap,
                                       *patchTable,
                                       limitValues,
