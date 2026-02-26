@@ -39,11 +39,11 @@ struct LimitEvalVertex
 };
 
 
-#include "tesselation/tessellation_adaptive_limit_eval.inc"
-#include "tesselation/tessellation_adaptive_edge_ops.inc"
-#include "tesselation/tessellation_adaptive_patch_build.inc"
-#include "tesselation/tessellation_adaptive_util.inc"
-#include "tesselation/tessellation_adaptive_obj_write.inc"
+#include "tesselation/tessellation_adaptive_limit_eval.h"
+#include "tesselation/tessellation_adaptive_edge_ops.h"
+#include "tesselation/tessellation_adaptive_patch_build.h"
+#include "tesselation/tessellation_adaptive_util.h"
+#include "tesselation/tessellation_adaptive_obj_write.h"
 
 int main(int argc, char **argv)
 {
