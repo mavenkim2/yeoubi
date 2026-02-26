@@ -234,6 +234,22 @@ static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap,
     return it->second;
 }
 
+static SubdivisionEdge &GetEdge(SubdivisionEdgeMap &edgeMap, int v0, int v1)
+{
+    const uint64_t key = MakeEdgeKey(v0, v1);
+    auto it = edgeMap.find(key);
+    YBI_ASSERT(it != edgeMap.end());
+    return it->second;
+}
+
+static const SubdivisionEdge &GetEdge(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
+{
+    const uint64_t key = MakeEdgeKey(v0, v1);
+    const auto it = edgeMap.find(key);
+    YBI_ASSERT(it != edgeMap.end());
+    return it->second;
+}
+
 static void SetEdgeSampleParams(SubdivisionEdge &edge,
                                 int vStart,
                                 int vEnd,
@@ -308,13 +324,13 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
         {
             edge.tmaxEdgeFactor = 1;
         }
-        const bool coarseFaceIsQuad = (patch.coarseFace >= 0) &&
-                                      (patch.coarseFace < int(m.faceVertexCounts.size())) &&
-                                      (m.faceVertexCounts[patch.coarseFace] == 4);
-        if (allowQuadCoarseUpgrade && coarseFaceIsQuad && edge.tmaxEdgeFactor == 1)
-        {
-            edge.tmaxEdgeFactor = 2;
-        }
+        // const bool coarseFaceIsQuad = (patch.coarseFace >= 0) &&
+        //                               (patch.coarseFace < int(m.faceVertexCounts.size())) &&
+        //                               (m.faceVertexCounts[patch.coarseFace] == 4);
+        // if (allowQuadCoarseUpgrade && coarseFaceIsQuad && edge.tmaxEdgeFactor == 1)
+        // {
+        //     edge.tmaxEdgeFactor = 2;
+        // }
         if (edge.tmaxEdgeFactor >= 1)
         {
             edge.transitionedUninitializedToUniform = true;
@@ -360,6 +376,7 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
     return edge.tmaxEdgeFactor;
 }
 
+#if 0
 static int PrecomputePatchEdgeFactors(const SelectedSubdivMesh &m,
                                       const std::vector<SubdivisionPatch> &patches,
                                       SubdivisionEdgeMap &edgeMap,
@@ -403,6 +420,7 @@ static int PrecomputePatchEdgeFactors(const SelectedSubdivMesh &m,
     }
     return computedCount;
 }
+#endif
 
 static std::vector<SubdivisionPatch>
 DiagSplitPatches(const SelectedSubdivMesh &m,
@@ -679,6 +697,7 @@ static int GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap,
     if (edge.midpointVertex < 0)
     {
         edge.midpointVertex = nextVertexId++;
+        edge.split = true;
     }
     return edge.midpointVertex;
 }
@@ -1100,7 +1119,8 @@ static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &le
         const int e2 = GetEdgeFactor(edgeMap, patch.verts[2], patch.verts[3]);
         const int e3 = GetEdgeFactor(edgeMap, patch.verts[3], patch.verts[0]);
         std::fprintf(f,
-                     "# face_id %d corner_vertex_ids %d %d %d %d obj_vertex_ids %d %d %d %d edge_factors %d %d %d %d\n",
+                     "# face_id %d corner_vertex_ids %d %d %d %d obj_vertex_ids %d %d %d %d "
+                     "edge_factors %d %d %d %d\n",
                      faceId,
                      patch.verts[0],
                      patch.verts[1],
@@ -1129,6 +1149,40 @@ static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &le
         *outQuadCount = quadCount;
     }
     return true;
+}
+
+static void RecurseChildEdges(
+    const SubdivisionEdgeMap &edgeMap, int v0, int v1, std::vector<int> &vertices, int depth = 0)
+{
+    const SubdivisionEdge &edge = GetEdge(edgeMap, v0, v1);
+    if (edge.split)
+    {
+        YBI_ASSERT(edge.midpointVertex >= 0);
+        RecurseChildEdges(edgeMap, v0, edge.midpointVertex, vertices, depth + 1);
+        RecurseChildEdges(edgeMap, edge.midpointVertex, v1, vertices, depth + 1);
+    }
+    else
+    {
+        YBI_ERROR(vertices.back() == v0 || vertices.back() == v1,
+                  "back: %i, edge: %i %i, depth: %i\n",
+                  vertices.back(),
+                  v0,
+                  v1,
+                  depth);
+        YBI_ASSERT(edge.tmaxEdgeFactor >= 1);
+        YBI_ASSERT(edge.edgeVertexIndexStart >= 0 || edge.tmaxEdgeFactor == 1);
+        bool forward = vertices.back() == v0;
+        YBI_ASSERT(forward);
+        bool edgeForward = edge.v0 == v0;
+
+        for (int k = 1; k < edge.tmaxEdgeFactor; k++)
+        {
+            const int localOffset = edgeForward ? (k - 1) : (edge.tmaxEdgeFactor - 1 - k);
+            int vertex = edge.edgeVertexIndexStart + localOffset;
+            vertices.push_back(vertex);
+        }
+        vertices.push_back(forward ? v1 : v0);
+    }
 }
 
 static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leafPatches,
@@ -1261,7 +1315,7 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
     }
 
     auto emitTri = [&](int a, int b, int c) {
-        YBI_ASSERT(a > 0 && b > 0 && c > 0);
+        YBI_ERROR(a > 0 && b > 0 && c > 0, "%i %i %i\n", a, b, c);
         if (a == b || b == c || a == c)
         {
             return;
@@ -1270,13 +1324,7 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         triangleCount++;
     };
 
-    auto getEdgeRef = [&](int a, int b) -> const SubdivisionEdge & {
-        const uint64_t key = MakeEdgeKey(a, b);
-        const auto it = edgeMap.find(key);
-        YBI_ERROR(it != edgeMap.end(), "Missing edge for stitching (%d, %d)\n", a, b);
-        return it->second;
-    };
-
+#if 1
     auto getOrientedEdgeVertexId =
         [&](const SubdivisionEdge &edge, int a, int b, int t, int k) -> int {
         YBI_ASSERT(t >= 1);
@@ -1297,6 +1345,7 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         const int localOffset = forward ? (k - 1) : (t - 1 - k);
         return edge.edgeVertexIndexStart + localOffset;
     };
+#endif
 
     auto stitchStrip = [&](const std::vector<int> &outer, const std::vector<int> &inner) {
         YBI_ASSERT(!outer.empty());
@@ -1349,16 +1398,66 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
 
     for (const SubdivisionPatch &patch : leafPatches)
     {
-        const int e0 = GetEdgeFactor(edgeMap, patch.verts[0], patch.verts[1]);
-        const int e1 = GetEdgeFactor(edgeMap, patch.verts[1], patch.verts[2]);
-        const int e2 = GetEdgeFactor(edgeMap, patch.verts[2], patch.verts[3]);
-        const int e3 = GetEdgeFactor(edgeMap, patch.verts[3], patch.verts[0]);
+        auto buildOuter = [&](const SubdivisionEdge &edge, int a, int b, int t) {
+            std::vector<int> outer;
+            outer.reserve(t + 1);
+#if 1
+            outer.push_back(a);
+            RecurseChildEdges(edgeMap, a, b, outer);
+            YBI_ERROR((!edge.split && outer.size() == t + 1) || (edge.split && outer.size() > t),
+                      "split: %i\n",
+                      edge.split);
+
+            std::vector<int> out;
+            for (int o : outer)
+            {
+                YBI_ASSERT(o >= 0 && o < int(sharedPos.size()));
+                YBI_ASSERT(isSharedInit(o));
+                const int objId = sharedObjIndex[o];
+                YBI_ASSERT(objId > 0);
+                out.push_back(objId);
+            }
+            return out;
+#else
+            std::vector<int> test;
+            for (int k = 0; k <= t; ++k)
+            {
+                const int vertexId = getOrientedEdgeVertexId(edge, a, b, t, k);
+                YBI_ASSERT(vertexId >= 0 && vertexId < int(sharedPos.size()));
+                YBI_ASSERT(isSharedInit(vertexId));
+                const int objId = sharedObjIndex[vertexId];
+                YBI_ASSERT(objId > 0);
+                test.push_back(objId);
+            }
+            return test;
+#endif
+        };
+
+        int e0 = GetEdgeFactor(edgeMap, patch.verts[0], patch.verts[1]);
+        int e1 = GetEdgeFactor(edgeMap, patch.verts[1], patch.verts[2]);
+        int e2 = GetEdgeFactor(edgeMap, patch.verts[2], patch.verts[3]);
+        int e3 = GetEdgeFactor(edgeMap, patch.verts[3], patch.verts[0]);
 
         YBI_ASSERT(e0 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
         YBI_ASSERT(e1 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
         YBI_ASSERT(e2 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
         YBI_ASSERT(e3 != SUBDIV_EDGE_FACTOR_NON_UNIFORM);
         YBI_ASSERT(e0 >= 1 && e1 >= 1 && e2 >= 1 && e3 >= 1);
+
+        const SubdivisionEdge &edge0 = GetEdge(edgeMap, patch.verts[0], patch.verts[1]);
+        const SubdivisionEdge &edge1 = GetEdge(edgeMap, patch.verts[1], patch.verts[2]);
+        const SubdivisionEdge &edge2 = GetEdge(edgeMap, patch.verts[2], patch.verts[3]);
+        const SubdivisionEdge &edge3 = GetEdge(edgeMap, patch.verts[3], patch.verts[0]);
+
+        std::vector<int> outer0 = buildOuter(edge0, patch.verts[0], patch.verts[1], e0);
+        std::vector<int> outer1 = buildOuter(edge1, patch.verts[1], patch.verts[2], e1);
+        std::vector<int> outer2 = buildOuter(edge2, patch.verts[2], patch.verts[3], e2);
+        std::vector<int> outer3 = buildOuter(edge3, patch.verts[3], patch.verts[0], e3);
+
+        e0 = outer0.size() - 1;
+        e1 = outer1.size() - 1;
+        e2 = outer2.size() - 1;
+        e3 = outer3.size() - 1;
 
         const int nu = std::max(std::max(e0, e2), 2);
         const int nv = std::max(std::max(e1, e3), 2);
@@ -1409,31 +1508,6 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
                 }
             }
         }
-
-        const SubdivisionEdge &edge0 = getEdgeRef(patch.verts[0], patch.verts[1]);
-        const SubdivisionEdge &edge1 = getEdgeRef(patch.verts[1], patch.verts[2]);
-        const SubdivisionEdge &edge2 = getEdgeRef(patch.verts[2], patch.verts[3]);
-        const SubdivisionEdge &edge3 = getEdgeRef(patch.verts[3], patch.verts[0]);
-
-        auto buildOuter = [&](const SubdivisionEdge &edge, int a, int b, int t) {
-            std::vector<int> outer;
-            outer.reserve(t + 1);
-            for (int k = 0; k <= t; ++k)
-            {
-                const int vertexId = getOrientedEdgeVertexId(edge, a, b, t, k);
-                YBI_ASSERT(vertexId >= 0 && vertexId < int(sharedPos.size()));
-                YBI_ASSERT(isSharedInit(vertexId));
-                const int objId = sharedObjIndex[vertexId];
-                YBI_ASSERT(objId > 0);
-                outer.push_back(objId);
-            }
-            return outer;
-        };
-
-        std::vector<int> outer0 = buildOuter(edge0, patch.verts[0], patch.verts[1], e0);
-        std::vector<int> outer1 = buildOuter(edge1, patch.verts[1], patch.verts[2], e1);
-        std::vector<int> outer2 = buildOuter(edge2, patch.verts[2], patch.verts[3], e2);
-        std::vector<int> outer3 = buildOuter(edge3, patch.verts[3], patch.verts[0], e3);
 
         std::vector<int> inner0;
         std::vector<int> inner1;
@@ -1554,7 +1628,9 @@ int main(int argc, char **argv)
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
         SchemeFromString(m.subdivisionScheme), sdcOptions);
 
-    SubdivisionEdgeMap edgeMap = BuildSubdivisionEdgeMap(m);
+    // SubdivisionEdgeMap edgeMap = BuildSubdivisionEdgeMap(m);
+    SubdivisionEdgeMap edgeMap;
+    edgeMap.reserve(m.faceVertexIndices.size());
     const int edgesWithOver2Faces = CountNonManifoldEdges(edgeMap);
     if (edgesWithOver2Faces > 0)
     {
@@ -1623,21 +1699,22 @@ int main(int argc, char **argv)
     const pxr::GfVec3f eye =
         camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
     const pxr::GfVec3f lookAt = camera.found ? camera.meshCenter : meshCenter;
-    int tmaxComputedEdges = PrecomputePatchEdgeFactors(m,
-                                                       patches,
-                                                       edgeMap,
-                                                       nextGeneratedVertexId,
-                                                       patchMap,
-                                                       *patchTable,
-                                                       limitValues,
-                                                       sampleSteps,
-                                                       pixelSpacing,
-                                                       splitThreshold,
-                                                       eye,
-                                                       lookAt,
-                                                       /*viewportWidth*/ 1920,
-                                                       /*viewportHeight*/ 1080,
-                                                       /*verticalFovDegrees*/ 45.0f);
+    // int tmaxComputedEdges = PrecomputePatchEdgeFactors(m,
+    //                                                    patches,
+    //                                                    edgeMap,
+    //                                                    nextGeneratedVertexId,
+    //                                                    patchMap,
+    //                                                    *patchTable,
+    //                                                    limitValues,
+    //                                                    sampleSteps,
+    //                                                    pixelSpacing,
+    //                                                    splitThreshold,
+    //                                                    eye,
+    //                                                    lookAt,
+    //                                                    /*viewportWidth*/ 1920,
+    //                                                    /*viewportHeight*/ 1080,
+    //                                                    /*verticalFovDegrees*/ 45.0f);
+    int tmaxComputedEdges = 0;
     const std::vector<SubdivisionPatch> splitPatches =
         DiagSplitPatches(m,
                          patches,
@@ -1685,7 +1762,8 @@ int main(int argc, char **argv)
                                       &patchQuadVerts,
                                       &patchQuadCount))
     {
-        std::fprintf(stderr, "Failed to write leaf patch-quad OBJ: %s\n", kDefaultPatchQuadObj.c_str());
+        std::fprintf(
+            stderr, "Failed to write leaf patch-quad OBJ: %s\n", kDefaultPatchQuadObj.c_str());
         delete patchTable;
         delete refiner;
         return 1;
@@ -1722,11 +1800,10 @@ int main(int argc, char **argv)
                 pixelSpacing,
                 splitThreshold,
                 sampleSteps);
-    std::printf(
-        "  patchQuadObj path=%s verts=%d quads=%d\n",
-        kDefaultPatchQuadObj.c_str(),
-        patchQuadVerts,
-        patchQuadCount);
+    std::printf("  patchQuadObj path=%s verts=%d quads=%d\n",
+                kDefaultPatchQuadObj.c_str(),
+                patchQuadVerts,
+                patchQuadCount);
     std::printf("  innerGridObj path=%s verts=%d tris=%d\n",
                 outObjPath.c_str(),
                 innerGridVerts,
