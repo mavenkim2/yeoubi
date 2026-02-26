@@ -167,6 +167,7 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
                                        const Far::PatchTable &patchTable,
                                        const std::vector<LimitEvalVertex> &limitValues,
                                        const std::string &outObjPath,
+                                       int nextGeneratedVertexId,
                                        int *outVertexCount,
                                        int *outTriangleCount)
 {
@@ -185,33 +186,7 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         return false;
     }
 
-    int maxVertexId = -1;
-    for (const SubdivisionPatch &patch : leafPatches)
-    {
-        for (int i = 0; i < 4; ++i)
-        {
-            maxVertexId = std::max(maxVertexId, patch.verts[i]);
-        }
-    }
-    for (const auto &it : edgeMap)
-    {
-        const SubdivisionEdge &edge = it.second;
-        maxVertexId = std::max(maxVertexId, edge.v0);
-        maxVertexId = std::max(maxVertexId, edge.v1);
-        maxVertexId = std::max(maxVertexId, edge.sampleVStart);
-        maxVertexId = std::max(maxVertexId, edge.sampleVEnd);
-        maxVertexId = std::max(maxVertexId, edge.midpointVertex);
-        if (edge.edgeVertexIndexStart >= 0 && edge.tmaxEdgeFactor >= 2)
-        {
-            maxVertexId =
-                std::max(maxVertexId, edge.edgeVertexIndexStart + (edge.tmaxEdgeFactor - 2));
-        }
-    }
-    if (maxVertexId < 0)
-    {
-        std::fclose(f);
-        return true;
-    }
+    int maxVertexId = nextGeneratedVertexId;
 
     const float inf = std::numeric_limits<float>::infinity();
     std::vector<pxr::GfVec3f> sharedPos(maxVertexId + 1, pxr::GfVec3f(inf, inf, inf));
@@ -287,6 +262,7 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
     {
         if (!isSharedInit(i))
         {
+            printf("what\n");
             continue;
         }
         const pxr::GfVec3f &p = sharedPos[i];

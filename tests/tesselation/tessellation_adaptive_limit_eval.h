@@ -170,12 +170,12 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
 }
 
 static float ComputeLength(const Far::PatchMap &patchMap,
-                                           const Far::PatchTable &patchTable,
-                                           const std::vector<LimitEvalVertex> &limitValues,
-                                           int ptexFaceId,
-                                           const pxr::GfVec2f &uvStart,
-                                           const pxr::GfVec2f &uvEnd,
-                                           int sampleStepsN)
+                           const Far::PatchTable &patchTable,
+                           const std::vector<LimitEvalVertex> &limitValues,
+                           int ptexFaceId,
+                           const pxr::GfVec2f &uvStart,
+                           const pxr::GfVec2f &uvEnd,
+                           int sampleStepsN)
 {
     if (sampleStepsN < 2)
     {

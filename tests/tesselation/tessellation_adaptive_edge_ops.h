@@ -271,6 +271,8 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
             const int ovn = (oppositeEdge + 1) & 3;
             SubdivisionEdge &opp = GetEdge(edgeMap, ov0, ov1);
             opp.tmaxEdgeFactor = 2;
+            // TODO: unsure if these edges' limit positions are always evaluated. assert should
+            // hopefully catch.
             SetEdgeSampleParams(
                 opp, ov0, ov1, patch.ptexFaceId, patch.uv[oppositeEdge], patch.uv[ovn], true);
             if (opp.edgeVertexIndexStart < 0 || opp.midpointVertex < 0)

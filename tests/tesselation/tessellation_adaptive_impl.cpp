@@ -38,12 +38,13 @@ struct LimitEvalVertex
     }
 };
 
-
+// clang-format off
 #include "tesselation/tessellation_adaptive_limit_eval.h"
 #include "tesselation/tessellation_adaptive_edge_ops.h"
 #include "tesselation/tessellation_adaptive_patch_build.h"
 #include "tesselation/tessellation_adaptive_util.h"
 #include "tesselation/tessellation_adaptive_obj_write.h"
+// clang-format on
 
 int main(int argc, char **argv)
 {
@@ -266,6 +267,7 @@ int main(int argc, char **argv)
                                     *patchTable,
                                     limitValues,
                                     outObjPath,
+                                    nextGeneratedVertexId,
                                     &innerGridVerts,
                                     &innerGridTris))
     {
