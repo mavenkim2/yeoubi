@@ -336,54 +336,69 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
     };
 #endif
 
-    auto stitchStrip = [&](const std::vector<int> &outer, const std::vector<int> &inner) {
-        YBI_ASSERT(!outer.empty());
-        YBI_ASSERT(!inner.empty());
+    auto stitchStrip =
+        [&](const std::vector<int> &outer, const std::vector<int> &inner, int m, int n) {
+            YBI_ASSERT(!outer.empty());
+            YBI_ASSERT(!inner.empty());
 
-        size_t io = 0;
-        size_t ii = 0;
-        if (inner.size() == 1)
-        {
-            while (io + 1 < outer.size())
+            size_t io = 0;
+            size_t ii = 0;
+            if (inner.size() == 1)
             {
-                emitTri(outer[io], outer[io + 1], inner[0]);
-                io++;
-            }
-            return;
-        }
-
-        while (io + 1 < outer.size() || ii + 1 < inner.size())
-        {
-            const bool canAdvanceOuter = (io + 1 < outer.size());
-            const bool canAdvanceInner = (ii + 1 < inner.size());
-
-            if (!canAdvanceInner)
-            {
-                emitTri(outer[io], outer[io + 1], inner[ii]);
-                io++;
-                continue;
-            }
-            if (!canAdvanceOuter)
-            {
-                emitTri(outer[io], inner[ii + 1], inner[ii]);
-                ii++;
-                continue;
+                while (io + 1 < outer.size())
+                {
+                    emitTri(outer[io], outer[io + 1], inner[0]);
+                    io++;
+                }
+                return;
             }
 
-            const float uOuter = float(io + 1) / float(outer.size() - 1);
-            const float uInner = float(ii + 1) / float(inner.size() - 1);
-            if (uOuter <= uInner)
+            int q = m - 3 * n;
+            while (io + 1 < outer.size() || ii + 1 < inner.size())
             {
-                emitTri(outer[io], outer[io + 1], inner[ii]);
-                io++;
+                const bool canAdvanceOuter = (io + 1 < outer.size());
+                const bool canAdvanceInner = (ii + 1 < inner.size());
+
+                if (!canAdvanceInner)
+                {
+                    emitTri(outer[io], outer[io + 1], inner[ii]);
+                    io++;
+                    continue;
+                }
+                if (!canAdvanceOuter)
+                {
+                    emitTri(outer[io], inner[ii + 1], inner[ii]);
+                    ii++;
+                    continue;
+                }
+
+                if (q >= 0)
+                {
+                    emitTri(outer[io], inner[ii + 1], inner[ii]);
+                    ii++;
+                    q -= 2 * n;
+                }
+                else
+                {
+                    emitTri(outer[io], outer[io + 1], inner[ii]);
+                    io++;
+                    q += 2 * m;
+                }
+
+                // const float uOuter = float(io + 1) / float(outer.size() - 1);
+                // const float uInner = float(ii + 1) / float(inner.size() - 1);
+                // if (uOuter <= uInner)
+                // {
+                //     emitTri(outer[io], outer[io + 1], inner[ii]);
+                //     io++;
+                // }
+                // else
+                // {
+                //     emitTri(outer[io], inner[ii + 1], inner[ii]);
+                //     ii++;
+                // }
             }
-            else
-            {
-                emitTri(outer[io], inner[ii + 1], inner[ii]);
-                ii++;
-            }
-        }
-    };
+        };
 
     for (size_t patchFaceId = 0; patchFaceId < leafPatches.size(); ++patchFaceId)
     {
@@ -520,19 +535,23 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         {
             inner1.push_back(innerAt(cols, iv));
         }
-        for (int iu = nu - 1; iu >= 1; --iu)
+        // for (int iu = nu - 1; iu >= 1; --iu)
+        for (int iu = 1; iu < nu; ++iu)
         {
             inner2.push_back(innerAt(iu, rows));
         }
-        for (int iv = nv - 1; iv >= 1; --iv)
+        // for (int iv = nv - 1; iv >= 1; --iv)
+        for (int iv = 1; iv < nv; ++iv)
         {
             inner3.push_back(innerAt(1, iv));
         }
 
-        stitchStrip(outer0, inner0);
-        stitchStrip(outer1, inner1);
-        stitchStrip(outer2, inner2);
-        stitchStrip(outer3, inner3);
+        std::reverse(outer2.begin(), outer2.end());
+        std::reverse(outer3.begin(), outer3.end());
+        stitchStrip(outer0, inner0, std::max(e0, e2), e0);
+        stitchStrip(outer1, inner1, std::max(e1, e3), e1);
+        stitchStrip(outer2, inner2, std::max(e0, e2), e2);
+        stitchStrip(outer3, inner3, std::max(e1, e3), e3);
     }
 
     std::fclose(f);

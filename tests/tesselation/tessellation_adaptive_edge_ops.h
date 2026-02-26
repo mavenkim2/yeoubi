@@ -269,8 +269,7 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
             const int ov0 = patch.verts[oppositeEdge];
             const int ov1 = patch.verts[(oppositeEdge + 1) & 3];
             const int ovn = (oppositeEdge + 1) & 3;
-            SubdivisionEdge &opp = GetOrCreateEdge(
-                edgeMap, ov0, ov1, patch.ptexFaceId, patch.uv[oppositeEdge], patch.uv[ovn]);
+            SubdivisionEdge &opp = GetEdge(edgeMap, ov0, ov1);
             opp.tmaxEdgeFactor = 2;
             SetEdgeSampleParams(
                 opp, ov0, ov1, patch.ptexFaceId, patch.uv[oppositeEdge], patch.uv[ovn], true);
@@ -291,8 +290,7 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
             const int n = (e + 1) & 3;
             const int v0 = patch.verts[e];
             const int v1 = patch.verts[n];
-            SubdivisionEdge &edge =
-                GetOrCreateEdge(edgeMap, v0, v1, patch.ptexFaceId, patch.uv[e], patch.uv[n]);
+            SubdivisionEdge &edge = GetEdge(edgeMap, v0, v1);
 
             int mid = edge.midpointVertex;
             int t = edgeFactor[e];
