@@ -121,7 +121,6 @@ int main(int argc, char **argv)
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
         SchemeFromString(m.subdivisionScheme), sdcOptions);
 
-    // SubdivisionEdgeMap edgeMap = BuildSubdivisionEdgeMap(m);
     SubdivisionEdgeMap edgeMap;
     edgeMap.reserve(m.faceVertexIndices.size());
     const int edgesWithOver2Faces = CountNonManifoldEdges(edgeMap);
