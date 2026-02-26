@@ -113,13 +113,6 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
         {
             edge.tmaxEdgeFactor = 1;
         }
-        // const bool coarseFaceIsQuad = (patch.coarseFace >= 0) &&
-        //                               (patch.coarseFace < int(m.faceVertexCounts.size())) &&
-        //                               (m.faceVertexCounts[patch.coarseFace] == 4);
-        // if (allowQuadCoarseUpgrade && coarseFaceIsQuad && edge.tmaxEdgeFactor == 1)
-        // {
-        //     edge.tmaxEdgeFactor = 2;
-        // }
         if (edge.tmaxEdgeFactor >= 1)
         {
             edge.transitionedUninitializedToUniform = true;
@@ -152,6 +145,7 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
             (*computedCountOut)++;
         }
     }
+#if 0
     else if (edge.tmaxEdgeFactor >= 1)
     {
         SetEdgeSampleParams(edge,
@@ -162,6 +156,7 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
                             patch.uv[next],
                             /*overwrite*/ false);
     }
+#endif
     return edge.tmaxEdgeFactor;
 }
 
@@ -326,17 +321,15 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
                     // NOTE: these are technically wrong when child edge factor is 1, but the
                     // lookup won't use edgeVertexIndexStart in that case.
                     SubdivisionEdge &edgeA = GetOrCreateEdge(
-                        edgeMap, v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
+                        edgeMap, edge.v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
                     SubdivisionEdge &edgeB = GetOrCreateEdge(
-                        edgeMap, mid, v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
+                        edgeMap, mid, edge.v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
                     edgeA.tmaxEdgeFactor = splitPosStored;
                     edgeA.edgeVertexIndexStart = edge.edgeVertexIndexStart;
                     edgeA.midpointVertex =
                         edgeA.tmaxEdgeFactor > 1
                             ? edgeA.edgeVertexIndexStart + (edgeA.tmaxEdgeFactor / 2) - 1
                             : -1;
-                    SetEdgeSampleParams(
-                        edgeA, v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i], true);
 
                     edgeB.tmaxEdgeFactor = t - splitPosStored;
                     edgeB.edgeVertexIndexStart = edge.edgeVertexIndexStart + splitPosStored;
@@ -344,8 +337,6 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
                         edgeB.tmaxEdgeFactor > 1
                             ? edgeB.edgeVertexIndexStart + (edgeB.tmaxEdgeFactor / 2) - 1
                             : -1;
-                    SetEdgeSampleParams(
-                        edgeB, mid, v1, patch.ptexFaceId, splitUV[i], patch.uv[n], true);
 
                     edgeA.boundary = edge.boundary;
                     edgeB.boundary = edge.boundary;
