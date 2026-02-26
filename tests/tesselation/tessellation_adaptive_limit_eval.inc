@@ -168,3 +168,38 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     }
     return tMax;
 }
+
+static float ComputeLength(const Far::PatchMap &patchMap,
+                                           const Far::PatchTable &patchTable,
+                                           const std::vector<LimitEvalVertex> &limitValues,
+                                           int ptexFaceId,
+                                           const pxr::GfVec2f &uvStart,
+                                           const pxr::GfVec2f &uvEnd,
+                                           int sampleStepsN)
+{
+    if (sampleStepsN < 2)
+    {
+        return 1;
+    }
+
+    float sumLi = 0.0f;
+    pxr::GfVec3f p0(0.0f);
+    if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
+    {
+        return 0.f;
+    }
+    for (int i = 1; i < sampleStepsN; ++i)
+    {
+        const float t = float(i) / float(sampleStepsN - 1);
+        const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
+        pxr::GfVec3f p(0.0f);
+        if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
+        {
+            return 0.f;
+        }
+        sumLi += (p - p0).GetLength();
+        p0 = p;
+    }
+
+    return sumLi;
+}

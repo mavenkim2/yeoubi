@@ -145,66 +145,8 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
             (*computedCountOut)++;
         }
     }
-#if 0
-    else if (edge.tmaxEdgeFactor >= 1)
-    {
-        SetEdgeSampleParams(edge,
-                            patch.verts[edgeIndex],
-                            patch.verts[next],
-                            patch.ptexFaceId,
-                            patch.uv[edgeIndex],
-                            patch.uv[next],
-                            /*overwrite*/ false);
-    }
-#endif
     return edge.tmaxEdgeFactor;
 }
-
-#if 0
-static int PrecomputePatchEdgeFactors(const SelectedSubdivMesh &m,
-                                      const std::vector<SubdivisionPatch> &patches,
-                                      SubdivisionEdgeMap &edgeMap,
-                                      int &nextGeneratedVertexId,
-                                      const Far::PatchMap &patchMap,
-                                      const Far::PatchTable &patchTable,
-                                      const std::vector<LimitEvalVertex> &limitValues,
-                                      int sampleStepsN,
-                                      float targetPixelSpacing,
-                                      int splitThreshold,
-                                      const pxr::GfVec3f &eye,
-                                      const pxr::GfVec3f &lookAt,
-                                      int viewportWidth,
-                                      int viewportHeight,
-                                      float verticalFovDegrees)
-{
-    int computedCount = 0;
-    for (const SubdivisionPatch &patch : patches)
-    {
-        for (int e = 0; e < 4; ++e)
-        {
-            EnsurePatchEdgeFactor(m,
-                                  patch,
-                                  e,
-                                  edgeMap,
-                                  nextGeneratedVertexId,
-                                  /*allowQuadCoarseUpgrade*/ true,
-                                  patchMap,
-                                  patchTable,
-                                  limitValues,
-                                  sampleStepsN,
-                                  targetPixelSpacing,
-                                  splitThreshold,
-                                  eye,
-                                  lookAt,
-                                  viewportWidth,
-                                  viewportHeight,
-                                  verticalFovDegrees,
-                                  &computedCount);
-        }
-    }
-    return computedCount;
-}
-#endif
 
 static std::vector<SubdivisionPatch>
 DiagSplitPatches(const SelectedSubdivMesh &m,
@@ -258,10 +200,35 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
                                                   viewportHeight,
                                                   verticalFovDegrees,
                                                   computedCountOut);
-            if (splitEdge < 0 && edgeFactor[e] == SUBDIV_EDGE_FACTOR_NON_UNIFORM)
+        }
+
+        bool splitU = edgeFactor[0] == SUBDIV_EDGE_FACTOR_NON_UNIFORM || edgeFactor[2] == SUBDIV_EDGE_FACTOR_NON_UNIFORM;
+        bool splitV = edgeFactor[1] == SUBDIV_EDGE_FACTOR_NON_UNIFORM || edgeFactor[3] == SUBDIV_EDGE_FACTOR_NON_UNIFORM;
+
+        if (splitU && splitV)
+        {
+            float l0 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[0], patch.uv[1], sampleStepsN);
+            float l1 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[1], patch.uv[2], sampleStepsN);
+            float l2 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[2], patch.uv[3], sampleStepsN);
+            float l3 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[3], patch.uv[0], sampleStepsN);
+
+            if (l0 + l2 > l1 + l3)
             {
-                splitEdge = e;
+                splitV = false;
             }
+            else 
+            {
+                splitU = false;
+            }
+        }
+
+        if (splitU)
+        {
+            splitEdge = edgeFactor[0] == SUBDIV_EDGE_FACTOR_NON_UNIFORM ? 0 : 2;
+        }
+        else if (splitV)
+        {
+            splitEdge = edgeFactor[1] == SUBDIV_EDGE_FACTOR_NON_UNIFORM ? 1 : 3;
         }
 
         if (splitEdge < 0)
