@@ -202,21 +202,47 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
                                                   computedCountOut);
         }
 
-        bool splitU = edgeFactor[0] == SUBDIV_EDGE_FACTOR_NON_UNIFORM || edgeFactor[2] == SUBDIV_EDGE_FACTOR_NON_UNIFORM;
-        bool splitV = edgeFactor[1] == SUBDIV_EDGE_FACTOR_NON_UNIFORM || edgeFactor[3] == SUBDIV_EDGE_FACTOR_NON_UNIFORM;
+        bool splitU = edgeFactor[0] == SUBDIV_EDGE_FACTOR_NON_UNIFORM ||
+                      edgeFactor[2] == SUBDIV_EDGE_FACTOR_NON_UNIFORM;
+        bool splitV = edgeFactor[1] == SUBDIV_EDGE_FACTOR_NON_UNIFORM ||
+                      edgeFactor[3] == SUBDIV_EDGE_FACTOR_NON_UNIFORM;
 
         if (splitU && splitV)
         {
-            float l0 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[0], patch.uv[1], sampleStepsN);
-            float l1 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[1], patch.uv[2], sampleStepsN);
-            float l2 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[2], patch.uv[3], sampleStepsN);
-            float l3 = ComputeLength(patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[3], patch.uv[0], sampleStepsN);
+            float l0 = ComputeLength(patchMap,
+                                     patchTable,
+                                     limitValues,
+                                     patch.ptexFaceId,
+                                     patch.uv[0],
+                                     patch.uv[1],
+                                     sampleStepsN);
+            float l1 = ComputeLength(patchMap,
+                                     patchTable,
+                                     limitValues,
+                                     patch.ptexFaceId,
+                                     patch.uv[1],
+                                     patch.uv[2],
+                                     sampleStepsN);
+            float l2 = ComputeLength(patchMap,
+                                     patchTable,
+                                     limitValues,
+                                     patch.ptexFaceId,
+                                     patch.uv[2],
+                                     patch.uv[3],
+                                     sampleStepsN);
+            float l3 = ComputeLength(patchMap,
+                                     patchTable,
+                                     limitValues,
+                                     patch.ptexFaceId,
+                                     patch.uv[3],
+                                     patch.uv[0],
+                                     sampleStepsN);
 
             if (l0 + l2 > l1 + l3)
             {
                 splitV = false;
             }
-            else 
+            else
             {
                 splitU = false;
             }
@@ -287,10 +313,20 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
 
                     // NOTE: these are technically wrong when child edge factor is 1, but the
                     // lookup won't use edgeVertexIndexStart in that case.
-                    SubdivisionEdge &edgeA = GetOrCreateEdge(
-                        edgeMap, edge.v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
-                    SubdivisionEdge &edgeB = GetOrCreateEdge(
-                        edgeMap, mid, edge.v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
+                    SubdivisionEdge &edgeA =
+                        GetOrCreateEdge(edgeMap,
+                                        edge.v0,
+                                        mid,
+                                        patch.ptexFaceId,
+                                        edge.v0 == v0 ? patch.uv[e] : patch.uv[n],
+                                        splitUV[i]);
+                    SubdivisionEdge &edgeB =
+                        GetOrCreateEdge(edgeMap,
+                                        mid,
+                                        edge.v1,
+                                        patch.ptexFaceId,
+                                        splitUV[i],
+                                        edge.v0 == v0 ? patch.uv[n] : patch.uv[e]);
                     edgeA.tmaxEdgeFactor = splitPosStored;
                     edgeA.edgeVertexIndexStart = edge.edgeVertexIndexStart;
                     edgeA.midpointVertex =
