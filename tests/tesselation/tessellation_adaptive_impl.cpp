@@ -702,26 +702,6 @@ static int GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap,
     return edge.midpointVertex;
 }
 
-static void AddEdgeUse(SubdivisionEdgeMap &edgeMap,
-                       int v0,
-                       int v1,
-                       int faceId,
-                       int ptexFaceId,
-                       const pxr::GfVec2f &uv0,
-                       const pxr::GfVec2f &uv1)
-{
-    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1, ptexFaceId, uv0, uv1);
-    if (edge.faceCount == 0)
-    {
-        edge.firstFace = faceId;
-    }
-    else if (edge.faceCount == 1)
-    {
-        edge.secondFace = faceId;
-    }
-    edge.faceCount++;
-}
-
 static void FinalizeEdgeFlags(SubdivisionEdgeMap &edgeMap)
 {
     for (auto &kv : edgeMap)
@@ -797,6 +777,8 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdi
                                                                 pxr::GfVec2f(0.0f, 1.0f),
                                                                 pxr::GfVec2f(0.0f, 0.0f),
                                                                 nextVertexId);
+                SubdivisionEdge &edge = GetEdge(edgeMap, v, vNext);
+                edge.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_NON_UNIFORM;
 
                 SubdivisionPatch patch = {};
                 patch.verts[0] = v;
@@ -812,16 +794,6 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdi
                 patch.ptexFaceId = basePtexFaceId + i;
                 const int patchId = int(patches.size());
                 patches.push_back(patch);
-
-                // Only generated edges for non-quad quadrangulation.
-                AddEdgeUse(
-                    edgeMap, v, midNext, patchId, patch.ptexFaceId, patch.uv[0], patch.uv[1]);
-                AddEdgeUse(
-                    edgeMap, midNext, center, patchId, patch.ptexFaceId, patch.uv[1], patch.uv[2]);
-                AddEdgeUse(
-                    edgeMap, center, midPrev, patchId, patch.ptexFaceId, patch.uv[2], patch.uv[3]);
-                AddEdgeUse(
-                    edgeMap, midPrev, v, patchId, patch.ptexFaceId, patch.uv[3], patch.uv[0]);
             }
         }
 
