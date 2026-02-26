@@ -300,7 +300,9 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
             {
                 YBI_ASSERT(t > 1);
                 const int splitPosStored = t / 2;
-                alpha = float(splitPosStored) / float(t);
+                const int splitPosPatch = edge.v0 == v0 ? splitPosStored : t - splitPosStored;
+
+                alpha = float(splitPosPatch) / float(t);
                 splitUV[i] = patch.uv[e] * (1.0f - alpha) + patch.uv[n] * alpha;
                 YBI_ASSERT(mid >= 0);
                 YBI_ASSERT(edge.edgeVertexIndexStart != -1);
