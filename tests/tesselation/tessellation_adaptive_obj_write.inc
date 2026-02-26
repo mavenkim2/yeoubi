@@ -277,6 +277,11 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
 
     int vertexCount = 0;
     int triangleCount = 0;
+    int triId = 0;
+    int currentPatchFaceId = -1;
+    int currentCoarseFaceId = -1;
+    int currentPtexFaceId = -1;
+    int currentQuadrant = -1;
     std::vector<int> sharedObjIndex(maxVertexId + 1, 0);
     for (int i = 0; i < int(sharedPos.size()); ++i)
     {
@@ -296,7 +301,15 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         {
             return;
         }
+        std::fprintf(f,
+                     "# tri_id %d patch_face_id %d coarse_face %d ptex_face_id %d quadrant %d\n",
+                     triId,
+                     currentPatchFaceId,
+                     currentCoarseFaceId,
+                     currentPtexFaceId,
+                     currentQuadrant);
         std::fprintf(f, "f %d %d %d\n", a, b, c);
+        triId++;
         triangleCount++;
     };
 
@@ -372,8 +385,14 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         }
     };
 
-    for (const SubdivisionPatch &patch : leafPatches)
+    for (size_t patchFaceId = 0; patchFaceId < leafPatches.size(); ++patchFaceId)
     {
+        const SubdivisionPatch &patch = leafPatches[patchFaceId];
+        currentPatchFaceId = int(patchFaceId);
+        currentCoarseFaceId = patch.coarseFace;
+        currentPtexFaceId = patch.ptexFaceId;
+        currentQuadrant = patch.quadrant;
+
         auto buildOuter = [&](const SubdivisionEdge &edge, int a, int b, int t) {
             std::vector<int> outer;
             outer.reserve(t + 1);
