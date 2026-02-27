@@ -197,55 +197,138 @@ static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
     return true;
 }
 
+struct TessellationCliOptions
+{
+    std::string inJson;
+    int level = 1;
+    float pixelSpacing = 1.0f;
+    int splitThreshold = 1;
+    int sampleSteps = 8;
+    std::string patchQuadObjPath;
+    std::string innerGridObjPath;
+};
+
+static void PrintUsage(const char *exe)
+{
+    std::fprintf(stderr,
+                 "Usage: %s --in <selected-subdiv.json> --innergridobj <out.obj>"
+                 " [--level <n>=1] [--pixelspacing <f>>0] [--splitthreshold <n>=1]"
+                 " [--samplesteps <n>=2] [--patchquadobj <out.obj>]\n",
+                 exe);
+}
+
+static bool ParseCliArgs(int argc, char **argv, TessellationCliOptions *out, std::string *outError)
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "-h" || arg == "--help")
+        {
+            return false;
+        }
+
+        if (arg.rfind("--", 0) != 0)
+        {
+            if (outError)
+            {
+                *outError = "Unexpected positional arg: " + arg;
+            }
+            return false;
+        }
+
+        if (i + 1 >= argc)
+        {
+            if (outError)
+            {
+                *outError = "Missing value for arg: " + arg;
+            }
+            return false;
+        }
+        const std::string value = argv[++i];
+
+        if (arg == "--in" || arg == "--json")
+        {
+            out->inJson = value;
+        }
+        else if (arg == "--level")
+        {
+            out->level = std::max(1, std::atoi(value.c_str()));
+        }
+        else if (arg == "--pixelspacing" || arg == "--pixel-spacing")
+        {
+            out->pixelSpacing = std::max(1e-6f, float(std::atof(value.c_str())));
+        }
+        else if (arg == "--splitthreshold" || arg == "--split-threshold")
+        {
+            out->splitThreshold = std::max(1, std::atoi(value.c_str()));
+        }
+        else if (arg == "--samplesteps" || arg == "--sample-steps")
+        {
+            out->sampleSteps = std::max(2, std::atoi(value.c_str()));
+        }
+        else if (arg == "--patchquadobj" || arg == "--patch-quad-obj")
+        {
+            out->patchQuadObjPath = value;
+        }
+        else if (arg == "--innergridobj" || arg == "--inner-grid-obj")
+        {
+            out->innerGridObjPath = value;
+        }
+        else
+        {
+            if (outError)
+            {
+                *outError = "Unknown arg: " + arg;
+            }
+            return false;
+        }
+    }
+
+    if (out->inJson.empty())
+    {
+        if (outError)
+        {
+            *outError = "Missing required arg: --in <selected-subdiv.json>";
+        }
+        return false;
+    }
+    if (out->innerGridObjPath.empty())
+    {
+        if (outError)
+        {
+            *outError = "Missing required arg: --innergridobj <out.obj>";
+        }
+        return false;
+    }
+
+    return true;
+}
+
 int main(int argc, char **argv)
 {
-    constexpr float kDefaultPixelSpacing = 1.0f;
-    constexpr int kDefaultSplitThreshold = 1;
-    constexpr int kDefaultSampleSteps = 8;
-    const std::string kDefaultPatchQuadObj = "tests/bvh/out/diagsplit_leaf_patch_quads.obj";
-    const std::string kDefaultInnerGridObj = "tests/bvh/out/diagsplit_leaf_inner_grid.obj";
-
-    if (argc < 2)
+    TessellationCliOptions cli = {};
+    std::string parseError;
+    if (!ParseCliArgs(argc, argv, &cli, &parseError))
     {
-        std::fprintf(stderr,
-                     "Usage: %s <selected-subdiv.json> [level>=1]"
-                     " [pixelSpacing>0] [splitThreshold>=1] [sampleSteps>=2] [outObjPath]\n",
-                     argv[0]);
-        return 2;
-    }
-
-    const std::string inJson = argv[1];
-    int level = 1;
-    float pixelSpacing = kDefaultPixelSpacing;
-    int splitThreshold = kDefaultSplitThreshold;
-    int sampleSteps = kDefaultSampleSteps;
-    std::string outObjPath = kDefaultInnerGridObj;
-    if (argc >= 3)
-    {
-        level = std::max(1, std::atoi(argv[2]));
-    }
-    if (argc >= 4)
-    {
-        pixelSpacing = std::max(1e-6f, float(std::atof(argv[3])));
-    }
-    if (argc >= 5)
-    {
-        splitThreshold = std::max(1, std::atoi(argv[4]));
-    }
-    if (argc >= 6)
-    {
-        sampleSteps = std::max(2, std::atoi(argv[5]));
-    }
-    if (argc >= 7)
-    {
-        outObjPath = argv[6];
+        PrintUsage(argv[0]);
+        if (!parseError.empty())
+        {
+            std::fprintf(stderr, "Error: %s\n", parseError.c_str());
+            return 2;
+        }
+        return 0;
     }
 
     SelectedSubdivMesh selected = {};
     UsdCameraInfo camera = {};
-    if (!ybi::testio::LoadSelectedSubdivFromJson(inJson, selected, camera))
+    if (!ybi::testio::LoadSelectedSubdivFromJson(cli.inJson, selected, camera))
     {
-        std::fprintf(stderr, "Failed to load JSON: %s\n", inJson.c_str());
+        std::fprintf(stderr, "Failed to load JSON: %s\n", cli.inJson.c_str());
         return 1;
     }
 
@@ -254,16 +337,16 @@ int main(int argc, char **argv)
     const pxr::GfVec3f meshCenter = ComputeMeshCenter(selected);
 
     ybi::SubdivisionRunOptions options = {};
-    options.level = level;
-    options.pixelSpacing = pixelSpacing;
-    options.splitThreshold = splitThreshold;
-    options.sampleSteps = sampleSteps;
+    options.level = cli.level;
+    options.pixelSpacing = cli.pixelSpacing;
+    options.splitThreshold = cli.splitThreshold;
+    options.sampleSteps = cli.sampleSteps;
     options.eye = camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
     options.lookAt = camera.found ? camera.meshCenter : meshCenter;
     options.subdivisionScheme = selected.subdivisionScheme;
     options.creasingMethod = selected.creasingMethod;
     options.triangleSubdivision = selected.triangleSubdivision;
-    options.patchQuadObjPath = kDefaultPatchQuadObj;
+    options.patchQuadObjPath = cli.patchQuadObjPath;
 
     ybi::SubdivisionRunResult result = {};
     if (!ybi::SubdivideAdaptive(mesh, options, &result))
@@ -277,13 +360,13 @@ int main(int argc, char **argv)
                                      result.triangleCoarseFaceIds,
                                      result.trianglePtexFaceIds,
                                      result.triangleQuadrants,
-                                     outObjPath))
+                                     cli.innerGridObjPath))
     {
-        std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", outObjPath.c_str());
+        std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", cli.innerGridObjPath.c_str());
         return 1;
     }
 
-    std::printf("  levelRequested=%d\n", level);
+    std::printf("  levelRequested=%d\n", cli.level);
     std::printf(
         "  refinedMaxLevel=%d patches=%d\n", result.refinedMaxLevel, result.totalPatches);
     std::printf(
@@ -295,15 +378,22 @@ int main(int argc, char **argv)
     std::printf(
         "  edgeTMaxComputed=%d totalComputedEdges=%d\n", result.edgeTMaxComputed, result.totalComputedEdges);
     std::printf("  diagSplitConfig pixelSpacing=%.3f splitThreshold=%d sampleSteps=%d\n",
-                pixelSpacing,
-                splitThreshold,
-                sampleSteps);
-    std::printf("  patchQuadObj path=%s verts=%d quads=%d\n",
-                kDefaultPatchQuadObj.c_str(),
-                result.patchQuadVerts,
-                result.patchQuadCount);
+                cli.pixelSpacing,
+                cli.splitThreshold,
+                cli.sampleSteps);
+    if (cli.patchQuadObjPath.empty())
+    {
+        std::printf("  patchQuadObj disabled\n");
+    }
+    else
+    {
+        std::printf("  patchQuadObj path=%s verts=%d quads=%d\n",
+                    cli.patchQuadObjPath.c_str(),
+                    result.patchQuadVerts,
+                    result.patchQuadCount);
+    }
     std::printf("  innerGridObj path=%s verts=%zu tris=%zu\n",
-                outObjPath.c_str(),
+                cli.innerGridObjPath.c_str(),
                 result.mesh.positions.size(),
                 result.mesh.indices.size() / 3);
     std::printf("  edgeMapChecks=ok\n");

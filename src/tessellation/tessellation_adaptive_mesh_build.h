@@ -1,18 +1,18 @@
 #pragma once
 
-static bool BuildLeafPatchInnerGridMesh(const std::vector<SubdivisionPatch> &leafPatches,
-                                        const SubdivisionEdgeMap &edgeMap,
-                                        const Far::PatchMap &patchMap,
-                                        const Far::PatchTable &patchTable,
-                                        const std::vector<LimitEvalVertex> &limitValues,
-                                        int nextGeneratedVertexId,
-                                        Mesh *outMesh,
-                                        std::vector<int> *outTriPatchFaceIds,
-                                        std::vector<int> *outTriCoarseFaceIds,
-                                        std::vector<int> *outTriPtexFaceIds,
-                                        std::vector<int> *outTriQuadrants,
-                                        int *outVertexCount,
-                                        int *outTriangleCount)
+static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leafPatches,
+                                       const SubdivisionEdgeMap &edgeMap,
+                                       const Far::PatchMap &patchMap,
+                                       const Far::PatchTable &patchTable,
+                                       const std::vector<LimitEvalVertex> &limitValues,
+                                       int nextGeneratedVertexId,
+                                       Mesh *outMesh,
+                                       std::vector<int> *outTriPatchFaceIds,
+                                       std::vector<int> *outTriCoarseFaceIds,
+                                       std::vector<int> *outTriPtexFaceIds,
+                                       std::vector<int> *outTriQuadrants,
+                                       int *outVertexCount,
+                                       int *outTriangleCount)
 {
     if (!outMesh)
     {

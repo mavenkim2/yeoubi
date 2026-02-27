@@ -283,19 +283,19 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
 
     int innerGridVerts = 0;
     int innerGridTris = 0;
-    if (!BuildLeafPatchInnerGridMesh(splitPatches,
-                                     edgeMap,
-                                     patchMap,
-                                     *patchTable,
-                                     limitValues,
-                                     nextGeneratedVertexId,
-                                     &outResult->mesh,
-                                     &outResult->trianglePatchFaceIds,
-                                     &outResult->triangleCoarseFaceIds,
-                                     &outResult->trianglePtexFaceIds,
-                                     &outResult->triangleQuadrants,
-                                     &innerGridVerts,
-                                     &innerGridTris))
+    if (!BuildLeafPatchStitchedMesh(splitPatches,
+                                    edgeMap,
+                                    patchMap,
+                                    *patchTable,
+                                    limitValues,
+                                    nextGeneratedVertexId,
+                                    &outResult->mesh,
+                                    &outResult->trianglePatchFaceIds,
+                                    &outResult->triangleCoarseFaceIds,
+                                    &outResult->trianglePtexFaceIds,
+                                    &outResult->triangleQuadrants,
+                                    &innerGridVerts,
+                                    &innerGridTris))
     {
         delete patchTable;
         delete refiner;
