@@ -1,50 +1,201 @@
 #include "io/usd_subdiv_json_io.h"
-#include "tesselation/edge_map_validation.h"
-#include "tesselation/subdivision_patch_types.h"
-#include "util/assert.h"
-
-#include <opensubdiv/far/patchMap.h>
-#include <opensubdiv/far/patchTableFactory.h>
-#include <opensubdiv/far/primvarRefiner.h>
-#include <opensubdiv/far/ptexIndices.h>
-#include <opensubdiv/far/topologyDescriptor.h>
-#include <opensubdiv/far/topologyRefinerFactory.h>
-#include <pxr/base/gf/vec2f.h>
+#include "tessellation/subdivision.h"
+#include "util/float3.h"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <limits>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-using namespace OpenSubdiv;
-
-struct LimitEvalVertex
+static ybi::BoundaryInterpolation BoundaryInterpolationFromString(const std::string &s)
 {
-    pxr::GfVec3f p = pxr::GfVec3f(0.0f);
-
-    void Clear()
+    if (s == "none")
     {
-        p = pxr::GfVec3f(0.0f);
+        return ybi::BOUNDARY_INTERPOLATION_NONE;
+    }
+    if (s == "edgeOnly")
+    {
+        return ybi::BOUNDARY_INTERPOLATION_EDGE;
+    }
+    return ybi::BOUNDARY_INTERPOLATION_EDGE_AND_CORNER;
+}
+
+static ybi::FVarLinearInterpolation FVarLinearInterpolationFromString(const std::string &s)
+{
+    if (s == "none")
+    {
+        return ybi::FVAR_LINEAR_NONE;
+    }
+    if (s == "cornersOnly")
+    {
+        return ybi::FVAR_LINEAR_CORNERS_ONLY;
+    }
+    if (s == "cornersPlus1")
+    {
+        return ybi::FVAR_LINEAR_CORNERS_PLUS1;
+    }
+    if (s == "cornersPlus2")
+    {
+        return ybi::FVAR_LINEAR_CORNERS_PLUS2;
+    }
+    if (s == "boundaries")
+    {
+        return ybi::FVAR_LINEAR_BOUNDARIES;
+    }
+    if (s == "all" || s == "bilinear")
+    {
+        return ybi::FVAR_LINEAR_ALL;
+    }
+    return ybi::FVAR_LINEAR_CORNERS_PLUS1;
+}
+
+static ybi::SubdivisionMesh ConvertSelectedSubdivMesh(const SelectedSubdivMesh &in)
+{
+    ybi::SubdivisionMesh out = {};
+
+    std::vector<ybi::float3> vertices;
+    vertices.reserve(in.points.size());
+    for (const pxr::GfVec3f &p : in.points)
+    {
+        ybi::float3 v = {};
+        v.x = p[0];
+        v.y = p[1];
+        v.z = p[2];
+        vertices.push_back(v);
+    }
+    out.vertices = vertices;
+
+    std::vector<int> indices;
+    indices.reserve(in.faceVertexIndices.size());
+    for (int idx : in.faceVertexIndices)
+    {
+        indices.push_back(idx);
+    }
+    out.indices = indices;
+
+    std::vector<int> vertsPerFace;
+    vertsPerFace.reserve(in.faceVertexCounts.size());
+    for (int c : in.faceVertexCounts)
+    {
+        vertsPerFace.push_back(c);
+    }
+    out.vertsPerFace = vertsPerFace;
+
+    std::vector<int> cornerIndices;
+    cornerIndices.reserve(in.cornerIndices.size());
+    for (int idx : in.cornerIndices)
+    {
+        cornerIndices.push_back(idx);
+    }
+    out.cornerIndices = cornerIndices;
+
+    std::vector<float> cornerSharpnesses;
+    cornerSharpnesses.reserve(in.cornerSharpnesses.size());
+    for (float sharpness : in.cornerSharpnesses)
+    {
+        cornerSharpnesses.push_back(sharpness);
+    }
+    out.cornerSharpnesses = cornerSharpnesses;
+
+    std::vector<int> creaseIndices;
+    creaseIndices.reserve(in.creaseIndices.size());
+    for (int idx : in.creaseIndices)
+    {
+        creaseIndices.push_back(idx);
+    }
+    out.creaseIndices = creaseIndices;
+
+    std::vector<int> creaseLengths;
+    creaseLengths.reserve(in.creaseLengths.size());
+    for (int len : in.creaseLengths)
+    {
+        creaseLengths.push_back(len);
+    }
+    out.creaseLengths = creaseLengths;
+
+    std::vector<float> creaseSharpnesses;
+    creaseSharpnesses.reserve(in.creaseSharpnesses.size());
+    for (float sharpness : in.creaseSharpnesses)
+    {
+        creaseSharpnesses.push_back(sharpness);
+    }
+    out.creaseSharpnesses = creaseSharpnesses;
+
+    std::vector<int> holeIndices;
+    holeIndices.reserve(in.holeIndices.size());
+    for (int idx : in.holeIndices)
+    {
+        holeIndices.push_back(idx);
+    }
+    out.holeIndices = holeIndices;
+
+    out.interpolationRule = BoundaryInterpolationFromString(in.vertexBoundaryInterpolation);
+    out.fvarLinearInterpolation = FVarLinearInterpolationFromString(in.fvarLinearInterpolation);
+    out.attributeStart = 0;
+    out.attributeEnd = 0;
+
+    return out;
+}
+
+static pxr::GfVec3f ComputeMeshCenter(const SelectedSubdivMesh &mesh)
+{
+    if (mesh.points.empty())
+    {
+        return pxr::GfVec3f(0.0f, 0.0f, 0.0f);
     }
 
-    void AddWithWeight(const LimitEvalVertex &src, float w)
+    pxr::GfVec3f sum(0.0f, 0.0f, 0.0f);
+    for (const pxr::GfVec3f &p : mesh.points)
     {
-        p += src.p * w;
+        sum += p;
     }
-};
+    return sum * (1.0f / float(mesh.points.size()));
+}
 
-// clang-format off
-#include "tesselation/tessellation_adaptive_limit_eval.h"
-#include "tesselation/tessellation_adaptive_edge_ops.h"
-#include "tesselation/tessellation_adaptive_patch_build.h"
-#include "tesselation/tessellation_adaptive_util.h"
-#include "tesselation/tessellation_adaptive_obj_write.h"
-// clang-format on
+static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
+                                        const std::vector<int> &triPatchFaceIds,
+                                        const std::vector<int> &triCoarseFaceIds,
+                                        const std::vector<int> &triPtexFaceIds,
+                                        const std::vector<int> &triQuadrants,
+                                        const std::string &outObjPath)
+{
+    FILE *f = std::fopen(outObjPath.c_str(), "w");
+    if (!f)
+    {
+        return false;
+    }
+
+    for (const ybi::float3 &p : mesh.positions)
+    {
+        std::fprintf(f, "v %.9g %.9g %.9g\n", double(p.x), double(p.y), double(p.z));
+    }
+
+    const size_t triCount = mesh.indices.size() / 3;
+    const bool hasMeta = triPatchFaceIds.size() == triCount && triCoarseFaceIds.size() == triCount &&
+                         triPtexFaceIds.size() == triCount && triQuadrants.size() == triCount;
+
+    for (size_t triId = 0; triId < triCount; ++triId)
+    {
+        const int i0 = mesh.indices[triId * 3 + 0] + 1;
+        const int i1 = mesh.indices[triId * 3 + 1] + 1;
+        const int i2 = mesh.indices[triId * 3 + 2] + 1;
+        if (hasMeta)
+        {
+            std::fprintf(f,
+                         "# tri_id %d patch_face_id %d coarse_face %d ptex_face_id %d quadrant %d\n",
+                         int(triId),
+                         triPatchFaceIds[triId],
+                         triCoarseFaceIds[triId],
+                         triPtexFaceIds[triId],
+                         triQuadrants[triId]);
+        }
+        std::fprintf(f, "f %d %d %d\n", i0, i1, i2);
+    }
+
+    std::fclose(f);
+    return true;
+}
 
 int main(int argc, char **argv)
 {
@@ -90,225 +241,76 @@ int main(int argc, char **argv)
         outObjPath = argv[6];
     }
 
-    SelectedSubdivMesh m = {};
+    SelectedSubdivMesh selected = {};
     UsdCameraInfo camera = {};
-    if (!ybi::testio::LoadSelectedSubdivFromJson(inJson, m, camera))
+    if (!ybi::testio::LoadSelectedSubdivFromJson(inJson, selected, camera))
     {
         std::fprintf(stderr, "Failed to load JSON: %s\n", inJson.c_str());
         return 1;
     }
 
-    CreasePairs creases = BuildCreasePairs(m);
-    Far::TopologyDescriptor d = {};
-    d.numVertices = int(m.points.size());
-    d.numFaces = int(m.faceVertexCounts.size());
-    d.numVertsPerFace = m.faceVertexCounts.data();
-    d.vertIndicesPerFace = m.faceVertexIndices.data();
-    d.numCreases = int(creases.weights.size());
-    d.creaseVertexIndexPairs = creases.pairs.data();
-    d.creaseWeights = creases.weights.data();
-    d.numCorners = int(m.cornerIndices.size());
-    d.cornerVertexIndices = m.cornerIndices.data();
-    d.cornerWeights = m.cornerSharpnesses.data();
-    d.numHoles = int(m.holeIndices.size());
-    d.holeIndices = m.holeIndices.data();
+    const ybi::SubdivisionMesh mesh = ConvertSelectedSubdivMesh(selected);
 
-    Sdc::Options sdcOptions;
-    sdcOptions.SetVtxBoundaryInterpolation(VtxBoundaryFromString(m.vertexBoundaryInterpolation));
-    sdcOptions.SetFVarLinearInterpolation(FVarLinearFromString(m.fvarLinearInterpolation));
-    sdcOptions.SetCreasingMethod(CreasingMethodFromString(m.creasingMethod));
-    sdcOptions.SetTriangleSubdivision(TriangleSubFromString(m.triangleSubdivision));
+    const pxr::GfVec3f meshCenter = ComputeMeshCenter(selected);
 
-    Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
-        SchemeFromString(m.subdivisionScheme), sdcOptions);
+    ybi::SubdivisionRunOptions options = {};
+    options.level = level;
+    options.pixelSpacing = pixelSpacing;
+    options.splitThreshold = splitThreshold;
+    options.sampleSteps = sampleSteps;
+    options.eye = camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
+    options.lookAt = camera.found ? camera.meshCenter : meshCenter;
+    options.subdivisionScheme = selected.subdivisionScheme;
+    options.creasingMethod = selected.creasingMethod;
+    options.triangleSubdivision = selected.triangleSubdivision;
+    options.patchQuadObjPath = kDefaultPatchQuadObj;
 
-    SubdivisionEdgeMap edgeMap;
-    edgeMap.reserve(m.faceVertexIndices.size());
-    const int edgesWithOver2Faces = CountNonManifoldEdges(edgeMap);
-    if (edgesWithOver2Faces > 0)
+    ybi::SubdivisionRunResult result = {};
+    if (!ybi::SubdivideAdaptive(mesh, options, &result))
     {
-        std::fprintf(
-            stderr,
-            "WARNING: non-manifold control cage detected from indices (edges with >2 faces: %d)\n",
-            edgesWithOver2Faces);
-    }
-
-    Far::TopologyRefiner *refiner =
-        Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Create(d, o);
-    if (!refiner)
-    {
-        std::fprintf(stderr, "Failed to create TopologyRefiner\n");
+        std::fprintf(stderr, "Subdivision failed\n");
         return 1;
     }
 
-    int nextGeneratedVertexId = int(m.points.size());
-    const std::vector<SubdivisionPatch> patches =
-        BuildSubdivisionPatches(m, *refiner, edgeMap, nextGeneratedVertexId);
-    const EdgeMapChecks edgeChecks = RunEdgeMapChecks(m, patches, edgeMap);
-    if (!edgeChecks.ok)
-    {
-        std::fprintf(stderr,
-                     "Edge map checks failed:"
-                     " missingNgonMidpoints=%d"
-                     " duplicateMidpointVertices=%d"
-                     " missingGeneratedPatchEdges=%d"
-                     " badBoundaryFlags=%d"
-                     " badNonManifoldFlags=%d\n",
-                     edgeChecks.missingNgonMidpoints,
-                     edgeChecks.duplicateMidpointVertices,
-                     edgeChecks.missingGeneratedPatchEdges,
-                     edgeChecks.badBoundaryFlags,
-                     edgeChecks.badNonManifoldFlags);
-        delete refiner;
-        return 1;
-    }
-
-    Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(level);
-    refiner->RefineAdaptive(adaptiveOptions);
-    if (refiner->GetMaxLevel() < level)
-    {
-        std::fprintf(stderr, "Adaptive refine did not produce level %d\n", level);
-        delete refiner;
-        return 1;
-    }
-
-    Far::PatchTableFactory::Options patchOptions(level);
-    patchOptions.endCapType = Far::PatchTableFactory::Options::ENDCAP_GREGORY_BASIS;
-    patchOptions.useInfSharpPatch = (d.numCreases > 0) || (d.numCorners > 0);
-    patchOptions.generateFVarLegacyLinearPatches = false;
-    const Far::PatchTable *patchTable = Far::PatchTableFactory::Create(*refiner, patchOptions);
-    if (!patchTable)
-    {
-        std::fprintf(stderr, "Failed to create PatchTable\n");
-        delete refiner;
-        return 1;
-    }
-
-    Far::PatchMap patchMap(*patchTable);
-    const std::vector<LimitEvalVertex> limitValues =
-        BuildLimitEvalVertices(*refiner, *patchTable, m.points);
-
-    const pxr::GfVec3f meshCenter = ComputeMeshCenter(m.points);
-    const pxr::GfVec3f eye =
-        camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
-    const pxr::GfVec3f lookAt = camera.found ? camera.meshCenter : meshCenter;
-    // int tmaxComputedEdges = PrecomputePatchEdgeFactors(m,
-    //                                                    patches,
-    //                                                    edgeMap,
-    //                                                    nextGeneratedVertexId,
-    //                                                    patchMap,
-    //                                                    *patchTable,
-    //                                                    limitValues,
-    //                                                    sampleSteps,
-    //                                                    pixelSpacing,
-    //                                                    splitThreshold,
-    //                                                    eye,
-    //                                                    lookAt,
-    //                                                    /*viewportWidth*/ 1920,
-    //                                                    /*viewportHeight*/ 1080,
-    //                                                    /*verticalFovDegrees*/ 45.0f);
-    int tmaxComputedEdges = 0;
-    const std::vector<SubdivisionPatch> splitPatches =
-        DiagSplitPatches(m,
-                         patches,
-                         edgeMap,
-                         nextGeneratedVertexId,
-                         patchMap,
-                         *patchTable,
-                         limitValues,
-                         sampleSteps,
-                         pixelSpacing,
-                         splitThreshold,
-                         eye,
-                         lookAt,
-                         /*viewportWidth*/ 1920,
-                         /*viewportHeight*/ 1080,
-                         /*verticalFovDegrees*/ 45.0f,
-                         &tmaxComputedEdges);
-
-    int missingStoredPatchParams = 0;
-    int badUniformFactor = 0;
-    if (!VerifyInitializedUniformEdgesHaveStoredPatchParams(
-            edgeMap, &missingStoredPatchParams, &badUniformFactor))
-    {
-        std::fprintf(stderr,
-                     "Initialized-uniform edge validation failed:"
-                     " missingStoredPatchParams=%d"
-                     " badUniformFactor=%d\n",
-                     missingStoredPatchParams,
-                     badUniformFactor);
-        delete patchTable;
-        delete refiner;
-        return 1;
-    }
-
-    int innerGridVerts = 0;
-    int innerGridTris = 0;
-    int patchQuadVerts = 0;
-    int patchQuadCount = 0;
-    if (!WriteLeafPatchCornerQuadsObj(splitPatches,
-                                      edgeMap,
-                                      patchMap,
-                                      *patchTable,
-                                      limitValues,
-                                      kDefaultPatchQuadObj,
-                                      &patchQuadVerts,
-                                      &patchQuadCount))
-    {
-        std::fprintf(
-            stderr, "Failed to write leaf patch-quad OBJ: %s\n", kDefaultPatchQuadObj.c_str());
-        delete patchTable;
-        delete refiner;
-        return 1;
-    }
-    if (!WriteLeafPatchInnerGridObj(splitPatches,
-                                    edgeMap,
-                                    patchMap,
-                                    *patchTable,
-                                    limitValues,
-                                    outObjPath,
-                                    nextGeneratedVertexId,
-                                    &innerGridVerts,
-                                    &innerGridTris))
+    if (!WriteMeshObjWithTriMetadata(result.mesh,
+                                     result.trianglePatchFaceIds,
+                                     result.triangleCoarseFaceIds,
+                                     result.trianglePtexFaceIds,
+                                     result.triangleQuadrants,
+                                     outObjPath))
     {
         std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", outObjPath.c_str());
-        delete patchTable;
-        delete refiner;
         return 1;
     }
 
     std::printf("  levelRequested=%d\n", level);
-    std::printf("  refinedMaxLevel=%d patches=%d\n",
-                refiner->GetMaxLevel(),
-                patchTable->GetNumPatchesTotal());
+    std::printf(
+        "  refinedMaxLevel=%d patches=%d\n", result.refinedMaxLevel, result.totalPatches);
     std::printf(
         "  subdivisionPatches=%zu diagSplitPatches=%zu generatedVertexCount=%d midpointEdges=%d\n",
-        patches.size(),
-        splitPatches.size(),
-        nextGeneratedVertexId - int(m.points.size()),
-        CountEdgesWithMidpointVertex(edgeMap));
-    std::printf("  edgeTMaxComputed=%d totalComputedEdges=%d\n",
-                tmaxComputedEdges,
-                CountEdgesWithComputedTMax(edgeMap));
+        result.subdivisionPatchCount,
+        result.diagSplitPatchCount,
+        result.generatedVertexCount,
+        result.midpointEdges);
+    std::printf(
+        "  edgeTMaxComputed=%d totalComputedEdges=%d\n", result.edgeTMaxComputed, result.totalComputedEdges);
     std::printf("  diagSplitConfig pixelSpacing=%.3f splitThreshold=%d sampleSteps=%d\n",
                 pixelSpacing,
                 splitThreshold,
                 sampleSteps);
     std::printf("  patchQuadObj path=%s verts=%d quads=%d\n",
                 kDefaultPatchQuadObj.c_str(),
-                patchQuadVerts,
-                patchQuadCount);
-    std::printf("  innerGridObj path=%s verts=%d tris=%d\n",
+                result.patchQuadVerts,
+                result.patchQuadCount);
+    std::printf("  innerGridObj path=%s verts=%zu tris=%zu\n",
                 outObjPath.c_str(),
-                innerGridVerts,
-                innerGridTris);
+                result.mesh.positions.size(),
+                result.mesh.indices.size() / 3);
     std::printf("  edgeMapChecks=ok\n");
     std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
-                edgeMap.size(),
-                CountBoundaryEdges(edgeMap));
-    std::printf("  controlCageEdgesWithOver2Faces=%d\n", edgesWithOver2Faces);
+                result.controlCageUniqueEdges,
+                result.boundaryEdges);
+    std::printf("  controlCageEdgesWithOver2Faces=%d\n", result.controlCageEdgesWithOver2Faces);
 
-    delete patchTable;
-    delete refiner;
     return 0;
 }

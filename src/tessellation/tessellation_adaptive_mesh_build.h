@@ -1,176 +1,24 @@
-static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &leafPatches,
-                                         const SubdivisionEdgeMap &edgeMap,
-                                         const Far::PatchMap &patchMap,
-                                         const Far::PatchTable &patchTable,
-                                         const std::vector<LimitEvalVertex> &limitValues,
-                                         const std::string &outObjPath,
-                                         int *outVertexCount,
-                                         int *outQuadCount)
+#pragma once
+
+static bool BuildLeafPatchInnerGridMesh(const std::vector<SubdivisionPatch> &leafPatches,
+                                        const SubdivisionEdgeMap &edgeMap,
+                                        const Far::PatchMap &patchMap,
+                                        const Far::PatchTable &patchTable,
+                                        const std::vector<LimitEvalVertex> &limitValues,
+                                        int nextGeneratedVertexId,
+                                        Mesh *outMesh,
+                                        std::vector<int> *outTriPatchFaceIds,
+                                        std::vector<int> *outTriCoarseFaceIds,
+                                        std::vector<int> *outTriPtexFaceIds,
+                                        std::vector<int> *outTriQuadrants,
+                                        int *outVertexCount,
+                                        int *outTriangleCount)
 {
-    if (outVertexCount)
-    {
-        *outVertexCount = 0;
-    }
-    if (outQuadCount)
-    {
-        *outQuadCount = 0;
-    }
-
-    int maxVertexId = -1;
-    for (const SubdivisionPatch &patch : leafPatches)
-    {
-        for (int i = 0; i < 4; ++i)
-        {
-            maxVertexId = std::max(maxVertexId, patch.verts[i]);
-        }
-    }
-    if (maxVertexId < 0)
-    {
-        FILE *fEmpty = std::fopen(outObjPath.c_str(), "w");
-        if (!fEmpty)
-        {
-            return false;
-        }
-        std::fclose(fEmpty);
-        return true;
-    }
-
-    const float inf = std::numeric_limits<float>::infinity();
-    std::vector<pxr::GfVec3f> cornerPos(maxVertexId + 1, pxr::GfVec3f(inf, inf, inf));
-    std::vector<uint8_t> cornerInit(maxVertexId + 1, uint8_t(0));
-
-    for (const SubdivisionPatch &patch : leafPatches)
-    {
-        for (int i = 0; i < 4; ++i)
-        {
-            const int vid = patch.verts[i];
-            YBI_ASSERT(vid >= 0 && vid < int(cornerPos.size()));
-            if (cornerInit[vid] != 0)
-            {
-                continue;
-            }
-
-            pxr::GfVec3f p(0.0f);
-            if (!EvaluateLimitPosition(
-                    patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[i], &p))
-            {
-                return false;
-            }
-            cornerPos[vid] = p;
-            cornerInit[vid] = 1;
-        }
-    }
-
-    FILE *f = std::fopen(outObjPath.c_str(), "w");
-    if (!f)
+    if (!outMesh)
     {
         return false;
     }
 
-    int vertexCount = 0;
-    int quadCount = 0;
-    std::vector<int> objIndex(maxVertexId + 1, 0);
-    for (int i = 0; i < int(cornerPos.size()); ++i)
-    {
-        if (cornerInit[i] == 0)
-        {
-            continue;
-        }
-        const pxr::GfVec3f &p = cornerPos[i];
-        std::fprintf(f, "v %.9g %.9g %.9g\n", double(p[0]), double(p[1]), double(p[2]));
-        vertexCount++;
-        objIndex[i] = vertexCount;
-    }
-
-    int faceId = 0;
-    for (const SubdivisionPatch &patch : leafPatches)
-    {
-        const int i0 = objIndex[patch.verts[0]];
-        const int i1 = objIndex[patch.verts[1]];
-        const int i2 = objIndex[patch.verts[2]];
-        const int i3 = objIndex[patch.verts[3]];
-        YBI_ASSERT(i0 > 0 && i1 > 0 && i2 > 0 && i3 > 0);
-        const int e0 = GetEdgeFactor(edgeMap, patch.verts[0], patch.verts[1]);
-        const int e1 = GetEdgeFactor(edgeMap, patch.verts[1], patch.verts[2]);
-        const int e2 = GetEdgeFactor(edgeMap, patch.verts[2], patch.verts[3]);
-        const int e3 = GetEdgeFactor(edgeMap, patch.verts[3], patch.verts[0]);
-        std::fprintf(f,
-                     "# face_id %d corner_vertex_ids %d %d %d %d obj_vertex_ids %d %d %d %d "
-                     "edge_factors %d %d %d %d\n",
-                     faceId,
-                     patch.verts[0],
-                     patch.verts[1],
-                     patch.verts[2],
-                     patch.verts[3],
-                     i0,
-                     i1,
-                     i2,
-                     i3,
-                     e0,
-                     e1,
-                     e2,
-                     e3);
-        std::fprintf(f, "f %d %d %d %d\n", i0, i1, i2, i3);
-        quadCount++;
-        faceId++;
-    }
-
-    std::fclose(f);
-    if (outVertexCount)
-    {
-        *outVertexCount = vertexCount;
-    }
-    if (outQuadCount)
-    {
-        *outQuadCount = quadCount;
-    }
-    return true;
-}
-
-static void RecurseChildEdges(
-    const SubdivisionEdgeMap &edgeMap, int v0, int v1, std::vector<int> &vertices, int depth = 0)
-{
-    const SubdivisionEdge &edge = GetEdge(edgeMap, v0, v1);
-    if (edge.split)
-    {
-        YBI_ASSERT(edge.midpointVertex >= 0);
-        RecurseChildEdges(edgeMap, v0, edge.midpointVertex, vertices, depth + 1);
-        RecurseChildEdges(edgeMap, edge.midpointVertex, v1, vertices, depth + 1);
-    }
-    else
-    {
-        YBI_ERROR(vertices.back() == v0 || vertices.back() == v1,
-                  "back: %i, edge: %i %i, depth: %i\n",
-                  vertices.back(),
-                  v0,
-                  v1,
-                  depth);
-        YBI_ASSERT(edge.tmaxEdgeFactor >= 1);
-        YBI_ASSERT(edge.edgeVertexIndexStart >= 0 || edge.tmaxEdgeFactor == 1);
-        bool forward = vertices.back() == v0;
-        YBI_ASSERT(forward);
-        bool edgeForward = edge.v0 == v0;
-
-        for (int k = 1; k < edge.tmaxEdgeFactor; k++)
-        {
-            const int localOffset = edgeForward ? (k - 1) : (edge.tmaxEdgeFactor - 1 - k);
-            int vertex = edge.edgeVertexIndexStart + localOffset;
-            vertices.push_back(vertex);
-        }
-        vertices.push_back(forward ? v1 : v0);
-    }
-}
-
-static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leafPatches,
-                                       const SubdivisionEdgeMap &edgeMap,
-                                       const Far::PatchMap &patchMap,
-                                       const Far::PatchTable &patchTable,
-                                       const std::vector<LimitEvalVertex> &limitValues,
-                                       const std::string &outObjPath,
-                                       int nextGeneratedVertexId,
-                                       int *outVertexCount,
-                                       int *outTriangleCount)
-{
     if (outVertexCount)
     {
         *outVertexCount = 0;
@@ -178,12 +26,6 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
     if (outTriangleCount)
     {
         *outTriangleCount = 0;
-    }
-
-    FILE *f = std::fopen(outObjPath.c_str(), "w");
-    if (!f)
-    {
-        return false;
     }
 
     int maxVertexId = nextGeneratedVertexId;
@@ -224,7 +66,6 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
             if (!EvaluateLimitPosition(
                     patchMap, patchTable, limitValues, edge.storedPtexFaceId, uv, &p))
             {
-                std::fclose(f);
                 return false;
             }
 
@@ -250,14 +91,26 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         }
     }
 
-    int vertexCount = 0;
-    int triangleCount = 0;
-    int triId = 0;
-    int currentPatchFaceId = -1;
-    int currentCoarseFaceId = -1;
-    int currentPtexFaceId = -1;
-    int currentQuadrant = -1;
-    std::vector<int> sharedObjIndex(maxVertexId, 0);
+    std::vector<float3> positions;
+    std::vector<int> indices;
+    if (outTriPatchFaceIds)
+    {
+        outTriPatchFaceIds->clear();
+    }
+    if (outTriCoarseFaceIds)
+    {
+        outTriCoarseFaceIds->clear();
+    }
+    if (outTriPtexFaceIds)
+    {
+        outTriPtexFaceIds->clear();
+    }
+    if (outTriQuadrants)
+    {
+        outTriQuadrants->clear();
+    }
+
+    std::vector<int> sharedMeshIndex(maxVertexId, -1);
     for (int i = 0; i < int(sharedPos.size()); ++i)
     {
         if (!isSharedInit(i))
@@ -265,51 +118,45 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
             continue;
         }
         const pxr::GfVec3f &p = sharedPos[i];
-        std::fprintf(f, "v %.9g %.9g %.9g\n", double(p[0]), double(p[1]), double(p[2]));
-        vertexCount++;
-        sharedObjIndex[i] = vertexCount;
+        sharedMeshIndex[i] = int(positions.size());
+        float3 v = {};
+        v.x = p[0];
+        v.y = p[1];
+        v.z = p[2];
+        positions.push_back(v);
     }
 
+    int currentPatchFaceId = -1;
+    int currentCoarseFaceId = -1;
+    int currentPtexFaceId = -1;
+    int currentQuadrant = -1;
+
     auto emitTri = [&](int a, int b, int c) {
-        YBI_ERROR(a > 0 && b > 0 && c > 0, "%i %i %i\n", a, b, c);
+        YBI_ERROR(a >= 0 && b >= 0 && c >= 0, "%i %i %i\n", a, b, c);
         if (a == b || b == c || a == c)
         {
             return;
         }
-        std::fprintf(f,
-                     "# tri_id %d patch_face_id %d coarse_face %d ptex_face_id %d quadrant %d\n",
-                     triId,
-                     currentPatchFaceId,
-                     currentCoarseFaceId,
-                     currentPtexFaceId,
-                     currentQuadrant);
-        std::fprintf(f, "f %d %d %d\n", a, b, c);
-        triId++;
-        triangleCount++;
-    };
-
-#if 1
-    auto getOrientedEdgeVertexId =
-        [&](const SubdivisionEdge &edge, int a, int b, int t, int k) -> int {
-        YBI_ASSERT(t >= 1);
-        YBI_ASSERT(k >= 0 && k <= t);
-        const bool forward = (edge.v0 == a && edge.v1 == b);
-        const bool reverse = (edge.v0 == b && edge.v1 == a);
-        YBI_ASSERT(forward || reverse);
-        if (k == 0)
+        indices.push_back(a);
+        indices.push_back(b);
+        indices.push_back(c);
+        if (outTriPatchFaceIds)
         {
-            return a;
+            outTriPatchFaceIds->push_back(currentPatchFaceId);
         }
-        if (k == t)
+        if (outTriCoarseFaceIds)
         {
-            return b;
+            outTriCoarseFaceIds->push_back(currentCoarseFaceId);
         }
-        YBI_ASSERT(t > 1);
-        YBI_ASSERT(edge.edgeVertexIndexStart >= 0);
-        const int localOffset = forward ? (k - 1) : (t - 1 - k);
-        return edge.edgeVertexIndexStart + localOffset;
+        if (outTriPtexFaceIds)
+        {
+            outTriPtexFaceIds->push_back(currentPtexFaceId);
+        }
+        if (outTriQuadrants)
+        {
+            outTriQuadrants->push_back(currentQuadrant);
+        }
     };
-#endif
 
     auto stitchStrip =
         [&](const std::vector<int> &outer, const std::vector<int> &inner, int m, int n) {
@@ -359,19 +206,6 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
                     io++;
                     q += 2 * m;
                 }
-
-                // const float uOuter = float(io + 1) / float(outer.size() - 1);
-                // const float uInner = float(ii + 1) / float(inner.size() - 1);
-                // if (uOuter <= uInner)
-                // {
-                //     emitTri(outer[io], outer[io + 1], inner[ii]);
-                //     io++;
-                // }
-                // else
-                // {
-                //     emitTri(outer[io], inner[ii + 1], inner[ii]);
-                //     ii++;
-                // }
             }
         };
 
@@ -386,7 +220,6 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         auto buildOuter = [&](const SubdivisionEdge &edge, int a, int b, int t) {
             std::vector<int> outer;
             outer.reserve(t + 1);
-#if 1
             outer.push_back(a);
             RecurseChildEdges(edgeMap, a, b, outer);
             YBI_ERROR((!edge.split && outer.size() == t + 1) || (edge.split && outer.size() > t),
@@ -398,24 +231,11 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
             {
                 YBI_ASSERT(o >= 0 && o < int(sharedPos.size()));
                 YBI_ASSERT(isSharedInit(o));
-                const int objId = sharedObjIndex[o];
-                YBI_ASSERT(objId > 0);
-                out.push_back(objId);
+                const int meshId = sharedMeshIndex[o];
+                YBI_ASSERT(meshId >= 0);
+                out.push_back(meshId);
             }
             return out;
-#else
-            std::vector<int> test;
-            for (int k = 0; k <= t; ++k)
-            {
-                const int vertexId = getOrientedEdgeVertexId(edge, a, b, t, k);
-                YBI_ASSERT(vertexId >= 0 && vertexId < int(sharedPos.size()));
-                YBI_ASSERT(isSharedInit(vertexId));
-                const int objId = sharedObjIndex[vertexId];
-                YBI_ASSERT(objId > 0);
-                test.push_back(objId);
-            }
-            return test;
-#endif
         };
 
         int e0 = GetEdgeFactor(edgeMap, patch.verts[0], patch.verts[1]);
@@ -448,11 +268,11 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         const int nv = std::max(std::max(e1, e3), 2);
         const int cols = nu - 1;
         const int rows = nv - 1;
-        std::vector<int> innerGridObj(cols * rows, 0);
+        std::vector<int> innerGridIndex(cols * rows, -1);
         auto innerAt = [&](int iu, int iv) -> int & {
             YBI_ASSERT(iu >= 1 && iu <= cols);
             YBI_ASSERT(iv >= 1 && iv <= rows);
-            return innerGridObj[(iv - 1) * cols + (iu - 1)];
+            return innerGridIndex[(iv - 1) * cols + (iu - 1)];
         };
 
         for (int iv = 1; iv < nv; ++iv)
@@ -469,12 +289,14 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
                 if (!EvaluateLimitPosition(
                         patchMap, patchTable, limitValues, patch.ptexFaceId, uv, &p))
                 {
-                    std::fclose(f);
                     return false;
                 }
-                std::fprintf(f, "v %.9g %.9g %.9g\n", double(p[0]), double(p[1]), double(p[2]));
-                vertexCount++;
-                innerAt(iu, iv) = vertexCount;
+                innerAt(iu, iv) = int(positions.size());
+                float3 v = {};
+                v.x = p[0];
+                v.y = p[1];
+                v.z = p[2];
+                positions.push_back(v);
             }
         }
 
@@ -510,12 +332,10 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         {
             inner1.push_back(innerAt(cols, iv));
         }
-        // for (int iu = nu - 1; iu >= 1; --iu)
         for (int iu = 1; iu < nu; ++iu)
         {
             inner2.push_back(innerAt(iu, rows));
         }
-        // for (int iv = nv - 1; iv >= 1; --iv)
         for (int iv = 1; iv < nv; ++iv)
         {
             inner3.push_back(innerAt(1, iv));
@@ -529,14 +349,16 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
         stitchStrip(outer3, inner3, std::max(e1, e3), e3);
     }
 
-    std::fclose(f);
+    outMesh->positions = positions;
+    outMesh->indices = indices;
+
     if (outVertexCount)
     {
-        *outVertexCount = vertexCount;
+        *outVertexCount = int(positions.size());
     }
     if (outTriangleCount)
     {
-        *outTriangleCount = triangleCount;
+        *outTriangleCount = int(indices.size() / 3);
     }
     return true;
 }

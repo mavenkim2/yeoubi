@@ -1,0 +1,65 @@
+#pragma once
+
+#include "scene/scene.h"
+#include "scene/subdivision_mesh.h"
+
+#include <pxr/base/gf/vec3f.h>
+
+#include <string>
+#include <vector>
+
+YBI_NAMESPACE_BEGIN
+
+struct SubdivisionRunOptions
+{
+    int level = 1;
+    float pixelSpacing = 1.0f;
+    int splitThreshold = 1;
+    int sampleSteps = 8;
+
+    pxr::GfVec3f eye = pxr::GfVec3f(0.0f, 0.0f, 5.0f);
+    pxr::GfVec3f lookAt = pxr::GfVec3f(0.0f, 0.0f, 0.0f);
+    int viewportWidth = 1920;
+    int viewportHeight = 1080;
+    float verticalFovDegrees = 45.0f;
+
+    std::string subdivisionScheme = "catmullClark";
+    std::string creasingMethod = "uniform";
+    std::string triangleSubdivision = "catmullClark";
+
+    std::string patchQuadObjPath;
+};
+
+struct SubdivisionRunResult
+{
+    Mesh mesh;
+
+    std::vector<int> trianglePatchFaceIds;
+    std::vector<int> triangleCoarseFaceIds;
+    std::vector<int> trianglePtexFaceIds;
+    std::vector<int> triangleQuadrants;
+
+    int refinedMaxLevel = 0;
+    int totalPatches = 0;
+
+    size_t subdivisionPatchCount = 0;
+    size_t diagSplitPatchCount = 0;
+    int generatedVertexCount = 0;
+    int midpointEdges = 0;
+
+    int edgeTMaxComputed = 0;
+    int totalComputedEdges = 0;
+
+    int patchQuadVerts = 0;
+    int patchQuadCount = 0;
+
+    size_t controlCageUniqueEdges = 0;
+    int boundaryEdges = 0;
+    int controlCageEdgesWithOver2Faces = 0;
+};
+
+bool SubdivideAdaptive(const SubdivisionMesh &mesh,
+                      const SubdivisionRunOptions &options,
+                      SubdivisionRunResult *outResult);
+
+YBI_NAMESPACE_END

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "bvh/usd_subdiv_select.h"
-#include "tesselation/subdivision_patch_types.h"
+#include "tessellation/subdivision_patch_types.h"
 
 #include <vector>
 
