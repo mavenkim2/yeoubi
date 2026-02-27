@@ -46,7 +46,6 @@ struct LimitEvalVertex
 #include "tessellation/tessellation_adaptive_patch_build.h"
 #include "tessellation/tessellation_adaptive_util.h"
 #include "tessellation/tessellation_adaptive_patch_quad_write.h"
-#include "tessellation/tessellation_adaptive_obj_write.h"
 #include "tessellation/tessellation_adaptive_mesh_build.h"
 // clang-format on
 
