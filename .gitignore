@@ -44,3 +44,6 @@ out/
 *.vcxproj
 *.cmake
 *.sln
+
+.cache
+assets/
