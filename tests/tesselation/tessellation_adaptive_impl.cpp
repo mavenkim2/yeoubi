@@ -158,7 +158,8 @@ static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
                                         const std::vector<int> &triCoarseFaceIds,
                                         const std::vector<int> &triPtexFaceIds,
                                         const std::vector<int> &triQuadrants,
-                                        const std::string &outObjPath)
+                                        const std::string &outObjPath,
+                                        bool writeMetadata)
 {
     FILE *f = std::fopen(outObjPath.c_str(), "w");
     if (!f)
@@ -180,7 +181,7 @@ static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
         const int i0 = mesh.indices[triId * 3 + 0] + 1;
         const int i1 = mesh.indices[triId * 3 + 1] + 1;
         const int i2 = mesh.indices[triId * 3 + 2] + 1;
-        if (hasMeta)
+        if (writeMetadata && hasMeta)
         {
             std::fprintf(f,
                          "# tri_id %d patch_face_id %d coarse_face %d ptex_face_id %d quadrant %d\n",
@@ -200,20 +201,21 @@ static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
 struct TessellationCliOptions
 {
     std::string inJson;
+    std::string outObjPath;
     int level = 1;
     float pixelSpacing = 1.0f;
     int splitThreshold = 1;
     int sampleSteps = 8;
+    bool writeMetadata = false;
     std::string patchQuadObjPath;
-    std::string innerGridObjPath;
 };
 
 static void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
-                 "Usage: %s --in <selected-subdiv.json> --innergridobj <out.obj>"
+                 "Usage: %s --in <selected-subdiv.json> <out.obj>"
                  " [--level <n>=1] [--pixelspacing <f>>0] [--splitthreshold <n>=1]"
-                 " [--samplesteps <n>=2] [--patchquadobj <out.obj>]\n",
+                 " [--samplesteps <n>=2] [--patchquadobj <out.obj>] [--writemetadata]\n",
                  exe);
 }
 
@@ -234,11 +236,22 @@ static bool ParseCliArgs(int argc, char **argv, TessellationCliOptions *out, std
 
         if (arg.rfind("--", 0) != 0)
         {
+            if (out->outObjPath.empty())
+            {
+                out->outObjPath = arg;
+                continue;
+            }
             if (outError)
             {
                 *outError = "Unexpected positional arg: " + arg;
             }
             return false;
+        }
+
+        if (arg == "--writemetadata" || arg == "--write-metadata")
+        {
+            out->writeMetadata = true;
+            continue;
         }
 
         if (i + 1 >= argc)
@@ -275,10 +288,6 @@ static bool ParseCliArgs(int argc, char **argv, TessellationCliOptions *out, std
         {
             out->patchQuadObjPath = value;
         }
-        else if (arg == "--innergridobj" || arg == "--inner-grid-obj")
-        {
-            out->innerGridObjPath = value;
-        }
         else
         {
             if (outError)
@@ -297,11 +306,11 @@ static bool ParseCliArgs(int argc, char **argv, TessellationCliOptions *out, std
         }
         return false;
     }
-    if (out->innerGridObjPath.empty())
+    if (out->outObjPath.empty())
     {
         if (outError)
         {
-            *outError = "Missing required arg: --innergridobj <out.obj>";
+            *outError = "Missing required positional arg: <out.obj>";
         }
         return false;
     }
@@ -360,9 +369,10 @@ int main(int argc, char **argv)
                                      result.triangleCoarseFaceIds,
                                      result.trianglePtexFaceIds,
                                      result.triangleQuadrants,
-                                     cli.innerGridObjPath))
+                                     cli.outObjPath,
+                                     cli.writeMetadata))
     {
-        std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", cli.innerGridObjPath.c_str());
+        std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", cli.outObjPath.c_str());
         return 1;
     }
 
@@ -393,9 +403,10 @@ int main(int argc, char **argv)
                     result.patchQuadCount);
     }
     std::printf("  innerGridObj path=%s verts=%zu tris=%zu\n",
-                cli.innerGridObjPath.c_str(),
+                cli.outObjPath.c_str(),
                 result.mesh.positions.size(),
                 result.mesh.indices.size() / 3);
+    std::printf("  writeMetadata=%s\n", cli.writeMetadata ? "true" : "false");
     std::printf("  edgeMapChecks=ok\n");
     std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
                 result.controlCageUniqueEdges,
