@@ -1,5 +1,6 @@
 #include "io/usd_subdiv_json_io.h"
 #include "tessellation/subdivision.h"
+#include "tessellation_adaptive_cli_usd.h"
 #include "util/float3.h"
 
 #include <algorithm>
@@ -200,7 +201,7 @@ static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
 
 struct TessellationCliOptions
 {
-    std::string inJson;
+    std::string inPath;
     std::string outObjPath;
     int level = 1;
     float pixelSpacing = 1.0f;
@@ -213,7 +214,7 @@ struct TessellationCliOptions
 static void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
-                 "Usage: %s --in <selected-subdiv.json> <out.obj>"
+                 "Usage: %s --in <input.json|input.usd[a|c]> <out.obj|out_dir>"
                  " [--level <n>=1] [--pixelspacing <f>>0] [--splitthreshold <n>=1]"
                  " [--samplesteps <n>=2] [--patchquadobj <out.obj>] [--writemetadata]\n",
                  exe);
@@ -266,7 +267,7 @@ static bool ParseCliArgs(int argc, char **argv, TessellationCliOptions *out, std
 
         if (arg == "--in" || arg == "--json")
         {
-            out->inJson = value;
+            out->inPath = value;
         }
         else if (arg == "--level")
         {
@@ -298,11 +299,11 @@ static bool ParseCliArgs(int argc, char **argv, TessellationCliOptions *out, std
         }
     }
 
-    if (out->inJson.empty())
+    if (out->inPath.empty())
     {
         if (outError)
         {
-            *outError = "Missing required arg: --in <selected-subdiv.json>";
+            *outError = "Missing required arg: --in <input.json|input.usd[a|c]>";
         }
         return false;
     }
@@ -333,85 +334,104 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    SelectedSubdivMesh selected = {};
-    UsdCameraInfo camera = {};
-    if (!ybi::testio::LoadSelectedSubdivFromJson(cli.inJson, selected, camera))
+    if (!IsJsonInputPath(cli.inPath) && !IsUsdInputPath(cli.inPath))
     {
-        std::fprintf(stderr, "Failed to load JSON: %s\n", cli.inJson.c_str());
+        std::fprintf(stderr, "Unsupported input extension: %s\n", cli.inPath.c_str());
         return 1;
     }
 
-    const ybi::SubdivisionMesh mesh = ConvertSelectedSubdivMesh(selected);
-
-    const pxr::GfVec3f meshCenter = ComputeMeshCenter(selected);
-
-    ybi::SubdivisionRunOptions options = {};
-    options.level = cli.level;
-    options.pixelSpacing = cli.pixelSpacing;
-    options.splitThreshold = cli.splitThreshold;
-    options.sampleSteps = cli.sampleSteps;
-    options.eye = camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
-    options.lookAt = camera.found ? camera.meshCenter : meshCenter;
-    options.subdivisionScheme = selected.subdivisionScheme;
-    options.creasingMethod = selected.creasingMethod;
-    options.triangleSubdivision = selected.triangleSubdivision;
-    options.patchQuadObjPath = cli.patchQuadObjPath;
-
-    ybi::SubdivisionRunResult result = {};
-    if (!ybi::SubdivideAdaptive(mesh, options, &result))
+    if (IsJsonInputPath(cli.inPath))
     {
-        std::fprintf(stderr, "Subdivision failed\n");
-        return 1;
+        SelectedSubdivMesh selected = {};
+        UsdCameraInfo camera = {};
+        if (!ybi::testio::LoadSelectedSubdivFromJson(cli.inPath, selected, camera))
+        {
+            std::fprintf(stderr, "Failed to load JSON: %s\n", cli.inPath.c_str());
+            return 1;
+        }
+
+        const ybi::SubdivisionMesh mesh = ConvertSelectedSubdivMesh(selected);
+        const pxr::GfVec3f meshCenter = ComputeMeshCenter(selected);
+
+        ybi::SubdivisionRunOptions options = {};
+        options.level = cli.level;
+        options.pixelSpacing = cli.pixelSpacing;
+        options.splitThreshold = cli.splitThreshold;
+        options.sampleSteps = cli.sampleSteps;
+        options.eye = camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
+        options.lookAt = camera.found ? camera.meshCenter : meshCenter;
+        options.subdivisionScheme = selected.subdivisionScheme;
+        options.creasingMethod = selected.creasingMethod;
+        options.triangleSubdivision = selected.triangleSubdivision;
+        options.patchQuadObjPath = cli.patchQuadObjPath;
+
+        ybi::SubdivisionRunResult result = {};
+        if (!ybi::SubdivideAdaptive(mesh, options, &result))
+        {
+            std::fprintf(stderr, "Subdivision failed\n");
+            return 1;
+        }
+
+        if (!WriteMeshObjWithTriMetadata(result.mesh,
+                                         result.trianglePatchFaceIds,
+                                         result.triangleCoarseFaceIds,
+                                         result.trianglePtexFaceIds,
+                                         result.triangleQuadrants,
+                                         cli.outObjPath,
+                                         cli.writeMetadata))
+        {
+            std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", cli.outObjPath.c_str());
+            return 1;
+        }
+
+        std::printf("  levelRequested=%d\n", cli.level);
+        std::printf(
+            "  refinedMaxLevel=%d patches=%d\n", result.refinedMaxLevel, result.totalPatches);
+        std::printf(
+            "  subdivisionPatches=%zu diagSplitPatches=%zu generatedVertexCount=%d midpointEdges=%d\n",
+            result.subdivisionPatchCount,
+            result.diagSplitPatchCount,
+            result.generatedVertexCount,
+            result.midpointEdges);
+        std::printf("  edgeTMaxComputed=%d totalComputedEdges=%d\n",
+                    result.edgeTMaxComputed,
+                    result.totalComputedEdges);
+        std::printf("  diagSplitConfig pixelSpacing=%.3f splitThreshold=%d sampleSteps=%d\n",
+                    cli.pixelSpacing,
+                    cli.splitThreshold,
+                    cli.sampleSteps);
+        if (cli.patchQuadObjPath.empty())
+        {
+            std::printf("  patchQuadObj disabled\n");
+        }
+        else
+        {
+            std::printf("  patchQuadObj path=%s verts=%d quads=%d\n",
+                        cli.patchQuadObjPath.c_str(),
+                        result.patchQuadVerts,
+                        result.patchQuadCount);
+        }
+        std::printf("  innerGridObj path=%s verts=%zu tris=%zu\n",
+                    cli.outObjPath.c_str(),
+                    result.mesh.positions.size(),
+                    result.mesh.indices.size() / 3);
+        std::printf("  writeMetadata=%s\n", cli.writeMetadata ? "true" : "false");
+        std::printf("  edgeMapChecks=ok\n");
+        std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
+                    result.controlCageUniqueEdges,
+                    result.boundaryEdges);
+        std::printf("  controlCageEdgesWithOver2Faces=%d\n", result.controlCageEdgesWithOver2Faces);
+        return 0;
     }
 
-    if (!WriteMeshObjWithTriMetadata(result.mesh,
-                                     result.trianglePatchFaceIds,
-                                     result.triangleCoarseFaceIds,
-                                     result.trianglePtexFaceIds,
-                                     result.triangleQuadrants,
-                                     cli.outObjPath,
-                                     cli.writeMetadata))
-    {
-        std::fprintf(stderr, "Failed to write leaf inner-grid OBJ: %s\n", cli.outObjPath.c_str());
-        return 1;
-    }
-
-    std::printf("  levelRequested=%d\n", cli.level);
-    std::printf(
-        "  refinedMaxLevel=%d patches=%d\n", result.refinedMaxLevel, result.totalPatches);
-    std::printf(
-        "  subdivisionPatches=%zu diagSplitPatches=%zu generatedVertexCount=%d midpointEdges=%d\n",
-        result.subdivisionPatchCount,
-        result.diagSplitPatchCount,
-        result.generatedVertexCount,
-        result.midpointEdges);
-    std::printf(
-        "  edgeTMaxComputed=%d totalComputedEdges=%d\n", result.edgeTMaxComputed, result.totalComputedEdges);
-    std::printf("  diagSplitConfig pixelSpacing=%.3f splitThreshold=%d sampleSteps=%d\n",
-                cli.pixelSpacing,
-                cli.splitThreshold,
-                cli.sampleSteps);
-    if (cli.patchQuadObjPath.empty())
-    {
-        std::printf("  patchQuadObj disabled\n");
-    }
-    else
-    {
-        std::printf("  patchQuadObj path=%s verts=%d quads=%d\n",
-                    cli.patchQuadObjPath.c_str(),
-                    result.patchQuadVerts,
-                    result.patchQuadCount);
-    }
-    std::printf("  innerGridObj path=%s verts=%zu tris=%zu\n",
-                cli.outObjPath.c_str(),
-                result.mesh.positions.size(),
-                result.mesh.indices.size() / 3);
-    std::printf("  writeMetadata=%s\n", cli.writeMetadata ? "true" : "false");
-    std::printf("  edgeMapChecks=ok\n");
-    std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
-                result.controlCageUniqueEdges,
-                result.boundaryEdges);
-    std::printf("  controlCageEdgesWithOver2Faces=%d\n", result.controlCageEdgesWithOver2Faces);
-
-    return 0;
+    TessellationRunConfig config = {};
+    config.level = cli.level;
+    config.pixelSpacing = cli.pixelSpacing;
+    config.splitThreshold = cli.splitThreshold;
+    config.sampleSteps = cli.sampleSteps;
+    config.writeMetadata = cli.writeMetadata;
+    config.patchQuadObjPath = cli.patchQuadObjPath;
+    return RunUsdTessellationInput(cli.inPath, cli.outObjPath, config, WriteMeshObjWithTriMetadata)
+               ? 0
+               : 1;
 }

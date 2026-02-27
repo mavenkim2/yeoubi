@@ -81,6 +81,10 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/tesselation/tessellation_adaptive_impl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/subdivision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/edge_map_validation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/usd_subdiv_select.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/io/usd_subdiv_json_io.cpp)
     target_compile_definitions(yeoubi_tessellation_adaptive_impl PRIVATE ${YBI_COMPILE_DEFINITIONS})
