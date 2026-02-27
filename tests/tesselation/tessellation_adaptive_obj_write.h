@@ -189,8 +189,8 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
     int maxVertexId = nextGeneratedVertexId;
 
     const float inf = std::numeric_limits<float>::infinity();
-    std::vector<pxr::GfVec3f> sharedPos(maxVertexId + 1, pxr::GfVec3f(inf, inf, inf));
-    std::vector<uint8_t> sharedInit(maxVertexId + 1, uint8_t(0));
+    std::vector<pxr::GfVec3f> sharedPos(maxVertexId, pxr::GfVec3f(inf, inf, inf));
+    std::vector<uint8_t> sharedInit(maxVertexId, uint8_t(0));
     auto isSharedInit = [&](int id) -> bool {
         return (id >= 0) && (id < int(sharedInit.size())) && (sharedInit[id] != 0);
     };
@@ -257,12 +257,11 @@ static bool WriteLeafPatchInnerGridObj(const std::vector<SubdivisionPatch> &leaf
     int currentCoarseFaceId = -1;
     int currentPtexFaceId = -1;
     int currentQuadrant = -1;
-    std::vector<int> sharedObjIndex(maxVertexId + 1, 0);
+    std::vector<int> sharedObjIndex(maxVertexId, 0);
     for (int i = 0; i < int(sharedPos.size()); ++i)
     {
         if (!isSharedInit(i))
         {
-            printf("what\n");
             continue;
         }
         const pxr::GfVec3f &p = sharedPos[i];
