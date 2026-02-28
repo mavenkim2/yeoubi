@@ -40,6 +40,21 @@ struct LimitEvalVertex
     }
 };
 
+struct LimitEvalFVar2
+{
+    float2 uv = make_float2(0.0f);
+
+    void Clear()
+    {
+        uv = make_float2(0.0f);
+    }
+
+    void AddWithWeight(const LimitEvalFVar2 &src, float w)
+    {
+        uv += src.uv * w;
+    }
+};
+
 // clang-format off
 #include "tessellation/tessellation_adaptive_limit_eval.h"
 #include "tessellation/tessellation_adaptive_edge_ops.h"
@@ -72,6 +87,15 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     d.cornerWeights = mesh.cornerSharpnesses.data();
     d.numHoles = int(mesh.holeIndices.size());
     d.holeIndices = mesh.holeIndices.data();
+    const bool hasTexcoords = mesh.texcoords.size() > 0 && mesh.texcoordIndices.size() == mesh.indices.size();
+    Far::TopologyDescriptor::FVarChannel fvarChannel = {};
+    if (hasTexcoords)
+    {
+        fvarChannel.numValues = int(mesh.texcoords.size());
+        fvarChannel.valueIndices = mesh.texcoordIndices.data();
+        d.numFVarChannels = 1;
+        d.fvarChannels = &fvarChannel;
+    }
 
     Sdc::Options sdcOptions;
     switch (mesh.interpolationRule)
@@ -127,6 +151,9 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     {
         return false;
     }
+    const bool hasRefinerFVar = refiner->GetNumFVarChannels() > 0;
+    YBI_ERROR(!hasTexcoords || hasRefinerFVar,
+              "Subdivision texcoords present but refiner has no fvar channels\n");
 
     int nextGeneratedVertexId = int(mesh.vertices.size());
     const std::vector<SubdivisionPatch> patches =
@@ -145,6 +172,9 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     Far::PatchTableFactory::Options patchOptions(options.level);
     patchOptions.endCapType = Far::PatchTableFactory::Options::ENDCAP_GREGORY_BASIS;
     patchOptions.useInfSharpPatch = (d.numCreases > 0) || (d.numCorners > 0);
+    // TODO: enabling fvar patch tables currently crashes in PatchTableFactory::Create
+    // with the available OpenSubdiv build; keep disabled until root-caused.
+    patchOptions.generateFVarTables = false;
     patchOptions.generateFVarLegacyLinearPatches = false;
     const Far::PatchTable *patchTable = Far::PatchTableFactory::Create(*refiner, patchOptions);
     if (!patchTable)
@@ -156,6 +186,13 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     Far::PatchMap patchMap(*patchTable);
     const std::vector<LimitEvalVertex> limitValues =
         BuildLimitEvalVertices(*refiner, *patchTable, mesh.vertices);
+    std::vector<LimitEvalFVar2> limitFVarValues;
+    const bool hasFVarChannel = hasTexcoords && hasRefinerFVar && patchTable->GetNumFVarChannels() > 0;
+    if (hasFVarChannel)
+    {
+        limitFVarValues = BuildLimitEvalFVarValues(*refiner, *patchTable, mesh.texcoords, 0);
+    }
+    const bool enableLimitFVarEval = hasFVarChannel && !limitFVarValues.empty();
 
     const float3 eye = options.eye;
     const float3 lookAt = options.lookAt;
@@ -238,6 +275,7 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                                     patchMap,
                                     *patchTable,
                                     limitValues,
+                                    enableLimitFVarEval ? &limitFVarValues : nullptr,
                                     nextGeneratedVertexId,
                                     &outResult->mesh,
                                     triPatchFaceIds,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "util/array.h"
+#include "util/float2.h"
 #include "util/float3.h"
 
 #include <string>
@@ -43,6 +44,8 @@ struct SubdivisionMesh
     Array<float3> vertices;
     Array<int> indices;
     Array<int> vertsPerFace;
+    Array<float2> texcoords;
+    Array<int> texcoordIndices;
 
     BoundaryInterpolation interpolationRule;
     FVarLinearInterpolation fvarLinearInterpolation;

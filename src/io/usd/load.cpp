@@ -497,6 +497,74 @@ static bool BuildTriangulatedMeshTexcoords(const pxr::UsdGeomMesh &mesh,
     return true;
 }
 
+static bool BuildSubdivisionMeshTexcoords(const pxr::UsdGeomMesh &mesh,
+                                          const pxr::VtIntArray &faceIndices,
+                                          Array<float2> *outTexcoords,
+                                          Array<int> *outTexcoordIndices)
+{
+    YBI_ASSERT(outTexcoords);
+    YBI_ASSERT(outTexcoordIndices);
+
+    pxr::UsdGeomPrimvarsAPI primvars(mesh);
+    pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
+    if (!stPrimvar)
+    {
+        return false;
+    }
+
+    pxr::VtVec2fArray stValues;
+    if (!stPrimvar.Get(&stValues, 0.0))
+    {
+        return false;
+    }
+    if (stValues.empty())
+    {
+        return false;
+    }
+
+    pxr::VtIntArray stIndices;
+    const bool hasExplicitIndices = stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, 0.0);
+    const pxr::TfToken interpolation = stPrimvar.GetInterpolation();
+
+    Array<float2> texcoords(stValues);
+    Array<int> cornerTexcoordIndices(faceIndices.size());
+    for (size_t corner = 0; corner < faceIndices.size(); ++corner)
+    {
+        int tcIndex = -1;
+        if (hasExplicitIndices)
+        {
+            if (corner >= stIndices.size())
+            {
+                return false;
+            }
+            tcIndex = stIndices[corner];
+        }
+        else if (interpolation == pxr::UsdGeomTokens->faceVarying)
+        {
+            tcIndex = int(corner);
+        }
+        else if (interpolation == pxr::UsdGeomTokens->vertex ||
+                 interpolation == pxr::UsdGeomTokens->varying)
+        {
+            tcIndex = faceIndices[corner];
+        }
+        else
+        {
+            return false;
+        }
+
+        if (tcIndex < 0 || tcIndex >= int(texcoords.size()))
+        {
+            return false;
+        }
+        cornerTexcoordIndices[corner] = tcIndex;
+    }
+
+    *outTexcoords = std::move(texcoords);
+    *outTexcoordIndices = std::move(cornerTexcoordIndices);
+    return true;
+}
+
 static PrimvarInterpolation ConvertPrimvarInterpolation(pxr::TfToken &token)
 {
     if (token == "constant")
@@ -823,7 +891,9 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           interpolation,
                                           fvarLinear,
                                           triangleSubdivision);
-    scene->subdivisionMeshes.back().primPath = prim.GetPath().GetString();
+    SubdivisionMesh &subdivMesh = scene->subdivisionMeshes.back();
+    subdivMesh.primPath = prim.GetPath().GetString();
+    BuildSubdivisionMeshTexcoords(mesh, faceIndices, &subdivMesh.texcoords, &subdivMesh.texcoordIndices);
 }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)

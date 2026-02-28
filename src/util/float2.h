@@ -2,6 +2,7 @@
 
 #include "util/assert.h"
 #include "util/forceinline.h"
+#include <cmath>
 
 YBI_NAMESPACE_BEGIN
 
@@ -85,6 +86,6 @@ __forceinline float dot(const float2 &a, const float2 &b)
 
 __forceinline float length(const float2 &a)
 {
-    return sqrt(dot(a, a));
+    return std::sqrt(dot(a, a));
 }
 YBI_NAMESPACE_END

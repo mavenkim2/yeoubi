@@ -29,6 +29,48 @@ static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRe
     return values;
 }
 
+static std::vector<LimitEvalFVar2> BuildLimitEvalFVarValues(const Far::TopologyRefiner &refiner,
+                                                            const Far::PatchTable &patchTable,
+                                                            const Array<float2> &coarseValues,
+                                                            int channel = 0)
+{
+    if (patchTable.GetNumFVarChannels() <= channel)
+    {
+        return {};
+    }
+    const int numRefinerValues = refiner.GetNumFVarValuesTotal(channel);
+    const int numLocalPoints = patchTable.GetNumLocalPointsFaceVarying(channel);
+    if (numRefinerValues <= 0)
+    {
+        return {};
+    }
+    std::vector<LimitEvalFVar2> values(numRefinerValues + numLocalPoints);
+
+    const int numBaseValues = refiner.GetLevel(0).GetNumFVarValues(channel);
+    const int copyCount = std::min(numBaseValues, int(coarseValues.size()));
+    for (int i = 0; i < copyCount; ++i)
+    {
+        values[i].uv = coarseValues[i];
+    }
+
+    Far::PrimvarRefiner primvarRefiner(refiner);
+    LimitEvalFVar2 *src = values.data();
+    for (int level = 1; level < refiner.GetNumLevels(); ++level)
+    {
+        LimitEvalFVar2 *dst = src + refiner.GetLevel(level - 1).GetNumFVarValues(channel);
+        primvarRefiner.InterpolateFaceVarying(level, src, dst, channel);
+        src = dst;
+    }
+
+    if (numLocalPoints > 0)
+    {
+        patchTable.ComputeLocalPointValuesFaceVarying(values.data(),
+                                                      values.data() + numRefinerValues,
+                                                      channel);
+    }
+    return values;
+}
+
 static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
                                   const Far::PatchTable &patchTable,
                                   const std::vector<LimitEvalVertex> &limitValues,
@@ -56,6 +98,49 @@ static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
         p += limitValues[cvs[i]].p * pWeights[i];
     }
     *outP = p;
+    return true;
+}
+
+static bool EvaluateLimitFVar2(const Far::PatchMap &patchMap,
+                               const Far::PatchTable &patchTable,
+                               const std::vector<LimitEvalFVar2> &limitValues,
+                               int ptexFaceId,
+                               const pxr::GfVec2f &uv,
+                               float2 *outUV,
+                               int channel = 0)
+{
+    if (!outUV)
+    {
+        return false;
+    }
+    if (patchTable.GetNumFVarChannels() <= channel)
+    {
+        return false;
+    }
+    const Far::PatchTable::PatchHandle *handle = patchMap.FindPatch(ptexFaceId, uv[0], uv[1]);
+    if (!handle)
+    {
+        return false;
+    }
+
+    float pWeights[20] = {0.0f};
+    patchTable.EvaluateBasis(*handle, uv[0], uv[1], pWeights);
+    Far::ConstIndexArray cvs = patchTable.GetPatchFVarValues(*handle, channel);
+    if (cvs.size() == 0)
+    {
+        return false;
+    }
+
+    float2 value = make_float2(0.0f);
+    for (int i = 0; i < cvs.size(); ++i)
+    {
+        if (cvs[i] < 0 || cvs[i] >= int(limitValues.size()))
+        {
+            return false;
+        }
+        value += limitValues[cvs[i]].uv * pWeights[i];
+    }
+    *outUV = value;
     return true;
 }
 
