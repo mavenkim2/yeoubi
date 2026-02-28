@@ -6,12 +6,6 @@
 #include "util/assert.h"
 #include "util/float3.h"
 
-#include <pxr/usd/usd/primRange.h>
-#include <pxr/usd/usd/stage.h>
-#include <pxr/usd/usdGeom/camera.h>
-#include <pxr/usd/usdGeom/mesh.h>
-#include <pxr/usd/usdGeom/xformCache.h>
-
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -93,67 +87,6 @@ static ybi::float3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh
         sum += p;
     }
     return sum * (1.0f / float(mesh.vertices.size()));
-}
-
-static bool GetUsdCameraInfo(const std::string &usdPath,
-                             ybi::float3 *outCameraWorldPos,
-                             ybi::float3 *outCameraForward,
-                             float *outVerticalFovDegrees,
-                             std::string *outCameraPath)
-{
-    pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(usdPath);
-    if (!stage)
-    {
-        return false;
-    }
-
-    pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode::Default());
-    const pxr::Usd_PrimFlagsConjunction flags =
-        pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
-    const pxr::Usd_PrimFlagsPredicate predicate(flags);
-
-    bool foundCamera = false;
-    for (const pxr::UsdPrim &prim : stage->Traverse(predicate))
-    {
-        if (!foundCamera && prim.IsA<pxr::UsdGeomCamera>())
-        {
-            const pxr::UsdGeomCamera camera(prim);
-            const pxr::GfMatrix4d localToWorld = xformCache.GetLocalToWorldTransform(prim);
-            const pxr::GfVec3d p = localToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
-            const pxr::GfVec3d fwd = localToWorld.TransformDir(pxr::GfVec3d(0.0, 0.0, -1.0));
-            if (outCameraWorldPos)
-            {
-                *outCameraWorldPos = ybi::make_float3(float(p[0]), float(p[1]), float(p[2]));
-            }
-            if (outCameraForward)
-            {
-                ybi::float3 forward = ybi::make_float3(float(fwd[0]), float(fwd[1]), float(fwd[2]));
-                const float len = ybi::length(forward);
-                if (len > 1e-8f)
-                {
-                    forward = forward * (1.0f / len);
-                }
-                else
-                {
-                    forward = ybi::make_float3(0.0f, 0.0f, -1.0f);
-                }
-                *outCameraForward = forward;
-            }
-            if (outCameraPath)
-            {
-                *outCameraPath = prim.GetPath().GetString();
-            }
-            if (outVerticalFovDegrees)
-            {
-                const pxr::GfCamera gfCamera = camera.GetCamera(pxr::UsdTimeCode::Default());
-                const float fovY = float(gfCamera.GetFieldOfView(pxr::GfCamera::FOVVertical));
-                *outVerticalFovDegrees = (std::isfinite(fovY) && fovY > 0.0f) ? fovY : 45.0f;
-            }
-            foundCamera = true;
-        }
-    }
-
-    return foundCamera;
 }
 
 static std::string SanitizePrimPathForFilename(const std::string &primPath)
@@ -277,12 +210,12 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         return false;
     }
 
-    ybi::float3 cameraWorldPos = ybi::make_float3(0.0f);
-    ybi::float3 cameraForward = ybi::make_float3(0.0f, 0.0f, -1.0f);
-    float cameraVerticalFovDegrees = 45.0f;
-    std::string cameraPath;
-    const bool hasCamera = GetUsdCameraInfo(
-        inPath, &cameraWorldPos, &cameraForward, &cameraVerticalFovDegrees, &cameraPath);
+    const ybi::Camera &camera = scenePool.camera;
+    const ybi::float3 cameraWorldPos = camera.worldPosition;
+    const ybi::float3 cameraForward = camera.forward;
+    const float cameraVerticalFovDegrees = camera.verticalFovDegrees;
+    const std::string cameraPath = camera.path;
+    const bool hasCamera = camera.hasValidCamera;
     YBI_ASSERT(hasCamera);
     YBI_ASSERT(IsFiniteFloat3(cameraWorldPos));
     YBI_ASSERT(IsFiniteFloat3(cameraForward));
@@ -399,6 +332,8 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.eye = cameraWorldPos;
         options.lookAt = cameraWorldPos + cameraForward;
         options.verticalFovDegrees = cameraVerticalFovDegrees;
+        options.viewportWidth = camera.viewportWidth;
+        options.viewportHeight = camera.viewportHeight;
         options.subdivisionScheme = "catmullClark";
         options.generateTriangleMetadata = config.writeMetadata;
         options.patchQuadObjPath = patchQuadPath;

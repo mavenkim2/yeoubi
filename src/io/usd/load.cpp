@@ -38,6 +38,7 @@
 #include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdGeom/scope.h>
 #include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
 #include <pxr/usd/usdRender/settings.h>
@@ -1009,6 +1010,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 {
     YBI_ASSERT(scenePool);
+    scenePool->camera = Camera();
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
 
     if (!stage)
@@ -1066,6 +1068,26 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
         pxr::GfFrustum frustum = gfCam.GetFrustum();
         pxr::GfMatrix4d viewM = frustum.ComputeViewMatrix().GetTranspose();
         pxr::GfMatrix4d projM = frustum.ComputeProjectionMatrix().GetTranspose();
+        const pxr::UsdPrim cameraPrim = camera.GetPrim();
+        pxr::UsdGeomXformCache xformCache(timeCode);
+        const pxr::GfMatrix4d cameraLocalToWorld = xformCache.GetLocalToWorldTransform(cameraPrim);
+        const pxr::GfVec3d cameraP = cameraLocalToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
+        const pxr::GfVec3d cameraFwd = cameraLocalToWorld.TransformDir(pxr::GfVec3d(0.0, 0.0, -1.0));
+        float3 worldPos = make_float3(float(cameraP[0]), float(cameraP[1]), float(cameraP[2]));
+        float3 forward = make_float3(float(cameraFwd[0]), float(cameraFwd[1]), float(cameraFwd[2]));
+        const float forwardLen = length(forward);
+        if (forwardLen > 1e-8f)
+        {
+            forward = forward * (1.0f / forwardLen);
+        }
+        else
+        {
+            forward = make_float3(0.0f, 0.0f, -1.0f);
+        }
+        const float verticalFovDegrees =
+            float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical));
+        const pxr::GfRange1d nearFar = frustum.GetNearFar();
+        const float nearPlane = float(nearFar.GetMin());
 
         Camera &uc = scenePool->camera;
         for (int i = 0; i < 4; i++)
@@ -1079,8 +1101,6 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
             }
         }
 
-        uc.viewportWidth = 1920;
-        uc.viewportHeight = 1080;
         if (settings)
         {
             pxr::GfVec2i resolution;
@@ -1091,6 +1111,14 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 printf("resolution: %i %i\n", resolution[0], resolution[1]);
             }
         }
+        uc.worldPosition = worldPos;
+        uc.forward = forward;
+        uc.verticalFovDegrees =
+            (std::isfinite(verticalFovDegrees) && verticalFovDegrees > 0.0f) ? verticalFovDegrees
+                                                                              : 45.0f;
+        uc.nearPlane = (std::isfinite(nearPlane) && nearPlane > 0.0f) ? nearPlane : 1.0f;
+        uc.hasValidCamera = true;
+        uc.path = cameraPrim.GetPath().GetString();
 
         double shutterOpen, shutterClose;
         camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);

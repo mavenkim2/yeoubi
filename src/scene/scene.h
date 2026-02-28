@@ -5,6 +5,7 @@
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
 #include "util/float2.h"
+#include "util/float3.h"
 #include "util/float3x4.h"
 #include "util/float4x4.h"
 #include "util/host_memory_arena.h"
@@ -149,10 +150,16 @@ struct ConstCollectionRange
 
 struct Camera
 {
-    int viewportWidth;
-    int viewportHeight;
-    float4x4 cameraFromWorld;
-    float4x4 clipFromCamera;
+    int viewportWidth = 1920;
+    int viewportHeight = 1080;
+    float4x4 cameraFromWorld = float4x4::Identity();
+    float4x4 clipFromCamera = float4x4::Identity();
+    float3 worldPosition = make_float3(0.0f, 0.0f, 0.0f);
+    float3 forward = make_float3(0.0f, 0.0f, -1.0f);
+    float verticalFovDegrees = 45.0f;
+    float nearPlane = 1.0f;
+    bool hasValidCamera = false;
+    std::string path;
 };
 
 struct Scene
