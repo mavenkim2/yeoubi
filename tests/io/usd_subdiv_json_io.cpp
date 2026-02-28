@@ -1,5 +1,7 @@
 #include "io/usd_subdiv_json_io.h"
 
+#include "util/float3.h"
+
 #include <cstdio>
 #include <cctype>
 #include <fstream>
@@ -156,11 +158,56 @@ std::vector<int> ParseIntArray(const std::string &arrayText)
     }
     return values;
 }
+
+ybi::BoundaryInterpolation BoundaryInterpolationFromString(const std::string &s)
+{
+    if (s == "none")
+    {
+        return ybi::BOUNDARY_INTERPOLATION_NONE;
+    }
+    if (s == "edgeOnly")
+    {
+        return ybi::BOUNDARY_INTERPOLATION_EDGE;
+    }
+    return ybi::BOUNDARY_INTERPOLATION_EDGE_AND_CORNER;
+}
+
+ybi::FVarLinearInterpolation FVarLinearInterpolationFromString(const std::string &s)
+{
+    if (s == "none")
+    {
+        return ybi::FVAR_LINEAR_NONE;
+    }
+    if (s == "cornersOnly")
+    {
+        return ybi::FVAR_LINEAR_CORNERS_ONLY;
+    }
+    if (s == "cornersPlus1")
+    {
+        return ybi::FVAR_LINEAR_CORNERS_PLUS1;
+    }
+    if (s == "cornersPlus2")
+    {
+        return ybi::FVAR_LINEAR_CORNERS_PLUS2;
+    }
+    if (s == "boundaries")
+    {
+        return ybi::FVAR_LINEAR_BOUNDARIES;
+    }
+    if (s == "all" || s == "bilinear")
+    {
+        return ybi::FVAR_LINEAR_ALL;
+    }
+    return ybi::FVAR_LINEAR_CORNERS_PLUS1;
+}
 } // namespace
 
 bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
-                                SelectedSubdivMesh &selectedOut,
-                                UsdCameraInfo &usdCameraInfoOut)
+                                ybi::SubdivisionMesh &meshOut,
+                                UsdCameraInfo &usdCameraInfoOut,
+                                std::string *outSubdivisionScheme,
+                                std::string *outCreasingMethod,
+                                std::string *outTriangleSubdivision)
 {
     std::ifstream input(jsonPath, std::ios::in | std::ios::binary);
     if (!input.is_open())
@@ -170,36 +217,44 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
     }
     const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 
-    const std::string sourcePrim = ExtractJsonString(json, "source_prim");
-    if (!sourcePrim.empty())
+    std::string subdivisionScheme = ExtractJsonString(json, "scheme");
+    if (subdivisionScheme.empty())
     {
-        selectedOut.path = pxr::SdfPath(sourcePrim);
+        subdivisionScheme = "catmullClark";
     }
-    selectedOut.subdivisionScheme = ExtractJsonString(json, "scheme");
-    if (selectedOut.subdivisionScheme.empty())
-    {
-        selectedOut.subdivisionScheme = "catmullClark";
-    }
-    selectedOut.vertexBoundaryInterpolation =
+    std::string vertexBoundaryInterpolation =
         ExtractJsonString(json, "vertex_boundary_interpolation");
-    if (selectedOut.vertexBoundaryInterpolation.empty())
+    if (vertexBoundaryInterpolation.empty())
     {
-        selectedOut.vertexBoundaryInterpolation = "edgeAndCorner";
+        vertexBoundaryInterpolation = "edgeAndCorner";
     }
-    selectedOut.fvarLinearInterpolation = ExtractJsonString(json, "fvar_linear_interpolation");
-    if (selectedOut.fvarLinearInterpolation.empty())
+    std::string fvarLinearInterpolation = ExtractJsonString(json, "fvar_linear_interpolation");
+    if (fvarLinearInterpolation.empty())
     {
-        selectedOut.fvarLinearInterpolation = "cornersPlus1";
+        fvarLinearInterpolation = "cornersPlus1";
     }
-    selectedOut.creasingMethod = ExtractJsonString(json, "creasing_method");
-    if (selectedOut.creasingMethod.empty())
+    std::string creasingMethod = ExtractJsonString(json, "creasing_method");
+    if (creasingMethod.empty())
     {
-        selectedOut.creasingMethod = "uniform";
+        creasingMethod = "uniform";
     }
-    selectedOut.triangleSubdivision = ExtractJsonString(json, "triangle_subdivision");
-    if (selectedOut.triangleSubdivision.empty())
+    std::string triangleSubdivision = ExtractJsonString(json, "triangle_subdivision");
+    if (triangleSubdivision.empty())
     {
-        selectedOut.triangleSubdivision = "catmullClark";
+        triangleSubdivision = "catmullClark";
+    }
+
+    if (outSubdivisionScheme)
+    {
+        *outSubdivisionScheme = subdivisionScheme;
+    }
+    if (outCreasingMethod)
+    {
+        *outCreasingMethod = creasingMethod;
+    }
+    if (outTriangleSubdivision)
+    {
+        *outTriangleSubdivision = triangleSubdivision;
     }
 
     const std::vector<float> pointScalars = ParseFloatArray(ExtractJsonArray(json, "points"));
@@ -208,16 +263,19 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
         fprintf(stderr, "Invalid points array in JSON (not xyz triplets): %s\n", jsonPath.string().c_str());
         return false;
     }
-    selectedOut.points.resize(pointScalars.size() / 3);
+    std::vector<ybi::float3> points;
+    points.resize(pointScalars.size() / 3);
     for (size_t i = 0; i + 2 < pointScalars.size(); i += 3)
     {
-        selectedOut.points[i / 3] = pxr::GfVec3f(pointScalars[i], pointScalars[i + 1], pointScalars[i + 2]);
+        ybi::float3 p = {};
+        p.x = pointScalars[i];
+        p.y = pointScalars[i + 1];
+        p.z = pointScalars[i + 2];
+        points[i / 3] = p;
     }
 
     const std::vector<int> faceVertexCounts = ParseIntArray(ExtractJsonArray(json, "face_vertex_counts"));
     const std::vector<int> faceVertexIndices = ParseIntArray(ExtractJsonArray(json, "face_vertex_indices"));
-    selectedOut.faceVertexCounts = pxr::VtIntArray(faceVertexCounts.begin(), faceVertexCounts.end());
-    selectedOut.faceVertexIndices = pxr::VtIntArray(faceVertexIndices.begin(), faceVertexIndices.end());
 
     const std::vector<int> cornerIndices = ParseIntArray(ExtractJsonArray(json, "corner_indices"));
     const std::vector<float> cornerSharpnesses =
@@ -228,26 +286,30 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
         ParseFloatArray(ExtractJsonArray(json, "crease_sharpnesses"));
     const std::vector<int> holeIndices = ParseIntArray(ExtractJsonArray(json, "hole_indices"));
 
-    selectedOut.cornerIndices = pxr::VtIntArray(cornerIndices.begin(), cornerIndices.end());
-    selectedOut.cornerSharpnesses =
-        pxr::VtFloatArray(cornerSharpnesses.begin(), cornerSharpnesses.end());
-    selectedOut.creaseIndices = pxr::VtIntArray(creaseIndices.begin(), creaseIndices.end());
-    selectedOut.creaseLengths = pxr::VtIntArray(creaseLengths.begin(), creaseLengths.end());
-    selectedOut.creaseSharpnesses =
-        pxr::VtFloatArray(creaseSharpnesses.begin(), creaseSharpnesses.end());
-    selectedOut.holeIndices = pxr::VtIntArray(holeIndices.begin(), holeIndices.end());
-
-    const int expectedFaceIndexCount =
-        std::accumulate(selectedOut.faceVertexCounts.begin(), selectedOut.faceVertexCounts.end(), 0);
-    if (expectedFaceIndexCount != int(selectedOut.faceVertexIndices.size()))
+    const int expectedFaceIndexCount = std::accumulate(faceVertexCounts.begin(), faceVertexCounts.end(), 0);
+    if (expectedFaceIndexCount != int(faceVertexIndices.size()))
     {
         fprintf(stderr,
                 "Invalid face topology in JSON: expected %d face indices, found %zu (%s)\n",
                 expectedFaceIndexCount,
-                selectedOut.faceVertexIndices.size(),
+                faceVertexIndices.size(),
                 jsonPath.string().c_str());
         return false;
     }
+
+    meshOut.vertices = points;
+    meshOut.indices = faceVertexIndices;
+    meshOut.vertsPerFace = faceVertexCounts;
+    meshOut.cornerIndices = cornerIndices;
+    meshOut.cornerSharpnesses = cornerSharpnesses;
+    meshOut.creaseIndices = creaseIndices;
+    meshOut.creaseLengths = creaseLengths;
+    meshOut.creaseSharpnesses = creaseSharpnesses;
+    meshOut.holeIndices = holeIndices;
+    meshOut.interpolationRule = BoundaryInterpolationFromString(vertexBoundaryInterpolation);
+    meshOut.fvarLinearInterpolation = FVarLinearInterpolationFromString(fvarLinearInterpolation);
+    meshOut.attributeStart = 0;
+    meshOut.attributeEnd = 0;
 
     usdCameraInfoOut = {};
     const std::string cameraPath = ExtractJsonString(json, "usd_camera_path");

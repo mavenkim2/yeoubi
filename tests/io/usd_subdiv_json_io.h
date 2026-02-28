@@ -1,13 +1,17 @@
 #pragma once
 
 #include "bvh/usd_camera_utils.h"
-#include "bvh/usd_subdiv_select.h"
+#include "scene/subdivision_mesh.h"
 
 #include <filesystem>
+#include <string>
 
 namespace ybi::testio
 {
 bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
-                                SelectedSubdivMesh &selectedOut,
-                                UsdCameraInfo &usdCameraInfoOut);
+                                ybi::SubdivisionMesh &meshOut,
+                                UsdCameraInfo &usdCameraInfoOut,
+                                std::string *outSubdivisionScheme = nullptr,
+                                std::string *outCreasingMethod = nullptr,
+                                std::string *outTriangleSubdivision = nullptr);
 } // namespace ybi::testio

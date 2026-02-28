@@ -9,149 +9,19 @@
 #include <string>
 #include <vector>
 
-static ybi::BoundaryInterpolation BoundaryInterpolationFromString(const std::string &s)
+static pxr::GfVec3f ComputeMeshCenter(const ybi::SubdivisionMesh &mesh)
 {
-    if (s == "none")
-    {
-        return ybi::BOUNDARY_INTERPOLATION_NONE;
-    }
-    if (s == "edgeOnly")
-    {
-        return ybi::BOUNDARY_INTERPOLATION_EDGE;
-    }
-    return ybi::BOUNDARY_INTERPOLATION_EDGE_AND_CORNER;
-}
-
-static ybi::FVarLinearInterpolation FVarLinearInterpolationFromString(const std::string &s)
-{
-    if (s == "none")
-    {
-        return ybi::FVAR_LINEAR_NONE;
-    }
-    if (s == "cornersOnly")
-    {
-        return ybi::FVAR_LINEAR_CORNERS_ONLY;
-    }
-    if (s == "cornersPlus1")
-    {
-        return ybi::FVAR_LINEAR_CORNERS_PLUS1;
-    }
-    if (s == "cornersPlus2")
-    {
-        return ybi::FVAR_LINEAR_CORNERS_PLUS2;
-    }
-    if (s == "boundaries")
-    {
-        return ybi::FVAR_LINEAR_BOUNDARIES;
-    }
-    if (s == "all" || s == "bilinear")
-    {
-        return ybi::FVAR_LINEAR_ALL;
-    }
-    return ybi::FVAR_LINEAR_CORNERS_PLUS1;
-}
-
-static ybi::SubdivisionMesh ConvertSelectedSubdivMesh(const SelectedSubdivMesh &in)
-{
-    ybi::SubdivisionMesh out = {};
-
-    std::vector<ybi::float3> vertices;
-    vertices.reserve(in.points.size());
-    for (const pxr::GfVec3f &p : in.points)
-    {
-        ybi::float3 v = {};
-        v.x = p[0];
-        v.y = p[1];
-        v.z = p[2];
-        vertices.push_back(v);
-    }
-    out.vertices = vertices;
-
-    std::vector<int> indices;
-    indices.reserve(in.faceVertexIndices.size());
-    for (int idx : in.faceVertexIndices)
-    {
-        indices.push_back(idx);
-    }
-    out.indices = indices;
-
-    std::vector<int> vertsPerFace;
-    vertsPerFace.reserve(in.faceVertexCounts.size());
-    for (int c : in.faceVertexCounts)
-    {
-        vertsPerFace.push_back(c);
-    }
-    out.vertsPerFace = vertsPerFace;
-
-    std::vector<int> cornerIndices;
-    cornerIndices.reserve(in.cornerIndices.size());
-    for (int idx : in.cornerIndices)
-    {
-        cornerIndices.push_back(idx);
-    }
-    out.cornerIndices = cornerIndices;
-
-    std::vector<float> cornerSharpnesses;
-    cornerSharpnesses.reserve(in.cornerSharpnesses.size());
-    for (float sharpness : in.cornerSharpnesses)
-    {
-        cornerSharpnesses.push_back(sharpness);
-    }
-    out.cornerSharpnesses = cornerSharpnesses;
-
-    std::vector<int> creaseIndices;
-    creaseIndices.reserve(in.creaseIndices.size());
-    for (int idx : in.creaseIndices)
-    {
-        creaseIndices.push_back(idx);
-    }
-    out.creaseIndices = creaseIndices;
-
-    std::vector<int> creaseLengths;
-    creaseLengths.reserve(in.creaseLengths.size());
-    for (int len : in.creaseLengths)
-    {
-        creaseLengths.push_back(len);
-    }
-    out.creaseLengths = creaseLengths;
-
-    std::vector<float> creaseSharpnesses;
-    creaseSharpnesses.reserve(in.creaseSharpnesses.size());
-    for (float sharpness : in.creaseSharpnesses)
-    {
-        creaseSharpnesses.push_back(sharpness);
-    }
-    out.creaseSharpnesses = creaseSharpnesses;
-
-    std::vector<int> holeIndices;
-    holeIndices.reserve(in.holeIndices.size());
-    for (int idx : in.holeIndices)
-    {
-        holeIndices.push_back(idx);
-    }
-    out.holeIndices = holeIndices;
-
-    out.interpolationRule = BoundaryInterpolationFromString(in.vertexBoundaryInterpolation);
-    out.fvarLinearInterpolation = FVarLinearInterpolationFromString(in.fvarLinearInterpolation);
-    out.attributeStart = 0;
-    out.attributeEnd = 0;
-
-    return out;
-}
-
-static pxr::GfVec3f ComputeMeshCenter(const SelectedSubdivMesh &mesh)
-{
-    if (mesh.points.empty())
+    if (mesh.vertices.size() == 0)
     {
         return pxr::GfVec3f(0.0f, 0.0f, 0.0f);
     }
 
     pxr::GfVec3f sum(0.0f, 0.0f, 0.0f);
-    for (const pxr::GfVec3f &p : mesh.points)
+    for (const ybi::float3 &p : mesh.vertices)
     {
-        sum += p;
+        sum += pxr::GfVec3f(p.x, p.y, p.z);
     }
-    return sum * (1.0f / float(mesh.points.size()));
+    return sum * (1.0f / float(mesh.vertices.size()));
 }
 
 static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
@@ -342,16 +212,23 @@ int main(int argc, char **argv)
 
     if (IsJsonInputPath(cli.inPath))
     {
-        SelectedSubdivMesh selected = {};
+        ybi::SubdivisionMesh mesh = {};
         UsdCameraInfo camera = {};
-        if (!ybi::testio::LoadSelectedSubdivFromJson(cli.inPath, selected, camera))
+        std::string subdivisionScheme = "catmullClark";
+        std::string creasingMethod = "uniform";
+        std::string triangleSubdivision = "catmullClark";
+        if (!ybi::testio::LoadSelectedSubdivFromJson(cli.inPath,
+                                                     mesh,
+                                                     camera,
+                                                     &subdivisionScheme,
+                                                     &creasingMethod,
+                                                     &triangleSubdivision))
         {
             std::fprintf(stderr, "Failed to load JSON: %s\n", cli.inPath.c_str());
             return 1;
         }
 
-        const ybi::SubdivisionMesh mesh = ConvertSelectedSubdivMesh(selected);
-        const pxr::GfVec3f meshCenter = ComputeMeshCenter(selected);
+        const pxr::GfVec3f meshCenter = ComputeMeshCenter(mesh);
 
         ybi::SubdivisionRunOptions options = {};
         options.level = cli.level;
@@ -360,9 +237,9 @@ int main(int argc, char **argv)
         options.sampleSteps = cli.sampleSteps;
         options.eye = camera.found ? camera.worldPosition : (meshCenter + pxr::GfVec3f(0.0f, 0.0f, 5.0f));
         options.lookAt = camera.found ? camera.meshCenter : meshCenter;
-        options.subdivisionScheme = selected.subdivisionScheme;
-        options.creasingMethod = selected.creasingMethod;
-        options.triangleSubdivision = selected.triangleSubdivision;
+        options.subdivisionScheme = subdivisionScheme;
+        options.creasingMethod = creasingMethod;
+        options.triangleSubdivision = triangleSubdivision;
         options.patchQuadObjPath = cli.patchQuadObjPath;
 
         ybi::SubdivisionRunResult result = {};
