@@ -62,6 +62,28 @@ public:
         other.m_capacity = 0;
     }
 
+    Array &operator=(Array &&other) noexcept
+    {
+        if (this == &other)
+        {
+            return *this;
+        }
+
+        if (m_data)
+        {
+            util::AlignedFree(m_data);
+        }
+
+        m_data = other.m_data;
+        m_size = other.m_size;
+        m_capacity = other.m_capacity;
+
+        other.m_data = nullptr;
+        other.m_size = 0;
+        other.m_capacity = 0;
+        return *this;
+    }
+
     template <typename OtherContainer,
               typename = std::enable_if_t<has_data_and_size<OtherContainer>::value>>
     Array(const OtherContainer &other) : m_data(nullptr), m_size(0), m_capacity(0)

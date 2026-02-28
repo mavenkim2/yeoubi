@@ -375,8 +375,12 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         stitchStrip(outer3, inner3, std::max(e1, e3), e3);
     }
 
-    outMesh->positions = positions;
-    outMesh->indices = indices;
+    Array<float3> outPositions(positions);
+    Array<int> outIndices(indices);
+    YBI_ASSERT(outPositions.size() == positions.size());
+    YBI_ASSERT(outIndices.size() == indices.size());
+    outMesh->positions = std::move(outPositions);
+    outMesh->indices = std::move(outIndices);
 
     if (outVertexCount)
     {
