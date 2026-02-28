@@ -189,7 +189,7 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
     const float tanHalfFovY = std::tan(0.5f * fovY);
     const float aspect = float(viewportWidth) / float(viewportHeight);
-    const float nearZ = 1e-3f;
+    const float nearZ = 1.0f;
 
     float maxLi = 0.0f;
     float sumLi = 0.0f;

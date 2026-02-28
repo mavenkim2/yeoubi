@@ -822,6 +822,7 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           interpolation,
                                           fvarLinear,
                                           triangleSubdivision);
+    scene->subdivisionMeshes.back().primPath = prim.GetPath().GetString();
 }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)

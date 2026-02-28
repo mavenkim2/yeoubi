@@ -95,21 +95,16 @@ static ybi::float3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh
     return sum * (1.0f / float(mesh.vertices.size()));
 }
 
-static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
-                                           ybi::float3 *outCameraWorldPos,
-                                           ybi::float3 *outCameraForward,
-                                           std::string *outCameraPath,
-                                           std::vector<std::string> *outSubdivPrimPaths)
+static bool GetUsdCameraInfo(const std::string &usdPath,
+                             ybi::float3 *outCameraWorldPos,
+                             ybi::float3 *outCameraForward,
+                             float *outVerticalFovDegrees,
+                             std::string *outCameraPath)
 {
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(usdPath);
     if (!stage)
     {
         return false;
-    }
-
-    if (outSubdivPrimPaths)
-    {
-        outSubdivPrimPaths->clear();
     }
 
     pxr::UsdGeomXformCache xformCache(pxr::UsdTimeCode::Default());
@@ -122,6 +117,7 @@ static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
     {
         if (!foundCamera && prim.IsA<pxr::UsdGeomCamera>())
         {
+            const pxr::UsdGeomCamera camera(prim);
             const pxr::GfMatrix4d localToWorld = xformCache.GetLocalToWorldTransform(prim);
             const pxr::GfVec3d p = localToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
             const pxr::GfVec3d fwd = localToWorld.TransformDir(pxr::GfVec3d(0.0, 0.0, -1.0));
@@ -147,18 +143,13 @@ static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
             {
                 *outCameraPath = prim.GetPath().GetString();
             }
-            foundCamera = true;
-        }
-
-        if (outSubdivPrimPaths && prim.IsA<pxr::UsdGeomMesh>())
-        {
-            pxr::UsdGeomMesh mesh(prim);
-            pxr::TfToken scheme;
-            if (mesh.GetSubdivisionSchemeAttr().Get(&scheme) &&
-                scheme == pxr::UsdGeomTokens->catmullClark)
+            if (outVerticalFovDegrees)
             {
-                outSubdivPrimPaths->push_back(prim.GetPath().GetString());
+                const pxr::GfCamera gfCamera = camera.GetCamera(pxr::UsdTimeCode::Default());
+                const float fovY = float(gfCamera.GetFieldOfView(pxr::GfCamera::FOVVertical));
+                *outVerticalFovDegrees = (std::isfinite(fovY) && fovY > 0.0f) ? fovY : 45.0f;
             }
+            foundCamera = true;
         }
     }
 
@@ -288,14 +279,16 @@ static bool RunUsdTessellationInput(const std::string &inPath,
 
     ybi::float3 cameraWorldPos = ybi::make_float3(0.0f);
     ybi::float3 cameraForward = ybi::make_float3(0.0f, 0.0f, -1.0f);
+    float cameraVerticalFovDegrees = 45.0f;
     std::string cameraPath;
-    std::vector<std::string> subdivPrimPaths;
-    const bool hasCamera = GetUsdCameraAndSubdivPrimPaths(
-        inPath, &cameraWorldPos, &cameraForward, &cameraPath, &subdivPrimPaths);
+    const bool hasCamera = GetUsdCameraInfo(
+        inPath, &cameraWorldPos, &cameraForward, &cameraVerticalFovDegrees, &cameraPath);
     YBI_ASSERT(hasCamera);
     YBI_ASSERT(IsFiniteFloat3(cameraWorldPos));
     YBI_ASSERT(IsFiniteFloat3(cameraForward));
     YBI_ASSERT(ybi::length(cameraForward) > 1e-8f);
+    YBI_ASSERT(std::isfinite(cameraVerticalFovDegrees));
+    YBI_ASSERT(cameraVerticalFovDegrees > 0.0f);
     if (!hasCamera)
     {
         std::fprintf(stderr, "USD camera missing: %s\n", inPath.c_str());
@@ -314,13 +307,9 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         std::fprintf(stderr, "Root scene missing in USD: %s\n", inPath.c_str());
         return false;
     }
-    size_t primPathCursor = 0;
     for (const ybi::SubdivisionMesh &mesh : rootScene->subdivisionMeshes)
     {
-        const std::string primPath =
-            primPathCursor < subdivPrimPaths.size() ? subdivPrimPaths[primPathCursor] : "";
-        meshRefs.push_back({&mesh, primPath});
-        primPathCursor++;
+        meshRefs.push_back({&mesh, mesh.primPath});
     }
 
     if (meshRefs.empty())
@@ -409,6 +398,7 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.sampleSteps = config.sampleSteps;
         options.eye = cameraWorldPos;
         options.lookAt = cameraWorldPos + cameraForward;
+        options.verticalFovDegrees = cameraVerticalFovDegrees;
         options.subdivisionScheme = "catmullClark";
         options.generateTriangleMetadata = config.writeMetadata;
         options.patchQuadObjPath = patchQuadPath;
@@ -496,11 +486,12 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         }
         std::printf("  manifest=%s\n", manifestPath.string().c_str());
     }
-    std::printf("  camera=%s eye=(%.6f %.6f %.6f)\n",
+    std::printf("  camera=%s eye=(%.6f %.6f %.6f) fovY=%.6f\n",
                 cameraPath.c_str(),
                 double(cameraWorldPos.x),
                 double(cameraWorldPos.y),
-                double(cameraWorldPos.z));
+                double(cameraWorldPos.z),
+                double(cameraVerticalFovDegrees));
     std::printf("  meshes=%zu totalVerts=%zu totalTris=%zu writeMetadata=%s\n",
                 outputs.size(),
                 totalVerts,

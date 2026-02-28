@@ -3,6 +3,8 @@
 #include "util/array.h"
 #include "util/float3.h"
 
+#include <string>
+
 YBI_NAMESPACE_BEGIN
 
 enum BoundaryInterpolation
@@ -36,6 +38,8 @@ enum TriangleSubdivisionRule
 
 struct SubdivisionMesh
 {
+    std::string primPath;
+
     Array<float3> vertices;
     Array<int> indices;
     Array<int> vertsPerFace;
