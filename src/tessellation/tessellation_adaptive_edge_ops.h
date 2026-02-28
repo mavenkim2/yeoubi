@@ -85,6 +85,17 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                  float verticalFovDegrees,
                                  int *computedCountOut)
 {
+    auto nonUniformReasonLabel = [](DiagSplitNonUniformReason reason) {
+        switch (reason)
+        {
+            case DIAGSPLIT_NON_UNIFORM_EVAL_FAIL:
+                return "eval-fail";
+            case DIAGSPLIT_NON_UNIFORM_VARIANCE_THRESHOLD:
+                return "variance-threshold";
+            default:
+                return "unknown";
+        }
+    };
     const int next = (edgeIndex + 1) & 3;
     SubdivisionEdge &edge = GetOrCreateEdge(edgeMap,
                                             patch.verts[edgeIndex],
@@ -94,6 +105,7 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                             patch.uv[next]);
     if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_UNINITIALIZED)
     {
+        DiagSplitNonUniformReason nonUniformReason = DIAGSPLIT_NON_UNIFORM_NONE;
         edge.tmaxEdgeFactor = ComputeDiagSplitPatchEdgeFactor(patchMap,
                                                               patchTable,
                                                               limitValues,
@@ -107,7 +119,26 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                                               lookAt,
                                                               viewportWidth,
                                                               viewportHeight,
-                                                              verticalFovDegrees);
+                                                              verticalFovDegrees,
+                                                              &nonUniformReason);
+        if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_NON_UNIFORM)
+        {
+            if (nonUniformReason != DIAGSPLIT_NON_UNIFORM_VARIANCE_THRESHOLD)
+            {
+                std::fprintf(stderr,
+                             "DiagSplit non-uniform edge: reason=%s ptex=%d edge=%d v=(%d,%d)"
+                             " uv0=(%.9g,%.9g) uv1=(%.9g,%.9g)\n",
+                             nonUniformReasonLabel(nonUniformReason),
+                             patch.ptexFaceId,
+                             edgeIndex,
+                             patch.verts[edgeIndex],
+                             patch.verts[next],
+                             double(patch.uv[edgeIndex][0]),
+                             double(patch.uv[edgeIndex][1]),
+                             double(patch.uv[next][0]),
+                             double(patch.uv[next][1]));
+            }
+        }
         if (edge.tmaxEdgeFactor != SUBDIV_EDGE_FACTOR_NON_UNIFORM && edge.tmaxEdgeFactor < 1)
         {
             edge.tmaxEdgeFactor = 1;
@@ -147,7 +178,8 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
     return edge.tmaxEdgeFactor;
 }
 
-static std::vector<SubdivisionPatch> DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
+static std::vector<SubdivisionPatch>
+DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                  SubdivisionEdgeMap &edgeMap,
                  int &nextGeneratedVertexId,
                  const Far::PatchMap &patchMap,
@@ -280,6 +312,7 @@ static std::vector<SubdivisionPatch> DiagSplitPatches(const std::vector<Subdivis
         }
 
         const int splitPair[2] = {splitEdge, oppositeEdge};
+        YBI_ASSERT(edgeFactor[splitEdge] == SUBDIV_EDGE_FACTOR_NON_UNIFORM);
         int splitVerts[2] = {-1, -1};
         pxr::GfVec2f splitUV[2];
         for (int i = 0; i < 2; ++i)
@@ -294,6 +327,11 @@ static std::vector<SubdivisionPatch> DiagSplitPatches(const std::vector<Subdivis
             int t = edgeFactor[e];
             float alpha = 0.5f;
 
+            if (edge.edgeVertexIndexStart > 1e9)
+            {
+                printf(
+                    "danger: %i %i %i %i %i\n", mid, edge.edgeVertexIndexStart, t, splitU, splitV);
+            }
             if (t != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
             {
                 YBI_ASSERT(t > 1);
@@ -302,45 +340,54 @@ static std::vector<SubdivisionPatch> DiagSplitPatches(const std::vector<Subdivis
 
                 alpha = float(splitPosPatch) / float(t);
                 splitUV[i] = patch.uv[e] * (1.0f - alpha) + patch.uv[n] * alpha;
-                YBI_ASSERT(mid >= 0);
+                YBI_ERROR(mid >= 0, "%i %i\n", mid, edge.edgeVertexIndexStart);
                 YBI_ASSERT(edge.edgeVertexIndexStart != -1);
 
                 if (!edge.split)
                 {
                     edge.split = true;
+                    const int parentV0 = edge.v0;
+                    const int parentV1 = edge.v1;
+                    const int parentEdgeVertexIndexStart = edge.edgeVertexIndexStart;
+                    const bool parentBoundary = edge.boundary;
+                    YBI_ASSERT(parentEdgeVertexIndexStart >= 0);
 
                     // NOTE: these are technically wrong when child edge factor is 1, but the
                     // lookup won't use edgeVertexIndexStart in that case.
                     SubdivisionEdge &edgeA =
                         GetOrCreateEdge(edgeMap,
-                                        edge.v0,
+                                        parentV0,
                                         mid,
                                         patch.ptexFaceId,
-                                        edge.v0 == v0 ? patch.uv[e] : patch.uv[n],
+                                        parentV0 == v0 ? patch.uv[e] : patch.uv[n],
                                         splitUV[i]);
                     SubdivisionEdge &edgeB =
                         GetOrCreateEdge(edgeMap,
                                         mid,
-                                        edge.v1,
+                                        parentV1,
                                         patch.ptexFaceId,
                                         splitUV[i],
-                                        edge.v0 == v0 ? patch.uv[n] : patch.uv[e]);
+                                        parentV0 == v0 ? patch.uv[n] : patch.uv[e]);
                     edgeA.tmaxEdgeFactor = splitPosStored;
-                    edgeA.edgeVertexIndexStart = edge.edgeVertexIndexStart;
+                    edgeA.edgeVertexIndexStart = parentEdgeVertexIndexStart;
                     edgeA.midpointVertex =
                         edgeA.tmaxEdgeFactor > 1
                             ? edgeA.edgeVertexIndexStart + (edgeA.tmaxEdgeFactor / 2) - 1
                             : -1;
 
+                    YBI_ASSERT(edgeA.v0 != edgeA.v1);
+
                     edgeB.tmaxEdgeFactor = t - splitPosStored;
-                    edgeB.edgeVertexIndexStart = edge.edgeVertexIndexStart + splitPosStored;
+                    edgeB.edgeVertexIndexStart = parentEdgeVertexIndexStart + splitPosStored;
                     edgeB.midpointVertex =
                         edgeB.tmaxEdgeFactor > 1
                             ? edgeB.edgeVertexIndexStart + (edgeB.tmaxEdgeFactor / 2) - 1
                             : -1;
 
-                    edgeA.boundary = edge.boundary;
-                    edgeB.boundary = edge.boundary;
+                    YBI_ASSERT(edgeB.v0 != edgeB.v1);
+
+                    edgeA.boundary = parentBoundary;
+                    edgeB.boundary = parentBoundary;
                 }
             }
             else

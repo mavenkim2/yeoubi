@@ -13,8 +13,8 @@
 #include <pxr/usd/usdGeom/xformCache.h>
 
 #include <cctype>
-#include <cstdio>
 #include <cstddef>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -91,6 +91,7 @@ static ybi::float3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh
 
 static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
                                            ybi::float3 *outCameraWorldPos,
+                                           ybi::float3 *outCameraForward,
                                            std::string *outCameraPath,
                                            std::vector<std::string> *outSubdivPrimPaths)
 {
@@ -117,9 +118,24 @@ static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
         {
             const pxr::GfMatrix4d localToWorld = xformCache.GetLocalToWorldTransform(prim);
             const pxr::GfVec3d p = localToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
+            const pxr::GfVec3d fwd = localToWorld.TransformDir(pxr::GfVec3d(0.0, 0.0, -1.0));
             if (outCameraWorldPos)
             {
                 *outCameraWorldPos = ybi::make_float3(float(p[0]), float(p[1]), float(p[2]));
+            }
+            if (outCameraForward)
+            {
+                ybi::float3 forward = ybi::make_float3(float(fwd[0]), float(fwd[1]), float(fwd[2]));
+                const float len = ybi::length(forward);
+                if (len > 1e-8f)
+                {
+                    forward = forward * (1.0f / len);
+                }
+                else
+                {
+                    forward = ybi::make_float3(0.0f, 0.0f, -1.0f);
+                }
+                *outCameraForward = forward;
             }
             if (outCameraPath)
             {
@@ -132,7 +148,8 @@ static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
         {
             pxr::UsdGeomMesh mesh(prim);
             pxr::TfToken scheme;
-            if (mesh.GetSubdivisionSchemeAttr().Get(&scheme) && scheme == pxr::UsdGeomTokens->catmullClark)
+            if (mesh.GetSubdivisionSchemeAttr().Get(&scheme) &&
+                scheme == pxr::UsdGeomTokens->catmullClark)
             {
                 outSubdivPrimPaths->push_back(prim.GetPath().GetString());
             }
@@ -189,7 +206,8 @@ static bool WriteTessellationManifest(const std::filesystem::path &manifestPath,
     {
         const TessellationOutputEntry &e = entries[i];
         std::fprintf(f,
-                     "    {\"meshIndex\": %zu, \"primPath\": \"%s\", \"obj\": \"%s\", \"verts\": %zu, \"tris\": %zu}%s\n",
+                     "    {\"meshIndex\": %zu, \"primPath\": \"%s\", \"obj\": \"%s\", \"verts\": "
+                     "%zu, \"tris\": %zu}%s\n",
                      e.index,
                      JsonEscape(e.primPath).c_str(),
                      JsonEscape(e.outObjPath).c_str(),
@@ -200,6 +218,47 @@ static bool WriteTessellationManifest(const std::filesystem::path &manifestPath,
     std::fprintf(f, "  ]\n}\n");
     std::fclose(f);
     return true;
+}
+
+static bool WriteSubdivisionControlCageObj(const ybi::SubdivisionMesh &mesh,
+                                           const std::string &path,
+                                           const std::string &primPath)
+{
+    FILE *f = std::fopen(path.c_str(), "w");
+    if (!f)
+    {
+        return false;
+    }
+
+    std::fprintf(f, "# control_cage_prim %s\n", primPath.empty() ? "<unknown>" : primPath.c_str());
+    std::fprintf(f, "# vertices %zu\n", mesh.vertices.size());
+    std::fprintf(f, "# faces %zu\n", mesh.vertsPerFace.size());
+    for (const ybi::float3 &p : mesh.vertices)
+    {
+        std::fprintf(f, "v %.9g %.9g %.9g\n", double(p.x), double(p.y), double(p.z));
+    }
+
+    size_t indexCursor = 0;
+    for (size_t face = 0; face < mesh.vertsPerFace.size(); ++face)
+    {
+        const int n = mesh.vertsPerFace[face];
+        if (n < 3 || indexCursor + size_t(n) > mesh.indices.size())
+        {
+            indexCursor += std::max(0, n);
+            continue;
+        }
+        std::fprintf(f, "f");
+        for (int i = 0; i < n; ++i)
+        {
+            const int idx = mesh.indices[indexCursor + size_t(i)];
+            std::fprintf(f, " %d", idx + 1);
+        }
+        std::fprintf(f, "\n");
+        indexCursor += size_t(n);
+    }
+
+    const int rc = std::fclose(f);
+    return rc == 0;
 }
 
 static bool RunUsdTessellationInput(const std::string &inPath,
@@ -222,10 +281,11 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     }
 
     ybi::float3 cameraWorldPos = ybi::make_float3(0.0f);
+    ybi::float3 cameraForward = ybi::make_float3(0.0f, 0.0f, -1.0f);
     std::string cameraPath;
     std::vector<std::string> subdivPrimPaths;
-    const bool hasCamera =
-        GetUsdCameraAndSubdivPrimPaths(inPath, &cameraWorldPos, &cameraPath, &subdivPrimPaths);
+    const bool hasCamera = GetUsdCameraAndSubdivPrimPaths(
+        inPath, &cameraWorldPos, &cameraForward, &cameraPath, &subdivPrimPaths);
     YBI_ASSERT(hasCamera);
     if (!hasCamera)
     {
@@ -256,7 +316,8 @@ static bool RunUsdTessellationInput(const std::string &inPath,
 
     if (meshRefs.empty())
     {
-        std::fprintf(stderr, "No subdivision meshes found in root scene of USD: %s\n", inPath.c_str());
+        std::fprintf(
+            stderr, "No subdivision meshes found in root scene of USD: %s\n", inPath.c_str());
         return false;
     }
 
@@ -274,7 +335,9 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     {
         if (std::filesystem::exists(outPath) && !std::filesystem::is_directory(outPath))
         {
-            std::fprintf(stderr, "Output must be a directory for multiple meshes: %s\n", outPathString.c_str());
+            std::fprintf(stderr,
+                         "Output must be a directory for multiple meshes: %s\n",
+                         outPathString.c_str());
             return false;
         }
         std::filesystem::create_directories(outPath);
@@ -321,7 +384,8 @@ static bool RunUsdTessellationInput(const std::string &inPath,
             if (!config.patchQuadObjPath.empty())
             {
                 patchQuadPath =
-                    (patchQuadDir / (std::string(prefix) + "_" + safePrim + "_patch_quads.obj")).string();
+                    (patchQuadDir / (std::string(prefix) + "_" + safePrim + "_patch_quads.obj"))
+                        .string();
             }
         }
         else if (!config.patchQuadObjPath.empty())
@@ -335,10 +399,26 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.splitThreshold = config.splitThreshold;
         options.sampleSteps = config.sampleSteps;
         options.eye = cameraWorldPos;
-        options.lookAt = ComputeSubdivisionMeshCenter(*ref.mesh);
+        options.lookAt = cameraWorldPos + cameraForward;
         options.subdivisionScheme = "catmullClark";
         options.generateTriangleMetadata = config.writeMetadata;
         options.patchQuadObjPath = patchQuadPath;
+
+        std::printf("  begin mesh[%zu] prim=%s\n",
+                    i,
+                    ref.primPath.empty() ? "<unknown>" : ref.primPath.c_str());
+
+        if (i == 143)
+        {
+            const char *controlCagePath = "/tmp/mesh143_control_cage.obj";
+            if (!WriteSubdivisionControlCageObj(*ref.mesh, controlCagePath, ref.primPath))
+            {
+                std::fprintf(
+                    stderr, "Failed to write mesh[143] control cage OBJ: %s\n", controlCagePath);
+                return false;
+            }
+            std::printf("  mesh[143] control_cage=%s\n", controlCagePath);
+        }
 
         ybi::SubdivisionRunResult result = {};
         if (!ybi::SubdivideAdaptive(*ref.mesh, options, &result))
@@ -379,21 +459,22 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         totalInnerGridTris += size_t(result.innerGridTriangleCount);
         totalStitchingTris += size_t(result.stitchingTriangleCount);
 
-        std::printf("  mesh[%zu] prim=%s out=%s verts=%zu tris=%zu vtx=%zu (%.3f MiB) idx=%zu (%.3f MiB)"
-                    " innerGridIdx=%zu (%.3f MiB) stitchingIdx=%zu (%.3f MiB)\n",
-                    i,
-                    outputs.back().primPath.c_str(),
-                    objPath.c_str(),
-                    outputs.back().verts,
-                    outputs.back().tris,
-                    vertexBytes,
-                    BytesToMiB(vertexBytes),
-                    indexBytes,
-                    BytesToMiB(indexBytes),
-                    innerGridIndexBytes,
-                    BytesToMiB(innerGridIndexBytes),
-                    stitchingIndexBytes,
-                    BytesToMiB(stitchingIndexBytes));
+        std::printf(
+            "  mesh[%zu] prim=%s out=%s verts=%zu tris=%zu vtx=%zu (%.3f MiB) idx=%zu (%.3f MiB)"
+            " innerGridIdx=%zu (%.3f MiB) stitchingIdx=%zu (%.3f MiB)\n",
+            i,
+            outputs.back().primPath.c_str(),
+            objPath.c_str(),
+            outputs.back().verts,
+            outputs.back().tris,
+            vertexBytes,
+            BytesToMiB(vertexBytes),
+            indexBytes,
+            BytesToMiB(indexBytes),
+            innerGridIndexBytes,
+            BytesToMiB(innerGridIndexBytes),
+            stitchingIndexBytes,
+            BytesToMiB(stitchingIndexBytes));
     }
 
     if (!singleOutput)
@@ -416,7 +497,8 @@ static bool RunUsdTessellationInput(const std::string &inPath,
                 totalVerts,
                 totalTris,
                 config.writeMetadata ? "true" : "false");
-    std::printf("  meshMemory vertexBytes=%zu (%.3f MiB) indexBytes=%zu (%.3f MiB) totalBytes=%zu (%.3f MiB)\n",
+    std::printf("  meshMemory vertexBytes=%zu (%.3f MiB) indexBytes=%zu (%.3f MiB) totalBytes=%zu "
+                "(%.3f MiB)\n",
                 totalVertexBytes,
                 BytesToMiB(totalVertexBytes),
                 totalIndexBytes,

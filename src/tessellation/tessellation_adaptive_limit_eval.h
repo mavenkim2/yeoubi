@@ -91,6 +91,13 @@ static pxr::GfVec2f ProjectToScreen(const float3 &p,
     return pxr::GfVec2f(sx, sy);
 }
 
+enum DiagSplitNonUniformReason
+{
+    DIAGSPLIT_NON_UNIFORM_NONE = 0,
+    DIAGSPLIT_NON_UNIFORM_EVAL_FAIL = 1,
+    DIAGSPLIT_NON_UNIFORM_VARIANCE_THRESHOLD = 2,
+};
+
 static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
                                            const Far::PatchTable &patchTable,
                                            const std::vector<LimitEvalVertex> &limitValues,
@@ -104,8 +111,13 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
                                            const float3 &lookAt,
                                            int viewportWidth,
                                            int viewportHeight,
-                                           float verticalFovDegrees)
+                                           float verticalFovDegrees,
+                                           DiagSplitNonUniformReason *nonUniformReasonOut)
 {
+    if (nonUniformReasonOut)
+    {
+        *nonUniformReasonOut = DIAGSPLIT_NON_UNIFORM_NONE;
+    }
     if (sampleStepsN < 2 || targetPixelSpacing <= 0.0f)
     {
         return 1;
@@ -116,6 +128,10 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     float3 p0 = make_float3(0.0f);
     if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
     {
+        if (nonUniformReasonOut)
+        {
+            *nonUniformReasonOut = DIAGSPLIT_NON_UNIFORM_EVAL_FAIL;
+        }
         return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
     }
     pxr::GfVec2f prev =
@@ -127,6 +143,10 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
         float3 p = make_float3(0.0f);
         if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
         {
+            if (nonUniformReasonOut)
+            {
+                *nonUniformReasonOut = DIAGSPLIT_NON_UNIFORM_EVAL_FAIL;
+            }
             return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
         }
         const pxr::GfVec2f s =
@@ -141,8 +161,12 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     const int tMin = std::max(1, int(std::ceil(sumLi / targetPixelSpacing)));
     const int tMax =
         std::max(1, int(std::ceil(float(sampleStepsN - 1) * maxLi / targetPixelSpacing)));
-    if ((tMax - tMin) >= splitThreshold)
+    if ((tMax - tMin) > splitThreshold)
     {
+        if (nonUniformReasonOut)
+        {
+            *nonUniformReasonOut = DIAGSPLIT_NON_UNIFORM_VARIANCE_THRESHOLD;
+        }
         return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
     }
     return tMax;
