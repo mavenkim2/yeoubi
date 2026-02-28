@@ -50,6 +50,8 @@ struct SubdivisionRunResult
 
     int patchQuadVerts = 0;
     int patchQuadCount = 0;
+    int innerGridTriangleCount = 0;
+    int stitchingTriangleCount = 0;
 
     size_t controlCageUniqueEdges = 0;
     int boundaryEdges = 0;

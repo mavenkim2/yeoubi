@@ -301,6 +301,10 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     size_t totalTris = 0;
     size_t totalVertexBytes = 0;
     size_t totalIndexBytes = 0;
+    size_t totalInnerGridIndexBytes = 0;
+    size_t totalStitchingIndexBytes = 0;
+    size_t totalInnerGridTris = 0;
+    size_t totalStitchingTris = 0;
 
     for (size_t i = 0; i < meshRefs.size(); ++i)
     {
@@ -364,10 +368,19 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         totalTris += result.mesh.indices.size() / 3;
         const size_t vertexBytes = result.mesh.positions.size() * sizeof(result.mesh.positions[0]);
         const size_t indexBytes = result.mesh.indices.size() * sizeof(result.mesh.indices[0]);
+        const size_t innerGridIndexBytes =
+            size_t(result.innerGridTriangleCount) * 3 * sizeof(result.mesh.indices[0]);
+        const size_t stitchingIndexBytes =
+            size_t(result.stitchingTriangleCount) * 3 * sizeof(result.mesh.indices[0]);
         totalVertexBytes += vertexBytes;
         totalIndexBytes += indexBytes;
+        totalInnerGridIndexBytes += innerGridIndexBytes;
+        totalStitchingIndexBytes += stitchingIndexBytes;
+        totalInnerGridTris += size_t(result.innerGridTriangleCount);
+        totalStitchingTris += size_t(result.stitchingTriangleCount);
 
-        std::printf("  mesh[%zu] prim=%s out=%s verts=%zu tris=%zu vtx=%zu (%.3f MiB) idx=%zu (%.3f MiB)\n",
+        std::printf("  mesh[%zu] prim=%s out=%s verts=%zu tris=%zu vtx=%zu (%.3f MiB) idx=%zu (%.3f MiB)"
+                    " innerGridIdx=%zu (%.3f MiB) stitchingIdx=%zu (%.3f MiB)\n",
                     i,
                     outputs.back().primPath.c_str(),
                     objPath.c_str(),
@@ -376,7 +389,11 @@ static bool RunUsdTessellationInput(const std::string &inPath,
                     vertexBytes,
                     BytesToMiB(vertexBytes),
                     indexBytes,
-                    BytesToMiB(indexBytes));
+                    BytesToMiB(indexBytes),
+                    innerGridIndexBytes,
+                    BytesToMiB(innerGridIndexBytes),
+                    stitchingIndexBytes,
+                    BytesToMiB(stitchingIndexBytes));
     }
 
     if (!singleOutput)
@@ -406,5 +423,13 @@ static bool RunUsdTessellationInput(const std::string &inPath,
                 BytesToMiB(totalIndexBytes),
                 totalVertexBytes + totalIndexBytes,
                 BytesToMiB(totalVertexBytes + totalIndexBytes));
+    std::printf("  indexMemorySplit innerGridTris=%zu innerGridIndexBytes=%zu (%.3f MiB)"
+                " stitchingTris=%zu stitchingIndexBytes=%zu (%.3f MiB)\n",
+                totalInnerGridTris,
+                totalInnerGridIndexBytes,
+                BytesToMiB(totalInnerGridIndexBytes),
+                totalStitchingTris,
+                totalStitchingIndexBytes,
+                BytesToMiB(totalStitchingIndexBytes));
     return true;
 }

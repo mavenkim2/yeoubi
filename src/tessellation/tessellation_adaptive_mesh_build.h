@@ -46,7 +46,9 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                                        std::vector<int> *outTriPtexFaceIds,
                                        std::vector<int> *outTriQuadrants,
                                        int *outVertexCount,
-                                       int *outTriangleCount)
+                                       int *outTriangleCount,
+                                       int *outInnerGridTriangleCount,
+                                       int *outStitchingTriangleCount)
 {
     if (!outMesh)
     {
@@ -60,6 +62,14 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     if (outTriangleCount)
     {
         *outTriangleCount = 0;
+    }
+    if (outInnerGridTriangleCount)
+    {
+        *outInnerGridTriangleCount = 0;
+    }
+    if (outStitchingTriangleCount)
+    {
+        *outStitchingTriangleCount = 0;
     }
 
     int maxVertexId = nextGeneratedVertexId;
@@ -160,6 +170,9 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int currentCoarseFaceId = -1;
     int currentPtexFaceId = -1;
     int currentQuadrant = -1;
+    int innerGridTriangleCount = 0;
+    int stitchingTriangleCount = 0;
+    bool emitFromInnerGrid = false;
 
     auto emitTri = [&](int a, int b, int c) {
         YBI_ERROR(a >= 0 && b >= 0 && c >= 0, "%i %i %i\n", a, b, c);
@@ -170,6 +183,14 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         indices.EmplaceBack(a);
         indices.EmplaceBack(b);
         indices.EmplaceBack(c);
+        if (emitFromInnerGrid)
+        {
+            innerGridTriangleCount++;
+        }
+        else
+        {
+            stitchingTriangleCount++;
+        }
         if (outTriPatchFaceIds)
         {
             outTriPatchFaceIds->push_back(currentPatchFaceId);
@@ -328,6 +349,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
 
         if (cols >= 2 && rows >= 2)
         {
+            emitFromInnerGrid = true;
             for (int y = 0; y < rows - 1; ++y)
             {
                 for (int x = 0; x < cols - 1; ++x)
@@ -340,6 +362,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                     emitTri(i00, i11, i01);
                 }
             }
+            emitFromInnerGrid = false;
         }
 
         std::vector<int> inner0;
@@ -385,6 +408,14 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     if (outTriangleCount)
     {
         *outTriangleCount = int(outMesh->indices.size() / 3);
+    }
+    if (outInnerGridTriangleCount)
+    {
+        *outInnerGridTriangleCount = innerGridTriangleCount;
+    }
+    if (outStitchingTriangleCount)
+    {
+        *outStitchingTriangleCount = stitchingTriangleCount;
     }
     return true;
 }

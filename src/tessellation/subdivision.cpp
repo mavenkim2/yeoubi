@@ -209,6 +209,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
 
     int innerGridVerts = 0;
     int innerGridTris = 0;
+    int innerGridOnlyTris = 0;
+    int stitchingOnlyTris = 0;
     if (!BuildLeafPatchStitchedMesh(splitPatches,
                                     edgeMap,
                                     patchMap,
@@ -221,7 +223,9 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                                     &outResult->trianglePtexFaceIds,
                                     &outResult->triangleQuadrants,
                                     &innerGridVerts,
-                                    &innerGridTris))
+                                    &innerGridTris,
+                                    &innerGridOnlyTris,
+                                    &stitchingOnlyTris))
     {
         delete patchTable;
         delete refiner;
@@ -238,6 +242,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     outResult->totalComputedEdges = CountEdgesWithComputedTMax(edgeMap);
     outResult->patchQuadVerts = patchQuadVerts;
     outResult->patchQuadCount = patchQuadCount;
+    outResult->innerGridTriangleCount = innerGridOnlyTris;
+    outResult->stitchingTriangleCount = stitchingOnlyTris;
     outResult->controlCageUniqueEdges = edgeMap.size();
     outResult->boundaryEdges = CountBoundaryEdges(edgeMap);
     outResult->controlCageEdgesWithOver2Faces = edgesWithOver2Faces;

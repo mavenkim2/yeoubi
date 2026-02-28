@@ -295,6 +295,10 @@ int main(int argc, char **argv)
                     result.mesh.indices.size() / 3);
         const size_t vertexBytes = result.mesh.positions.size() * sizeof(result.mesh.positions[0]);
         const size_t indexBytes = result.mesh.indices.size() * sizeof(result.mesh.indices[0]);
+        const size_t innerGridIndexBytes =
+            size_t(result.innerGridTriangleCount) * 3 * sizeof(result.mesh.indices[0]);
+        const size_t stitchingIndexBytes =
+            size_t(result.stitchingTriangleCount) * 3 * sizeof(result.mesh.indices[0]);
         std::printf("  meshMemory vertexBytes=%zu (%.3f MiB) indexBytes=%zu (%.3f MiB) totalBytes=%zu (%.3f MiB)\n",
                     vertexBytes,
                     BytesToMiB(vertexBytes),
@@ -302,6 +306,14 @@ int main(int argc, char **argv)
                     BytesToMiB(indexBytes),
                     vertexBytes + indexBytes,
                     BytesToMiB(vertexBytes + indexBytes));
+        std::printf("  indexMemorySplit innerGridTris=%d innerGridIndexBytes=%zu (%.3f MiB)"
+                    " stitchingTris=%d stitchingIndexBytes=%zu (%.3f MiB)\n",
+                    result.innerGridTriangleCount,
+                    innerGridIndexBytes,
+                    BytesToMiB(innerGridIndexBytes),
+                    result.stitchingTriangleCount,
+                    stitchingIndexBytes,
+                    BytesToMiB(stitchingIndexBytes));
         std::printf("  writeMetadata=%s\n", cli.writeMetadata ? "true" : "false");
         std::printf("  edgeMapChecks=ok\n");
         std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
