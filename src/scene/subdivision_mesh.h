@@ -22,6 +22,18 @@ enum FVarLinearInterpolation
     FVAR_LINEAR_ALL,
 };
 
+enum SubdivisionCreasingMethod
+{
+    SUBDIVISION_CREASING_UNIFORM,
+    SUBDIVISION_CREASING_CHAIKIN,
+};
+
+enum TriangleSubdivisionRule
+{
+    TRIANGLE_SUBDIVISION_CATMULL_CLARK,
+    TRIANGLE_SUBDIVISION_SMOOTH,
+};
+
 struct SubdivisionMesh
 {
     Array<float3> vertices;
@@ -30,6 +42,7 @@ struct SubdivisionMesh
 
     BoundaryInterpolation interpolationRule;
     FVarLinearInterpolation fvarLinearInterpolation;
+    TriangleSubdivisionRule triangleSubdivisionRule = TRIANGLE_SUBDIVISION_CATMULL_CLARK;
 
     Array<int> cornerIndices;
     Array<float> cornerSharpnesses;
@@ -57,10 +70,12 @@ struct SubdivisionMesh
         size_t attributeStart,
         size_t attributeEnd,
         BoundaryInterpolation interpolationRule = BOUNDARY_INTERPOLATION_EDGE_AND_CORNER,
-        FVarLinearInterpolation fvarLinearInterpolation = FVAR_LINEAR_CORNERS_ONLY)
+        FVarLinearInterpolation fvarLinearInterpolation = FVAR_LINEAR_CORNERS_ONLY,
+        TriangleSubdivisionRule triangleSubdivisionRule = TRIANGLE_SUBDIVISION_CATMULL_CLARK)
         : vertices(std::move(vertices)), indices(std::move(indices)),
           vertsPerFace(std::move(vertsPerFace)), interpolationRule(interpolationRule),
-          fvarLinearInterpolation(fvarLinearInterpolation), attributeStart(attributeStart),
+          fvarLinearInterpolation(fvarLinearInterpolation),
+          triangleSubdivisionRule(triangleSubdivisionRule), attributeStart(attributeStart),
           attributeEnd(attributeEnd), cornerIndices(std::move(cornerIndices)),
           cornerSharpnesses(std::move(cornerSharpnesses)), creaseIndices(std::move(creaseIndices)),
           creaseLengths(std::move(creaseLengths)), creaseSharpnesses(std::move(creaseSharpnesses)),

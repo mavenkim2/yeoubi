@@ -200,14 +200,21 @@ ybi::FVarLinearInterpolation FVarLinearInterpolationFromString(const std::string
     }
     return ybi::FVAR_LINEAR_CORNERS_PLUS1;
 }
+
+ybi::TriangleSubdivisionRule TriangleSubdivisionRuleFromString(const std::string &s)
+{
+    if (s == "smooth")
+    {
+        return ybi::TRIANGLE_SUBDIVISION_SMOOTH;
+    }
+    return ybi::TRIANGLE_SUBDIVISION_CATMULL_CLARK;
+}
 } // namespace
 
 bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
                                 ybi::SubdivisionMesh &meshOut,
                                 UsdCameraInfo &usdCameraInfoOut,
-                                std::string *outSubdivisionScheme,
-                                std::string *outCreasingMethod,
-                                std::string *outTriangleSubdivision)
+                                std::string *outSubdivisionScheme)
 {
     std::ifstream input(jsonPath, std::ios::in | std::ios::binary);
     if (!input.is_open())
@@ -233,11 +240,6 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
     {
         fvarLinearInterpolation = "cornersPlus1";
     }
-    std::string creasingMethod = ExtractJsonString(json, "creasing_method");
-    if (creasingMethod.empty())
-    {
-        creasingMethod = "uniform";
-    }
     std::string triangleSubdivision = ExtractJsonString(json, "triangle_subdivision");
     if (triangleSubdivision.empty())
     {
@@ -248,15 +250,6 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
     {
         *outSubdivisionScheme = subdivisionScheme;
     }
-    if (outCreasingMethod)
-    {
-        *outCreasingMethod = creasingMethod;
-    }
-    if (outTriangleSubdivision)
-    {
-        *outTriangleSubdivision = triangleSubdivision;
-    }
-
     const std::vector<float> pointScalars = ParseFloatArray(ExtractJsonArray(json, "points"));
     if (pointScalars.size() % 3 != 0)
     {
@@ -308,6 +301,7 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
     meshOut.holeIndices = holeIndices;
     meshOut.interpolationRule = BoundaryInterpolationFromString(vertexBoundaryInterpolation);
     meshOut.fvarLinearInterpolation = FVarLinearInterpolationFromString(fvarLinearInterpolation);
+    meshOut.triangleSubdivisionRule = TriangleSubdivisionRuleFromString(triangleSubdivision);
     meshOut.attributeStart = 0;
     meshOut.attributeEnd = 0;
 

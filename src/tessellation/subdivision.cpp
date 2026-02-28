@@ -111,8 +111,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
             sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1);
             break;
     }
-    sdcOptions.SetCreasingMethod(CreasingMethodFromString(options.creasingMethod));
-    sdcOptions.SetTriangleSubdivision(TriangleSubFromString(options.triangleSubdivision));
+    sdcOptions.SetCreasingMethod(ToSdcCreasingMethod(options.creasingMethod));
+    sdcOptions.SetTriangleSubdivision(ToSdcTriangleSubdivision(mesh.triangleSubdivisionRule));
 
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
         SchemeFromString(options.subdivisionScheme), sdcOptions);

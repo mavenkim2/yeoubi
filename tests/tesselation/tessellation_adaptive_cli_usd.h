@@ -326,8 +326,6 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.eye = cameraWorldPos;
         options.lookAt = ComputeSubdivisionMeshCenter(*ref.mesh);
         options.subdivisionScheme = "catmullClark";
-        options.creasingMethod = "uniform";
-        options.triangleSubdivision = "catmullClark";
         options.patchQuadObjPath = patchQuadPath;
 
         ybi::SubdivisionRunResult result = {};

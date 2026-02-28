@@ -11,7 +11,5 @@ namespace ybi::testio
 bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
                                 ybi::SubdivisionMesh &meshOut,
                                 UsdCameraInfo &usdCameraInfoOut,
-                                std::string *outSubdivisionScheme = nullptr,
-                                std::string *outCreasingMethod = nullptr,
-                                std::string *outTriangleSubdivision = nullptr);
+                                std::string *outSubdivisionScheme = nullptr);
 } // namespace ybi::testio

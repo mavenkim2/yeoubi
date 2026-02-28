@@ -796,6 +796,12 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
         fvarLinear = FVAR_LINEAR_ALL;
     }
 
+    TriangleSubdivisionRule triangleSubdivision = TRIANGLE_SUBDIVISION_CATMULL_CLARK;
+    if (triangleSubdivisionRule == "smooth")
+    {
+        triangleSubdivision = TRIANGLE_SUBDIVISION_SMOOTH;
+    }
+
     Array<int> cornerIndicesArray(cornerIndices);
     Array<float> cornerSharpnessesArray(cornerSharpnesses);
     Array<int> creaseIndicesArray(creaseIndices);
@@ -814,7 +820,8 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           attributeStart,
                                           attributeEnd,
                                           interpolation,
-                                          fvarLinear);
+                                          fvarLinear,
+                                          triangleSubdivision);
 }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)

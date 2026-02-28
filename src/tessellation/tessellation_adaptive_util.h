@@ -41,18 +41,18 @@ static Sdc::SchemeType SchemeFromString(const std::string &s)
     return Sdc::SCHEME_CATMARK;
 }
 
-static Sdc::Options::CreasingMethod CreasingMethodFromString(const std::string &s)
+static Sdc::Options::CreasingMethod ToSdcCreasingMethod(SubdivisionCreasingMethod method)
 {
-    if (s == "chaikin")
+    if (method == SUBDIVISION_CREASING_CHAIKIN)
     {
         return Sdc::Options::CREASE_CHAIKIN;
     }
     return Sdc::Options::CREASE_UNIFORM;
 }
 
-static Sdc::Options::TriangleSubdivision TriangleSubFromString(const std::string &s)
+static Sdc::Options::TriangleSubdivision ToSdcTriangleSubdivision(TriangleSubdivisionRule rule)
 {
-    if (s == "smooth")
+    if (rule == TRIANGLE_SUBDIVISION_SMOOTH)
     {
         return Sdc::Options::TRI_SUB_SMOOTH;
     }

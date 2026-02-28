@@ -23,8 +23,7 @@ struct SubdivisionRunOptions
     float verticalFovDegrees = 45.0f;
 
     std::string subdivisionScheme = "catmullClark";
-    std::string creasingMethod = "uniform";
-    std::string triangleSubdivision = "catmullClark";
+    SubdivisionCreasingMethod creasingMethod = SUBDIVISION_CREASING_UNIFORM;
 
     std::string patchQuadObjPath;
 };

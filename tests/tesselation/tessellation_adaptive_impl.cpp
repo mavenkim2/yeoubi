@@ -215,14 +215,10 @@ int main(int argc, char **argv)
         ybi::SubdivisionMesh mesh = {};
         UsdCameraInfo camera = {};
         std::string subdivisionScheme = "catmullClark";
-        std::string creasingMethod = "uniform";
-        std::string triangleSubdivision = "catmullClark";
         if (!ybi::testio::LoadSelectedSubdivFromJson(cli.inPath,
                                                      mesh,
                                                      camera,
-                                                     &subdivisionScheme,
-                                                     &creasingMethod,
-                                                     &triangleSubdivision))
+                                                     &subdivisionScheme))
         {
             std::fprintf(stderr, "Failed to load JSON: %s\n", cli.inPath.c_str());
             return 1;
@@ -244,8 +240,6 @@ int main(int argc, char **argv)
             camera.found ? ybi::make_float3(camera.meshCenter[0], camera.meshCenter[1], camera.meshCenter[2])
                          : meshCenter;
         options.subdivisionScheme = subdivisionScheme;
-        options.creasingMethod = creasingMethod;
-        options.triangleSubdivision = triangleSubdivision;
         options.patchQuadObjPath = cli.patchQuadObjPath;
 
         ybi::SubdivisionRunResult result = {};
