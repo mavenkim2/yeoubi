@@ -27,11 +27,11 @@ YBI_NAMESPACE_BEGIN
 
 struct LimitEvalVertex
 {
-    pxr::GfVec3f p = pxr::GfVec3f(0.0f);
+    float3 p = make_float3(0.0f);
 
     void Clear()
     {
-        p = pxr::GfVec3f(0.0f);
+        p = make_float3(0.0f);
     }
 
     void AddWithWeight(const LimitEvalVertex &src, float w)
@@ -162,8 +162,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     const std::vector<LimitEvalVertex> limitValues =
         BuildLimitEvalVertices(*refiner, *patchTable, mesh.vertices);
 
-    const pxr::GfVec3f eye = options.eye;
-    const pxr::GfVec3f lookAt = options.lookAt;
+    const float3 eye = options.eye;
+    const float3 lookAt = options.lookAt;
 
     int tmaxComputedEdges = 0;
     const std::vector<SubdivisionPatch> splitPatches =

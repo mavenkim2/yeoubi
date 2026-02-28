@@ -69,22 +69,22 @@ static bool IsUsdInputPath(const std::string &path)
            (lower.size() >= 5 && lower.substr(lower.size() - 5) == ".usdc");
 }
 
-static pxr::GfVec3f ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh)
+static ybi::float3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh)
 {
     if (mesh.vertices.size() == 0)
     {
-        return pxr::GfVec3f(0.0f, 0.0f, 0.0f);
+        return ybi::make_float3(0.0f);
     }
-    pxr::GfVec3f sum(0.0f, 0.0f, 0.0f);
+    ybi::float3 sum = ybi::make_float3(0.0f);
     for (const ybi::float3 &p : mesh.vertices)
     {
-        sum += pxr::GfVec3f(p.x, p.y, p.z);
+        sum += p;
     }
     return sum * (1.0f / float(mesh.vertices.size()));
 }
 
 static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
-                                           pxr::GfVec3f *outCameraWorldPos,
+                                           ybi::float3 *outCameraWorldPos,
                                            std::string *outCameraPath,
                                            std::vector<std::string> *outSubdivPrimPaths)
 {
@@ -113,7 +113,7 @@ static bool GetUsdCameraAndSubdivPrimPaths(const std::string &usdPath,
             const pxr::GfVec3d p = localToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
             if (outCameraWorldPos)
             {
-                *outCameraWorldPos = pxr::GfVec3f(float(p[0]), float(p[1]), float(p[2]));
+                *outCameraWorldPos = ybi::make_float3(float(p[0]), float(p[1]), float(p[2]));
             }
             if (outCameraPath)
             {
@@ -215,7 +215,7 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         return false;
     }
 
-    pxr::GfVec3f cameraWorldPos(0.0f);
+    ybi::float3 cameraWorldPos = ybi::make_float3(0.0f);
     std::string cameraPath;
     std::vector<std::string> subdivPrimPaths;
     const bool hasCamera =
@@ -377,9 +377,9 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     }
     std::printf("  camera=%s eye=(%.6f %.6f %.6f)\n",
                 cameraPath.c_str(),
-                double(cameraWorldPos[0]),
-                double(cameraWorldPos[1]),
-                double(cameraWorldPos[2]));
+                double(cameraWorldPos.x),
+                double(cameraWorldPos.y),
+                double(cameraWorldPos.z));
     std::printf("  meshes=%zu totalVerts=%zu totalTris=%zu writeMetadata=%s\n",
                 outputs.size(),
                 totalVerts,

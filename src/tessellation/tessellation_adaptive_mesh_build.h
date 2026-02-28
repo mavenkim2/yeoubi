@@ -65,7 +65,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int maxVertexId = nextGeneratedVertexId;
 
     const float inf = std::numeric_limits<float>::infinity();
-    std::vector<pxr::GfVec3f> sharedPos(maxVertexId, pxr::GfVec3f(inf, inf, inf));
+    std::vector<float3> sharedPos(maxVertexId, make_float3(inf, inf, inf));
     std::vector<uint8_t> sharedInit(maxVertexId, uint8_t(0));
     auto isSharedInit = [&](int id) -> bool {
         return (id >= 0) && (id < int(sharedInit.size())) && (sharedInit[id] != 0);
@@ -96,7 +96,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         {
             const float a = float(k) / float(t);
             const pxr::GfVec2f uv = edge.storedUv0 * (1.0f - a) + edge.storedUv1 * a;
-            pxr::GfVec3f p(0.0f);
+            float3 p = make_float3(0.0f);
             if (!EvaluateLimitPosition(
                     patchMap, patchTable, limitValues, edge.storedPtexFaceId, uv, &p))
             {
@@ -151,13 +151,9 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         {
             continue;
         }
-        const pxr::GfVec3f &p = sharedPos[i];
+        const float3 &p = sharedPos[i];
         sharedMeshIndex[i] = int(positions.size());
-        float3 v = {};
-        v.x = p[0];
-        v.y = p[1];
-        v.z = p[2];
-        positions.push_back(v);
+        positions.push_back(p);
     }
 
     int currentPatchFaceId = -1;
@@ -319,18 +315,14 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 const pxr::GfVec2f uvTop = patch.uv[3] * (1.0f - su) + patch.uv[2] * su;
                 const pxr::GfVec2f uv = uvBottom * (1.0f - sv) + uvTop * sv;
 
-                pxr::GfVec3f p(0.0f);
+                float3 p = make_float3(0.0f);
                 if (!EvaluateLimitPosition(
                         patchMap, patchTable, limitValues, patch.ptexFaceId, uv, &p))
                 {
                     return false;
                 }
                 innerAt(iu, iv) = int(positions.size());
-                float3 v = {};
-                v.x = p[0];
-                v.y = p[1];
-                v.z = p[2];
-                positions.push_back(v);
+                positions.push_back(p);
             }
         }
 

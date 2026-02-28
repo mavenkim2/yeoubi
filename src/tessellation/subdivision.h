@@ -2,8 +2,7 @@
 
 #include "scene/scene.h"
 #include "scene/subdivision_mesh.h"
-
-#include <pxr/base/gf/vec3f.h>
+#include "util/float3.h"
 
 #include <string>
 #include <vector>
@@ -17,8 +16,8 @@ struct SubdivisionRunOptions
     int splitThreshold = 1;
     int sampleSteps = 8;
 
-    pxr::GfVec3f eye = pxr::GfVec3f(0.0f, 0.0f, 5.0f);
-    pxr::GfVec3f lookAt = pxr::GfVec3f(0.0f, 0.0f, 0.0f);
+    float3 eye = make_float3(0.0f, 0.0f, 5.0f);
+    float3 lookAt = make_float3(0.0f, 0.0f, 0.0f);
     int viewportWidth = 1920;
     int viewportHeight = 1080;
     float verticalFovDegrees = 45.0f;

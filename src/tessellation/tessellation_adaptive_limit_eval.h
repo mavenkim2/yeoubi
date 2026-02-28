@@ -1,24 +1,3 @@
-static float Dot(const pxr::GfVec3f &a, const pxr::GfVec3f &b)
-{
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-static pxr::GfVec3f Cross(const pxr::GfVec3f &a, const pxr::GfVec3f &b)
-{
-    return pxr::GfVec3f(
-        a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]);
-}
-
-static pxr::GfVec3f Normalize(const pxr::GfVec3f &v)
-{
-    const float lenSq = Dot(v, v);
-    if (lenSq <= 1e-12f)
-    {
-        return pxr::GfVec3f(0.0f, 0.0f, 1.0f);
-    }
-    return v * (1.0f / std::sqrt(lenSq));
-}
-
 static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRefiner &refiner,
                                                            const Far::PatchTable &patchTable,
                                                            const Array<float3> &coarsePoints)
@@ -31,8 +10,7 @@ static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRe
     const int copyCount = std::min(numCoarseVerts, int(coarsePoints.size()));
     for (int i = 0; i < copyCount; ++i)
     {
-        const float3 p = coarsePoints[i];
-        values[i].p = pxr::GfVec3f(p.x, p.y, p.z);
+        values[i].p = coarsePoints[i];
     }
 
     Far::PrimvarRefiner primvarRefiner(refiner);
@@ -56,7 +34,7 @@ static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
                                   const std::vector<LimitEvalVertex> &limitValues,
                                   int ptexFaceId,
                                   const pxr::GfVec2f &uv,
-                                  pxr::GfVec3f *outP)
+                                  float3 *outP)
 {
     if (!outP)
     {
@@ -72,7 +50,7 @@ static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
     patchTable.EvaluateBasis(*handle, uv[0], uv[1], pWeights);
     Far::ConstIndexArray cvs = patchTable.GetPatchVertices(*handle);
 
-    pxr::GfVec3f p(0.0f);
+    float3 p = make_float3(0.0f);
     for (int i = 0; i < cvs.size(); ++i)
     {
         p += limitValues[cvs[i]].p * pWeights[i];
@@ -81,26 +59,26 @@ static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
     return true;
 }
 
-static pxr::GfVec2f ProjectToScreen(const pxr::GfVec3f &p,
-                                    const pxr::GfVec3f &eye,
-                                    const pxr::GfVec3f &lookAt,
+static pxr::GfVec2f ProjectToScreen(const float3 &p,
+                                    const float3 &eye,
+                                    const float3 &lookAt,
                                     int viewportWidth,
                                     int viewportHeight,
                                     float verticalFovDegrees)
 {
-    const pxr::GfVec3f forward = Normalize(lookAt - eye);
-    pxr::GfVec3f worldUp(0.0f, 0.0f, 1.0f);
-    if (std::abs(Dot(forward, worldUp)) > 0.999f)
+    const float3 forward = normalize(lookAt - eye);
+    float3 worldUp = make_float3(0.0f, 0.0f, 1.0f);
+    if (std::abs(dot(forward, worldUp)) > 0.999f)
     {
-        worldUp = pxr::GfVec3f(0.0f, 1.0f, 0.0f);
+        worldUp = make_float3(0.0f, 1.0f, 0.0f);
     }
-    const pxr::GfVec3f right = Normalize(Cross(forward, worldUp));
-    const pxr::GfVec3f up = Normalize(Cross(right, forward));
+    const float3 right = normalize(cross(forward, worldUp));
+    const float3 up = normalize(cross(right, forward));
 
-    const pxr::GfVec3f v = p - eye;
-    const float x = Dot(v, right);
-    const float y = Dot(v, up);
-    const float z = std::max(1e-6f, Dot(v, forward));
+    const float3 v = p - eye;
+    const float x = dot(v, right);
+    const float y = dot(v, up);
+    const float z = std::max(1e-6f, dot(v, forward));
 
     const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
     const float tanHalfFovY = std::tan(0.5f * fovY);
@@ -122,8 +100,8 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
                                            int sampleStepsN,
                                            float targetPixelSpacing,
                                            int splitThreshold,
-                                           const pxr::GfVec3f &eye,
-                                           const pxr::GfVec3f &lookAt,
+                                           const float3 &eye,
+                                           const float3 &lookAt,
                                            int viewportWidth,
                                            int viewportHeight,
                                            float verticalFovDegrees)
@@ -135,7 +113,7 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
 
     float maxLi = 0.0f;
     float sumLi = 0.0f;
-    pxr::GfVec3f p0(0.0f);
+    float3 p0 = make_float3(0.0f);
     if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
     {
         return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
@@ -146,7 +124,7 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     {
         const float t = float(i) / float(sampleStepsN - 1);
         const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
-        pxr::GfVec3f p(0.0f);
+        float3 p = make_float3(0.0f);
         if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
         {
             return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
@@ -184,7 +162,7 @@ static float ComputeLength(const Far::PatchMap &patchMap,
     }
 
     float sumLi = 0.0f;
-    pxr::GfVec3f p0(0.0f);
+    float3 p0 = make_float3(0.0f);
     if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
     {
         return 0.f;
@@ -193,12 +171,12 @@ static float ComputeLength(const Far::PatchMap &patchMap,
     {
         const float t = float(i) / float(sampleStepsN - 1);
         const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
-        pxr::GfVec3f p(0.0f);
+        float3 p = make_float3(0.0f);
         if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
         {
             return 0.f;
         }
-        sumLi += (p - p0).GetLength();
+        sumLi += length(p - p0);
         p0 = p;
     }
 
