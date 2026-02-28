@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bvh/usd_subdiv_select.h"
+#include "scene/subdivision_mesh.h"
 #include "tessellation/subdivision_patch_types.h"
 
 #include <vector>
@@ -15,6 +15,6 @@ struct EdgeMapChecks
     bool ok = true;
 };
 
-EdgeMapChecks RunEdgeMapChecks(const SelectedSubdivMesh &m,
+EdgeMapChecks RunEdgeMapChecks(const ybi::SubdivisionMesh &m,
                                const std::vector<SubdivisionPatch> &patches,
                                const SubdivisionEdgeMap &edgeMap);

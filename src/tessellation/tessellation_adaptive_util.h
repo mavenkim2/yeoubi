@@ -4,14 +4,14 @@ struct CreasePairs
     std::vector<float> weights;
 };
 
-static CreasePairs BuildCreasePairs(const SelectedSubdivMesh &m)
+static CreasePairs BuildCreasePairs(const SubdivisionMesh &m)
 {
     CreasePairs out = {};
     size_t c = 0;
     for (size_t i = 0; i < m.creaseLengths.size(); i++)
     {
         const int len = m.creaseLengths[i];
-        if (len < 2 || c + len > m.creaseIndices.size())
+        if (len < 2 || c + size_t(len) > m.creaseIndices.size())
         {
             c += std::max(0, len);
             continue;
@@ -39,48 +39,6 @@ static Sdc::SchemeType SchemeFromString(const std::string &s)
         return Sdc::SCHEME_BILINEAR;
     }
     return Sdc::SCHEME_CATMARK;
-}
-
-static Sdc::Options::VtxBoundaryInterpolation VtxBoundaryFromString(const std::string &s)
-{
-    if (s == "none")
-    {
-        return Sdc::Options::VTX_BOUNDARY_NONE;
-    }
-    if (s == "edgeOnly")
-    {
-        return Sdc::Options::VTX_BOUNDARY_EDGE_ONLY;
-    }
-    return Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER;
-}
-
-static Sdc::Options::FVarLinearInterpolation FVarLinearFromString(const std::string &s)
-{
-    if (s == "none")
-    {
-        return Sdc::Options::FVAR_LINEAR_NONE;
-    }
-    if (s == "cornersOnly")
-    {
-        return Sdc::Options::FVAR_LINEAR_CORNERS_ONLY;
-    }
-    if (s == "cornersPlus1")
-    {
-        return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
-    }
-    if (s == "cornersPlus2")
-    {
-        return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS2;
-    }
-    if (s == "boundaries")
-    {
-        return Sdc::Options::FVAR_LINEAR_BOUNDARIES;
-    }
-    if (s == "all" || s == "bilinear")
-    {
-        return Sdc::Options::FVAR_LINEAR_ALL;
-    }
-    return Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1;
 }
 
 static Sdc::Options::CreasingMethod CreasingMethodFromString(const std::string &s)

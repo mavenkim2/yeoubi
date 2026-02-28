@@ -25,22 +25,22 @@ static void FinalizeEdgeFlags(SubdivisionEdgeMap &edgeMap)
     }
 }
 
-static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdivMesh &m,
+static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMesh &m,
                                                              const Far::TopologyRefiner &refiner,
                                                              SubdivisionEdgeMap &edgeMap,
                                                              int &nextVertexId)
 {
     std::vector<SubdivisionPatch> patches;
-    patches.reserve(m.faceVertexCounts.size());
+    patches.reserve(m.vertsPerFace.size());
 
     Far::PtexIndices ptexIndices(refiner);
-    std::vector<int> faceCenterVertex(m.faceVertexCounts.size(), -1);
+    std::vector<int> faceCenterVertex(m.vertsPerFace.size(), -1);
 
     size_t cursor = 0;
-    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    for (size_t f = 0; f < m.vertsPerFace.size(); ++f)
     {
-        const int n = m.faceVertexCounts[f];
-        if (n < 3 || cursor + n > m.faceVertexIndices.size())
+        const int n = m.vertsPerFace[f];
+        if (n < 3 || cursor + size_t(n) > m.indices.size())
         {
             cursor += std::max(0, n);
             continue;
@@ -50,10 +50,10 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdi
         if (n == 4)
         {
             SubdivisionPatch patch = {};
-            patch.verts[0] = m.faceVertexIndices[cursor + 0];
-            patch.verts[1] = m.faceVertexIndices[cursor + 1];
-            patch.verts[2] = m.faceVertexIndices[cursor + 2];
-            patch.verts[3] = m.faceVertexIndices[cursor + 3];
+            patch.verts[0] = m.indices[cursor + 0];
+            patch.verts[1] = m.indices[cursor + 1];
+            patch.verts[2] = m.indices[cursor + 2];
+            patch.verts[3] = m.indices[cursor + 3];
             patch.uv[0] = pxr::GfVec2f(0.0f, 0.0f);
             patch.uv[1] = pxr::GfVec2f(1.0f, 0.0f);
             patch.uv[2] = pxr::GfVec2f(1.0f, 1.0f);
@@ -73,9 +73,9 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SelectedSubdi
 
             for (int i = 0; i < n; ++i)
             {
-                const int v = m.faceVertexIndices[cursor + i];
-                const int vNext = m.faceVertexIndices[cursor + ((i + 1) % n)];
-                const int vPrev = m.faceVertexIndices[cursor + ((i + n - 1) % n)];
+                const int v = m.indices[cursor + i];
+                const int vNext = m.indices[cursor + ((i + 1) % n)];
+                const int vPrev = m.indices[cursor + ((i + n - 1) % n)];
                 const int midNext = GetOrAllocateMidpointVertex(edgeMap,
                                                                 v,
                                                                 vNext,

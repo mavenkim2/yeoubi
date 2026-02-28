@@ -67,8 +67,7 @@ static int GetEdgeFactor(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
     return it->second.tmaxEdgeFactor;
 }
 
-static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
-                                 const SubdivisionPatch &patch,
+static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                  int edgeIndex,
                                  SubdivisionEdgeMap &edgeMap,
                                  int &nextGeneratedVertexId,
@@ -148,9 +147,7 @@ static int EnsurePatchEdgeFactor(const SelectedSubdivMesh &m,
     return edge.tmaxEdgeFactor;
 }
 
-static std::vector<SubdivisionPatch>
-DiagSplitPatches(const SelectedSubdivMesh &m,
-                 const std::vector<SubdivisionPatch> &patches,
+static std::vector<SubdivisionPatch> DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                  SubdivisionEdgeMap &edgeMap,
                  int &nextGeneratedVertexId,
                  const Far::PatchMap &patchMap,
@@ -182,8 +179,7 @@ DiagSplitPatches(const SelectedSubdivMesh &m,
         int splitEdge = -1;
         for (int e = 0; e < 4; ++e)
         {
-            edgeFactor[e] = EnsurePatchEdgeFactor(m,
-                                                  patch,
+            edgeFactor[e] = EnsurePatchEdgeFactor(patch,
                                                   e,
                                                   edgeMap,
                                                   nextGeneratedVertexId,

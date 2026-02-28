@@ -1,6 +1,5 @@
 #include "tessellation/subdivision.h"
 
-#include "bvh/usd_subdiv_select.h"
 #include "tessellation/edge_map_validation.h"
 #include "tessellation/subdivision_patch_types.h"
 #include "util/assert.h"
@@ -16,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -49,106 +49,6 @@ struct LimitEvalVertex
 #include "tessellation/tessellation_adaptive_mesh_build.h"
 // clang-format on
 
-static SelectedSubdivMesh ConvertToSelectedSubdivMesh(const SubdivisionMesh &mesh,
-                                                      const SubdivisionRunOptions &options)
-{
-    SelectedSubdivMesh out = {};
-    out.path = pxr::SdfPath::EmptyPath();
-
-    out.points.resize(mesh.vertices.size());
-    for (size_t i = 0; i < mesh.vertices.size(); ++i)
-    {
-        const float3 p = mesh.vertices[i];
-        out.points[i] = pxr::GfVec3f(p.x, p.y, p.z);
-    }
-
-    out.faceVertexCounts.resize(mesh.vertsPerFace.size());
-    for (size_t i = 0; i < mesh.vertsPerFace.size(); ++i)
-    {
-        out.faceVertexCounts[i] = mesh.vertsPerFace[i];
-    }
-
-    out.faceVertexIndices.resize(mesh.indices.size());
-    for (size_t i = 0; i < mesh.indices.size(); ++i)
-    {
-        out.faceVertexIndices[i] = mesh.indices[i];
-    }
-
-    out.cornerIndices.resize(mesh.cornerIndices.size());
-    for (size_t i = 0; i < mesh.cornerIndices.size(); ++i)
-    {
-        out.cornerIndices[i] = mesh.cornerIndices[i];
-    }
-
-    out.cornerSharpnesses.resize(mesh.cornerSharpnesses.size());
-    for (size_t i = 0; i < mesh.cornerSharpnesses.size(); ++i)
-    {
-        out.cornerSharpnesses[i] = mesh.cornerSharpnesses[i];
-    }
-
-    out.creaseIndices.resize(mesh.creaseIndices.size());
-    for (size_t i = 0; i < mesh.creaseIndices.size(); ++i)
-    {
-        out.creaseIndices[i] = mesh.creaseIndices[i];
-    }
-
-    out.creaseLengths.resize(mesh.creaseLengths.size());
-    for (size_t i = 0; i < mesh.creaseLengths.size(); ++i)
-    {
-        out.creaseLengths[i] = mesh.creaseLengths[i];
-    }
-
-    out.creaseSharpnesses.resize(mesh.creaseSharpnesses.size());
-    for (size_t i = 0; i < mesh.creaseSharpnesses.size(); ++i)
-    {
-        out.creaseSharpnesses[i] = mesh.creaseSharpnesses[i];
-    }
-
-    out.holeIndices.resize(mesh.holeIndices.size());
-    for (size_t i = 0; i < mesh.holeIndices.size(); ++i)
-    {
-        out.holeIndices[i] = mesh.holeIndices[i];
-    }
-
-    out.subdivisionScheme = options.subdivisionScheme;
-    switch (mesh.interpolationRule)
-    {
-        case BOUNDARY_INTERPOLATION_NONE: out.vertexBoundaryInterpolation = "none"; break;
-        case BOUNDARY_INTERPOLATION_EDGE: out.vertexBoundaryInterpolation = "edgeOnly"; break;
-        case BOUNDARY_INTERPOLATION_EDGE_AND_CORNER:
-        default: out.vertexBoundaryInterpolation = "edgeAndCorner"; break;
-    }
-    switch (mesh.fvarLinearInterpolation)
-    {
-        case FVAR_LINEAR_NONE: out.fvarLinearInterpolation = "none"; break;
-        case FVAR_LINEAR_CORNERS_ONLY: out.fvarLinearInterpolation = "cornersOnly"; break;
-        case FVAR_LINEAR_CORNERS_PLUS1: out.fvarLinearInterpolation = "cornersPlus1"; break;
-        case FVAR_LINEAR_CORNERS_PLUS2: out.fvarLinearInterpolation = "cornersPlus2"; break;
-        case FVAR_LINEAR_BOUNDARIES: out.fvarLinearInterpolation = "boundaries"; break;
-        case FVAR_LINEAR_ALL: out.fvarLinearInterpolation = "all"; break;
-        default: out.fvarLinearInterpolation = "cornersPlus1"; break;
-    }
-    out.creasingMethod = options.creasingMethod;
-    out.triangleSubdivision = options.triangleSubdivision;
-
-    return out;
-}
-
-static pxr::GfVec3f ComputeMeshCenter(const pxr::VtVec3fArray &points)
-{
-    if (points.empty())
-    {
-        return pxr::GfVec3f(0.0f, 0.0f, 0.0f);
-    }
-
-    pxr::GfVec3f sum(0.0f, 0.0f, 0.0f);
-    for (const auto &p : points)
-    {
-        sum += p;
-    }
-    return sum * (1.0f / float(points.size()));
-}
-
 bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                       const SubdivisionRunOptions &options,
                       SubdivisionRunResult *outResult)
@@ -158,34 +58,67 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         return false;
     }
 
-    SelectedSubdivMesh m = ConvertToSelectedSubdivMesh(mesh, options);
-
-    CreasePairs creases = BuildCreasePairs(m);
+    CreasePairs creases = BuildCreasePairs(mesh);
     Far::TopologyDescriptor d = {};
-    d.numVertices = int(m.points.size());
-    d.numFaces = int(m.faceVertexCounts.size());
-    d.numVertsPerFace = m.faceVertexCounts.data();
-    d.vertIndicesPerFace = m.faceVertexIndices.data();
+    d.numVertices = int(mesh.vertices.size());
+    d.numFaces = int(mesh.vertsPerFace.size());
+    d.numVertsPerFace = mesh.vertsPerFace.data();
+    d.vertIndicesPerFace = mesh.indices.data();
     d.numCreases = int(creases.weights.size());
     d.creaseVertexIndexPairs = creases.pairs.data();
     d.creaseWeights = creases.weights.data();
-    d.numCorners = int(m.cornerIndices.size());
-    d.cornerVertexIndices = m.cornerIndices.data();
-    d.cornerWeights = m.cornerSharpnesses.data();
-    d.numHoles = int(m.holeIndices.size());
-    d.holeIndices = m.holeIndices.data();
+    d.numCorners = int(mesh.cornerIndices.size());
+    d.cornerVertexIndices = mesh.cornerIndices.data();
+    d.cornerWeights = mesh.cornerSharpnesses.data();
+    d.numHoles = int(mesh.holeIndices.size());
+    d.holeIndices = mesh.holeIndices.data();
 
     Sdc::Options sdcOptions;
-    sdcOptions.SetVtxBoundaryInterpolation(VtxBoundaryFromString(m.vertexBoundaryInterpolation));
-    sdcOptions.SetFVarLinearInterpolation(FVarLinearFromString(m.fvarLinearInterpolation));
-    sdcOptions.SetCreasingMethod(CreasingMethodFromString(m.creasingMethod));
-    sdcOptions.SetTriangleSubdivision(TriangleSubFromString(m.triangleSubdivision));
+    switch (mesh.interpolationRule)
+    {
+        case BOUNDARY_INTERPOLATION_NONE:
+            sdcOptions.SetVtxBoundaryInterpolation(Sdc::Options::VTX_BOUNDARY_NONE);
+            break;
+        case BOUNDARY_INTERPOLATION_EDGE:
+            sdcOptions.SetVtxBoundaryInterpolation(Sdc::Options::VTX_BOUNDARY_EDGE_ONLY);
+            break;
+        case BOUNDARY_INTERPOLATION_EDGE_AND_CORNER:
+        default:
+            sdcOptions.SetVtxBoundaryInterpolation(Sdc::Options::VTX_BOUNDARY_EDGE_AND_CORNER);
+            break;
+    }
+    switch (mesh.fvarLinearInterpolation)
+    {
+        case FVAR_LINEAR_NONE:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_NONE);
+            break;
+        case FVAR_LINEAR_CORNERS_ONLY:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_CORNERS_ONLY);
+            break;
+        case FVAR_LINEAR_CORNERS_PLUS1:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1);
+            break;
+        case FVAR_LINEAR_CORNERS_PLUS2:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_CORNERS_PLUS2);
+            break;
+        case FVAR_LINEAR_BOUNDARIES:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_BOUNDARIES);
+            break;
+        case FVAR_LINEAR_ALL:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_ALL);
+            break;
+        default:
+            sdcOptions.SetFVarLinearInterpolation(Sdc::Options::FVAR_LINEAR_CORNERS_PLUS1);
+            break;
+    }
+    sdcOptions.SetCreasingMethod(CreasingMethodFromString(options.creasingMethod));
+    sdcOptions.SetTriangleSubdivision(TriangleSubFromString(options.triangleSubdivision));
 
     Far::TopologyRefinerFactory<Far::TopologyDescriptor>::Options o(
-        SchemeFromString(m.subdivisionScheme), sdcOptions);
+        SchemeFromString(options.subdivisionScheme), sdcOptions);
 
     SubdivisionEdgeMap edgeMap;
-    edgeMap.reserve(m.faceVertexIndices.size());
+    edgeMap.reserve(mesh.indices.size());
     const int edgesWithOver2Faces = CountNonManifoldEdges(edgeMap);
 
     Far::TopologyRefiner *refiner =
@@ -195,11 +128,11 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         return false;
     }
 
-    int nextGeneratedVertexId = int(m.points.size());
+    int nextGeneratedVertexId = int(mesh.vertices.size());
     const std::vector<SubdivisionPatch> patches =
-        BuildSubdivisionPatches(m, *refiner, edgeMap, nextGeneratedVertexId);
+        BuildSubdivisionPatches(mesh, *refiner, edgeMap, nextGeneratedVertexId);
 
-    const EdgeMapChecks edgeChecks = RunEdgeMapChecks(m, patches, edgeMap);
+    const EdgeMapChecks edgeChecks = RunEdgeMapChecks(mesh, patches, edgeMap);
     if (!edgeChecks.ok)
     {
         delete refiner;
@@ -227,15 +160,14 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
 
     Far::PatchMap patchMap(*patchTable);
     const std::vector<LimitEvalVertex> limitValues =
-        BuildLimitEvalVertices(*refiner, *patchTable, m.points);
+        BuildLimitEvalVertices(*refiner, *patchTable, mesh.vertices);
 
     const pxr::GfVec3f eye = options.eye;
     const pxr::GfVec3f lookAt = options.lookAt;
 
     int tmaxComputedEdges = 0;
     const std::vector<SubdivisionPatch> splitPatches =
-        DiagSplitPatches(m,
-                         patches,
+        DiagSplitPatches(patches,
                          edgeMap,
                          nextGeneratedVertexId,
                          patchMap,
@@ -305,7 +237,7 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     outResult->totalPatches = patchTable->GetNumPatchesTotal();
     outResult->subdivisionPatchCount = patches.size();
     outResult->diagSplitPatchCount = splitPatches.size();
-    outResult->generatedVertexCount = nextGeneratedVertexId - int(m.points.size());
+    outResult->generatedVertexCount = nextGeneratedVertexId - int(mesh.vertices.size());
     outResult->midpointEdges = CountEdgesWithMidpointVertex(edgeMap);
     outResult->edgeTMaxComputed = tmaxComputedEdges;
     outResult->totalComputedEdges = CountEdgesWithComputedTMax(edgeMap);

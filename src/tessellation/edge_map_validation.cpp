@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-EdgeMapChecks RunEdgeMapChecks(const SelectedSubdivMesh &m,
+EdgeMapChecks RunEdgeMapChecks(const ybi::SubdivisionMesh &m,
                                const std::vector<SubdivisionPatch> &patches,
                                const SubdivisionEdgeMap &edgeMap)
 {
@@ -11,32 +11,32 @@ EdgeMapChecks RunEdgeMapChecks(const SelectedSubdivMesh &m,
 
     // 1) Every coarse edge touched by a non-quad face must have a midpoint vertex allocated.
     std::unordered_map<int, size_t> faceStart;
-    faceStart.reserve(m.faceVertexCounts.size());
+    faceStart.reserve(m.vertsPerFace.size());
     size_t cursor = 0;
-    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    for (size_t f = 0; f < m.vertsPerFace.size(); ++f)
     {
         faceStart[int(f)] = cursor;
-        cursor += std::max(0, m.faceVertexCounts[f]);
+        cursor += std::max(0, m.vertsPerFace[f]);
     }
 
     std::unordered_map<uint64_t, int> checkedNgonEdgeKeys;
-    checkedNgonEdgeKeys.reserve(m.faceVertexIndices.size());
-    for (size_t f = 0; f < m.faceVertexCounts.size(); ++f)
+    checkedNgonEdgeKeys.reserve(m.indices.size());
+    for (size_t f = 0; f < m.vertsPerFace.size(); ++f)
     {
-        const int n = m.faceVertexCounts[f];
+        const int n = m.vertsPerFace[f];
         if (n <= 4)
         {
             continue;
         }
         const size_t start = faceStart[int(f)];
-        if (start + size_t(n) > m.faceVertexIndices.size())
+        if (start + size_t(n) > m.indices.size())
         {
             continue;
         }
         for (int i = 0; i < n; ++i)
         {
-            const int v0 = m.faceVertexIndices[start + i];
-            const int v1 = m.faceVertexIndices[start + ((i + 1) % n)];
+            const int v0 = m.indices[start + i];
+            const int v1 = m.indices[start + ((i + 1) % n)];
             const uint64_t key = MakeEdgeKey(v0, v1);
             if (!checkedNgonEdgeKeys.insert({key, 1}).second)
             {
@@ -75,11 +75,11 @@ EdgeMapChecks RunEdgeMapChecks(const SelectedSubdivMesh &m,
     // 3) Generated edges used by non-quad patches must exist in edgeMap.
     for (const SubdivisionPatch &patch : patches)
     {
-        if (patch.coarseFace < 0 || patch.coarseFace >= int(m.faceVertexCounts.size()))
+        if (patch.coarseFace < 0 || patch.coarseFace >= int(m.vertsPerFace.size()))
         {
             continue;
         }
-        if (m.faceVertexCounts[patch.coarseFace] <= 4)
+        if (m.vertsPerFace[patch.coarseFace] <= 4)
         {
             continue;
         }

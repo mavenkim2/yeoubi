@@ -21,7 +21,7 @@ static pxr::GfVec3f Normalize(const pxr::GfVec3f &v)
 
 static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRefiner &refiner,
                                                            const Far::PatchTable &patchTable,
-                                                           const pxr::VtVec3fArray &coarsePoints)
+                                                           const Array<float3> &coarsePoints)
 {
     const int numRefinerVerts = refiner.GetNumVerticesTotal();
     const int numLocalPoints = patchTable.GetNumLocalPoints();
@@ -31,7 +31,8 @@ static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRe
     const int copyCount = std::min(numCoarseVerts, int(coarsePoints.size()));
     for (int i = 0; i < copyCount; ++i)
     {
-        values[i].p = coarsePoints[i];
+        const float3 p = coarsePoints[i];
+        values[i].p = pxr::GfVec3f(p.x, p.y, p.z);
     }
 
     Far::PrimvarRefiner primvarRefiner(refiner);
