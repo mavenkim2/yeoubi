@@ -20,7 +20,7 @@
 
 struct TessellationRunConfig
 {
-    int level = 1;
+    int level = 3;
     float pixelSpacing = 1.0f;
     int splitThreshold = 1;
     int sampleSteps = 8;

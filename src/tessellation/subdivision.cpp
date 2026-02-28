@@ -141,11 +141,6 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
 
     Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(options.level);
     refiner->RefineAdaptive(adaptiveOptions);
-    if (refiner->GetMaxLevel() < options.level)
-    {
-        delete refiner;
-        return false;
-    }
 
     Far::PatchTableFactory::Options patchOptions(options.level);
     patchOptions.endCapType = Far::PatchTableFactory::Options::ENDCAP_GREGORY_BASIS;

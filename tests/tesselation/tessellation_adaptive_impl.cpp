@@ -73,7 +73,7 @@ struct TessellationCliOptions
 {
     std::string inPath;
     std::string outObjPath;
-    int level = 1;
+    int level = 3;
     float pixelSpacing = 1.0f;
     int splitThreshold = 1;
     int sampleSteps = 8;
@@ -85,7 +85,7 @@ static void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
                  "Usage: %s --in <input.json|input.usd[a|c]> <out.obj|out_dir>"
-                 " [--level <n>=1] [--pixelspacing <f>>0] [--splitthreshold <n>=1]"
+                 " [--level <n>=3] [--pixelspacing <f>>0] [--splitthreshold <n>=1]"
                  " [--samplesteps <n>=2] [--patchquadobj <out.obj>] [--writemetadata]\n",
                  exe);
 }
