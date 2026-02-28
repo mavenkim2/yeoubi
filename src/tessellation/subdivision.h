@@ -24,6 +24,7 @@ struct SubdivisionRunOptions
 
     std::string subdivisionScheme = "catmullClark";
     SubdivisionCreasingMethod creasingMethod = SUBDIVISION_CREASING_UNIFORM;
+    bool generateTriangleMetadata = true;
 
     std::string patchQuadObjPath;
 };

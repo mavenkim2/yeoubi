@@ -211,6 +211,24 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     int innerGridTris = 0;
     int innerGridOnlyTris = 0;
     int stitchingOnlyTris = 0;
+    std::vector<int> *triPatchFaceIds = nullptr;
+    std::vector<int> *triCoarseFaceIds = nullptr;
+    std::vector<int> *triPtexFaceIds = nullptr;
+    std::vector<int> *triQuadrants = nullptr;
+    if (options.generateTriangleMetadata)
+    {
+        triPatchFaceIds = &outResult->trianglePatchFaceIds;
+        triCoarseFaceIds = &outResult->triangleCoarseFaceIds;
+        triPtexFaceIds = &outResult->trianglePtexFaceIds;
+        triQuadrants = &outResult->triangleQuadrants;
+    }
+    else
+    {
+        outResult->trianglePatchFaceIds.clear();
+        outResult->triangleCoarseFaceIds.clear();
+        outResult->trianglePtexFaceIds.clear();
+        outResult->triangleQuadrants.clear();
+    }
     if (!BuildLeafPatchStitchedMesh(splitPatches,
                                     edgeMap,
                                     patchMap,
@@ -218,10 +236,10 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                                     limitValues,
                                     nextGeneratedVertexId,
                                     &outResult->mesh,
-                                    &outResult->trianglePatchFaceIds,
-                                    &outResult->triangleCoarseFaceIds,
-                                    &outResult->trianglePtexFaceIds,
-                                    &outResult->triangleQuadrants,
+                                    triPatchFaceIds,
+                                    triCoarseFaceIds,
+                                    triPtexFaceIds,
+                                    triQuadrants,
                                     &innerGridVerts,
                                     &innerGridTris,
                                     &innerGridOnlyTris,

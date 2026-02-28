@@ -241,6 +241,7 @@ int main(int argc, char **argv)
             camera.found ? ybi::make_float3(camera.meshCenter[0], camera.meshCenter[1], camera.meshCenter[2])
                          : meshCenter;
         options.subdivisionScheme = subdivisionScheme;
+        options.generateTriangleMetadata = cli.writeMetadata;
         options.patchQuadObjPath = cli.patchQuadObjPath;
 
         ybi::SubdivisionRunResult result = {};
