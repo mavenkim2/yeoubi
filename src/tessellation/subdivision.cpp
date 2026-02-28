@@ -177,6 +177,9 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                          options.viewportWidth,
                          options.viewportHeight,
                          options.verticalFovDegrees,
+                         options.useCameraMatrices,
+                         options.cameraFromWorld,
+                         options.clipFromCamera,
                          &tmaxComputedEdges);
 
     int missingStoredPatchParams = 0;

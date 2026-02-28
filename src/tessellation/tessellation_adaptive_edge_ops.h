@@ -87,6 +87,9 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                  int viewportWidth,
                                  int viewportHeight,
                                  float verticalFovDegrees,
+                                 bool useCameraMatrices,
+                                 const float4x4 &cameraFromWorld,
+                                 const float4x4 &clipFromCamera,
                                  int *computedCountOut)
 {
     auto nonUniformReasonLabel = [](DiagSplitNonUniformReason reason) {
@@ -129,6 +132,9 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                                               viewportWidth,
                                                               viewportHeight,
                                                               verticalFovDegrees,
+                                                              useCameraMatrices,
+                                                              cameraFromWorld,
+                                                              clipFromCamera,
                                                               &nonUniformReason);
         if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_NON_UNIFORM)
         {
@@ -237,6 +243,9 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                  int viewportWidth,
                  int viewportHeight,
                  float verticalFovDegrees,
+                 bool useCameraMatrices,
+                 const float4x4 &cameraFromWorld,
+                 const float4x4 &clipFromCamera,
                  int *computedCountOut)
 {
     std::vector<SubdivisionPatch> worklist = patches;
@@ -272,6 +281,9 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                                                   viewportWidth,
                                                   viewportHeight,
                                                   verticalFovDegrees,
+                                                  useCameraMatrices,
+                                                  cameraFromWorld,
+                                                  clipFromCamera,
                                                   computedCountOut);
         }
 

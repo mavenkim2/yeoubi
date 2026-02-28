@@ -22,6 +22,9 @@ struct SubdivisionRunOptions
     int viewportWidth = 1920;
     int viewportHeight = 1080;
     float verticalFovDegrees = 45.0f;
+    bool useCameraMatrices = false;
+    float4x4 cameraFromWorld = float4x4::Identity();
+    float4x4 clipFromCamera = float4x4::Identity();
 
     std::string subdivisionScheme = "catmullClark";
     SubdivisionCreasingMethod creasingMethod = SUBDIVISION_CREASING_UNIFORM;

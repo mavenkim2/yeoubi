@@ -334,6 +334,9 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.verticalFovDegrees = cameraVerticalFovDegrees;
         options.viewportWidth = camera.viewportWidth;
         options.viewportHeight = camera.viewportHeight;
+        options.useCameraMatrices = true;
+        options.cameraFromWorld = camera.cameraFromWorld;
+        options.clipFromCamera = camera.clipFromCamera;
         options.subdivisionScheme = "catmullClark";
         options.generateTriangleMetadata = config.writeMetadata;
         options.patchQuadObjPath = patchQuadPath;
