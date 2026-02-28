@@ -91,7 +91,8 @@ static pxr::GfMatrix4d GetPrimLocalToParentTransform(const pxr::UsdPrim &prim,
     return localTransform;
 }
 
-static void TraversePrimToPrimListsImpl(const pxr::UsdPrim &root, USDPrimLists *out)
+static void
+TraversePrimToPrimListsImpl(const pxr::UsdPrim &root, USDPrimLists *out, bool skipPrototypePrims)
 {
     YBI_ASSERT(out);
 
@@ -105,6 +106,11 @@ static void TraversePrimToPrimListsImpl(const pxr::UsdPrim &root, USDPrimLists *
     {
         const pxr::UsdPrim prim = stack.back();
         stack.pop_back();
+
+        if (skipPrototypePrims && (prim.IsInPrototype() || prim.IsInstanceProxy()))
+        {
+            continue;
+        }
 
         bool pushChildren = true;
         if (prim.IsInstance())
@@ -237,7 +243,7 @@ CollectPrototypePrimListsImpl(const pxr::UsdStageRefPtr &stage,
 
         USDPrimLists primLists = {};
         primLists.ownerPath = prototypePath;
-        TraversePrimToPrimListsImpl(prototypePrim, &primLists);
+        TraversePrimToPrimListsImpl(prototypePrim, &primLists, /*skipPrototypePrims*/ false);
         (*prototypePrimLists)[prototypeIndex] = std::move(primLists);
 
         if (!CollectPrototypeDependencies((*prototypePrimLists)[prototypeIndex],
@@ -739,7 +745,7 @@ void TraverseUSDPrimLists(const pxr::UsdPrim &root, USDPrimLists *out)
     out->curves.clear();
     out->instances.clear();
     out->pointInstancers.clear();
-    TraversePrimToPrimListsImpl(root, out);
+    TraversePrimToPrimListsImpl(root, out, /*skipPrototypePrims*/ true);
 }
 
 bool CollectUSDPrototypePrimLists(const pxr::UsdStageRefPtr &stage,
