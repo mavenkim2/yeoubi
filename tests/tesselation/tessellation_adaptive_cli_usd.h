@@ -14,6 +14,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -53,6 +54,11 @@ static std::string Lowercase(const std::string &s)
         c = char(std::tolower(static_cast<unsigned char>(c)));
     }
     return out;
+}
+
+static double BytesToMiB(size_t bytes)
+{
+    return double(bytes) / (1024.0 * 1024.0);
 }
 
 static bool IsJsonInputPath(const std::string &path)
@@ -293,6 +299,8 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     outputs.reserve(meshRefs.size());
     size_t totalVerts = 0;
     size_t totalTris = 0;
+    size_t totalVertexBytes = 0;
+    size_t totalIndexBytes = 0;
 
     for (size_t i = 0; i < meshRefs.size(); ++i)
     {
@@ -354,13 +362,21 @@ static bool RunUsdTessellationInput(const std::string &inPath,
                            result.mesh.indices.size() / 3});
         totalVerts += result.mesh.positions.size();
         totalTris += result.mesh.indices.size() / 3;
+        const size_t vertexBytes = result.mesh.positions.size() * sizeof(result.mesh.positions[0]);
+        const size_t indexBytes = result.mesh.indices.size() * sizeof(result.mesh.indices[0]);
+        totalVertexBytes += vertexBytes;
+        totalIndexBytes += indexBytes;
 
-        std::printf("  mesh[%zu] prim=%s out=%s verts=%zu tris=%zu\n",
+        std::printf("  mesh[%zu] prim=%s out=%s verts=%zu tris=%zu vtx=%zu (%.3f MiB) idx=%zu (%.3f MiB)\n",
                     i,
                     outputs.back().primPath.c_str(),
                     objPath.c_str(),
                     outputs.back().verts,
-                    outputs.back().tris);
+                    outputs.back().tris,
+                    vertexBytes,
+                    BytesToMiB(vertexBytes),
+                    indexBytes,
+                    BytesToMiB(indexBytes));
     }
 
     if (!singleOutput)
@@ -383,5 +399,12 @@ static bool RunUsdTessellationInput(const std::string &inPath,
                 totalVerts,
                 totalTris,
                 config.writeMetadata ? "true" : "false");
+    std::printf("  meshMemory vertexBytes=%zu (%.3f MiB) indexBytes=%zu (%.3f MiB) totalBytes=%zu (%.3f MiB)\n",
+                totalVertexBytes,
+                BytesToMiB(totalVertexBytes),
+                totalIndexBytes,
+                BytesToMiB(totalIndexBytes),
+                totalVertexBytes + totalIndexBytes,
+                BytesToMiB(totalVertexBytes + totalIndexBytes));
     return true;
 }

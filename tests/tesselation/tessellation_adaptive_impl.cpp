@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -292,6 +293,15 @@ int main(int argc, char **argv)
                     cli.outObjPath.c_str(),
                     result.mesh.positions.size(),
                     result.mesh.indices.size() / 3);
+        const size_t vertexBytes = result.mesh.positions.size() * sizeof(result.mesh.positions[0]);
+        const size_t indexBytes = result.mesh.indices.size() * sizeof(result.mesh.indices[0]);
+        std::printf("  meshMemory vertexBytes=%zu (%.3f MiB) indexBytes=%zu (%.3f MiB) totalBytes=%zu (%.3f MiB)\n",
+                    vertexBytes,
+                    BytesToMiB(vertexBytes),
+                    indexBytes,
+                    BytesToMiB(indexBytes),
+                    vertexBytes + indexBytes,
+                    BytesToMiB(vertexBytes + indexBytes));
         std::printf("  writeMetadata=%s\n", cli.writeMetadata ? "true" : "false");
         std::printf("  edgeMapChecks=ok\n");
         std::printf("  controlCageUniqueEdges=%zu boundaryEdges=%d\n",
