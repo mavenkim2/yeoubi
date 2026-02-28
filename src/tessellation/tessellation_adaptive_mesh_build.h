@@ -125,8 +125,8 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         }
     }
 
-    std::vector<float3> positions;
-    std::vector<int> indices;
+    Array<float3> positions;
+    Array<int> indices;
     if (outTriPatchFaceIds)
     {
         outTriPatchFaceIds->clear();
@@ -153,7 +153,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         }
         const float3 &p = sharedPos[i];
         sharedMeshIndex[i] = int(positions.size());
-        positions.push_back(p);
+        positions.EmplaceBack(p);
     }
 
     int currentPatchFaceId = -1;
@@ -167,9 +167,9 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         {
             return;
         }
-        indices.push_back(a);
-        indices.push_back(b);
-        indices.push_back(c);
+        indices.EmplaceBack(a);
+        indices.EmplaceBack(b);
+        indices.EmplaceBack(c);
         if (outTriPatchFaceIds)
         {
             outTriPatchFaceIds->push_back(currentPatchFaceId);
@@ -322,7 +322,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                     return false;
                 }
                 innerAt(iu, iv) = int(positions.size());
-                positions.push_back(p);
+                positions.EmplaceBack(p);
             }
         }
 
@@ -375,20 +375,16 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         stitchStrip(outer3, inner3, std::max(e1, e3), e3);
     }
 
-    Array<float3> outPositions(positions);
-    Array<int> outIndices(indices);
-    YBI_ASSERT(outPositions.size() == positions.size());
-    YBI_ASSERT(outIndices.size() == indices.size());
-    outMesh->positions = std::move(outPositions);
-    outMesh->indices = std::move(outIndices);
+    outMesh->positions = std::move(positions);
+    outMesh->indices = std::move(indices);
 
     if (outVertexCount)
     {
-        *outVertexCount = int(positions.size());
+        *outVertexCount = int(outMesh->positions.size());
     }
     if (outTriangleCount)
     {
-        *outTriangleCount = int(indices.size() / 3);
+        *outTriangleCount = int(outMesh->indices.size() / 3);
     }
     return true;
 }
