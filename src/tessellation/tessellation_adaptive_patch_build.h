@@ -11,6 +11,8 @@ static int GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap,
     if (edge.midpointVertex < 0)
     {
         edge.midpointVertex = nextVertexId++;
+        YBI_ASSERT(edge.midpointVertex != edge.v0);
+        YBI_ASSERT(edge.midpointVertex != edge.v1);
         edge.split = true;
     }
     return edge.midpointVertex;
@@ -62,7 +64,6 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMe
             patch.coarseFace = int(f);
             patch.quadrant = 0;
             patch.ptexFaceId = basePtexFaceId;
-            patch.depth = 0;
             patches.push_back(patch);
         }
         else
@@ -109,8 +110,37 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMe
                 patch.coarseFace = int(f);
                 patch.quadrant = i;
                 patch.ptexFaceId = basePtexFaceId + i;
-                patch.depth = 1;
-                const int patchId = int(patches.size());
+
+                // Explicitly seed quadrangulated patch edges at depth 1.
+                // These are not control-cage edges; they are the NGon-generated edges.
+                GetOrCreateEdge(edgeMap,
+                                patch.verts[0],
+                                patch.verts[1],
+                                1,
+                                patch.ptexFaceId,
+                                patch.uv[0],
+                                patch.uv[1]);
+                GetOrCreateEdge(edgeMap,
+                                patch.verts[1],
+                                patch.verts[2],
+                                1,
+                                patch.ptexFaceId,
+                                patch.uv[1],
+                                patch.uv[2]);
+                GetOrCreateEdge(edgeMap,
+                                patch.verts[2],
+                                patch.verts[3],
+                                1,
+                                patch.ptexFaceId,
+                                patch.uv[2],
+                                patch.uv[3]);
+                GetOrCreateEdge(edgeMap,
+                                patch.verts[3],
+                                patch.verts[0],
+                                1,
+                                patch.ptexFaceId,
+                                patch.uv[3],
+                                patch.uv[0]);
                 patches.push_back(patch);
             }
         }
