@@ -12,6 +12,7 @@ YBI_NAMESPACE_BEGIN
 struct SubdivisionRunOptions
 {
     int level = 3;
+    int maxDiagSplitDepth = 12;
     float pixelSpacing = 1.0f;
     int splitThreshold = 1;
     int sampleSteps = 8;

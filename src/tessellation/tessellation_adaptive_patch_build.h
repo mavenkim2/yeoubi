@@ -1,12 +1,13 @@
 static int GetOrAllocateMidpointVertex(SubdivisionEdgeMap &edgeMap,
                                        int v0,
                                        int v1,
+                                       int depth,
                                        int ptexFaceId,
                                        const pxr::GfVec2f &uv0,
                                        const pxr::GfVec2f &uv1,
                                        int &nextVertexId)
 {
-    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1, ptexFaceId, uv0, uv1);
+    SubdivisionEdge &edge = GetOrCreateEdge(edgeMap, v0, v1, depth, ptexFaceId, uv0, uv1);
     if (edge.midpointVertex < 0)
     {
         edge.midpointVertex = nextVertexId++;
@@ -61,6 +62,7 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMe
             patch.coarseFace = int(f);
             patch.quadrant = 0;
             patch.ptexFaceId = basePtexFaceId;
+            patch.depth = 0;
             patches.push_back(patch);
         }
         else
@@ -79,6 +81,7 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMe
                 const int midNext = GetOrAllocateMidpointVertex(edgeMap,
                                                                 v,
                                                                 vNext,
+                                                                0,
                                                                 basePtexFaceId + i,
                                                                 pxr::GfVec2f(0.0f, 0.0f),
                                                                 pxr::GfVec2f(1.0f, 0.0f),
@@ -86,6 +89,7 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMe
                 const int midPrev = GetOrAllocateMidpointVertex(edgeMap,
                                                                 vPrev,
                                                                 v,
+                                                                0,
                                                                 basePtexFaceId + i,
                                                                 pxr::GfVec2f(0.0f, 1.0f),
                                                                 pxr::GfVec2f(0.0f, 0.0f),
@@ -105,6 +109,7 @@ static std::vector<SubdivisionPatch> BuildSubdivisionPatches(const SubdivisionMe
                 patch.coarseFace = int(f);
                 patch.quadrant = i;
                 patch.ptexFaceId = basePtexFaceId + i;
+                patch.depth = 1;
                 const int patchId = int(patches.size());
                 patches.push_back(patch);
             }

@@ -13,6 +13,7 @@
 #include <pxr/usd/usdGeom/xformCache.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
@@ -59,6 +60,11 @@ static std::string Lowercase(const std::string &s)
 static double BytesToMiB(size_t bytes)
 {
     return double(bytes) / (1024.0 * 1024.0);
+}
+
+static bool IsFiniteFloat3(const ybi::float3 &v)
+{
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
 static bool IsJsonInputPath(const std::string &path)
@@ -287,6 +293,9 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     const bool hasCamera = GetUsdCameraAndSubdivPrimPaths(
         inPath, &cameraWorldPos, &cameraForward, &cameraPath, &subdivPrimPaths);
     YBI_ASSERT(hasCamera);
+    YBI_ASSERT(IsFiniteFloat3(cameraWorldPos));
+    YBI_ASSERT(IsFiniteFloat3(cameraForward));
+    YBI_ASSERT(ybi::length(cameraForward) > 1e-8f);
     if (!hasCamera)
     {
         std::fprintf(stderr, "USD camera missing: %s\n", inPath.c_str());

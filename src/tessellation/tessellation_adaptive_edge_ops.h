@@ -1,6 +1,7 @@
 static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap,
                                         int v0,
                                         int v1,
+                                        int depth,
                                         int ptexFaceId,
                                         const pxr::GfVec2f &uv0,
                                         const pxr::GfVec2f &uv1)
@@ -18,7 +19,12 @@ static SubdivisionEdge &GetOrCreateEdge(SubdivisionEdgeMap &edgeMap,
         edge.storedUv0 = uv0;
         edge.storedUv1 = uv1;
         edge.hasStoredPatchParams = (ptexFaceId >= 0);
+        edge.depth = depth;
         it = edgeMap.emplace(key, edge).first;
+    }
+    else
+    {
+        it->second.depth = std::max(it->second.depth, depth);
     }
     return it->second;
 }
@@ -71,6 +77,7 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                  int edgeIndex,
                                  SubdivisionEdgeMap &edgeMap,
                                  int &nextGeneratedVertexId,
+                                 int maxDiagSplitDepth,
                                  bool allowQuadCoarseUpgrade,
                                  const Far::PatchMap &patchMap,
                                  const Far::PatchTable &patchTable,
@@ -100,9 +107,14 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
     SubdivisionEdge &edge = GetOrCreateEdge(edgeMap,
                                             patch.verts[edgeIndex],
                                             patch.verts[next],
+                                            patch.depth,
                                             patch.ptexFaceId,
                                             patch.uv[edgeIndex],
                                             patch.uv[next]);
+    const int clampedDepth = std::max(0, std::max(patch.depth, edge.depth));
+    const int remainingDepth = std::max(0, maxDiagSplitDepth - clampedDepth);
+    const int maxFactorAtDepth =
+        remainingDepth >= 30 ? std::numeric_limits<int>::max() : (1 << remainingDepth);
     if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_UNINITIALIZED)
     {
         DiagSplitNonUniformReason nonUniformReason = DIAGSPLIT_NON_UNIFORM_NONE;
@@ -139,9 +151,17 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                              double(patch.uv[next][1]));
             }
         }
+        if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_NON_UNIFORM && clampedDepth >= maxDiagSplitDepth)
+        {
+            edge.tmaxEdgeFactor = 1;
+        }
         if (edge.tmaxEdgeFactor != SUBDIV_EDGE_FACTOR_NON_UNIFORM && edge.tmaxEdgeFactor < 1)
         {
             edge.tmaxEdgeFactor = 1;
+        }
+        if (edge.tmaxEdgeFactor != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
+        {
+            edge.tmaxEdgeFactor = std::min(edge.tmaxEdgeFactor, maxFactorAtDepth);
         }
         if (edge.tmaxEdgeFactor >= 1)
         {
@@ -175,6 +195,21 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
             (*computedCountOut)++;
         }
     }
+    if (edge.tmaxEdgeFactor == SUBDIV_EDGE_FACTOR_NON_UNIFORM && clampedDepth >= maxDiagSplitDepth)
+    {
+        edge.tmaxEdgeFactor = 1;
+        edge.edgeVertexIndexStart = -1;
+        edge.midpointVertex = -1;
+    }
+    if (edge.tmaxEdgeFactor != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
+    {
+        edge.tmaxEdgeFactor = std::max(1, std::min(edge.tmaxEdgeFactor, maxFactorAtDepth));
+        if (edge.tmaxEdgeFactor <= 1)
+        {
+            edge.edgeVertexIndexStart = -1;
+            edge.midpointVertex = -1;
+        }
+    }
     return edge.tmaxEdgeFactor;
 }
 
@@ -182,6 +217,7 @@ static std::vector<SubdivisionPatch>
 DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                  SubdivisionEdgeMap &edgeMap,
                  int &nextGeneratedVertexId,
+                 int maxDiagSplitDepth,
                  const Far::PatchMap &patchMap,
                  const Far::PatchTable &patchTable,
                  const std::vector<LimitEvalVertex> &limitValues,
@@ -215,6 +251,7 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                                                   e,
                                                   edgeMap,
                                                   nextGeneratedVertexId,
+                                                  maxDiagSplitDepth,
                                                   /*allowQuadCoarseUpgrade*/ false,
                                                   patchMap,
                                                   patchTable,
@@ -326,12 +363,6 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
             int mid = edge.midpointVertex;
             int t = edgeFactor[e];
             float alpha = 0.5f;
-
-            if (edge.edgeVertexIndexStart > 1e9)
-            {
-                printf(
-                    "danger: %i %i %i %i %i\n", mid, edge.edgeVertexIndexStart, t, splitU, splitV);
-            }
             if (t != SUBDIV_EDGE_FACTOR_NON_UNIFORM)
             {
                 YBI_ASSERT(t > 1);
@@ -358,6 +389,7 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                         GetOrCreateEdge(edgeMap,
                                         parentV0,
                                         mid,
+                                        edge.depth + 1,
                                         patch.ptexFaceId,
                                         parentV0 == v0 ? patch.uv[e] : patch.uv[n],
                                         splitUV[i]);
@@ -365,6 +397,7 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                         GetOrCreateEdge(edgeMap,
                                         mid,
                                         parentV1,
+                                        edge.depth + 1,
                                         patch.ptexFaceId,
                                         splitUV[i],
                                         parentV0 == v0 ? patch.uv[n] : patch.uv[e]);
@@ -399,9 +432,9 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                     mid = nextGeneratedVertexId++;
                     edge.midpointVertex = mid;
                     SubdivisionEdge &edgeA = GetOrCreateEdge(
-                        edgeMap, v0, mid, patch.ptexFaceId, patch.uv[e], splitUV[i]);
+                        edgeMap, v0, mid, edge.depth + 1, patch.ptexFaceId, patch.uv[e], splitUV[i]);
                     SubdivisionEdge &edgeB = GetOrCreateEdge(
-                        edgeMap, mid, v1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
+                        edgeMap, mid, v1, edge.depth + 1, patch.ptexFaceId, splitUV[i], patch.uv[n]);
                     edgeA.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
                     edgeB.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
                     edgeA.boundary = edge.boundary;
@@ -413,7 +446,7 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
         }
 
         SubdivisionEdge &seam = GetOrCreateEdge(
-            edgeMap, splitVerts[0], splitVerts[1], patch.ptexFaceId, splitUV[0], splitUV[1]);
+            edgeMap, splitVerts[0], splitVerts[1], patch.depth + 1, patch.ptexFaceId, splitUV[0], splitUV[1]);
         seam.tmaxEdgeFactor = SUBDIV_EDGE_FACTOR_UNINITIALIZED;
         seam.edgeVertexIndexStart = -1;
         seam.boundary = false;
@@ -434,6 +467,7 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
         childA.uv[1] = splitUV[0];
         childA.uv[2] = splitUV[1];
         childA.uv[3] = patch.uv[i3];
+        childA.depth = patch.depth + 1;
 
         SubdivisionPatch childB = patch;
         childB.verts[0] = midA;
@@ -444,6 +478,7 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
         childB.uv[1] = patch.uv[i1];
         childB.uv[2] = patch.uv[i2];
         childB.uv[3] = splitUV[1];
+        childB.depth = patch.depth + 1;
 
         worklist.push_back(childA);
         worklist.push_back(childB);

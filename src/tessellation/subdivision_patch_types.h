@@ -27,6 +27,7 @@ struct SubdivisionEdge
     int secondFace = -1;
     bool boundary = false;
     bool nonManifold = false;
+    int depth = 0;
 
     bool split = false;
 };
@@ -40,6 +41,7 @@ struct SubdivisionPatch
     int coarseFace = -1;
     int quadrant = 0;
     int ptexFaceId = -1;
+    int depth = 0;
 };
 
 inline uint64_t MakeEdgeKey(int v0, int v1)

@@ -91,6 +91,61 @@ static pxr::GfVec2f ProjectToScreen(const float3 &p,
     return pxr::GfVec2f(sx, sy);
 }
 
+static float3 WorldToCameraSpace(const float3 &p,
+                                 const float3 &eye,
+                                 const float3 &right,
+                                 const float3 &up,
+                                 const float3 &forward)
+{
+    const float3 v = p - eye;
+    return make_float3(dot(v, right), dot(v, up), dot(v, forward));
+}
+
+static pxr::GfVec2f ProjectCameraPointToScreen(const float3 &cameraP,
+                                               int viewportWidth,
+                                               int viewportHeight,
+                                               float tanHalfFovY,
+                                               float aspect)
+{
+    const float ndcX = cameraP.x / (cameraP.z * tanHalfFovY * aspect);
+    const float ndcY = cameraP.y / (cameraP.z * tanHalfFovY);
+    const float sx = (ndcX * 0.5f + 0.5f) * float(viewportWidth);
+    const float sy = (1.0f - (ndcY * 0.5f + 0.5f)) * float(viewportHeight);
+    return pxr::GfVec2f(sx, sy);
+}
+
+static bool ClipSegmentToNearPlane(float3 *a, float3 *b, float nearZ)
+{
+    YBI_ASSERT(a);
+    YBI_ASSERT(b);
+    const bool aInside = a->z >= nearZ;
+    const bool bInside = b->z >= nearZ;
+    if (!aInside && !bInside)
+    {
+        return false;
+    }
+    if (aInside && bInside)
+    {
+        return true;
+    }
+    const float denom = (b->z - a->z);
+    if (std::abs(denom) <= 1e-20f)
+    {
+        return false;
+    }
+    const float t = std::max(0.0f, std::min(1.0f, (nearZ - a->z) / denom));
+    const float3 clipped = *a + (*b - *a) * t;
+    if (!aInside)
+    {
+        *a = clipped;
+    }
+    else
+    {
+        *b = clipped;
+    }
+    return true;
+}
+
 enum DiagSplitNonUniformReason
 {
     DIAGSPLIT_NON_UNIFORM_NONE = 0,
@@ -123,8 +178,22 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
         return 1;
     }
 
+    const float3 forward = normalize(lookAt - eye);
+    float3 worldUp = make_float3(0.0f, 0.0f, 1.0f);
+    if (std::abs(dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = make_float3(0.0f, 1.0f, 0.0f);
+    }
+    const float3 right = normalize(cross(forward, worldUp));
+    const float3 up = normalize(cross(right, forward));
+    const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
+    const float tanHalfFovY = std::tan(0.5f * fovY);
+    const float aspect = float(viewportWidth) / float(viewportHeight);
+    const float nearZ = 1e-3f;
+
     float maxLi = 0.0f;
     float sumLi = 0.0f;
+    bool hadVisibleSegment = false;
     float3 p0 = make_float3(0.0f);
     if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
     {
@@ -134,8 +203,7 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
         }
         return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
     }
-    pxr::GfVec2f prev =
-        ProjectToScreen(p0, eye, lookAt, viewportWidth, viewportHeight, verticalFovDegrees);
+    float3 prevCamera = WorldToCameraSpace(p0, eye, right, up, forward);
     for (int i = 1; i < sampleStepsN; ++i)
     {
         const float t = float(i) / float(sampleStepsN - 1);
@@ -149,13 +217,26 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
             }
             return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
         }
-        const pxr::GfVec2f s =
-            ProjectToScreen(p, eye, lookAt, viewportWidth, viewportHeight, verticalFovDegrees);
-        const pxr::GfVec2f d = s - prev;
-        const float li = std::sqrt(d[0] * d[0] + d[1] * d[1]);
-        sumLi += li;
-        maxLi = std::max(maxLi, li);
-        prev = s;
+        const float3 currCamera = WorldToCameraSpace(p, eye, right, up, forward);
+        float3 segA = prevCamera;
+        float3 segB = currCamera;
+        if (ClipSegmentToNearPlane(&segA, &segB, nearZ))
+        {
+            hadVisibleSegment = true;
+            const pxr::GfVec2f sa =
+                ProjectCameraPointToScreen(segA, viewportWidth, viewportHeight, tanHalfFovY, aspect);
+            const pxr::GfVec2f sb =
+                ProjectCameraPointToScreen(segB, viewportWidth, viewportHeight, tanHalfFovY, aspect);
+            const pxr::GfVec2f d = sb - sa;
+            const float li = std::sqrt(d[0] * d[0] + d[1] * d[1]);
+            sumLi += li;
+            maxLi = std::max(maxLi, li);
+        }
+        prevCamera = currCamera;
+    }
+    if (!hadVisibleSegment)
+    {
+        return 1;
     }
 
     const int tMin = std::max(1, int(std::ceil(sumLi / targetPixelSpacing)));
