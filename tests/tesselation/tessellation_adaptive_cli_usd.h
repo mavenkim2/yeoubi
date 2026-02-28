@@ -239,25 +239,24 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         std::string primPath;
     };
     std::vector<MeshRef> meshRefs;
-    size_t primPathCursor = 0;
-    for (const std::unique_ptr<ybi::Scene> &scenePtr : scenePool.scenes)
+    ybi::Scene *rootScene = scenePool.scenes[scenePool.rootSceneIndex].get();
+    if (!rootScene)
     {
-        if (!scenePtr)
-        {
-            continue;
-        }
-        for (const ybi::SubdivisionMesh &mesh : scenePtr->subdivisionMeshes)
-        {
-            const std::string primPath =
-                primPathCursor < subdivPrimPaths.size() ? subdivPrimPaths[primPathCursor] : "";
-            meshRefs.push_back({&mesh, primPath});
-            primPathCursor++;
-        }
+        std::fprintf(stderr, "Root scene missing in USD: %s\n", inPath.c_str());
+        return false;
+    }
+    size_t primPathCursor = 0;
+    for (const ybi::SubdivisionMesh &mesh : rootScene->subdivisionMeshes)
+    {
+        const std::string primPath =
+            primPathCursor < subdivPrimPaths.size() ? subdivPrimPaths[primPathCursor] : "";
+        meshRefs.push_back({&mesh, primPath});
+        primPathCursor++;
     }
 
     if (meshRefs.empty())
     {
-        std::fprintf(stderr, "No subdivision meshes found in USD: %s\n", inPath.c_str());
+        std::fprintf(stderr, "No subdivision meshes found in root scene of USD: %s\n", inPath.c_str());
         return false;
     }
 
