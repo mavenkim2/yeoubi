@@ -121,6 +121,7 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/exr_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tiles.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
@@ -139,6 +140,8 @@ if (WITH_USD)
         add_executable(yeoubi_tile_verify
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_verify.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
         target_compile_definitions(yeoubi_tile_verify PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
@@ -243,6 +246,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp

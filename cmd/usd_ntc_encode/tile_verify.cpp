@@ -1,4 +1,6 @@
 #include "tile_binary.h"
+#include "texture/exr_io.h"
+#include "texture/udim_utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -8,9 +10,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#define TINYEXR_IMPLEMENTATION
-#include <tinyexr.h>
 
 namespace
 {
@@ -33,202 +32,6 @@ std::string Sanitize(const std::string &s)
         out = "texture";
     }
     return out;
-}
-
-bool FindUdimToken(const std::string &path, size_t &pos, size_t &len)
-{
-    pos = path.find("<UDIM>");
-    len = 6;
-    if (pos != std::string::npos)
-    {
-        return true;
-    }
-    pos = path.find("<udim>");
-    len = 6;
-    return pos != std::string::npos;
-}
-
-bool TryFindUdimDigits(const std::string &path, uint32_t &udim, size_t &digitPos)
-{
-    const size_t ext = path.rfind('.');
-    if (ext == std::string::npos || ext < 4)
-    {
-        return false;
-    }
-    digitPos = ext - 4;
-    for (size_t i = 0; i < 4; ++i)
-    {
-        if (!std::isdigit(static_cast<unsigned char>(path[digitPos + i])))
-        {
-            return false;
-        }
-    }
-    if (digitPos > 0)
-    {
-        const char c = path[digitPos - 1];
-        if (!(c == '.' || c == '_' || c == '-'))
-        {
-            return false;
-        }
-    }
-    udim = static_cast<uint32_t>(std::strtoul(path.substr(digitPos, 4).c_str(), nullptr, 10));
-    return udim >= kUdimMin && udim <= kUdimMax;
-}
-
-std::string StripUdimFromPath(const std::string &path)
-{
-    size_t tokenPos = std::string::npos;
-    size_t tokenLen = 0;
-    if (FindUdimToken(path, tokenPos, tokenLen))
-    {
-        std::string out = path;
-        out.erase(tokenPos, tokenLen);
-        if (tokenPos > 0 && tokenPos < out.size() && out[tokenPos - 1] == '.' && out[tokenPos] == '.')
-        {
-            out.erase(tokenPos - 1, 1);
-        }
-        if (tokenPos > 0 && tokenPos < out.size() &&
-            (out[tokenPos - 1] == '_' || out[tokenPos - 1] == '-') && out[tokenPos] == '.')
-        {
-            out.erase(tokenPos - 1, 1);
-        }
-        return out;
-    }
-
-    uint32_t udim = 0;
-    size_t digitPos = 0;
-    if (TryFindUdimDigits(path, udim, digitPos))
-    {
-        std::string out = path;
-        out.erase(digitPos, 4);
-        if (digitPos > 0 && digitPos < out.size() && out[digitPos - 1] == '.' && out[digitPos] == '.')
-        {
-            out.erase(digitPos - 1, 1);
-        }
-        if (digitPos > 0 && digitPos < out.size() &&
-            (out[digitPos - 1] == '_' || out[digitPos - 1] == '-') && out[digitPos] == '.')
-        {
-            out.erase(digitPos - 1, 1);
-        }
-        return out;
-    }
-
-    return path;
-}
-
-bool LoadExrRgba(const std::string &path, int &width, int &height, std::vector<float> &rgba, std::string &reason)
-{
-    width = 0;
-    height = 0;
-    auto AssignRgbaAndFree = [&](float *rawData, int w, int h) {
-        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
-        rgba.assign(rawData, rawData + pixelCount * 4);
-        std::free(rawData);
-        width = w;
-        height = h;
-    };
-
-    float *raw = nullptr;
-    const char *err = nullptr;
-    int rc = LoadEXR(&raw, &width, &height, path.c_str(), &err);
-    if (rc == TINYEXR_SUCCESS && raw)
-    {
-        AssignRgbaAndFree(raw, width, height);
-        return true;
-    }
-
-    std::string primaryError;
-    if (err)
-    {
-        primaryError = err;
-        FreeEXRErrorMessage(err);
-    }
-    if (rc != TINYEXR_ERROR_LAYER_NOT_FOUND)
-    {
-        reason = "LoadEXR failed for " + path;
-        if (!primaryError.empty())
-        {
-            reason += " (" + primaryError + ")";
-        }
-        return false;
-    }
-
-    const char **layerNames = nullptr;
-    int numLayers = 0;
-    const char *layersErr = nullptr;
-    rc = EXRLayers(path.c_str(), &layerNames, &numLayers, &layersErr);
-    if (rc != TINYEXR_SUCCESS || !layerNames || numLayers <= 0)
-    {
-        reason = "LoadEXR failed for " + path;
-        if (!primaryError.empty())
-        {
-            reason += " (" + primaryError + ")";
-        }
-        if (layersErr)
-        {
-            reason += " [EXRLayers: ";
-            reason += layersErr;
-            reason += "]";
-            FreeEXRErrorMessage(layersErr);
-        }
-        if (layerNames)
-        {
-            for (int i = 0; i < numLayers; ++i)
-            {
-                if (layerNames[i])
-                {
-                    std::free((void *)layerNames[i]);
-                }
-            }
-            std::free((void *)layerNames);
-        }
-        return false;
-    }
-
-    std::string layerError;
-    for (int i = 0; i < numLayers; ++i)
-    {
-        float *layerRaw = nullptr;
-        int layerWidth = 0;
-        int layerHeight = 0;
-        const char *layerErr = nullptr;
-        const int layerRc =
-            LoadEXRWithLayer(&layerRaw, &layerWidth, &layerHeight, path.c_str(), layerNames[i], &layerErr);
-        if (layerRc == TINYEXR_SUCCESS && layerRaw)
-        {
-            AssignRgbaAndFree(layerRaw, layerWidth, layerHeight);
-            for (int j = 0; j < numLayers; ++j)
-            {
-                if (layerNames[j])
-                {
-                    std::free((void *)layerNames[j]);
-                }
-            }
-            std::free((void *)layerNames);
-            return true;
-        }
-        if (layerErr)
-        {
-            layerError = layerErr;
-            FreeEXRErrorMessage(layerErr);
-        }
-    }
-
-    for (int i = 0; i < numLayers; ++i)
-    {
-        if (layerNames[i])
-        {
-            std::free((void *)layerNames[i]);
-        }
-    }
-    std::free((void *)layerNames);
-
-    reason = "LoadEXRWithLayer failed for " + path;
-    if (!layerError.empty())
-    {
-        reason += " (" + layerError + ")";
-    }
-    return false;
 }
 
 void PrintUsage(const char *exe)
@@ -329,7 +132,7 @@ int main(int argc, char **argv)
     if (!udimProvided)
     {
         size_t digitPos = 0;
-        if (!TryFindUdimDigits(exrPath, udim, digitPos))
+        if (!ybi::usd_ntc::TryFindUdimDigits(exrPath, udim, digitPos))
         {
             udim = kUdimMin;
         }
@@ -342,14 +145,14 @@ int main(int argc, char **argv)
             std::printf("missing tiles input: set --tiles-bin or --tiles-dir\n");
             return 1;
         }
-        tilesBinPath = tilesDir + "/" + Sanitize(StripUdimFromPath(exrPath)) + ".tiles.bin";
+        tilesBinPath = tilesDir + "/" + Sanitize(ybi::usd_ntc::StripUdimFromPath(exrPath)) + ".tiles.bin";
     }
 
     int exrW = 0;
     int exrH = 0;
     std::vector<float> exrRgba;
     std::string error;
-    if (!LoadExrRgba(exrPath, exrW, exrH, exrRgba, error))
+    if (!ybi::texture::LoadExrRgba(exrPath, &exrW, &exrH, &exrRgba, &error, false))
     {
         std::printf("verify failed: %s\n", error.c_str());
         return 2;

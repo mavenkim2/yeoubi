@@ -1,6 +1,7 @@
 #include "shared.h"
 #include "exr_utils.h"
 #include "tile_binary.h"
+#include "texture/path_utils.h"
 #include "texture/udim_utils.h"
 
 #include <algorithm>
@@ -22,16 +23,6 @@ struct TextureGroup
     std::string basePathNoUdim;
     std::unordered_map<uint32_t, std::string> udimPaths;
 };
-
-std::string LowerExt(const std::string &path)
-{
-    std::string ext = std::filesystem::path(path).extension().string();
-    for (char &c : ext)
-    {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return ext;
-}
 
 void ExtractTileRgbaF32(const std::vector<float> &image,
                         int imageWidth,
@@ -226,7 +217,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
     for (const auto &entry : groups)
     {
         const TextureGroup &group = entry.second;
-        if (LowerExt(group.basePathNoUdim) != ".exr")
+        if (ybi::texture::LowerExt(group.basePathNoUdim) != ".exr")
         {
             std::printf("Tile prep: skip non-EXR texture %s\n", group.basePathNoUdim.c_str());
             continue;

@@ -2,6 +2,7 @@
 #include "io/usd/load.h"
 #include "scene/scene.h"
 #include "texture/exr_io.h"
+#include "texture/path_utils.h"
 #include "texture/udim_utils.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
@@ -578,16 +579,6 @@ static const MaterialTextureInput *FindDiffuseTextureInput(const MaterialInfo &m
     return nullptr;
 }
 
-static std::string LowerExt(const std::string &path)
-{
-    std::string ext = std::filesystem::path(path).extension().string();
-    for (char &c : ext)
-    {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return ext;
-}
-
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
 static bool LoadExrRgba8(const std::string &path,
                          int *outWidth,
@@ -634,7 +625,7 @@ static bool LoadImageRgba8(const std::string &path,
     *outHeight = 0;
     outRgba8->clear();
 
-    if (LowerExt(path) == ".exr")
+    if (ybi::texture::LowerExt(path) == ".exr")
     {
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
         return LoadExrRgba8(path, outWidth, outHeight, outRgba8, outReason);

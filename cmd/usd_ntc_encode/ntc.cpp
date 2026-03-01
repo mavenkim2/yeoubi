@@ -1,5 +1,6 @@
 #include "shared.h"
 #include "texture/exr_io.h"
+#include "texture/path_utils.h"
 
 #include <libntc/wrappers.h>
 
@@ -112,16 +113,6 @@ std::vector<int> BuildSourceChannels(const std::string &inputName, const Channel
     return channels;
 }
 
-std::string LowerExt(const std::string &path)
-{
-    std::string ext = std::filesystem::path(path).extension().string();
-    for (char &c : ext)
-    {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return ext;
-}
-
 std::string ResolveUdimTilePath(const std::string &path)
 {
     const std::string tokenUpper = "<UDIM>";
@@ -181,7 +172,7 @@ bool LoadTexture(const std::string &inputName, const ChannelTexture &texture, Lo
     const int numChannels = InferChannelCount(inputName, texture);
     const std::vector<int> srcChannels = BuildSourceChannels(inputName, texture, numChannels);
 
-    if (LowerExt(out.texturePath) == ".exr")
+    if (ybi::texture::LowerExt(out.texturePath) == ".exr")
     {
         std::vector<float> rgba;
         int width = 0;
