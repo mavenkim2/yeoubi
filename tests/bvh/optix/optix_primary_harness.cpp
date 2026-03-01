@@ -1,6 +1,8 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
 #include "scene/scene.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "third_party/embree/tutorials/common/image/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
 #include "util/array.h"
@@ -14,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -22,6 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <cuda_runtime_api.h>
 #include <optix_stubs.h>
 
 using namespace ybi;
@@ -123,6 +127,7 @@ struct CliOptions
     std::optional<ybi::float3> cameraPosition;
     std::optional<ybi::float3> lookAt;
     int spp = 1;
+    bool useNtc = false;
 };
 
 struct RenderCameraOverride
@@ -267,7 +272,7 @@ static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao] [--spp N] "
-           "[--cam-pos x y z] [--look-at x y z]\n",
+           "[--cam-pos x y z] [--look-at x y z] [--ntc]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
@@ -275,6 +280,7 @@ static void PrintUsage(const char *exeName)
     printf("  --spp spp passes; feedback dumped after each pass\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
+    printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
 }
 
 static CliOptions ParseCli(int argc, char **argv)
@@ -365,6 +371,11 @@ static CliOptions ParseCli(int argc, char **argv)
             PrintUsage(argv[0]);
             std::exit(0);
         }
+        if (arg == "--ntc")
+        {
+            options.useNtc = true;
+            continue;
+        }
 
         PrintUsage(argv[0]);
         std::abort();
@@ -383,6 +394,247 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
 {
     const int strideInBytes = width * 4;
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
+}
+
+struct DecodedMaterialTexture
+{
+    bool valid = false;
+    int width = 0;
+    int height = 0;
+    std::vector<unsigned char> rgba8;
+    std::string sourcePath;
+};
+
+struct UploadedMaterialTextures
+{
+    std::vector<LaunchParams::MaterialTextureRef> refs;
+    std::vector<cudaArray_t> arrays;
+    std::vector<cudaTextureObject_t> textureObjects;
+};
+
+static bool CheckCudaRuntime(cudaError_t result, std::string *outError, const char *callName)
+{
+    if (result == cudaSuccess)
+    {
+        return true;
+    }
+    if (outError)
+    {
+        *outError = std::string(callName) + " failed: " + cudaGetErrorString(result);
+    }
+    return false;
+}
+
+static cudaTextureAddressMode ToCudaAddressMode(TextureWrapMode mode)
+{
+    switch (mode)
+    {
+        case TEXTURE_WRAP_MODE_CLAMP:
+            return cudaAddressModeClamp;
+        case TEXTURE_WRAP_MODE_MIRROR:
+            return cudaAddressModeMirror;
+        case TEXTURE_WRAP_MODE_BLACK:
+            return cudaAddressModeBorder;
+        case TEXTURE_WRAP_MODE_REPEAT:
+            return cudaAddressModeWrap;
+        case TEXTURE_WRAP_MODE_USE_METADATA:
+            return cudaAddressModeWrap;
+        case TEXTURE_WRAP_MODE_UNKNOWN:
+            return cudaAddressModeWrap;
+    }
+    return cudaAddressModeWrap;
+}
+
+static const MaterialTextureInput *FindDiffuseTextureInput(const MaterialInfo &material)
+{
+    for (const MaterialTextureInput &input : material.textureInputs)
+    {
+        if (input.inputName == "diffuseColor" && !input.texturePath.empty())
+        {
+            return &input;
+        }
+    }
+    return nullptr;
+}
+
+static bool DecodeDiffuseImageTextures(const std::vector<MaterialInfo> &materials,
+                                       std::vector<DecodedMaterialTexture> *outTextures)
+{
+    YBI_ASSERT(outTextures);
+    outTextures->clear();
+    outTextures->resize(materials.size());
+
+    std::unordered_map<std::string, size_t> decodedByPath;
+    int decodedCount = 0;
+    for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
+    {
+        const MaterialTextureInput *diffuse = FindDiffuseTextureInput(materials[materialIndex]);
+        if (!diffuse)
+        {
+            continue;
+        }
+
+        auto found = decodedByPath.find(diffuse->texturePath);
+        if (found != decodedByPath.end())
+        {
+            (*outTextures)[materialIndex] = (*outTextures)[found->second];
+            decodedCount++;
+            continue;
+        }
+
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        stbi_uc *pixels = stbi_load(diffuse->texturePath.c_str(), &width, &height, &channels, 4);
+        if (!pixels || width <= 0 || height <= 0)
+        {
+            std::printf("Image runtime: failed to load material %zu diffuse (%s): %s\n",
+                        materialIndex,
+                        diffuse->texturePath.c_str(),
+                        stbi_failure_reason() ? stbi_failure_reason() : "<unknown>");
+            if (pixels)
+            {
+                stbi_image_free(pixels);
+            }
+            continue;
+        }
+
+        DecodedMaterialTexture texture = {};
+        texture.valid = true;
+        texture.width = width;
+        texture.height = height;
+        texture.sourcePath = diffuse->texturePath;
+        texture.rgba8.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
+        std::memcpy(texture.rgba8.data(), pixels, texture.rgba8.size());
+        stbi_image_free(pixels);
+
+        (*outTextures)[materialIndex] = std::move(texture);
+        decodedByPath.emplace(diffuse->texturePath, materialIndex);
+        decodedCount++;
+    }
+
+    std::printf("Image runtime: decoded %d/%zu material diffuse textures\n",
+                decodedCount,
+                materials.size());
+    return true;
+}
+
+static bool UploadDecodedTexturesToCuda(const std::vector<MaterialInfo> &materials,
+                                        const std::vector<DecodedMaterialTexture> &decodedTextures,
+                                        UploadedMaterialTextures *outTextures,
+                                        std::string *outError)
+{
+    YBI_ASSERT(outTextures);
+    for (cudaTextureObject_t textureObject : outTextures->textureObjects)
+    {
+        if (textureObject)
+        {
+            cudaDestroyTextureObject(textureObject);
+        }
+    }
+    for (cudaArray_t array : outTextures->arrays)
+    {
+        if (array)
+        {
+            cudaFreeArray(array);
+        }
+    }
+    outTextures->arrays.clear();
+    outTextures->textureObjects.clear();
+    outTextures->refs.clear();
+    outTextures->refs.resize(decodedTextures.size());
+
+    for (size_t i = 0; i < decodedTextures.size(); ++i)
+    {
+        const DecodedMaterialTexture &src = decodedTextures[i];
+        if (!src.valid || src.width <= 0 || src.height <= 0 || src.rgba8.empty())
+        {
+            continue;
+        }
+
+        const MaterialTextureInput *diffuse =
+            (i < materials.size()) ? FindDiffuseTextureInput(materials[i]) : nullptr;
+
+        cudaChannelFormatDesc channelDesc =
+            cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
+        cudaArray_t array = nullptr;
+        if (!CheckCudaRuntime(
+                cudaMallocArray(&array, &channelDesc, src.width, src.height), outError, "cudaMallocArray"))
+        {
+            return false;
+        }
+
+        if (!CheckCudaRuntime(cudaMemcpy2DToArray(array,
+                                                  0,
+                                                  0,
+                                                  src.rgba8.data(),
+                                                  static_cast<size_t>(src.width) * 4u,
+                                                  static_cast<size_t>(src.width) * 4u,
+                                                  src.height,
+                                                  cudaMemcpyHostToDevice),
+                              outError,
+                              "cudaMemcpy2DToArray"))
+        {
+            cudaFreeArray(array);
+            return false;
+        }
+
+        cudaResourceDesc resourceDesc = {};
+        resourceDesc.resType = cudaResourceTypeArray;
+        resourceDesc.res.array.array = array;
+
+        cudaTextureDesc textureDesc = {};
+        textureDesc.addressMode[0] =
+            ToCudaAddressMode(diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT);
+        textureDesc.addressMode[1] =
+            ToCudaAddressMode(diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT);
+        textureDesc.filterMode = cudaFilterModePoint;
+        textureDesc.readMode = cudaReadModeNormalizedFloat;
+        textureDesc.normalizedCoords = 1;
+
+        cudaTextureObject_t textureObject = 0;
+        if (!CheckCudaRuntime(cudaCreateTextureObject(&textureObject, &resourceDesc, &textureDesc, nullptr),
+                              outError,
+                              "cudaCreateTextureObject"))
+        {
+            cudaFreeArray(array);
+            return false;
+        }
+
+        outTextures->arrays.push_back(array);
+        outTextures->textureObjects.push_back(textureObject);
+        outTextures->refs[i].textureObject = static_cast<unsigned long long>(textureObject);
+        outTextures->refs[i].width = src.width;
+        outTextures->refs[i].height = src.height;
+        outTextures->refs[i].valid = 1;
+    }
+
+    return true;
+}
+
+static void DestroyUploadedTextures(UploadedMaterialTextures *textures)
+{
+    if (!textures)
+    {
+        return;
+    }
+    for (cudaTextureObject_t textureObject : textures->textureObjects)
+    {
+        if (textureObject)
+        {
+            cudaDestroyTextureObject(textureObject);
+        }
+    }
+    for (cudaArray_t array : textures->arrays)
+    {
+        if (array)
+        {
+            cudaFreeArray(array);
+        }
+    }
+    textures->textureObjects.clear();
+    textures->arrays.clear();
+    textures->refs.clear();
 }
 
 static unsigned int FeedbackTileX(unsigned long long key)
@@ -761,28 +1013,63 @@ int main(int argc, char **argv)
 
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
     int materialTextureRefCount = 0;
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-    testbvh::UploadedMaterialTextures uploadedMaterialTextures = {};
-    std::vector<testbvh::DecodedMaterialTexture> decodedTextures;
-    std::string ntcError;
-    const bool ok = testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &decodedTextures, &ntcError);
-    if (!ok)
+    UploadedMaterialTextures uploadedMaterialTextures = {};
+    std::vector<DecodedMaterialTexture> decodedTextures;
+    if (!DecodeDiffuseImageTextures(scenePool.materials, &decodedTextures))
     {
-        fprintf(stderr, "NTC runtime decode failed: %s\n", ntcError.c_str());
+        fprintf(stderr, "Image runtime decode failed.\n");
         return 1;
     }
 
-    if (!testbvh::UploadDecodedTexturesToCuda(decodedTextures, &uploadedMaterialTextures, &ntcError))
+    if (options.useNtc)
     {
-        fprintf(stderr, "NTC runtime upload failed: %s\n", ntcError.c_str());
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+        std::vector<testbvh::DecodedMaterialTexture> ntcTextures;
+        std::string ntcError;
+        if (testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &ntcTextures, &ntcError))
+        {
+            int overrideCount = 0;
+            const size_t numMaterials = std::min(decodedTextures.size(), ntcTextures.size());
+            for (size_t i = 0; i < numMaterials; ++i)
+            {
+                if (!ntcTextures[i].valid)
+                {
+                    continue;
+                }
+                decodedTextures[i].valid = true;
+                decodedTextures[i].width = ntcTextures[i].width;
+                decodedTextures[i].height = ntcTextures[i].height;
+                decodedTextures[i].rgba8 = std::move(ntcTextures[i].rgba8);
+                decodedTextures[i].sourcePath = ntcTextures[i].ntcPath;
+                overrideCount++;
+            }
+            printf("NTC runtime: applied %d material overrides\n", overrideCount);
+        }
+        else
+        {
+            fprintf(stderr, "NTC runtime decode failed (continuing with image textures): %s\n", ntcError.c_str());
+        }
+#else
+        fprintf(stderr,
+                "NTC runtime requested via --ntc, but harness built without WITH_NTC. "
+                "Using image textures only.\n");
+#endif
+    }
+
+    std::string textureUploadError;
+    if (!UploadDecodedTexturesToCuda(
+            scenePool.materials, decodedTextures, &uploadedMaterialTextures, &textureUploadError))
+    {
+        fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
         return 1;
     }
+
     if (!uploadedMaterialTextures.refs.empty())
     {
         std::vector<LaunchParams::MaterialTextureRef> launchRefs(uploadedMaterialTextures.refs.size());
         for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
         {
-            const testbvh::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
+            const LaunchParams::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
             launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
         }
         const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
@@ -790,10 +1077,6 @@ int main(int argc, char **argv)
         device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
         materialTextureRefCount = static_cast<int>(launchRefs.size());
     }
-#else
-    fprintf(stderr,
-            "NTC runtime decode skipped: harness built without WITH_NTC support.\n");
-#endif
 
     Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
     YBI_ASSERT(rootScene);
@@ -869,9 +1152,7 @@ int main(int argc, char **argv)
     {
         device.FreeBytes(materialTextureRefsBuffer);
     }
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-    testbvh::DestroyUploadedTextures(&uploadedMaterialTextures);
-#endif
+    DestroyUploadedTextures(&uploadedMaterialTextures);
     for (DeviceMemoryView<uint8_t> &buffer : uploadedRefs.ownedBuffers)
     {
         device.FreeBytes(buffer);
