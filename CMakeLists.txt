@@ -119,7 +119,6 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/cli.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/exr_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp

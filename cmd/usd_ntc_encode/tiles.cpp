@@ -1,6 +1,6 @@
 #include "shared.h"
-#include "exr_utils.h"
 #include "tile_binary.h"
+#include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
 
@@ -232,7 +232,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             int width = 0;
             int height = 0;
             std::string reason;
-            if (!ybi::usd_ntc::LoadExrRgba(udimPath.second, width, height, image.rgba, reason))
+            if (!ybi::texture::LoadExrRgba(udimPath.second, &width, &height, &image.rgba, &reason, false))
             {
                 if (outError)
                 {
