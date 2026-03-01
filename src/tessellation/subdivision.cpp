@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #include <limits>
@@ -81,6 +82,31 @@ using LimitEvalFloat4 = LimitEvalValue<float4>;
 using LimitEvalVertex = LimitEvalFloat3;
 using LimitEvalFVar2 = LimitEvalFloat2;
 
+struct SubdivisionLimitEvalAttribute
+{
+    std::string name;
+    AttributeType type = AttributeType::Unknown;
+    PrimvarInterpolation interpolation = PrimvarInterpolation::Unknown;
+    int fvarChannel = -1;
+
+    std::vector<LimitEvalFloat> valuesFloat;
+    std::vector<LimitEvalFloat2> valuesFloat2;
+    std::vector<LimitEvalFloat3> valuesFloat3;
+    std::vector<LimitEvalFloat4> valuesFloat4;
+};
+
+template <typename T> static Array<T> BytesToArray(const Array<uint8_t> &bytes)
+{
+    YBI_ASSERT((bytes.size() % sizeof(T)) == 0);
+    const size_t count = bytes.size() / sizeof(T);
+    Array<T> out(count);
+    if (count > 0)
+    {
+        memcpy(out.data(), bytes.data(), bytes.size());
+    }
+    return out;
+}
+
 // clang-format off
 #include "tessellation/tessellation_adaptive_limit_eval.h"
 #include "tessellation/tessellation_adaptive_edge_ops.h"
@@ -113,14 +139,70 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     d.cornerWeights = mesh.cornerSharpnesses.data();
     d.numHoles = int(mesh.holeIndices.size());
     d.holeIndices = mesh.holeIndices.data();
-    const bool hasTexcoords = mesh.texcoords.size() > 0 && mesh.texcoordIndices.size() == mesh.indices.size();
-    Far::TopologyDescriptor::FVarChannel fvarChannel = {};
-    if (hasTexcoords)
+    std::vector<const Attribute *> tessellationAttributes;
+    tessellationAttributes.reserve(mesh.attributes.size());
+    for (const Attribute &attr : mesh.attributes)
     {
-        fvarChannel.numValues = int(mesh.texcoords.size());
-        fvarChannel.valueIndices = mesh.texcoordIndices.data();
-        d.numFVarChannels = 1;
-        d.fvarChannels = &fvarChannel;
+        if (!AttributeTypeIsFloat(attr.type))
+        {
+            continue;
+        }
+        if (attr.interpolation == PrimvarInterpolation::Vertex ||
+            attr.interpolation == PrimvarInterpolation::Varying ||
+            attr.interpolation == PrimvarInterpolation::FaceVarying)
+        {
+            tessellationAttributes.push_back(&attr);
+        }
+    }
+
+    std::vector<Far::TopologyDescriptor::FVarChannel> fvarChannels;
+    std::vector<Array<int>> generatedFVarIndices;
+    std::unordered_map<const Attribute *, int> fvarChannelByAttribute;
+    for (const Attribute *attr : tessellationAttributes)
+    {
+        if (!attr || attr->interpolation != PrimvarInterpolation::FaceVarying)
+        {
+            continue;
+        }
+        const size_t elementSize = AttributeTypeGetSize(attr->type);
+        if (elementSize == 0 || (attr->data.size() % elementSize) != 0)
+        {
+            continue;
+        }
+        const int numValues = int(attr->data.size() / elementSize);
+        if (numValues <= 0)
+        {
+            continue;
+        }
+
+        const int *valueIndices = nullptr;
+        if (attr->indices.size() == mesh.indices.size())
+        {
+            valueIndices = attr->indices.data();
+        }
+        else if (size_t(numValues) == mesh.indices.size())
+        {
+            generatedFVarIndices.emplace_back(mesh.indices.size());
+            for (size_t i = 0; i < mesh.indices.size(); ++i)
+            {
+                generatedFVarIndices.back()[i] = int(i);
+            }
+            valueIndices = generatedFVarIndices.back().data();
+        }
+        else
+        {
+            continue;
+        }
+        fvarChannelByAttribute[attr] = int(fvarChannels.size());
+        Far::TopologyDescriptor::FVarChannel channel = {};
+        channel.numValues = numValues;
+        channel.valueIndices = valueIndices;
+        fvarChannels.push_back(channel);
+    }
+    if (!fvarChannels.empty())
+    {
+        d.numFVarChannels = int(fvarChannels.size());
+        d.fvarChannels = fvarChannels.data();
     }
 
     Sdc::Options sdcOptions;
@@ -178,8 +260,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         return false;
     }
     const bool hasRefinerFVar = refiner->GetNumFVarChannels() > 0;
-    YBI_ERROR(!hasTexcoords || hasRefinerFVar,
-              "Subdivision texcoords present but refiner has no fvar channels\n");
+    YBI_ERROR(fvarChannels.empty() || hasRefinerFVar,
+              "Subdivision face-varying attrs present but refiner has no fvar channels\n");
 
     int nextGeneratedVertexId = int(mesh.vertices.size());
     const std::vector<SubdivisionPatch> patches =
@@ -192,7 +274,7 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         return false;
     }
 
-    const bool enableFVarTables = hasTexcoords && hasRefinerFVar;
+    const bool enableFVarTables = !fvarChannels.empty() && hasRefinerFVar;
 
     Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(options.level);
     adaptiveOptions.considerFVarChannels = enableFVarTables;
@@ -213,14 +295,62 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     Far::PatchMap patchMap(*patchTable);
     const std::vector<LimitEvalVertex> limitValues =
         BuildLimitEvalVertices(*refiner, *patchTable, mesh.vertices);
-    std::vector<LimitEvalFVar2> limitFVarValues;
-    const bool hasFVarChannel = hasTexcoords && hasRefinerFVar && patchTable->GetNumFVarChannels() > 0;
-    if (hasFVarChannel)
+    std::vector<SubdivisionLimitEvalAttribute> limitEvalAttributes;
+    limitEvalAttributes.reserve(tessellationAttributes.size());
+    for (const Attribute *attr : tessellationAttributes)
     {
-        limitFVarValues = BuildLimitEvalFVarValues(
-            *refiner, *patchTable, mesh.texcoords, PrimvarInterpolation::FaceVarying, 0);
+        if (!attr)
+        {
+            continue;
+        }
+        SubdivisionLimitEvalAttribute outAttr = {};
+        outAttr.name = attr->name;
+        outAttr.type = attr->type;
+        outAttr.interpolation = attr->interpolation;
+        if (attr->interpolation == PrimvarInterpolation::FaceVarying)
+        {
+            auto found = fvarChannelByAttribute.find(attr);
+            if (found == fvarChannelByAttribute.end() || found->second < 0)
+            {
+                continue;
+            }
+            outAttr.fvarChannel = found->second;
+        }
+
+        bool ok = false;
+        if (attr->type == AttributeType::Float)
+        {
+            Array<float> coarse = BytesToArray<float>(attr->data);
+            outAttr.valuesFloat = BuildLimitEvalValues<LimitEvalFloat, float>(
+                *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
+            ok = !outAttr.valuesFloat.empty();
+        }
+        else if (attr->type == AttributeType::Float2)
+        {
+            Array<float2> coarse = BytesToArray<float2>(attr->data);
+            outAttr.valuesFloat2 = BuildLimitEvalValues<LimitEvalFloat2, float2>(
+                *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
+            ok = !outAttr.valuesFloat2.empty();
+        }
+        else if (attr->type == AttributeType::Float3)
+        {
+            Array<float3> coarse = BytesToArray<float3>(attr->data);
+            outAttr.valuesFloat3 = BuildLimitEvalValues<LimitEvalFloat3, float3>(
+                *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
+            ok = !outAttr.valuesFloat3.empty();
+        }
+        else if (attr->type == AttributeType::Float4)
+        {
+            Array<float4> coarse = BytesToArray<float4>(attr->data);
+            outAttr.valuesFloat4 = BuildLimitEvalValues<LimitEvalFloat4, float4>(
+                *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
+            ok = !outAttr.valuesFloat4.empty();
+        }
+        if (ok)
+        {
+            limitEvalAttributes.push_back(std::move(outAttr));
+        }
     }
-    const bool enableLimitFVarEval = hasFVarChannel && !limitFVarValues.empty();
 
     const float3 eye = options.eye;
     const float3 lookAt = options.lookAt;
@@ -303,7 +433,7 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                                     patchMap,
                                     *patchTable,
                                     limitValues,
-                                    enableLimitFVarEval ? &limitFVarValues : nullptr,
+                                    limitEvalAttributes,
                                     nextGeneratedVertexId,
                                     &outResult->mesh,
                                     triPatchFaceIds,

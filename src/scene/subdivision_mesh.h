@@ -1,10 +1,12 @@
 #pragma once
 
+#include "scene/attributes.h"
 #include "util/array.h"
 #include "util/float2.h"
 #include "util/float3.h"
 
 #include <string>
+#include <vector>
 
 YBI_NAMESPACE_BEGIN
 
@@ -44,8 +46,7 @@ struct SubdivisionMesh
     Array<float3> vertices;
     Array<int> indices;
     Array<int> vertsPerFace;
-    Array<float2> texcoords;
-    Array<int> texcoordIndices;
+    std::vector<Attribute> attributes;
 
     BoundaryInterpolation interpolationRule;
     FVarLinearInterpolation fvarLinearInterpolation;
@@ -60,9 +61,6 @@ struct SubdivisionMesh
 
     Array<int> holeIndices;
 
-    size_t attributeStart;
-    size_t attributeEnd;
-
     SubdivisionMesh() = default;
     SubdivisionMesh(
         Array<float3> &&vertices,
@@ -74,16 +72,13 @@ struct SubdivisionMesh
         Array<int> &&creaseLengths,
         Array<float> &&creaseSharpnesses,
         Array<int> &&holeIndices,
-        size_t attributeStart,
-        size_t attributeEnd,
         BoundaryInterpolation interpolationRule = BOUNDARY_INTERPOLATION_EDGE_AND_CORNER,
         FVarLinearInterpolation fvarLinearInterpolation = FVAR_LINEAR_CORNERS_ONLY,
         TriangleSubdivisionRule triangleSubdivisionRule = TRIANGLE_SUBDIVISION_CATMULL_CLARK)
         : vertices(std::move(vertices)), indices(std::move(indices)),
           vertsPerFace(std::move(vertsPerFace)), interpolationRule(interpolationRule),
           fvarLinearInterpolation(fvarLinearInterpolation),
-          triangleSubdivisionRule(triangleSubdivisionRule), attributeStart(attributeStart),
-          attributeEnd(attributeEnd), cornerIndices(std::move(cornerIndices)),
+          triangleSubdivisionRule(triangleSubdivisionRule), cornerIndices(std::move(cornerIndices)),
           cornerSharpnesses(std::move(cornerSharpnesses)), creaseIndices(std::move(creaseIndices)),
           creaseLengths(std::move(creaseLengths)), creaseSharpnesses(std::move(creaseSharpnesses)),
           holeIndices(std::move(holeIndices))

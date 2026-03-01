@@ -1,5 +1,97 @@
 #pragma once
 
+template <typename T> static int AppendAttributeValue(Array<uint8_t> *dst, const T &value)
+{
+    YBI_ASSERT(dst);
+    const int index = int(dst->size() / sizeof(T));
+    const size_t oldBytes = dst->size();
+    dst->Resize(oldBytes + sizeof(T));
+    memcpy(dst->data() + oldBytes, &value, sizeof(T));
+    return index;
+}
+
+static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute &evalAttr,
+                                             const Far::PatchMap &patchMap,
+                                             const Far::PatchTable &patchTable,
+                                             int ptexFaceId,
+                                             const pxr::GfVec2f &uv,
+                                             Array<uint8_t> *dst,
+                                             int *outIndex)
+{
+    YBI_ASSERT(dst);
+    YBI_ASSERT(outIndex);
+
+    if (evalAttr.type == AttributeType::Float)
+    {
+        float value = 0.0f;
+        if (!EvaluateLimitValue<LimitEvalFloat, float>(patchMap,
+                                                       patchTable,
+                                                       evalAttr.valuesFloat,
+                                                       ptexFaceId,
+                                                       uv,
+                                                       evalAttr.interpolation,
+                                                       &value,
+                                                       evalAttr.fvarChannel))
+        {
+            return false;
+        }
+        *outIndex = AppendAttributeValue<float>(dst, value);
+        return true;
+    }
+    if (evalAttr.type == AttributeType::Float2)
+    {
+        float2 value = make_float2(0.0f);
+        if (!EvaluateLimitValue<LimitEvalFloat2, float2>(patchMap,
+                                                         patchTable,
+                                                         evalAttr.valuesFloat2,
+                                                         ptexFaceId,
+                                                         uv,
+                                                         evalAttr.interpolation,
+                                                         &value,
+                                                         evalAttr.fvarChannel))
+        {
+            return false;
+        }
+        *outIndex = AppendAttributeValue<float2>(dst, value);
+        return true;
+    }
+    if (evalAttr.type == AttributeType::Float3)
+    {
+        float3 value = make_float3(0.0f);
+        if (!EvaluateLimitValue<LimitEvalFloat3, float3>(patchMap,
+                                                         patchTable,
+                                                         evalAttr.valuesFloat3,
+                                                         ptexFaceId,
+                                                         uv,
+                                                         evalAttr.interpolation,
+                                                         &value,
+                                                         evalAttr.fvarChannel))
+        {
+            return false;
+        }
+        *outIndex = AppendAttributeValue<float3>(dst, value);
+        return true;
+    }
+    if (evalAttr.type == AttributeType::Float4)
+    {
+        float4 value = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+        if (!EvaluateLimitValue<LimitEvalFloat4, float4>(patchMap,
+                                                         patchTable,
+                                                         evalAttr.valuesFloat4,
+                                                         ptexFaceId,
+                                                         uv,
+                                                         evalAttr.interpolation,
+                                                         &value,
+                                                         evalAttr.fvarChannel))
+        {
+            return false;
+        }
+        *outIndex = AppendAttributeValue<float4>(dst, value);
+        return true;
+    }
+    return false;
+}
+
 static void RecurseChildEdges(
     const SubdivisionEdgeMap &edgeMap, int v0, int v1, std::vector<int> &vertices, int depth = 0)
 {
@@ -34,71 +126,22 @@ static void RecurseChildEdges(
     }
 }
 
-static void RecurseChildEdgeUVs(const SubdivisionEdgeMap &edgeMap,
-                                int v0,
-                                int v1,
-                                const pxr::GfVec2f &uv0,
-                                const pxr::GfVec2f &uv1,
-                                std::vector<pxr::GfVec2f> &uvs)
+struct TessellationAttributeBuilder
 {
-    const SubdivisionEdge &edge = GetEdge(edgeMap, v0, v1);
-    auto GetEdgeVertexUV = [](const SubdivisionEdge &e,
-                              int vertexId,
-                              const pxr::GfVec2f &fallback) -> pxr::GfVec2f {
-        if (!e.hasStoredPatchParams)
-        {
-            return fallback;
-        }
-        if (e.sampleVStart == vertexId)
-        {
-            return e.storedUv0;
-        }
-        if (e.sampleVEnd == vertexId)
-        {
-            return e.storedUv1;
-        }
-        if (e.v0 == vertexId)
-        {
-            return e.storedUv0;
-        }
-        if (e.v1 == vertexId)
-        {
-            return e.storedUv1;
-        }
-        return fallback;
-    };
-    if (edge.split)
-    {
-        YBI_ASSERT(edge.midpointVertex >= 0);
-        const SubdivisionEdge &edgeA = GetEdge(edgeMap, v0, edge.midpointVertex);
-        const SubdivisionEdge &edgeB = GetEdge(edgeMap, edge.midpointVertex, v1);
-        const pxr::GfVec2f uvFallbackMid = uv0 * 0.5f + uv1 * 0.5f;
-        const pxr::GfVec2f uvMid = GetEdgeVertexUV(edgeA,
-                                                   edge.midpointVertex,
-                                                   GetEdgeVertexUV(edgeB,
-                                                                   edge.midpointVertex,
-                                                                   uvFallbackMid));
-        RecurseChildEdgeUVs(edgeMap, v0, edge.midpointVertex, uv0, uvMid, uvs);
-        RecurseChildEdgeUVs(edgeMap, edge.midpointVertex, v1, uvMid, uv1, uvs);
-    }
-    else
-    {
-        YBI_ASSERT(edge.tmaxEdgeFactor >= 1);
-        for (int k = 1; k < edge.tmaxEdgeFactor; ++k)
-        {
-            const float a = float(k) / float(edge.tmaxEdgeFactor);
-            uvs.push_back(uv0 * (1.0f - a) + uv1 * a);
-        }
-        uvs.push_back(uv1);
-    }
-}
+    std::string name;
+    AttributeType type = AttributeType::Unknown;
+    PrimvarInterpolation interpolation = PrimvarInterpolation::Unknown;
+    bool isFaceVarying = false;
+    Array<uint8_t> values;
+    Array<int> indices;
+};
 
 static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leafPatches,
                                        const SubdivisionEdgeMap &edgeMap,
                                        const Far::PatchMap &patchMap,
                                        const Far::PatchTable &patchTable,
                                        const std::vector<LimitEvalVertex> &limitValues,
-                                       const std::vector<LimitEvalFVar2> *limitFVarValues,
+                                       const std::vector<SubdivisionLimitEvalAttribute> &limitEvalAttributes,
                                        int nextGeneratedVertexId,
                                        Mesh *outMesh,
                                        std::vector<int> *outTriPatchFaceIds,
@@ -136,10 +179,31 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
 
     const float inf = std::numeric_limits<float>::infinity();
     std::vector<float3> sharedPos(maxVertexId, make_float3(inf, inf, inf));
+    std::vector<pxr::GfVec2f> sharedUV(maxVertexId, pxr::GfVec2f(0.0f, 0.0f));
+    std::vector<int> sharedPtexFace(maxVertexId, -1);
     std::vector<uint8_t> sharedInit(maxVertexId, uint8_t(0));
+    std::vector<uint8_t> sharedUVInit(maxVertexId, uint8_t(0));
     auto isSharedInit = [&](int id) -> bool {
         return (id >= 0) && (id < int(sharedInit.size())) && (sharedInit[id] != 0);
     };
+
+    std::vector<TessellationAttributeBuilder> attrBuilders(limitEvalAttributes.size());
+    std::vector<int> faceVaryingBuilderIndices;
+    std::vector<int> builderToFVarSlot(limitEvalAttributes.size(), -1);
+    for (size_t i = 0; i < limitEvalAttributes.size(); ++i)
+    {
+        attrBuilders[i].name = limitEvalAttributes[i].name;
+        attrBuilders[i].type = limitEvalAttributes[i].type;
+        attrBuilders[i].interpolation = limitEvalAttributes[i].interpolation;
+        attrBuilders[i].isFaceVarying =
+            (limitEvalAttributes[i].interpolation == PrimvarInterpolation::FaceVarying);
+        if (attrBuilders[i].isFaceVarying)
+        {
+            builderToFVarSlot[i] = int(faceVaryingBuilderIndices.size());
+            faceVaryingBuilderIndices.push_back(int(i));
+        }
+    }
+    const int fvarAttrCount = int(faceVaryingBuilderIndices.size());
 
     for (const auto &it : edgeMap)
     {
@@ -191,15 +255,15 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
             {
                 sharedPos[vertexId] = p;
                 sharedInit[vertexId] = 1;
+                sharedUV[vertexId] = uv;
+                sharedPtexFace[vertexId] = edge.storedPtexFaceId;
+                sharedUVInit[vertexId] = 1;
             }
         }
     }
 
-    const bool hasTexcoords = limitFVarValues != nullptr;
     Array<float3> positions;
     Array<int> indices;
-    Array<float2> texcoords;
-    Array<int> texcoordIndices;
     if (outTriPatchFaceIds)
     {
         outTriPatchFaceIds->clear();
@@ -224,9 +288,29 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         {
             continue;
         }
-        const float3 &p = sharedPos[i];
-        sharedMeshIndex[i] = int(positions.size());
-        positions.EmplaceBack(p);
+        const int meshIndex = int(positions.size());
+        sharedMeshIndex[i] = meshIndex;
+        positions.EmplaceBack(sharedPos[i]);
+        YBI_ASSERT(sharedUVInit[i] != 0 && sharedPtexFace[i] >= 0);
+        for (size_t ai = 0; ai < limitEvalAttributes.size(); ++ai)
+        {
+            if (attrBuilders[ai].isFaceVarying)
+            {
+                continue;
+            }
+            int attrValueIndex = -1;
+            if (!EvaluateAndAppendAttributeSample(limitEvalAttributes[ai],
+                                                  patchMap,
+                                                  patchTable,
+                                                  sharedPtexFace[i],
+                                                  sharedUV[i],
+                                                  &attrBuilders[ai].values,
+                                                  &attrValueIndex))
+            {
+                return false;
+            }
+            YBI_ASSERT(attrValueIndex == meshIndex);
+        }
     }
 
     int currentPatchFaceId = -1;
@@ -236,8 +320,11 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int innerGridTriangleCount = 0;
     int stitchingTriangleCount = 0;
     bool emitFromInnerGrid = false;
+    std::vector<int> tmpFVarA(fvarAttrCount, -1);
+    std::vector<int> tmpFVarB(fvarAttrCount, -1);
+    std::vector<int> tmpFVarC(fvarAttrCount, -1);
 
-    auto emitTri = [&](int a, int b, int c, int ta, int tb, int tc) {
+    auto emitTri = [&](int a, int b, int c) {
         YBI_ERROR(a >= 0 && b >= 0 && c >= 0, "%i %i %i\n", a, b, c);
         if (a == b || b == c || a == c)
         {
@@ -246,12 +333,22 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         indices.EmplaceBack(a);
         indices.EmplaceBack(b);
         indices.EmplaceBack(c);
-        if (hasTexcoords)
+        for (size_t ai = 0; ai < attrBuilders.size(); ++ai)
         {
-            YBI_ASSERT(ta >= 0 && tb >= 0 && tc >= 0);
-            texcoordIndices.EmplaceBack(ta);
-            texcoordIndices.EmplaceBack(tb);
-            texcoordIndices.EmplaceBack(tc);
+            if (attrBuilders[ai].isFaceVarying)
+            {
+                const int fvSlot = builderToFVarSlot[ai];
+                YBI_ASSERT(fvSlot >= 0);
+                attrBuilders[ai].indices.EmplaceBack(tmpFVarA[fvSlot]);
+                attrBuilders[ai].indices.EmplaceBack(tmpFVarB[fvSlot]);
+                attrBuilders[ai].indices.EmplaceBack(tmpFVarC[fvSlot]);
+            }
+            else
+            {
+                attrBuilders[ai].indices.EmplaceBack(a);
+                attrBuilders[ai].indices.EmplaceBack(b);
+                attrBuilders[ai].indices.EmplaceBack(c);
+            }
         }
         if (emitFromInnerGrid)
         {
@@ -281,18 +378,18 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
 
     auto stitchStrip = [&](const std::vector<int> &outer,
                            const std::vector<int> &inner,
-                           const std::vector<int> *outerTc,
-                           const std::vector<int> *innerTc,
+                           const std::vector<std::vector<int>> &outerFVar,
+                           const std::vector<std::vector<int>> &innerFVar,
                            int m,
                            int n) {
             YBI_ASSERT(!outer.empty());
             YBI_ASSERT(!inner.empty());
-            if (hasTexcoords)
+            YBI_ASSERT(int(outerFVar.size()) == fvarAttrCount);
+            YBI_ASSERT(int(innerFVar.size()) == fvarAttrCount);
+            for (int i = 0; i < fvarAttrCount; ++i)
             {
-                YBI_ASSERT(outerTc != nullptr);
-                YBI_ASSERT(innerTc != nullptr);
-                YBI_ASSERT(outerTc->size() == outer.size());
-                YBI_ASSERT(innerTc->size() == inner.size());
+                YBI_ASSERT(outerFVar[i].size() == outer.size());
+                YBI_ASSERT(innerFVar[i].size() == inner.size());
             }
 
             size_t io = 0;
@@ -301,12 +398,13 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
             {
                 while (io + 1 < outer.size())
                 {
-                    emitTri(outer[io],
-                            outer[io + 1],
-                            inner[0],
-                            hasTexcoords ? (*outerTc)[io] : -1,
-                            hasTexcoords ? (*outerTc)[io + 1] : -1,
-                            hasTexcoords ? (*innerTc)[0] : -1);
+                    for (int k = 0; k < fvarAttrCount; ++k)
+                    {
+                        tmpFVarA[k] = outerFVar[k][io];
+                        tmpFVarB[k] = outerFVar[k][io + 1];
+                        tmpFVarC[k] = innerFVar[k][0];
+                    }
+                    emitTri(outer[io], outer[io + 1], inner[0]);
                     io++;
                 }
                 return;
@@ -320,46 +418,50 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
 
                 if (!canAdvanceInner)
                 {
-                    emitTri(outer[io],
-                            outer[io + 1],
-                            inner[ii],
-                            hasTexcoords ? (*outerTc)[io] : -1,
-                            hasTexcoords ? (*outerTc)[io + 1] : -1,
-                            hasTexcoords ? (*innerTc)[ii] : -1);
+                    for (int k = 0; k < fvarAttrCount; ++k)
+                    {
+                        tmpFVarA[k] = outerFVar[k][io];
+                        tmpFVarB[k] = outerFVar[k][io + 1];
+                        tmpFVarC[k] = innerFVar[k][ii];
+                    }
+                    emitTri(outer[io], outer[io + 1], inner[ii]);
                     io++;
                     continue;
                 }
                 if (!canAdvanceOuter)
                 {
-                    emitTri(outer[io],
-                            inner[ii + 1],
-                            inner[ii],
-                            hasTexcoords ? (*outerTc)[io] : -1,
-                            hasTexcoords ? (*innerTc)[ii + 1] : -1,
-                            hasTexcoords ? (*innerTc)[ii] : -1);
+                    for (int k = 0; k < fvarAttrCount; ++k)
+                    {
+                        tmpFVarA[k] = outerFVar[k][io];
+                        tmpFVarB[k] = innerFVar[k][ii + 1];
+                        tmpFVarC[k] = innerFVar[k][ii];
+                    }
+                    emitTri(outer[io], inner[ii + 1], inner[ii]);
                     ii++;
                     continue;
                 }
 
                 if (q >= 0)
                 {
-                    emitTri(outer[io],
-                            inner[ii + 1],
-                            inner[ii],
-                            hasTexcoords ? (*outerTc)[io] : -1,
-                            hasTexcoords ? (*innerTc)[ii + 1] : -1,
-                            hasTexcoords ? (*innerTc)[ii] : -1);
+                    for (int k = 0; k < fvarAttrCount; ++k)
+                    {
+                        tmpFVarA[k] = outerFVar[k][io];
+                        tmpFVarB[k] = innerFVar[k][ii + 1];
+                        tmpFVarC[k] = innerFVar[k][ii];
+                    }
+                    emitTri(outer[io], inner[ii + 1], inner[ii]);
                     ii++;
                     q -= 2 * n;
                 }
                 else
                 {
-                    emitTri(outer[io],
-                            outer[io + 1],
-                            inner[ii],
-                            hasTexcoords ? (*outerTc)[io] : -1,
-                            hasTexcoords ? (*outerTc)[io + 1] : -1,
-                            hasTexcoords ? (*innerTc)[ii] : -1);
+                    for (int k = 0; k < fvarAttrCount; ++k)
+                    {
+                        tmpFVarA[k] = outerFVar[k][io];
+                        tmpFVarB[k] = outerFVar[k][io + 1];
+                        tmpFVarC[k] = innerFVar[k][ii];
+                    }
+                    emitTri(outer[io], outer[io + 1], inner[ii]);
                     io++;
                     q += 2 * m;
                 }
@@ -381,32 +483,29 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                               const pxr::GfVec2f &uvA,
                               const pxr::GfVec2f &uvB,
                               std::vector<int> *out,
-                              std::vector<int> *outTc) -> bool {
+                              std::vector<std::vector<int>> *outFVar) -> bool {
             YBI_ASSERT(out);
-            YBI_ASSERT(outTc);
+            YBI_ASSERT(outFVar);
+            outFVar->assign(size_t(fvarAttrCount), std::vector<int>{});
 
             std::vector<int> outerVertexIds;
             outerVertexIds.reserve(t + 1);
             outerVertexIds.push_back(a);
             RecurseChildEdges(edgeMap, a, b, outerVertexIds);
-            YBI_ERROR((!edge.split && outerVertexIds.size() == t + 1) ||
+            YBI_ERROR((!edge.split && outerVertexIds.size() == size_t(t + 1)) ||
                           (edge.split && outerVertexIds.size() > size_t(t)),
                       "split: %i\n",
                       edge.split);
 
-            std::vector<pxr::GfVec2f> outerPatchUVs;
-            if (hasTexcoords)
-            {
-                outerPatchUVs.reserve(outerVertexIds.size());
-                outerPatchUVs.push_back(uvA);
-                RecurseChildEdgeUVs(edgeMap, a, b, uvA, uvB, outerPatchUVs);
-                YBI_ASSERT(outerPatchUVs.size() == outerVertexIds.size());
-            }
-
+            const int edgeRate = int(outerVertexIds.size()) - 1;
+            YBI_ASSERT(edgeRate >= 1);
             out->clear();
             out->reserve(outerVertexIds.size());
-            outTc->clear();
-            outTc->reserve(outerVertexIds.size());
+            for (int k = 0; k < fvarAttrCount; ++k)
+            {
+                (*outFVar)[k].reserve(outerVertexIds.size());
+            }
+
             for (size_t i = 0; i < outerVertexIds.size(); ++i)
             {
                 const int o = outerVertexIds[i];
@@ -416,20 +515,23 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 YBI_ASSERT(meshId >= 0);
                 out->push_back(meshId);
 
-                if (hasTexcoords)
+                const float alpha = float(i) / float(edgeRate);
+                const pxr::GfVec2f uv = uvA * (1.0f - alpha) + uvB * alpha;
+                for (int fvSlot = 0; fvSlot < fvarAttrCount; ++fvSlot)
                 {
-                    float2 tc = make_float2(0.0f);
-                    if (!EvaluateLimitFVar2(patchMap,
-                                            patchTable,
-                                            *limitFVarValues,
-                                            patch.ptexFaceId,
-                                            outerPatchUVs[i],
-                                            &tc))
+                    const int builderIndex = faceVaryingBuilderIndices[fvSlot];
+                    int valueIndex = -1;
+                    if (!EvaluateAndAppendAttributeSample(limitEvalAttributes[builderIndex],
+                                                          patchMap,
+                                                          patchTable,
+                                                          patch.ptexFaceId,
+                                                          uv,
+                                                          &attrBuilders[builderIndex].values,
+                                                          &valueIndex))
                     {
                         return false;
                     }
-                    outTc->push_back(int(texcoords.size()));
-                    texcoords.EmplaceBack(tc);
+                    (*outFVar)[fvSlot].push_back(valueIndex);
                 }
             }
             return true;
@@ -452,7 +554,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         const SubdivisionEdge &edge3 = GetEdge(edgeMap, patch.verts[3], patch.verts[0]);
 
         std::vector<int> outer0, outer1, outer2, outer3;
-        std::vector<int> outer0Tc, outer1Tc, outer2Tc, outer3Tc;
+        std::vector<std::vector<int>> outer0FVar, outer1FVar, outer2FVar, outer3FVar;
         if (!buildOuter(edge0,
                         patch.verts[0],
                         patch.verts[1],
@@ -460,7 +562,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                         patch.uv[0],
                         patch.uv[1],
                         &outer0,
-                        &outer0Tc) ||
+                        &outer0FVar) ||
             !buildOuter(edge1,
                         patch.verts[1],
                         patch.verts[2],
@@ -468,7 +570,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                         patch.uv[1],
                         patch.uv[2],
                         &outer1,
-                        &outer1Tc) ||
+                        &outer1FVar) ||
             !buildOuter(edge2,
                         patch.verts[2],
                         patch.verts[3],
@@ -476,7 +578,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                         patch.uv[2],
                         patch.uv[3],
                         &outer2,
-                        &outer2Tc) ||
+                        &outer2FVar) ||
             !buildOuter(edge3,
                         patch.verts[3],
                         patch.verts[0],
@@ -484,31 +586,32 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                         patch.uv[3],
                         patch.uv[0],
                         &outer3,
-                        &outer3Tc))
+                        &outer3FVar))
         {
             return false;
         }
 
-        e0 = outer0.size() - 1;
-        e1 = outer1.size() - 1;
-        e2 = outer2.size() - 1;
-        e3 = outer3.size() - 1;
+        e0 = int(outer0.size()) - 1;
+        e1 = int(outer1.size()) - 1;
+        e2 = int(outer2.size()) - 1;
+        e3 = int(outer3.size()) - 1;
 
         const int nu = std::max(std::max(e0, e2), 2);
         const int nv = std::max(std::max(e1, e3), 2);
         const int cols = nu - 1;
         const int rows = nv - 1;
         std::vector<int> innerGridIndex(cols * rows, -1);
-        std::vector<int> innerGridTcIndex(cols * rows, -1);
+        std::vector<std::vector<int>> innerGridFVarIndex(
+            size_t(fvarAttrCount), std::vector<int>(cols * rows, -1));
         auto innerAt = [&](int iu, int iv) -> int & {
             YBI_ASSERT(iu >= 1 && iu <= cols);
             YBI_ASSERT(iv >= 1 && iv <= rows);
             return innerGridIndex[(iv - 1) * cols + (iu - 1)];
         };
-        auto innerTcAt = [&](int iu, int iv) -> int & {
+        auto innerFVarAt = [&](int fvarSlot, int iu, int iv) -> int & {
             YBI_ASSERT(iu >= 1 && iu <= cols);
             YBI_ASSERT(iv >= 1 && iv <= rows);
-            return innerGridTcIndex[(iv - 1) * cols + (iu - 1)];
+            return innerGridFVarIndex[size_t(fvarSlot)][(iv - 1) * cols + (iu - 1)];
         };
 
         for (int iv = 1; iv < nv; ++iv)
@@ -527,18 +630,43 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 {
                     return false;
                 }
-                innerAt(iu, iv) = int(positions.size());
+                const int meshIndex = int(positions.size());
+                innerAt(iu, iv) = meshIndex;
                 positions.EmplaceBack(p);
-                if (hasTexcoords)
+                for (size_t ai = 0; ai < limitEvalAttributes.size(); ++ai)
                 {
-                    float2 tc = make_float2(0.0f);
-                    if (!EvaluateLimitFVar2(
-                            patchMap, patchTable, *limitFVarValues, patch.ptexFaceId, uv, &tc))
+                    if (attrBuilders[ai].isFaceVarying)
+                    {
+                        continue;
+                    }
+                    int attrValueIndex = -1;
+                    if (!EvaluateAndAppendAttributeSample(limitEvalAttributes[ai],
+                                                          patchMap,
+                                                          patchTable,
+                                                          patch.ptexFaceId,
+                                                          uv,
+                                                          &attrBuilders[ai].values,
+                                                          &attrValueIndex))
                     {
                         return false;
                     }
-                    innerTcAt(iu, iv) = int(texcoords.size());
-                    texcoords.EmplaceBack(tc);
+                    YBI_ASSERT(attrValueIndex == meshIndex);
+                }
+                for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                {
+                    const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                    int valueIndex = -1;
+                    if (!EvaluateAndAppendAttributeSample(limitEvalAttributes[builderIndex],
+                                                          patchMap,
+                                                          patchTable,
+                                                          patch.ptexFaceId,
+                                                          uv,
+                                                          &attrBuilders[builderIndex].values,
+                                                          &valueIndex))
+                    {
+                        return false;
+                    }
+                    innerFVarAt(fvarSlot, iu, iv) = valueIndex;
                 }
             }
         }
@@ -554,12 +682,20 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                     const int i10 = innerAt(x + 2, y + 1);
                     const int i01 = innerAt(x + 1, y + 2);
                     const int i11 = innerAt(x + 2, y + 2);
-                    const int tc00 = hasTexcoords ? innerTcAt(x + 1, y + 1) : -1;
-                    const int tc10 = hasTexcoords ? innerTcAt(x + 2, y + 1) : -1;
-                    const int tc01 = hasTexcoords ? innerTcAt(x + 1, y + 2) : -1;
-                    const int tc11 = hasTexcoords ? innerTcAt(x + 2, y + 2) : -1;
-                    emitTri(i00, i10, i11, tc00, tc10, tc11);
-                    emitTri(i00, i11, i01, tc00, tc11, tc01);
+                    for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                    {
+                        tmpFVarA[fvarSlot] = innerFVarAt(fvarSlot, x + 1, y + 1);
+                        tmpFVarB[fvarSlot] = innerFVarAt(fvarSlot, x + 2, y + 1);
+                        tmpFVarC[fvarSlot] = innerFVarAt(fvarSlot, x + 2, y + 2);
+                    }
+                    emitTri(i00, i10, i11);
+                    for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                    {
+                        tmpFVarA[fvarSlot] = innerFVarAt(fvarSlot, x + 1, y + 1);
+                        tmpFVarB[fvarSlot] = innerFVarAt(fvarSlot, x + 2, y + 2);
+                        tmpFVarC[fvarSlot] = innerFVarAt(fvarSlot, x + 1, y + 2);
+                    }
+                    emitTri(i00, i11, i01);
                 }
             }
             emitFromInnerGrid = false;
@@ -569,93 +705,80 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         std::vector<int> inner1;
         std::vector<int> inner2;
         std::vector<int> inner3;
-        std::vector<int> inner0Tc;
-        std::vector<int> inner1Tc;
-        std::vector<int> inner2Tc;
-        std::vector<int> inner3Tc;
+        std::vector<std::vector<int>> inner0FVar{size_t(fvarAttrCount)};
+        std::vector<std::vector<int>> inner1FVar{size_t(fvarAttrCount)};
+        std::vector<std::vector<int>> inner2FVar{size_t(fvarAttrCount)};
+        std::vector<std::vector<int>> inner3FVar{size_t(fvarAttrCount)};
         inner0.reserve(cols);
         inner1.reserve(rows);
         inner2.reserve(cols);
         inner3.reserve(rows);
-        inner0Tc.reserve(cols);
-        inner1Tc.reserve(rows);
-        inner2Tc.reserve(cols);
-        inner3Tc.reserve(rows);
+        for (int f = 0; f < fvarAttrCount; ++f)
+        {
+            inner0FVar[size_t(f)].reserve(cols);
+            inner1FVar[size_t(f)].reserve(rows);
+            inner2FVar[size_t(f)].reserve(cols);
+            inner3FVar[size_t(f)].reserve(rows);
+        }
         for (int iu = 1; iu < nu; ++iu)
         {
             inner0.push_back(innerAt(iu, 1));
-            if (hasTexcoords)
+            for (int f = 0; f < fvarAttrCount; ++f)
             {
-                inner0Tc.push_back(innerTcAt(iu, 1));
+                inner0FVar[size_t(f)].push_back(innerFVarAt(f, iu, 1));
             }
         }
         for (int iv = 1; iv < nv; ++iv)
         {
             inner1.push_back(innerAt(cols, iv));
-            if (hasTexcoords)
+            for (int f = 0; f < fvarAttrCount; ++f)
             {
-                inner1Tc.push_back(innerTcAt(cols, iv));
+                inner1FVar[size_t(f)].push_back(innerFVarAt(f, cols, iv));
             }
         }
         for (int iu = 1; iu < nu; ++iu)
         {
             inner2.push_back(innerAt(iu, rows));
-            if (hasTexcoords)
+            for (int f = 0; f < fvarAttrCount; ++f)
             {
-                inner2Tc.push_back(innerTcAt(iu, rows));
+                inner2FVar[size_t(f)].push_back(innerFVarAt(f, iu, rows));
             }
         }
         for (int iv = 1; iv < nv; ++iv)
         {
             inner3.push_back(innerAt(1, iv));
-            if (hasTexcoords)
+            for (int f = 0; f < fvarAttrCount; ++f)
             {
-                inner3Tc.push_back(innerTcAt(1, iv));
+                inner3FVar[size_t(f)].push_back(innerFVarAt(f, 1, iv));
             }
         }
 
         std::reverse(outer2.begin(), outer2.end());
         std::reverse(outer3.begin(), outer3.end());
-        std::reverse(outer2Tc.begin(), outer2Tc.end());
-        std::reverse(outer3Tc.begin(), outer3Tc.end());
-        stitchStrip(outer0,
-                    inner0,
-                    hasTexcoords ? &outer0Tc : nullptr,
-                    hasTexcoords ? &inner0Tc : nullptr,
-                    std::max(e0, e2),
-                    e0);
-        stitchStrip(outer1,
-                    inner1,
-                    hasTexcoords ? &outer1Tc : nullptr,
-                    hasTexcoords ? &inner1Tc : nullptr,
-                    std::max(e1, e3),
-                    e1);
-        stitchStrip(outer2,
-                    inner2,
-                    hasTexcoords ? &outer2Tc : nullptr,
-                    hasTexcoords ? &inner2Tc : nullptr,
-                    std::max(e0, e2),
-                    e2);
-        stitchStrip(outer3,
-                    inner3,
-                    hasTexcoords ? &outer3Tc : nullptr,
-                    hasTexcoords ? &inner3Tc : nullptr,
-                    std::max(e1, e3),
-                    e3);
+        for (int f = 0; f < fvarAttrCount; ++f)
+        {
+            std::reverse(outer2FVar[size_t(f)].begin(), outer2FVar[size_t(f)].end());
+            std::reverse(outer3FVar[size_t(f)].begin(), outer3FVar[size_t(f)].end());
+        }
+
+        stitchStrip(outer0, inner0, outer0FVar, inner0FVar, std::max(e0, e2), e0);
+        stitchStrip(outer1, inner1, outer1FVar, inner1FVar, std::max(e1, e3), e1);
+        stitchStrip(outer2, inner2, outer2FVar, inner2FVar, std::max(e0, e2), e2);
+        stitchStrip(outer3, inner3, outer3FVar, inner3FVar, std::max(e1, e3), e3);
     }
 
     outMesh->positions = std::move(positions);
     outMesh->indices = std::move(indices);
-    if (hasTexcoords)
+    outMesh->attributes.clear();
+    outMesh->attributes.reserve(attrBuilders.size());
+    for (TessellationAttributeBuilder &builder : attrBuilders)
     {
-        YBI_ASSERT(texcoordIndices.size() == outMesh->indices.size());
-        outMesh->texcoords = std::move(texcoords);
-        outMesh->texcoordIndices = std::move(texcoordIndices);
-    }
-    else
-    {
-        outMesh->texcoords.Resize(0);
-        outMesh->texcoordIndices.Resize(0);
+        YBI_ASSERT(builder.indices.size() == outMesh->indices.size());
+        outMesh->attributes.emplace_back(std::move(builder.values),
+                                         std::move(builder.indices),
+                                         builder.type,
+                                         builder.interpolation,
+                                         builder.name);
     }
 
     if (outVertexCount)

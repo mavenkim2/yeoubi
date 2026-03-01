@@ -1,7 +1,9 @@
 #pragma once
 
+#include "util/array.h"
 #include "util/memory_view.h"
 #include <cstdint>
+#include <string>
 
 YBI_NAMESPACE_BEGIN
 
@@ -64,16 +66,31 @@ inline size_t AttributeTypeGetSize(AttributeType type)
 
 struct Attribute
 {
-    MemoryView<uint8_t> data;
-    MemoryView<int> indices;
+    std::string name;
+    Array<uint8_t> data;
+    Array<int> indices;
     AttributeType type;
     PrimvarInterpolation interpolation;
 
-    Attribute(MemoryView<uint8_t> data, AttributeType type, PrimvarInterpolation interpolation);
+    Attribute() = default;
+    Attribute(Array<uint8_t> data,
+              AttributeType type,
+              PrimvarInterpolation interpolation,
+              const std::string &name = "");
+    Attribute(Array<uint8_t> data,
+              Array<int> indices,
+              AttributeType type,
+              PrimvarInterpolation interpolation,
+              const std::string &name = "");
+    Attribute(MemoryView<uint8_t> data,
+              AttributeType type,
+              PrimvarInterpolation interpolation,
+              const std::string &name = "");
     Attribute(MemoryView<uint8_t> data,
               MemoryView<int> indices,
               AttributeType type,
-              PrimvarInterpolation interpolation);
+              PrimvarInterpolation interpolation,
+              const std::string &name = "");
 };
 
 YBI_NAMESPACE_END

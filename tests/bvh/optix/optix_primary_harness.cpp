@@ -416,6 +416,22 @@ struct UploadedMeshRefs
     std::vector<DeviceMemoryView<uint8_t>> ownedBuffers;
 };
 
+static const Attribute *FindMeshSTAttribute(const Mesh &mesh)
+{
+    for (const Attribute &attr : mesh.attributes)
+    {
+        if (attr.name == "st" && attr.type == AttributeType::Float2 &&
+            attr.interpolation == PrimvarInterpolation::FaceVarying && attr.indices.size() > 0)
+        {
+            if ((attr.data.size() % sizeof(ybi::float2)) == 0)
+            {
+                return &attr;
+            }
+        }
+    }
+    return nullptr;
+}
+
 static UploadedMeshRefs UploadScenePoolMeshRefs(
     CUDADevice *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
 {
@@ -442,17 +458,21 @@ static UploadedMeshRefs UploadScenePoolMeshRefs(
 
         DeviceMemoryView<uint8_t> texcoordsBuffer = {};
         DeviceMemoryView<uint8_t> texcoordIndicesBuffer = {};
-        if (mesh.texcoords.size() > 0 && mesh.texcoordIndices.size() > 0)
+        int texcoordCount = 0;
+        int texcoordIndexCount = 0;
+        const Attribute *stAttr = FindMeshSTAttribute(mesh);
+        if (stAttr)
         {
-            const size_t texcoordsBytes = sizeof(ybi::float2) * mesh.texcoords.size();
-            const size_t texcoordIndicesBytes = sizeof(int) * mesh.texcoordIndices.size();
+            const size_t texcoordsBytes = stAttr->data.size();
+            const size_t texcoordIndicesBytes = sizeof(int) * stAttr->indices.size();
             texcoordsBuffer = device->AllocBytes(texcoordsBytes);
             texcoordIndicesBuffer = device->AllocBytes(texcoordIndicesBytes);
-            device->CopyBytesToDevice(texcoordsBuffer, mesh.texcoords.data(), texcoordsBytes);
-            device->CopyBytesToDevice(
-                texcoordIndicesBuffer, mesh.texcoordIndices.data(), texcoordIndicesBytes);
+            device->CopyBytesToDevice(texcoordsBuffer, stAttr->data.data(), texcoordsBytes);
+            device->CopyBytesToDevice(texcoordIndicesBuffer, stAttr->indices.data(), texcoordIndicesBytes);
             out.ownedBuffers.push_back(texcoordsBuffer);
             out.ownedBuffers.push_back(texcoordIndicesBuffer);
+            texcoordCount = int(stAttr->data.size() / sizeof(ybi::float2));
+            texcoordIndexCount = int(stAttr->indices.size());
         }
 
         out.refs[job.refIndex] = {(unsigned long long)positionsBuffer.data(),
@@ -461,8 +481,8 @@ static UploadedMeshRefs UploadScenePoolMeshRefs(
                                   (unsigned long long)texcoordIndicesBuffer.data(),
                                   (int)mesh.positions.size(),
                                   (int)mesh.indices.size(),
-                                  (int)mesh.texcoords.size(),
-                                  (int)mesh.texcoordIndices.size(),
+                                  texcoordCount,
+                                  texcoordIndexCount,
                                   mesh.materialIndex};
         out.ownedBuffers.push_back(positionsBuffer);
         out.ownedBuffers.push_back(indicesBuffer);

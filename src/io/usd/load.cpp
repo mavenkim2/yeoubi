@@ -388,15 +388,13 @@ static int GetMaterialIndex(const std::unordered_map<std::string, int> &material
     return it->second;
 }
 
-static bool BuildTriangulatedMeshTexcoords(const pxr::UsdGeomMesh &mesh,
-                                           const pxr::VtIntArray &faceCounts,
-                                           const pxr::VtIntArray &faceIndices,
-                                           int numTriangles,
-                                           Array<float2> *outTexcoords,
-                                           Array<int> *outTexcoordIndices)
+static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
+                                             const pxr::VtIntArray &faceCounts,
+                                             const pxr::VtIntArray &faceIndices,
+                                             int numTriangles,
+                                             Attribute *outAttribute)
 {
-    YBI_ASSERT(outTexcoords);
-    YBI_ASSERT(outTexcoordIndices);
+    YBI_ASSERT(outAttribute);
 
     pxr::UsdGeomPrimvarsAPI primvars(mesh);
     pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
@@ -482,28 +480,24 @@ static bool BuildTriangulatedMeshTexcoords(const pxr::UsdGeomMesh &mesh,
         faceIndexOffset += faceCount;
     }
 
-    outTexcoords->Resize(texcoords.size());
+    Array<uint8_t> dataBytes(sizeof(float2) * texcoords.size());
     if (texcoords.size() > 0)
     {
-        memcpy(outTexcoords->data(), texcoords.data(), sizeof(float2) * texcoords.size());
+        memcpy(dataBytes.data(), texcoords.data(), sizeof(float2) * texcoords.size());
     }
-    outTexcoordIndices->Resize(triTexcoordIndices.size());
-    if (triTexcoordIndices.size() > 0)
-    {
-        memcpy(outTexcoordIndices->data(),
-               triTexcoordIndices.data(),
-               sizeof(int) * triTexcoordIndices.size());
-    }
+    *outAttribute = Attribute(std::move(dataBytes),
+                              std::move(triTexcoordIndices),
+                              AttributeType::Float2,
+                              PrimvarInterpolation::FaceVarying,
+                              "st");
     return true;
 }
 
-static bool BuildSubdivisionMeshTexcoords(const pxr::UsdGeomMesh &mesh,
-                                          const pxr::VtIntArray &faceIndices,
-                                          Array<float2> *outTexcoords,
-                                          Array<int> *outTexcoordIndices)
+static bool BuildSubdivisionMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
+                                            const pxr::VtIntArray &faceIndices,
+                                            Attribute *outAttribute)
 {
-    YBI_ASSERT(outTexcoords);
-    YBI_ASSERT(outTexcoordIndices);
+    YBI_ASSERT(outAttribute);
 
     pxr::UsdGeomPrimvarsAPI primvars(mesh);
     pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
@@ -560,8 +554,16 @@ static bool BuildSubdivisionMeshTexcoords(const pxr::UsdGeomMesh &mesh,
         cornerTexcoordIndices[corner] = tcIndex;
     }
 
-    *outTexcoords = std::move(texcoords);
-    *outTexcoordIndices = std::move(cornerTexcoordIndices);
+    Array<uint8_t> dataBytes(sizeof(float2) * texcoords.size());
+    if (texcoords.size() > 0)
+    {
+        memcpy(dataBytes.data(), texcoords.data(), sizeof(float2) * texcoords.size());
+    }
+    *outAttribute = Attribute(std::move(dataBytes),
+                              std::move(cornerTexcoordIndices),
+                              AttributeType::Float2,
+                              PrimvarInterpolation::FaceVarying,
+                              "st");
     return true;
 }
 
@@ -817,9 +819,6 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
     mesh.GetHoleIndicesAttr().Get(&holeIndices, timeCode);
 
     pxr::UsdPrim prim = mesh.GetPrim();
-    size_t attributeStart = scene->attributes.size();
-    ProcessPrimvars(prim, timeCode, scene);
-    size_t attributeEnd = scene->attributes.size();
 
     Array<float3> positionsArray(positions);
     Array<int> faceIndicesArray(faceIndices);
@@ -886,14 +885,16 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           std::move(creaseLengthsArray),
                                           std::move(creaseSharpnessesArray),
                                           std::move(holeIndices),
-                                          attributeStart,
-                                          attributeEnd,
                                           interpolation,
                                           fvarLinear,
                                           triangleSubdivision);
     SubdivisionMesh &subdivMesh = scene->subdivisionMeshes.back();
     subdivMesh.primPath = prim.GetPath().GetString();
-    BuildSubdivisionMeshTexcoords(mesh, faceIndices, &subdivMesh.texcoords, &subdivMesh.texcoordIndices);
+    Attribute stAttr;
+    if (BuildSubdivisionMeshSTAttribute(mesh, faceIndices, &stAttr))
+    {
+        subdivMesh.attributes.push_back(std::move(stAttr));
+    }
 }
 
 static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
@@ -1322,7 +1323,6 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
             outScene->curves.back().parentFromLocal = curveRef.parentFromLocal;
         }
 
-        outScene->attributes.Reserve(buildScene.meshes.size());
         for (const USDBuildSceneMesh &meshRef : buildScene.meshes)
         {
             const pxr::UsdPrim prim = stage->GetPrimAtPath(pxr::SdfPath(meshRef.path));
@@ -1349,7 +1349,6 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
             }
             else if (scheme == pxr::UsdGeomTokens->none)
             {
-                ProcessPrimvars(mesh.GetPrim(), 0.0, outScene);
             }
             else
             {
@@ -1383,8 +1382,6 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 
             Array<float3> finalPositions(positions);
             Array<int> finalIndices(3 * numTriangles);
-            Array<float2> finalTexcoords;
-            Array<int> finalTexcoordIndices;
 
             int inputOffset = 0;
             int finalOffset = 0;
@@ -1422,29 +1419,17 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 }
             }
 
-            const bool hasTexcoords = BuildTriangulatedMeshTexcoords(
-                mesh, faceCounts, faceIndices, numTriangles, &finalTexcoords, &finalTexcoordIndices);
+            Attribute stAttr;
+            const bool hasSt =
+                BuildTriangulatedMeshSTAttribute(mesh, faceCounts, faceIndices, numTriangles, &stAttr);
 
             outScene->meshes.emplace_back(
                 std::move(finalPositions), std::move(finalIndices), meshRef.parentFromLocal);
             Mesh &outMesh = outScene->meshes.back();
             outMesh.materialIndex = materialIndex;
-            if (hasTexcoords)
+            if (hasSt)
             {
-                outMesh.texcoords.Resize(finalTexcoords.size());
-                if (finalTexcoords.size() > 0)
-                {
-                    memcpy(outMesh.texcoords.data(),
-                           finalTexcoords.data(),
-                           sizeof(float2) * finalTexcoords.size());
-                }
-                outMesh.texcoordIndices.Resize(finalTexcoordIndices.size());
-                if (finalTexcoordIndices.size() > 0)
-                {
-                    memcpy(outMesh.texcoordIndices.data(),
-                           finalTexcoordIndices.data(),
-                           sizeof(int) * finalTexcoordIndices.size());
-                }
+                outMesh.attributes.push_back(std::move(stAttr));
             }
         }
     }

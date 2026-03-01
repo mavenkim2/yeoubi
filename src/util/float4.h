@@ -34,6 +34,15 @@ __forceinline float4 operator+(const float4 &a, const float4 &b)
     return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w};
 }
 
+__forceinline float4 &operator+=(float4 &a, const float4 &b)
+{
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
+    a.w += b.w;
+    return a;
+}
+
 __forceinline float4 operator-(const float4 &a, const float4 &b)
 {
     return {a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w};

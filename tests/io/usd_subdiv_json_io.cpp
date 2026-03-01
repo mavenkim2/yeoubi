@@ -302,8 +302,6 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
     meshOut.interpolationRule = BoundaryInterpolationFromString(vertexBoundaryInterpolation);
     meshOut.fvarLinearInterpolation = FVarLinearInterpolationFromString(fvarLinearInterpolation);
     meshOut.triangleSubdivisionRule = TriangleSubdivisionRuleFromString(triangleSubdivision);
-    meshOut.attributeStart = 0;
-    meshOut.attributeEnd = 0;
 
     usdCameraInfoOut = {};
     const std::string cameraPath = ExtractJsonString(json, "usd_camera_path");
