@@ -324,7 +324,18 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     const float uu = u - floorf(u);
     const float vv = v - floorf(v);
 
-    const int materialIndex = ClampInt(geomRef.materialIndex, 0, params.materialTextureRefCount - 1);
+    if (geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
+    {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 5);
+        if ((prev & (1u << 5)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[5]: material index invalid mat=%d count=%d\n",
+                   geomRef.materialIndex,
+                   params.materialTextureRefCount);
+        }
+        return false;
+    }
+    const int materialIndex = geomRef.materialIndex;
     const LaunchParams::MaterialTextureRef *materialRefs =
         reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
     const int base = materialIndex * params.materialTextureRefStride;

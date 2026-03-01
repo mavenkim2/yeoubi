@@ -145,12 +145,18 @@ CreateRuntimeScenesFromBuildSceneDAG(const USDBuildSceneDAG &dag,
     return true;
 }
 
-static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim,
-                                             pxr::TfToken token = pxr::UsdShadeTokens->full)
+static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim)
 {
     pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
-    // TODO: set this as an option
-    pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(token);
+    pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->full);
+    if (!material)
+    {
+        material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->preview);
+    }
+    if (!material)
+    {
+        material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->allPurpose);
+    }
 
     if (material)
     {
