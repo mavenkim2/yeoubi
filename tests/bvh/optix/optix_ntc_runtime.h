@@ -35,7 +35,7 @@ struct UploadedMaterialTextures
     std::vector<cudaTextureObject_t> textureObjects;
 };
 
-bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &materials,
+bool DecodeNtcDiffuseTextures(const std::vector<ybi::MaterialInfo> &materials,
                               std::vector<DecodedMaterialTexture> *outTextures,
                               std::string *outError);
 

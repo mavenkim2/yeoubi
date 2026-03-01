@@ -191,23 +191,35 @@ struct Scene
     Scene &operator=(Scene &&other) noexcept = delete;
 };
 
+enum TextureWrapMode : uint8_t
+{
+    TEXTURE_WRAP_MODE_UNKNOWN = 0,
+    TEXTURE_WRAP_MODE_REPEAT,
+    TEXTURE_WRAP_MODE_CLAMP,
+    TEXTURE_WRAP_MODE_MIRROR,
+    TEXTURE_WRAP_MODE_BLACK,
+    TEXTURE_WRAP_MODE_USE_METADATA,
+};
+
+struct MaterialTextureInput
+{
+    std::string inputName;
+    std::string texturePath;
+    std::string swizzle;
+    TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
+    TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
+};
+
+struct MaterialInfo
+{
+    std::string materialPath;
+    std::vector<MaterialTextureInput> textureInputs;
+    std::string ntcDiffuseFile;
+    std::string ntcDiffuseTextureName;
+};
+
 struct ScenePool
 {
-    struct MaterialTextureInput
-    {
-        std::string inputName;
-        std::string texturePath;
-        std::string swizzle;
-    };
-
-    struct MaterialInfo
-    {
-        std::string materialPath;
-        std::vector<MaterialTextureInput> textureInputs;
-        std::string ntcDiffuseFile;
-        std::string ntcDiffuseTextureName;
-    };
-
     std::vector<std::unique_ptr<Scene>> scenes;
     uint32_t rootSceneIndex = 0;
     Camera camera;

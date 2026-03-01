@@ -89,9 +89,9 @@ int FindBestAlbedoTexture(ntc::ITextureSet *textureSet)
     return fallback;
 }
 
-std::string FindDiffuseTexturePath(const ybi::ScenePool::MaterialInfo &material)
+std::string FindDiffuseTexturePath(const ybi::MaterialInfo &material)
 {
-    for (const ybi::ScenePool::MaterialTextureInput &input : material.textureInputs)
+    for (const ybi::MaterialTextureInput &input : material.textureInputs)
     {
         if (input.inputName == "diffuseColor")
         {
@@ -231,7 +231,7 @@ bool DecodeOneMaterial(ntc::IContext *context,
 
 } // namespace
 
-bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &materials,
+bool DecodeNtcDiffuseTextures(const std::vector<ybi::MaterialInfo> &materials,
                               std::vector<DecodedMaterialTexture> *outTextures,
                               std::string *outError)
 {
@@ -267,7 +267,7 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::ScenePool::MaterialInfo> &m
     int withNtcPath = 0;
     for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
     {
-        const ybi::ScenePool::MaterialInfo &material = materials[materialIndex];
+        const ybi::MaterialInfo &material = materials[materialIndex];
         if (material.ntcDiffuseFile.empty())
         {
             continue;

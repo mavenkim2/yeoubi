@@ -251,14 +251,68 @@ static std::string OutputNameToSwizzle(const pxr::TfToken &sourceName)
     return "";
 }
 
+static TextureWrapMode TextureWrapModeFromToken(const pxr::TfToken &token)
+{
+    if (token == pxr::TfToken("repeat"))
+    {
+        return TEXTURE_WRAP_MODE_REPEAT;
+    }
+    if (token == pxr::TfToken("clamp"))
+    {
+        return TEXTURE_WRAP_MODE_CLAMP;
+    }
+    if (token == pxr::TfToken("mirror"))
+    {
+        return TEXTURE_WRAP_MODE_MIRROR;
+    }
+    if (token == pxr::TfToken("black"))
+    {
+        return TEXTURE_WRAP_MODE_BLACK;
+    }
+    if (token == pxr::TfToken("useMetadata"))
+    {
+        return TEXTURE_WRAP_MODE_USE_METADATA;
+    }
+    return TEXTURE_WRAP_MODE_UNKNOWN;
+}
+
+static const char *TextureWrapModeToString(TextureWrapMode mode)
+{
+    switch (mode)
+    {
+        case TEXTURE_WRAP_MODE_REPEAT:
+            return "repeat";
+        case TEXTURE_WRAP_MODE_CLAMP:
+            return "clamp";
+        case TEXTURE_WRAP_MODE_MIRROR:
+            return "mirror";
+        case TEXTURE_WRAP_MODE_BLACK:
+            return "black";
+        case TEXTURE_WRAP_MODE_USE_METADATA:
+            return "useMetadata";
+        default:
+            return "unknown";
+    }
+}
+
 static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
                                    std::string &outPath,
-                                   std::string *outSwizzle)
+                                   std::string *outSwizzle,
+                                   TextureWrapMode *outWrapS,
+                                   TextureWrapMode *outWrapT)
 {
     outPath.clear();
     if (outSwizzle)
     {
         outSwizzle->clear();
+    }
+    if (outWrapS)
+    {
+        *outWrapS = TEXTURE_WRAP_MODE_UNKNOWN;
+    }
+    if (outWrapT)
+    {
+        *outWrapT = TEXTURE_WRAP_MODE_UNKNOWN;
     }
 
     pxr::UsdShadeShader sourceShader;
@@ -315,12 +369,30 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
             outSwizzle->assign(OutputNameToSwizzle(sources[0].sourceName));
         }
     }
+    if (outWrapS)
+    {
+        pxr::TfToken wrapS;
+        pxr::UsdShadeInput wrapSInput = sourceShader.GetInput(pxr::TfToken("wrapS"));
+        if (wrapSInput && wrapSInput.Get(&wrapS))
+        {
+            *outWrapS = TextureWrapModeFromToken(wrapS);
+        }
+    }
+    if (outWrapT)
+    {
+        pxr::TfToken wrapT;
+        pxr::UsdShadeInput wrapTInput = sourceShader.GetInput(pxr::TfToken("wrapT"));
+        if (wrapTInput && wrapTInput.Get(&wrapT))
+        {
+            *outWrapT = TextureWrapModeFromToken(wrapT);
+        }
+    }
 
     return true;
 }
 
 static void ReadNtcMaterialInfo(const pxr::UsdShadeMaterial &material,
-                                ScenePool::MaterialInfo *outInfo)
+                                MaterialInfo *outInfo)
 {
     YBI_ASSERT(outInfo);
     outInfo->ntcDiffuseFile.clear();
@@ -1240,12 +1312,12 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 
     printf("num materials: %zi\n", materials.size());
 
-    std::vector<ScenePool::MaterialInfo> materialTextures;
+    std::vector<MaterialInfo> materialTextures;
     materialTextures.reserve(materials.size());
 
     for (pxr::UsdShadeMaterial &material : materials)
     {
-        ScenePool::MaterialInfo info = {};
+        MaterialInfo info = {};
         info.materialPath = material.GetPath().GetString();
         ReadNtcMaterialInfo(material, &info);
         std::vector<std::string> uniqueTexturePaths;
@@ -1259,13 +1331,17 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 {
                     std::string texturePath;
                     std::string swizzle;
-                    if (TryGetImageTexturePath(input, texturePath, &swizzle))
+                    TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
+                    TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
+                    if (TryGetImageTexturePath(input, texturePath, &swizzle, &wrapS, &wrapT))
                     {
                         AppendUniqueTexturePath(uniqueTexturePaths, texturePath);
-                        ScenePool::MaterialTextureInput textureInput = {};
+                        MaterialTextureInput textureInput = {};
                         textureInput.inputName = input.GetBaseName().GetString();
                         textureInput.texturePath = texturePath;
                         textureInput.swizzle = swizzle;
+                        textureInput.wrapS = wrapS;
+                        textureInput.wrapT = wrapT;
                         info.textureInputs.push_back(std::move(textureInput));
                     }
                 }
@@ -1285,14 +1361,18 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
         materialTextures.push_back(std::move(info));
     }
 
-    for (const ScenePool::MaterialInfo &info : materialTextures)
+    for (const MaterialInfo &info : materialTextures)
     {
         printf("material %s image textures: %zu\n",
                info.materialPath.c_str(),
                info.textureInputs.size());
-        for (const ScenePool::MaterialTextureInput &textureInput : info.textureInputs)
+        for (const MaterialTextureInput &textureInput : info.textureInputs)
         {
-            printf("  %s (%s)\n", textureInput.texturePath.c_str(), textureInput.inputName.c_str());
+            printf("  %s (%s) wrapS=%s wrapT=%s\n",
+                   textureInput.texturePath.c_str(),
+                   textureInput.inputName.c_str(),
+                   TextureWrapModeToString(textureInput.wrapS),
+                   TextureWrapModeToString(textureInput.wrapT));
         }
         if (!info.ntcDiffuseFile.empty())
         {
