@@ -1,7 +1,7 @@
 #include "shared.h"
 #include "exr_utils.h"
 #include "tile_binary.h"
-#include "udim_utils.h"
+#include "texture/udim_utils.h"
 
 #include <algorithm>
 #include <cctype>

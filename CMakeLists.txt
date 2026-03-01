@@ -120,7 +120,7 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/exr_utils.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/udim_utils.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tiles.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
@@ -242,9 +242,11 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
     if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
         target_sources(yeoubi_optix_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)

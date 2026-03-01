@@ -50,6 +50,7 @@ struct LaunchParams
     int instanceGeomRefCount;
     unsigned long long materialTextureRefs;
     int materialTextureRefCount;
+    int materialTextureRefStride;
     unsigned long long feedbackKeys;
     unsigned long long feedbackStats;
     int feedbackCapacity;
@@ -250,14 +251,15 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
                          float3 &outColor)
 {
     if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
-        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
+        params.materialTextureRefStride <= 0)
     {
         const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 0);
         if ((prev & (1u << 0)) == 0u)
         {
-            printf("TrySampleMaterialTexture fail[0]: material ref invalid ptr=%llu count=%d mat=%d\n",
+            printf("TrySampleMaterialTexture fail[0]: material ref invalid ptr=%llu count=%d stride=%d mat=%d\n",
                    params.materialTextureRefs,
                    params.materialTextureRefCount,
+                   params.materialTextureRefStride,
                    geomRef.materialIndex);
         }
         return false;
@@ -309,30 +311,57 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
         return false;
     }
 
-    const LaunchParams::MaterialTextureRef *materialRefs =
-        reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
-    const LaunchParams::MaterialTextureRef textureRef = materialRefs[geomRef.materialIndex];
-    if (textureRef.textureObject == 0ull || textureRef.valid == 0)
-    {
-        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
-        if ((prev & (1u << 4)) == 0u)
-        {
-            printf("TrySampleMaterialTexture fail[4]: texture ref invalid obj=%llu valid=%d mat=%d\n",
-                   textureRef.textureObject,
-                   textureRef.valid,
-                   geomRef.materialIndex);
-        }
-        return false;
-    }
-
     const float2_simple *texcoords = reinterpret_cast<const float2_simple *>(geomRef.texcoords);
     const float2_simple uv0 = texcoords[t0];
     const float2_simple uv1 = texcoords[t1];
     const float2_simple uv2 = texcoords[t2];
     const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y + uv2.x * barycentrics.z;
     const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y + uv2.y * barycentrics.z;
+    const int udimU = int(floorf(u));
+    const int udimV = int(floorf(v));
+    const int udim = 1001 + udimU + 10 * udimV;
+    const int udimSlot = ClampInt(udim - 1001, 0, params.materialTextureRefStride - 1);
     const float uu = u - floorf(u);
     const float vv = v - floorf(v);
+
+    const int materialIndex = ClampInt(geomRef.materialIndex, 0, params.materialTextureRefCount - 1);
+    const LaunchParams::MaterialTextureRef *materialRefs =
+        reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
+    const int base = materialIndex * params.materialTextureRefStride;
+    const int slot = base + udimSlot;
+    const int maxSlots = params.materialTextureRefCount * params.materialTextureRefStride;
+    if (slot < 0 || slot >= maxSlots)
+    {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
+        if ((prev & (1u << 4)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[4]: udim slot invalid slot=%d max=%d mat=%d udim=%d\n",
+                   slot,
+                   maxSlots,
+                   materialIndex,
+                   udim);
+        }
+        return false;
+    }
+
+    LaunchParams::MaterialTextureRef textureRef = materialRefs[slot];
+    if (textureRef.textureObject == 0ull || textureRef.valid == 0)
+    {
+        textureRef = materialRefs[base];
+    }
+    if (textureRef.textureObject == 0ull || textureRef.valid == 0)
+    {
+        const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
+        if ((prev & (1u << 4)) == 0u)
+        {
+            printf("TrySampleMaterialTexture fail[4]: texture ref invalid obj=%llu valid=%d mat=%d udim=%d\n",
+                   textureRef.textureObject,
+                   textureRef.valid,
+                   materialIndex,
+                   udim);
+        }
+        return false;
+    }
 
     const cudaTextureObject_t textureObject =
         static_cast<cudaTextureObject_t>(textureRef.textureObject);

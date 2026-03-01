@@ -1,6 +1,7 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
 #include "scene/scene.h"
+#include "texture/udim_utils.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -11,6 +12,7 @@
 #include "util/float4.h"
 #include "util/float4x4.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +29,11 @@
 
 #include <cuda_runtime_api.h>
 #include <optix_stubs.h>
+
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+#define TINYEXR_IMPLEMENTATION
+#include <tinyexr.h>
+#endif
 
 using namespace ybi;
 
@@ -105,6 +112,7 @@ struct LaunchParams
     int instanceGeomRefCount;
     unsigned long long materialTextureRefs;
     int materialTextureRefCount;
+    int materialTextureRefStride;
     unsigned long long feedbackKeys;
     unsigned long long feedbackStats;
     int feedbackCapacity;
@@ -399,10 +407,13 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
 struct DecodedMaterialTexture
 {
     bool valid = false;
+    uint32_t udim = 1001u;
     int width = 0;
     int height = 0;
     std::vector<unsigned char> rgba8;
     std::string sourcePath;
+    TextureWrapMode wrapS = TEXTURE_WRAP_MODE_REPEAT;
+    TextureWrapMode wrapT = TEXTURE_WRAP_MODE_REPEAT;
 };
 
 struct UploadedMaterialTextures
@@ -411,6 +422,21 @@ struct UploadedMaterialTextures
     std::vector<cudaArray_t> arrays;
     std::vector<cudaTextureObject_t> textureObjects;
 };
+
+static constexpr uint32_t kUdimMin = 1001u;
+static constexpr uint32_t kUdimMax = 1100u;
+static constexpr int kUdimSlotCount = 128;
+
+static int MaterialUdimSlotIndex(size_t materialIndex, uint32_t udim)
+{
+    int udimSlot = 0;
+    if (udim >= kUdimMin && udim <= kUdimMax)
+    {
+        udimSlot = static_cast<int>(udim - kUdimMin);
+    }
+    udimSlot = std::max(0, std::min(udimSlot, kUdimSlotCount - 1));
+    return static_cast<int>(materialIndex) * kUdimSlotCount + udimSlot;
+}
 
 static bool CheckCudaRuntime(cudaError_t result, std::string *outError, const char *callName)
 {
@@ -457,15 +483,217 @@ static const MaterialTextureInput *FindDiffuseTextureInput(const MaterialInfo &m
     return nullptr;
 }
 
+static std::string LowerExt(const std::string &path)
+{
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (char &c : ext)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return ext;
+}
+
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+static bool LoadExrRgba8(const std::string &path,
+                         int *outWidth,
+                         int *outHeight,
+                         std::vector<unsigned char> *outRgba8,
+                         std::string *outReason)
+{
+    YBI_ASSERT(outWidth);
+    YBI_ASSERT(outHeight);
+    YBI_ASSERT(outRgba8);
+
+    *outWidth = 0;
+    *outHeight = 0;
+    outRgba8->clear();
+
+    auto assignAndFree = [&](float *rawData, int w, int h) {
+        *outWidth = w;
+        *outHeight = h;
+        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+        outRgba8->resize(pixelCount * 4u);
+        for (size_t i = 0; i < pixelCount * 4u; ++i)
+        {
+            const float c = std::min(1.0f, std::max(0.0f, rawData[i]));
+            (*outRgba8)[i] = static_cast<unsigned char>(c * 255.0f + 0.5f);
+        }
+        std::free(rawData);
+    };
+
+    float *raw = nullptr;
+    const char *err = nullptr;
+    int rc = LoadEXR(&raw, outWidth, outHeight, path.c_str(), &err);
+    if (rc == TINYEXR_SUCCESS && raw)
+    {
+        assignAndFree(raw, *outWidth, *outHeight);
+        return true;
+    }
+
+    std::string primaryError;
+    if (err)
+    {
+        primaryError = err;
+        FreeEXRErrorMessage(err);
+        err = nullptr;
+    }
+
+    if (rc != TINYEXR_ERROR_LAYER_NOT_FOUND)
+    {
+        if (outReason)
+        {
+            *outReason = "LoadEXR failed for " + path;
+            if (!primaryError.empty())
+            {
+                *outReason += " (" + primaryError + ")";
+            }
+        }
+        return false;
+    }
+
+    const char **layerNames = nullptr;
+    int numLayers = 0;
+    const char *layersErr = nullptr;
+    rc = EXRLayers(path.c_str(), &layerNames, &numLayers, &layersErr);
+    if (rc != TINYEXR_SUCCESS || !layerNames || numLayers <= 0)
+    {
+        if (outReason)
+        {
+            *outReason = "LoadEXR failed for " + path;
+            if (!primaryError.empty())
+            {
+                *outReason += " (" + primaryError + ")";
+            }
+            if (layersErr)
+            {
+                *outReason += " [EXRLayers: ";
+                *outReason += layersErr;
+                *outReason += "]";
+                FreeEXRErrorMessage(layersErr);
+            }
+        }
+        if (layerNames)
+        {
+            for (int i = 0; i < numLayers; ++i)
+            {
+                if (layerNames[i])
+                {
+                    std::free((void *)layerNames[i]);
+                }
+            }
+            std::free((void *)layerNames);
+        }
+        return false;
+    }
+
+    std::string layerError;
+    for (int i = 0; i < numLayers; ++i)
+    {
+        float *layerRaw = nullptr;
+        int layerWidth = 0;
+        int layerHeight = 0;
+        const char *layerErr = nullptr;
+        const int layerRc = LoadEXRWithLayer(
+            &layerRaw, &layerWidth, &layerHeight, path.c_str(), layerNames[i], &layerErr);
+        if (layerRc == TINYEXR_SUCCESS && layerRaw)
+        {
+            assignAndFree(layerRaw, layerWidth, layerHeight);
+            for (int j = 0; j < numLayers; ++j)
+            {
+                if (layerNames[j])
+                {
+                    std::free((void *)layerNames[j]);
+                }
+            }
+            std::free((void *)layerNames);
+            return true;
+        }
+        if (layerErr)
+        {
+            layerError = layerErr;
+            FreeEXRErrorMessage(layerErr);
+        }
+    }
+
+    for (int i = 0; i < numLayers; ++i)
+    {
+        if (layerNames[i])
+        {
+            std::free((void *)layerNames[i]);
+        }
+    }
+    std::free((void *)layerNames);
+
+    if (outReason)
+    {
+        *outReason = "LoadEXRWithLayer failed for " + path;
+        if (!layerError.empty())
+        {
+            *outReason += " (" + layerError + ")";
+        }
+    }
+    return false;
+}
+#endif
+
+static bool LoadImageRgba8(const std::string &path,
+                           int *outWidth,
+                           int *outHeight,
+                           std::vector<unsigned char> *outRgba8,
+                           std::string *outReason)
+{
+    YBI_ASSERT(outWidth);
+    YBI_ASSERT(outHeight);
+    YBI_ASSERT(outRgba8);
+
+    *outWidth = 0;
+    *outHeight = 0;
+    outRgba8->clear();
+
+    if (LowerExt(path) == ".exr")
+    {
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+        return LoadExrRgba8(path, outWidth, outHeight, outRgba8, outReason);
+#else
+        if (outReason)
+        {
+            *outReason = "EXR loading unavailable (harness built without NTC/tinyexr): " + path;
+        }
+        return false;
+#endif
+    }
+
+    int channels = 0;
+    stbi_uc *pixels = stbi_load(path.c_str(), outWidth, outHeight, &channels, 4);
+    if (!pixels || *outWidth <= 0 || *outHeight <= 0)
+    {
+        if (outReason)
+        {
+            *outReason = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load failed";
+        }
+        if (pixels)
+        {
+            stbi_image_free(pixels);
+        }
+        return false;
+    }
+
+    const size_t bytes = static_cast<size_t>(*outWidth) * static_cast<size_t>(*outHeight) * 4u;
+    outRgba8->resize(bytes);
+    std::memcpy(outRgba8->data(), pixels, bytes);
+    stbi_image_free(pixels);
+    return true;
+}
+
 static bool DecodeDiffuseImageTextures(const std::vector<MaterialInfo> &materials,
                                        std::vector<DecodedMaterialTexture> *outTextures)
 {
     YBI_ASSERT(outTextures);
     outTextures->clear();
-    outTextures->resize(materials.size());
+    outTextures->resize(materials.size() * static_cast<size_t>(kUdimSlotCount));
 
-    std::unordered_map<std::string, size_t> decodedByPath;
-    int decodedCount = 0;
+    std::unordered_map<std::string, DecodedMaterialTexture> decodedByPath;
+    int decodedTiles = 0;
     for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
     {
         const MaterialTextureInput *diffuse = FindDiffuseTextureInput(materials[materialIndex]);
@@ -474,48 +702,63 @@ static bool DecodeDiffuseImageTextures(const std::vector<MaterialInfo> &material
             continue;
         }
 
-        auto found = decodedByPath.find(diffuse->texturePath);
-        if (found != decodedByPath.end())
+        std::unordered_map<uint32_t, std::string> udimPaths;
+        std::string udimReason;
+        if (!ybi::usd_ntc::CollectUdimPaths(diffuse->texturePath, udimPaths, udimReason))
         {
-            (*outTextures)[materialIndex] = (*outTextures)[found->second];
-            decodedCount++;
-            continue;
-        }
-
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        stbi_uc *pixels = stbi_load(diffuse->texturePath.c_str(), &width, &height, &channels, 4);
-        if (!pixels || width <= 0 || height <= 0)
-        {
-            std::printf("Image runtime: failed to load material %zu diffuse (%s): %s\n",
+            std::printf("Image runtime: failed to resolve UDIMs for material %zu diffuse (%s): %s\n",
                         materialIndex,
                         diffuse->texturePath.c_str(),
-                        stbi_failure_reason() ? stbi_failure_reason() : "<unknown>");
-            if (pixels)
-            {
-                stbi_image_free(pixels);
-            }
+                        udimReason.c_str());
             continue;
         }
 
-        DecodedMaterialTexture texture = {};
-        texture.valid = true;
-        texture.width = width;
-        texture.height = height;
-        texture.sourcePath = diffuse->texturePath;
-        texture.rgba8.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
-        std::memcpy(texture.rgba8.data(), pixels, texture.rgba8.size());
-        stbi_image_free(pixels);
+        for (const auto &entry : udimPaths)
+        {
+            const uint32_t udim = entry.first;
+            const std::string &tilePath = entry.second;
+            const int dstIndex = MaterialUdimSlotIndex(materialIndex, udim);
+            YBI_ASSERT(dstIndex >= 0 && static_cast<size_t>(dstIndex) < outTextures->size());
 
-        (*outTextures)[materialIndex] = std::move(texture);
-        decodedByPath.emplace(diffuse->texturePath, materialIndex);
-        decodedCount++;
+            auto cached = decodedByPath.find(tilePath);
+            if (cached != decodedByPath.end())
+            {
+                DecodedMaterialTexture tile = cached->second;
+                tile.udim = udim;
+                tile.wrapS = diffuse->wrapS;
+                tile.wrapT = diffuse->wrapT;
+                (*outTextures)[static_cast<size_t>(dstIndex)] = std::move(tile);
+                decodedTiles++;
+                continue;
+            }
+
+            DecodedMaterialTexture texture = {};
+            texture.valid = true;
+            texture.udim = udim;
+            texture.sourcePath = tilePath;
+            texture.wrapS = diffuse->wrapS;
+            texture.wrapT = diffuse->wrapT;
+
+            std::string reason;
+            if (!LoadImageRgba8(tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
+            {
+                std::printf("Image runtime: failed to load material %zu tile %u (%s): %s\n",
+                            materialIndex,
+                            udim,
+                            tilePath.c_str(),
+                            reason.c_str());
+                continue;
+            }
+
+            (*outTextures)[static_cast<size_t>(dstIndex)] = texture;
+            decodedByPath.emplace(tilePath, std::move(texture));
+            decodedTiles++;
+        }
     }
 
-    std::printf("Image runtime: decoded %d/%zu material diffuse textures\n",
-                decodedCount,
-                materials.size());
+    std::printf("Image runtime: decoded %d/%zu material UDIM tiles\n",
+                decodedTiles,
+                materials.size() * static_cast<size_t>(kUdimSlotCount));
     return true;
 }
 
@@ -552,8 +795,15 @@ static bool UploadDecodedTexturesToCuda(const std::vector<MaterialInfo> &materia
             continue;
         }
 
-        const MaterialTextureInput *diffuse =
-            (i < materials.size()) ? FindDiffuseTextureInput(materials[i]) : nullptr;
+        const MaterialTextureInput *diffuse = nullptr;
+        if (!materials.empty())
+        {
+            const size_t materialIndex = i / static_cast<size_t>(kUdimSlotCount);
+            if (materialIndex < materials.size())
+            {
+                diffuse = FindDiffuseTextureInput(materials[materialIndex]);
+            }
+        }
 
         cudaChannelFormatDesc channelDesc =
             cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
@@ -754,6 +1004,7 @@ static void RenderTraversable(OptixPipeline pipeline,
                               int instanceGeomRefCount,
                               CUdeviceptr materialTextureRefsBuffer,
                               int materialTextureRefCount,
+                              int materialTextureRefStride,
                               const std::optional<RenderCameraOverride> &cameraOverride,
                               const std::optional<ybi::float3> &cameraPositionOverride,
                               const std::optional<ybi::float3> &lookAtOverride)
@@ -838,6 +1089,7 @@ static void RenderTraversable(OptixPipeline pipeline,
     params.instanceGeomRefCount = instanceGeomRefCount;
     params.materialTextureRefs = (unsigned long long)materialTextureRefsBuffer;
     params.materialTextureRefCount = materialTextureRefCount;
+    params.materialTextureRefStride = materialTextureRefStride;
     params.feedbackKeys = (unsigned long long)feedbackKeysBuffer;
     params.feedbackStats = (unsigned long long)feedbackStatsBuffer;
     params.feedbackCapacity = feedbackCapacity;
@@ -1013,6 +1265,7 @@ int main(int argc, char **argv)
 
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
     int materialTextureRefCount = 0;
+    int materialTextureRefStride = kUdimSlotCount;
     UploadedMaterialTextures uploadedMaterialTextures = {};
     std::vector<DecodedMaterialTexture> decodedTextures;
     if (!DecodeDiffuseImageTextures(scenePool.materials, &decodedTextures))
@@ -1029,18 +1282,25 @@ int main(int argc, char **argv)
         if (testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &ntcTextures, &ntcError))
         {
             int overrideCount = 0;
-            const size_t numMaterials = std::min(decodedTextures.size(), ntcTextures.size());
+            const size_t numMaterials = std::min(scenePool.materials.size(), ntcTextures.size());
             for (size_t i = 0; i < numMaterials; ++i)
             {
                 if (!ntcTextures[i].valid)
                 {
                     continue;
                 }
-                decodedTextures[i].valid = true;
-                decodedTextures[i].width = ntcTextures[i].width;
-                decodedTextures[i].height = ntcTextures[i].height;
-                decodedTextures[i].rgba8 = std::move(ntcTextures[i].rgba8);
-                decodedTextures[i].sourcePath = ntcTextures[i].ntcPath;
+                const int slot = MaterialUdimSlotIndex(i, kUdimMin);
+                YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < decodedTextures.size());
+                DecodedMaterialTexture &dst = decodedTextures[static_cast<size_t>(slot)];
+                dst.valid = true;
+                dst.udim = kUdimMin;
+                dst.width = ntcTextures[i].width;
+                dst.height = ntcTextures[i].height;
+                dst.rgba8 = std::move(ntcTextures[i].rgba8);
+                dst.sourcePath = ntcTextures[i].ntcPath;
+                const MaterialTextureInput *diffuse = FindDiffuseTextureInput(scenePool.materials[i]);
+                dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
+                dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
                 overrideCount++;
             }
             printf("NTC runtime: applied %d material overrides\n", overrideCount);
@@ -1075,7 +1335,7 @@ int main(int argc, char **argv)
         const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
         materialTextureRefsBuffer = device.AllocBytes(refsBytes);
         device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
-        materialTextureRefCount = static_cast<int>(launchRefs.size());
+        materialTextureRefCount = static_cast<int>(scenePool.materials.size());
     }
 
     Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
@@ -1140,6 +1400,7 @@ int main(int argc, char **argv)
                       (int)uploadedRefs.refs.size(),
                       (CUdeviceptr)materialTextureRefsBuffer.data(),
                       materialTextureRefCount,
+                      materialTextureRefStride,
                       usdCamera,
                       options.cameraPosition,
                       options.lookAt);
