@@ -136,6 +136,7 @@ struct CliOptions
     std::optional<ybi::float3> lookAt;
     int spp = 1;
     bool useNtc = false;
+    std::vector<std::string> purposes = {"default", "render"};
 };
 
 struct RenderCameraOverride
@@ -276,11 +277,64 @@ static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valu
     return true;
 }
 
+static bool ParsePurposeToken(const std::string &input, std::string *outPurpose)
+{
+    YBI_ASSERT(outPurpose);
+    *outPurpose = input;
+    for (char &c : *outPurpose)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return *outPurpose == "default" || *outPurpose == "render" || *outPurpose == "proxy" ||
+           *outPurpose == "guide";
+}
+
+static bool ParsePurposeList(const std::string &csv, std::vector<std::string> *outPurposes)
+{
+    YBI_ASSERT(outPurposes);
+    outPurposes->clear();
+    size_t begin = 0;
+    while (begin <= csv.size())
+    {
+        const size_t comma = csv.find(',', begin);
+        const size_t end = (comma == std::string::npos) ? csv.size() : comma;
+        size_t b = begin;
+        while (b < end && std::isspace(static_cast<unsigned char>(csv[b])))
+        {
+            ++b;
+        }
+        size_t e = end;
+        while (e > b && std::isspace(static_cast<unsigned char>(csv[e - 1])))
+        {
+            --e;
+        }
+        std::string token = csv.substr(b, e - b);
+        if (!token.empty())
+        {
+            std::string normalized;
+            if (!ParsePurposeToken(token, &normalized))
+            {
+                return false;
+            }
+            if (std::find(outPurposes->begin(), outPurposes->end(), normalized) == outPurposes->end())
+            {
+                outPurposes->push_back(std::move(normalized));
+            }
+        }
+        if (comma == std::string::npos)
+        {
+            break;
+        }
+        begin = comma + 1;
+    }
+    return !outPurposes->empty();
+}
+
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao] [--spp N] "
-           "[--cam-pos x y z] [--look-at x y z] [--ntc]\n",
+           "[--cam-pos x y z] [--look-at x y z] [--ntc] [--purposes csv] [--purpose name]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
@@ -289,11 +343,14 @@ static void PrintUsage(const char *exeName)
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
     printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
+    printf("  --purposes comma-separated default,render,proxy,guide\n");
+    printf("  --purpose single purpose token, repeatable; overrides defaults\n");
 }
 
 static CliOptions ParseCli(int argc, char **argv)
 {
     CliOptions options = {};
+    bool purposeOverrideSet = false;
     for (int i = 1; i < argc; i++)
     {
         const std::string arg = argv[i];
@@ -382,6 +439,48 @@ static CliOptions ParseCli(int argc, char **argv)
         if (arg == "--ntc")
         {
             options.useNtc = true;
+            continue;
+        }
+        if (arg == "--purposes")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            std::vector<std::string> parsedPurposes;
+            if (!ParsePurposeList(argv[++i], &parsedPurposes))
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.purposes = std::move(parsedPurposes);
+            purposeOverrideSet = true;
+            continue;
+        }
+        if (arg == "--purpose")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            std::string purpose;
+            if (!ParsePurposeToken(argv[++i], &purpose))
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            if (!purposeOverrideSet)
+            {
+                options.purposes.clear();
+                purposeOverrideSet = true;
+            }
+            if (std::find(options.purposes.begin(), options.purposes.end(), purpose) ==
+                options.purposes.end())
+            {
+                options.purposes.push_back(std::move(purpose));
+            }
             continue;
         }
 
@@ -1238,7 +1337,9 @@ int main(int argc, char **argv)
     fflush(stdout);
 
     ScenePool scenePool = {};
-    LoadUSDScene(&scenePool, options.inputPath);
+    USDLoadOptions loadOptions = {};
+    loadOptions.purposes = options.purposes;
+    LoadUSDScene(&scenePool, options.inputPath, loadOptions);
     if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
     {
         fprintf(stderr,

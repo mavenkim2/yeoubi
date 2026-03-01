@@ -11,6 +11,7 @@
 #include "util/float4x4.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <pxr/base/gf/frustum.h>
@@ -31,6 +32,7 @@
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/curves.h>
 #include <pxr/usd/usdGeom/hermiteCurves.h>
+#include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/nurbsCurves.h>
@@ -87,6 +89,55 @@ static void CollectUSDCameras(const pxr::UsdPrim &root, std::vector<pxr::UsdGeom
             stack.push_back(child);
         }
     }
+}
+
+static std::string NormalizePurposeName(const std::string &input)
+{
+    std::string out = input;
+    for (char &c : out)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+static std::string PurposeTokenToName(const pxr::TfToken &purpose)
+{
+    if (purpose == pxr::UsdGeomTokens->default_)
+    {
+        return "default";
+    }
+    if (purpose == pxr::UsdGeomTokens->render)
+    {
+        return "render";
+    }
+    if (purpose == pxr::UsdGeomTokens->proxy)
+    {
+        return "proxy";
+    }
+    if (purpose == pxr::UsdGeomTokens->guide)
+    {
+        return "guide";
+    }
+    return "";
+}
+
+static bool IsPurposeAllowed(const pxr::UsdPrim &prim, const std::vector<std::string> &allowedPurposes)
+{
+    pxr::UsdGeomImageable imageable(prim);
+    if (!imageable)
+    {
+        return true;
+    }
+    const std::string name = PurposeTokenToName(imageable.ComputePurpose());
+    for (const std::string &allowed : allowedPurposes)
+    {
+        if (name == allowed)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool
@@ -1158,6 +1209,12 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 
 void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
 {
+    const USDLoadOptions options = {};
+    LoadUSDScene(scenePool, filePath, options);
+}
+
+void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLoadOptions &options)
+{
     YBI_ASSERT(scenePool);
     scenePool->camera = Camera();
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
@@ -1192,6 +1249,27 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
     }
 
     pxr::UsdPrim root = stage->GetPseudoRoot();
+
+    std::vector<std::string> allowedPurposes;
+    allowedPurposes.reserve(options.purposes.size());
+    for (const std::string &purpose : options.purposes)
+    {
+        const std::string normalized = NormalizePurposeName(purpose);
+        if (normalized == "default" || normalized == "render" || normalized == "proxy" ||
+            normalized == "guide")
+        {
+            if (std::find(allowedPurposes.begin(), allowedPurposes.end(), normalized) ==
+                allowedPurposes.end())
+            {
+                allowedPurposes.push_back(normalized);
+            }
+        }
+    }
+    if (allowedPurposes.empty())
+    {
+        allowedPurposes = {"default", "render"};
+    }
+
     USDBuildSceneDAG buildSceneDAG = {};
     std::string buildSceneError;
     if (!BuildInstanceDAGFromUSD(stage, &buildSceneDAG, &buildSceneError))
@@ -1288,6 +1366,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 printf("curve prim missing or invalid: %s\n", curveRef.path.c_str());
                 return;
             }
+            if (!IsPurposeAllowed(prim, allowedPurposes))
+            {
+                continue;
+            }
             pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
             AddMaterialToMap(materialMap, materials, material);
         }
@@ -1299,6 +1381,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
             {
                 printf("mesh prim missing or invalid: %s\n", meshRef.path.c_str());
                 return;
+            }
+            if (!IsPurposeAllowed(prim, allowedPurposes))
+            {
+                continue;
             }
 
             pxr::UsdGeomMesh mesh(prim);
@@ -1403,6 +1489,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
                 printf("curve prim missing or invalid: %s\n", curveRef.path.c_str());
                 return;
             }
+            if (!IsPurposeAllowed(prim, allowedPurposes))
+            {
+                continue;
+            }
 
             pxr::UsdGeomBasisCurves curve(prim);
             ProcessUSDBasisCurve(curve, outScene);
@@ -1416,6 +1506,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath)
             {
                 printf("mesh prim missing or invalid: %s\n", meshRef.path.c_str());
                 return;
+            }
+            if (!IsPurposeAllowed(prim, allowedPurposes))
+            {
+                continue;
             }
 
             pxr::UsdGeomMesh mesh(prim);
