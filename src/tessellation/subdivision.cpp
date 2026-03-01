@@ -25,35 +25,61 @@ using namespace OpenSubdiv;
 
 YBI_NAMESPACE_BEGIN
 
-struct LimitEvalVertex
+template <typename T> struct LimitEvalValueTraits;
+
+template <> struct LimitEvalValueTraits<float>
 {
-    float3 p = make_float3(0.0f);
-
-    void Clear()
+    static float Zero()
     {
-        p = make_float3(0.0f);
-    }
-
-    void AddWithWeight(const LimitEvalVertex &src, float w)
-    {
-        p += src.p * w;
+        return 0.0f;
     }
 };
 
-struct LimitEvalFVar2
+template <> struct LimitEvalValueTraits<float2>
 {
-    float2 uv = make_float2(0.0f);
+    static float2 Zero()
+    {
+        return make_float2(0.0f);
+    }
+};
+
+template <> struct LimitEvalValueTraits<float3>
+{
+    static float3 Zero()
+    {
+        return make_float3(0.0f);
+    }
+};
+
+template <> struct LimitEvalValueTraits<float4>
+{
+    static float4 Zero()
+    {
+        return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+};
+
+template <typename T> struct LimitEvalValue
+{
+    T value = LimitEvalValueTraits<T>::Zero();
 
     void Clear()
     {
-        uv = make_float2(0.0f);
+        value = LimitEvalValueTraits<T>::Zero();
     }
 
-    void AddWithWeight(const LimitEvalFVar2 &src, float w)
+    void AddWithWeight(const LimitEvalValue &src, float w)
     {
-        uv += src.uv * w;
+        value += src.value * w;
     }
 };
+
+using LimitEvalFloat = LimitEvalValue<float>;
+using LimitEvalFloat2 = LimitEvalValue<float2>;
+using LimitEvalFloat3 = LimitEvalValue<float3>;
+using LimitEvalFloat4 = LimitEvalValue<float4>;
+using LimitEvalVertex = LimitEvalFloat3;
+using LimitEvalFVar2 = LimitEvalFloat2;
 
 // clang-format off
 #include "tessellation/tessellation_adaptive_limit_eval.h"
@@ -191,7 +217,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     const bool hasFVarChannel = hasTexcoords && hasRefinerFVar && patchTable->GetNumFVarChannels() > 0;
     if (hasFVarChannel)
     {
-        limitFVarValues = BuildLimitEvalFVarValues(*refiner, *patchTable, mesh.texcoords, 0);
+        limitFVarValues = BuildLimitEvalFVarValues(
+            *refiner, *patchTable, mesh.texcoords, PrimvarInterpolation::FaceVarying, 0);
     }
     const bool enableLimitFVarEval = hasFVarChannel && !limitFVarValues.empty();
 
