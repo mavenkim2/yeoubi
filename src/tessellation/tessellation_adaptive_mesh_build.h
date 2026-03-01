@@ -319,21 +319,13 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int currentQuadrant = -1;
     int innerGridTriangleCount = 0;
     int stitchingTriangleCount = 0;
-    auto emitTriToBuffer = [&](const int refA,
-                               const int refB,
-                               const int refC,
-                               const int outA,
+    auto emitTriToBuffer = [&](const int outA,
                                const int outB,
                                const int outC,
                                bool trackMetadata,
                                bool fromInnerGrid,
-                               Array<int> *outIndexBuffer) -> bool {
+                               Array<int> *outIndexBuffer) {
         YBI_ASSERT(outIndexBuffer);
-        YBI_ERROR(refA >= 0 && refB >= 0 && refC >= 0, "%i %i %i\n", refA, refB, refC);
-        if (refA == refB || refB == refC || refA == refC)
-        {
-            return false;
-        }
         outIndexBuffer->EmplaceBack(outA);
         outIndexBuffer->EmplaceBack(outB);
         outIndexBuffer->EmplaceBack(outC);
@@ -364,34 +356,26 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 outTriQuadrants->push_back(currentQuadrant);
             }
         }
-        return true;
     };
 
-    auto stitchStripToBuffer = [&](const std::vector<int> &outerRef,
-                                   const std::vector<int> &innerRef,
-                                   const std::vector<int> &outerWrite,
+    auto stitchStripToBuffer = [&](const std::vector<int> &outerWrite,
                                    const std::vector<int> &innerWrite,
                                    Array<int> *outIndexBuffer,
                                    int m,
                                    int n,
                                    bool trackMetadata) -> int {
-            YBI_ASSERT(!outerRef.empty());
-            YBI_ASSERT(!innerRef.empty());
-            YBI_ASSERT(outerRef.size() == outerWrite.size());
-            YBI_ASSERT(innerRef.size() == innerWrite.size());
+            YBI_ASSERT(!outerWrite.empty());
+            YBI_ASSERT(!innerWrite.empty());
             YBI_ASSERT(outIndexBuffer);
 
             const size_t beforeTriCount = outIndexBuffer->size() / 3;
             size_t io = 0;
             size_t ii = 0;
-            if (innerRef.size() == 1)
+            if (innerWrite.size() == 1)
             {
-                while (io + 1 < outerRef.size())
+                while (io + 1 < outerWrite.size())
                 {
-                    emitTriToBuffer(outerRef[io],
-                                    outerRef[io + 1],
-                                    innerRef[0],
-                                    outerWrite[io],
+                    emitTriToBuffer(outerWrite[io],
                                     outerWrite[io + 1],
                                     innerWrite[0],
                                     trackMetadata,
@@ -403,17 +387,14 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
             }
 
             int q = m - 3 * n;
-            while (io + 1 < outerRef.size() || ii + 1 < innerRef.size())
+            while (io + 1 < outerWrite.size() || ii + 1 < innerWrite.size())
             {
-                const bool canAdvanceOuter = (io + 1 < outerRef.size());
-                const bool canAdvanceInner = (ii + 1 < innerRef.size());
+                const bool canAdvanceOuter = (io + 1 < outerWrite.size());
+                const bool canAdvanceInner = (ii + 1 < innerWrite.size());
 
                 if (!canAdvanceInner)
                 {
-                    emitTriToBuffer(outerRef[io],
-                                    outerRef[io + 1],
-                                    innerRef[ii],
-                                    outerWrite[io],
+                    emitTriToBuffer(outerWrite[io],
                                     outerWrite[io + 1],
                                     innerWrite[ii],
                                     trackMetadata,
@@ -424,10 +405,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 }
                 if (!canAdvanceOuter)
                 {
-                    emitTriToBuffer(outerRef[io],
-                                    innerRef[ii + 1],
-                                    innerRef[ii],
-                                    outerWrite[io],
+                    emitTriToBuffer(outerWrite[io],
                                     innerWrite[ii + 1],
                                     innerWrite[ii],
                                     trackMetadata,
@@ -439,10 +417,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
 
                 if (q >= 0)
                 {
-                    emitTriToBuffer(outerRef[io],
-                                    innerRef[ii + 1],
-                                    innerRef[ii],
-                                    outerWrite[io],
+                    emitTriToBuffer(outerWrite[io],
                                     innerWrite[ii + 1],
                                     innerWrite[ii],
                                     trackMetadata,
@@ -453,10 +428,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 }
                 else
                 {
-                    emitTriToBuffer(outerRef[io],
-                                    outerRef[io + 1],
-                                    innerRef[ii],
-                                    outerWrite[io],
+                    emitTriToBuffer(outerWrite[io],
                                     outerWrite[io + 1],
                                     innerWrite[ii],
                                     trackMetadata,
@@ -690,41 +662,27 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                     const int i10 = innerAt(x + 2, y + 1);
                     const int i01 = innerAt(x + 1, y + 2);
                     const int i11 = innerAt(x + 2, y + 2);
-                    const bool emit0 = emitTriToBuffer(
-                        i00, i10, i11, i00, i10, i11, true, true, &indices);
-                    const bool emit1 = emitTriToBuffer(
-                        i00, i11, i01, i00, i11, i01, true, true, &indices);
-                    if (emit0)
+                    emitTriToBuffer(i00, i10, i11, true, true, &indices);
+                    for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
                     {
-                        for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
-                        {
-                            const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
-                            emitTriToBuffer(i00,
-                                            i10,
-                                            i11,
-                                            innerFVarAt(fvarSlot, x + 1, y + 1),
-                                            innerFVarAt(fvarSlot, x + 2, y + 1),
-                                            innerFVarAt(fvarSlot, x + 2, y + 2),
-                                            false,
-                                            true,
-                                            &attrBuilders[builderIndex].indices);
-                        }
+                        const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                        emitTriToBuffer(innerFVarAt(fvarSlot, x + 1, y + 1),
+                                        innerFVarAt(fvarSlot, x + 2, y + 1),
+                                        innerFVarAt(fvarSlot, x + 2, y + 2),
+                                        false,
+                                        true,
+                                        &attrBuilders[builderIndex].indices);
                     }
-                    if (emit1)
+                    emitTriToBuffer(i00, i11, i01, true, true, &indices);
+                    for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
                     {
-                        for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
-                        {
-                            const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
-                            emitTriToBuffer(i00,
-                                            i11,
-                                            i01,
-                                            innerFVarAt(fvarSlot, x + 1, y + 1),
-                                            innerFVarAt(fvarSlot, x + 2, y + 2),
-                                            innerFVarAt(fvarSlot, x + 1, y + 2),
-                                            false,
-                                            true,
-                                            &attrBuilders[builderIndex].indices);
-                        }
+                        const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                        emitTriToBuffer(innerFVarAt(fvarSlot, x + 1, y + 1),
+                                        innerFVarAt(fvarSlot, x + 2, y + 2),
+                                        innerFVarAt(fvarSlot, x + 1, y + 2),
+                                        false,
+                                        true,
+                                        &attrBuilders[builderIndex].indices);
                     }
                 }
             }
@@ -809,10 +767,10 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
             stitchingFVarTriStart[size_t(fvarSlot)] =
                 attrBuilders[builderIndex].indices.size() / 3;
         }
-        const int emittedStitchPos0 = stitchStripToBuffer(outer0, inner0, outer0, inner0, &indices, mU, e0, true);
-        const int emittedStitchPos1 = stitchStripToBuffer(outer1, inner1, outer1, inner1, &indices, mV, e1, true);
-        const int emittedStitchPos2 = stitchStripToBuffer(outer2, inner2, outer2, inner2, &indices, mU, e2, true);
-        const int emittedStitchPos3 = stitchStripToBuffer(outer3, inner3, outer3, inner3, &indices, mV, e3, true);
+        const int emittedStitchPos0 = stitchStripToBuffer(outer0, inner0, &indices, mU, e0, true);
+        const int emittedStitchPos1 = stitchStripToBuffer(outer1, inner1, &indices, mV, e1, true);
+        const int emittedStitchPos2 = stitchStripToBuffer(outer2, inner2, &indices, mU, e2, true);
+        const int emittedStitchPos3 = stitchStripToBuffer(outer3, inner3, &indices, mV, e3, true);
         const int emittedStitchPosTotal = emittedStitchPos0 + emittedStitchPos1 + emittedStitchPos2 + emittedStitchPos3;
 
         for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
@@ -827,33 +785,25 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
             YBI_ASSERT(inner3FVar[size_t(fvarSlot)].size() == inner3.size());
 
             const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
-            const int emittedFVar0 = stitchStripToBuffer(outer0,
-                                                         inner0,
-                                                         outer0FVar[size_t(fvarSlot)],
+            const int emittedFVar0 = stitchStripToBuffer(outer0FVar[size_t(fvarSlot)],
                                                          inner0FVar[size_t(fvarSlot)],
                                                          &attrBuilders[builderIndex].indices,
                                                          mU,
                                                          e0,
                                                          false);
-            const int emittedFVar1 = stitchStripToBuffer(outer1,
-                                                         inner1,
-                                                         outer1FVar[size_t(fvarSlot)],
+            const int emittedFVar1 = stitchStripToBuffer(outer1FVar[size_t(fvarSlot)],
                                                          inner1FVar[size_t(fvarSlot)],
                                                          &attrBuilders[builderIndex].indices,
                                                          mV,
                                                          e1,
                                                          false);
-            const int emittedFVar2 = stitchStripToBuffer(outer2,
-                                                         inner2,
-                                                         outer2FVar[size_t(fvarSlot)],
+            const int emittedFVar2 = stitchStripToBuffer(outer2FVar[size_t(fvarSlot)],
                                                          inner2FVar[size_t(fvarSlot)],
                                                          &attrBuilders[builderIndex].indices,
                                                          mU,
                                                          e2,
                                                          false);
-            const int emittedFVar3 = stitchStripToBuffer(outer3,
-                                                         inner3,
-                                                         outer3FVar[size_t(fvarSlot)],
+            const int emittedFVar3 = stitchStripToBuffer(outer3FVar[size_t(fvarSlot)],
                                                          inner3FVar[size_t(fvarSlot)],
                                                          &attrBuilders[builderIndex].indices,
                                                          mV,
