@@ -166,15 +166,16 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         return false;
     }
 
+    const bool enableFVarTables = hasTexcoords && hasRefinerFVar;
+
     Far::TopologyRefiner::AdaptiveOptions adaptiveOptions(options.level);
+    adaptiveOptions.considerFVarChannels = enableFVarTables;
     refiner->RefineAdaptive(adaptiveOptions);
 
     Far::PatchTableFactory::Options patchOptions(options.level);
     patchOptions.endCapType = Far::PatchTableFactory::Options::ENDCAP_GREGORY_BASIS;
     patchOptions.useInfSharpPatch = (d.numCreases > 0) || (d.numCorners > 0);
-    // TODO: enabling fvar patch tables currently crashes in PatchTableFactory::Create
-    // with the available OpenSubdiv build; keep disabled until root-caused.
-    patchOptions.generateFVarTables = false;
+    patchOptions.generateFVarTables = enableFVarTables;
     patchOptions.generateFVarLegacyLinearPatches = false;
     const Far::PatchTable *patchTable = Far::PatchTableFactory::Create(*refiner, patchOptions);
     if (!patchTable)
