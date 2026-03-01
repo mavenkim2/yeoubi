@@ -322,7 +322,7 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     const int udim = 1001 + udimU + 10 * udimV;
     const int udimSlot = ClampInt(udim - 1001, 0, params.materialTextureRefStride - 1);
     const float uu = u - floorf(u);
-    const float vv = 1.0f - (v - floorf(v));
+    const float vv = v - floorf(v);
 
     if (geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
     {

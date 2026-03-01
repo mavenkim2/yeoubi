@@ -612,10 +612,24 @@ static bool LoadExrRgba8(const std::string &path,
         *outHeight = h;
         const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
         outRgba8->resize(pixelCount * 4u);
-        for (size_t i = 0; i < pixelCount * 4u; ++i)
+        for (int y = 0; y < h; ++y)
         {
-            const float c = std::min(1.0f, std::max(0.0f, rawData[i]));
-            (*outRgba8)[i] = static_cast<unsigned char>(c * 255.0f + 0.5f);
+            const int srcY = h - 1 - y;
+            for (int x = 0; x < w; ++x)
+            {
+                const size_t dstBase = (static_cast<size_t>(y) * static_cast<size_t>(w) +
+                                        static_cast<size_t>(x)) *
+                                       4u;
+                const size_t srcBase = (static_cast<size_t>(srcY) * static_cast<size_t>(w) +
+                                        static_cast<size_t>(x)) *
+                                       4u;
+                for (int c = 0; c < 4; ++c)
+                {
+                    const float value = std::min(1.0f, std::max(0.0f, rawData[srcBase + c]));
+                    (*outRgba8)[dstBase + static_cast<size_t>(c)] =
+                        static_cast<unsigned char>(value * 255.0f + 0.5f);
+                }
+            }
         }
         std::free(rawData);
     };
@@ -763,7 +777,9 @@ static bool LoadImageRgba8(const std::string &path,
     }
 
     int channels = 0;
+    stbi_set_flip_vertically_on_load(1);
     stbi_uc *pixels = stbi_load(path.c_str(), outWidth, outHeight, &channels, 4);
+    stbi_set_flip_vertically_on_load(0);
     if (!pixels || *outWidth <= 0 || *outHeight <= 0)
     {
         if (outReason)
