@@ -319,153 +319,154 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int currentQuadrant = -1;
     int innerGridTriangleCount = 0;
     int stitchingTriangleCount = 0;
-    bool emitFromInnerGrid = false;
-    std::vector<int> tmpFVarA(fvarAttrCount, -1);
-    std::vector<int> tmpFVarB(fvarAttrCount, -1);
-    std::vector<int> tmpFVarC(fvarAttrCount, -1);
-
-    auto emitTri = [&](int a, int b, int c) {
-        YBI_ERROR(a >= 0 && b >= 0 && c >= 0, "%i %i %i\n", a, b, c);
-        if (a == b || b == c || a == c)
+    auto emitTriToBuffer = [&](const int refA,
+                               const int refB,
+                               const int refC,
+                               const int outA,
+                               const int outB,
+                               const int outC,
+                               bool trackMetadata,
+                               bool fromInnerGrid,
+                               Array<int> *outIndexBuffer) -> bool {
+        YBI_ASSERT(outIndexBuffer);
+        YBI_ERROR(refA >= 0 && refB >= 0 && refC >= 0, "%i %i %i\n", refA, refB, refC);
+        if (refA == refB || refB == refC || refA == refC)
         {
-            return;
+            return false;
         }
-        indices.EmplaceBack(a);
-        indices.EmplaceBack(b);
-        indices.EmplaceBack(c);
-        for (size_t ai = 0; ai < attrBuilders.size(); ++ai)
+        outIndexBuffer->EmplaceBack(outA);
+        outIndexBuffer->EmplaceBack(outB);
+        outIndexBuffer->EmplaceBack(outC);
+        if (trackMetadata)
         {
-            if (attrBuilders[ai].isFaceVarying)
+            if (fromInnerGrid)
             {
-                const int fvSlot = builderToFVarSlot[ai];
-                YBI_ASSERT(fvSlot >= 0);
-                attrBuilders[ai].indices.EmplaceBack(tmpFVarA[fvSlot]);
-                attrBuilders[ai].indices.EmplaceBack(tmpFVarB[fvSlot]);
-                attrBuilders[ai].indices.EmplaceBack(tmpFVarC[fvSlot]);
+                innerGridTriangleCount++;
             }
             else
             {
-                attrBuilders[ai].indices.EmplaceBack(a);
-                attrBuilders[ai].indices.EmplaceBack(b);
-                attrBuilders[ai].indices.EmplaceBack(c);
+                stitchingTriangleCount++;
+            }
+            if (outTriPatchFaceIds)
+            {
+                outTriPatchFaceIds->push_back(currentPatchFaceId);
+            }
+            if (outTriCoarseFaceIds)
+            {
+                outTriCoarseFaceIds->push_back(currentCoarseFaceId);
+            }
+            if (outTriPtexFaceIds)
+            {
+                outTriPtexFaceIds->push_back(currentPtexFaceId);
+            }
+            if (outTriQuadrants)
+            {
+                outTriQuadrants->push_back(currentQuadrant);
             }
         }
-        if (emitFromInnerGrid)
-        {
-            innerGridTriangleCount++;
-        }
-        else
-        {
-            stitchingTriangleCount++;
-        }
-        if (outTriPatchFaceIds)
-        {
-            outTriPatchFaceIds->push_back(currentPatchFaceId);
-        }
-        if (outTriCoarseFaceIds)
-        {
-            outTriCoarseFaceIds->push_back(currentCoarseFaceId);
-        }
-        if (outTriPtexFaceIds)
-        {
-            outTriPtexFaceIds->push_back(currentPtexFaceId);
-        }
-        if (outTriQuadrants)
-        {
-            outTriQuadrants->push_back(currentQuadrant);
-        }
+        return true;
     };
 
-    auto stitchStrip = [&](const std::vector<int> &outer,
-                           const std::vector<int> &inner,
-                           const std::vector<std::vector<int>> &outerFVar,
-                           const std::vector<std::vector<int>> &innerFVar,
-                           int m,
-                           int n) {
-            YBI_ASSERT(!outer.empty());
-            YBI_ASSERT(!inner.empty());
-            YBI_ASSERT(int(outerFVar.size()) == fvarAttrCount);
-            YBI_ASSERT(int(innerFVar.size()) == fvarAttrCount);
-            for (int i = 0; i < fvarAttrCount; ++i)
-            {
-                YBI_ASSERT(outerFVar[i].size() == outer.size());
-                YBI_ASSERT(innerFVar[i].size() == inner.size());
-            }
+    auto stitchStripToBuffer = [&](const std::vector<int> &outerRef,
+                                   const std::vector<int> &innerRef,
+                                   const std::vector<int> &outerWrite,
+                                   const std::vector<int> &innerWrite,
+                                   Array<int> *outIndexBuffer,
+                                   int m,
+                                   int n,
+                                   bool trackMetadata) -> int {
+            YBI_ASSERT(!outerRef.empty());
+            YBI_ASSERT(!innerRef.empty());
+            YBI_ASSERT(outerRef.size() == outerWrite.size());
+            YBI_ASSERT(innerRef.size() == innerWrite.size());
+            YBI_ASSERT(outIndexBuffer);
 
+            const size_t beforeTriCount = outIndexBuffer->size() / 3;
             size_t io = 0;
             size_t ii = 0;
-            if (inner.size() == 1)
+            if (innerRef.size() == 1)
             {
-                while (io + 1 < outer.size())
+                while (io + 1 < outerRef.size())
                 {
-                    for (int k = 0; k < fvarAttrCount; ++k)
-                    {
-                        tmpFVarA[k] = outerFVar[k][io];
-                        tmpFVarB[k] = outerFVar[k][io + 1];
-                        tmpFVarC[k] = innerFVar[k][0];
-                    }
-                    emitTri(outer[io], outer[io + 1], inner[0]);
+                    emitTriToBuffer(outerRef[io],
+                                    outerRef[io + 1],
+                                    innerRef[0],
+                                    outerWrite[io],
+                                    outerWrite[io + 1],
+                                    innerWrite[0],
+                                    trackMetadata,
+                                    false,
+                                    outIndexBuffer);
                     io++;
                 }
-                return;
+                return int(outIndexBuffer->size() / 3 - beforeTriCount);
             }
 
             int q = m - 3 * n;
-            while (io + 1 < outer.size() || ii + 1 < inner.size())
+            while (io + 1 < outerRef.size() || ii + 1 < innerRef.size())
             {
-                const bool canAdvanceOuter = (io + 1 < outer.size());
-                const bool canAdvanceInner = (ii + 1 < inner.size());
+                const bool canAdvanceOuter = (io + 1 < outerRef.size());
+                const bool canAdvanceInner = (ii + 1 < innerRef.size());
 
                 if (!canAdvanceInner)
                 {
-                    for (int k = 0; k < fvarAttrCount; ++k)
-                    {
-                        tmpFVarA[k] = outerFVar[k][io];
-                        tmpFVarB[k] = outerFVar[k][io + 1];
-                        tmpFVarC[k] = innerFVar[k][ii];
-                    }
-                    emitTri(outer[io], outer[io + 1], inner[ii]);
+                    emitTriToBuffer(outerRef[io],
+                                    outerRef[io + 1],
+                                    innerRef[ii],
+                                    outerWrite[io],
+                                    outerWrite[io + 1],
+                                    innerWrite[ii],
+                                    trackMetadata,
+                                    false,
+                                    outIndexBuffer);
                     io++;
                     continue;
                 }
                 if (!canAdvanceOuter)
                 {
-                    for (int k = 0; k < fvarAttrCount; ++k)
-                    {
-                        tmpFVarA[k] = outerFVar[k][io];
-                        tmpFVarB[k] = innerFVar[k][ii + 1];
-                        tmpFVarC[k] = innerFVar[k][ii];
-                    }
-                    emitTri(outer[io], inner[ii + 1], inner[ii]);
+                    emitTriToBuffer(outerRef[io],
+                                    innerRef[ii + 1],
+                                    innerRef[ii],
+                                    outerWrite[io],
+                                    innerWrite[ii + 1],
+                                    innerWrite[ii],
+                                    trackMetadata,
+                                    false,
+                                    outIndexBuffer);
                     ii++;
                     continue;
                 }
 
                 if (q >= 0)
                 {
-                    for (int k = 0; k < fvarAttrCount; ++k)
-                    {
-                        tmpFVarA[k] = outerFVar[k][io];
-                        tmpFVarB[k] = innerFVar[k][ii + 1];
-                        tmpFVarC[k] = innerFVar[k][ii];
-                    }
-                    emitTri(outer[io], inner[ii + 1], inner[ii]);
+                    emitTriToBuffer(outerRef[io],
+                                    innerRef[ii + 1],
+                                    innerRef[ii],
+                                    outerWrite[io],
+                                    innerWrite[ii + 1],
+                                    innerWrite[ii],
+                                    trackMetadata,
+                                    false,
+                                    outIndexBuffer);
                     ii++;
                     q -= 2 * n;
                 }
                 else
                 {
-                    for (int k = 0; k < fvarAttrCount; ++k)
-                    {
-                        tmpFVarA[k] = outerFVar[k][io];
-                        tmpFVarB[k] = outerFVar[k][io + 1];
-                        tmpFVarC[k] = innerFVar[k][ii];
-                    }
-                    emitTri(outer[io], outer[io + 1], inner[ii]);
+                    emitTriToBuffer(outerRef[io],
+                                    outerRef[io + 1],
+                                    innerRef[ii],
+                                    outerWrite[io],
+                                    outerWrite[io + 1],
+                                    innerWrite[ii],
+                                    trackMetadata,
+                                    false,
+                                    outIndexBuffer);
                     io++;
                     q += 2 * m;
                 }
             }
+            return int(outIndexBuffer->size() / 3 - beforeTriCount);
         };
 
     for (size_t patchFaceId = 0; patchFaceId < leafPatches.size(); ++patchFaceId)
@@ -673,7 +674,14 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
 
         if (cols >= 2 && rows >= 2)
         {
-            emitFromInnerGrid = true;
+            const size_t innerGridTriStart = indices.size() / 3;
+            std::vector<size_t> innerGridFVarTriStart(size_t(fvarAttrCount), 0);
+            for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+            {
+                const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                innerGridFVarTriStart[size_t(fvarSlot)] =
+                    attrBuilders[builderIndex].indices.size() / 3;
+            }
             for (int y = 0; y < rows - 1; ++y)
             {
                 for (int x = 0; x < cols - 1; ++x)
@@ -682,23 +690,53 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                     const int i10 = innerAt(x + 2, y + 1);
                     const int i01 = innerAt(x + 1, y + 2);
                     const int i11 = innerAt(x + 2, y + 2);
-                    for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                    const bool emit0 = emitTriToBuffer(
+                        i00, i10, i11, i00, i10, i11, true, true, &indices);
+                    const bool emit1 = emitTriToBuffer(
+                        i00, i11, i01, i00, i11, i01, true, true, &indices);
+                    if (emit0)
                     {
-                        tmpFVarA[fvarSlot] = innerFVarAt(fvarSlot, x + 1, y + 1);
-                        tmpFVarB[fvarSlot] = innerFVarAt(fvarSlot, x + 2, y + 1);
-                        tmpFVarC[fvarSlot] = innerFVarAt(fvarSlot, x + 2, y + 2);
+                        for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                        {
+                            const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                            emitTriToBuffer(i00,
+                                            i10,
+                                            i11,
+                                            innerFVarAt(fvarSlot, x + 1, y + 1),
+                                            innerFVarAt(fvarSlot, x + 2, y + 1),
+                                            innerFVarAt(fvarSlot, x + 2, y + 2),
+                                            false,
+                                            true,
+                                            &attrBuilders[builderIndex].indices);
+                        }
                     }
-                    emitTri(i00, i10, i11);
-                    for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                    if (emit1)
                     {
-                        tmpFVarA[fvarSlot] = innerFVarAt(fvarSlot, x + 1, y + 1);
-                        tmpFVarB[fvarSlot] = innerFVarAt(fvarSlot, x + 2, y + 2);
-                        tmpFVarC[fvarSlot] = innerFVarAt(fvarSlot, x + 1, y + 2);
+                        for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+                        {
+                            const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                            emitTriToBuffer(i00,
+                                            i11,
+                                            i01,
+                                            innerFVarAt(fvarSlot, x + 1, y + 1),
+                                            innerFVarAt(fvarSlot, x + 2, y + 2),
+                                            innerFVarAt(fvarSlot, x + 1, y + 2),
+                                            false,
+                                            true,
+                                            &attrBuilders[builderIndex].indices);
+                        }
                     }
-                    emitTri(i00, i11, i01);
                 }
             }
-            emitFromInnerGrid = false;
+            const int emittedInnerGridPosTris = int(indices.size() / 3 - innerGridTriStart);
+            for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+            {
+                const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+                const int emittedInnerGridFVarTris =
+                    int(attrBuilders[builderIndex].indices.size() / 3 -
+                        innerGridFVarTriStart[size_t(fvarSlot)]);
+                YBI_ASSERT(emittedInnerGridPosTris == emittedInnerGridFVarTris);
+            }
         }
 
         std::vector<int> inner0;
@@ -761,10 +799,73 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
             std::reverse(outer3FVar[size_t(f)].begin(), outer3FVar[size_t(f)].end());
         }
 
-        stitchStrip(outer0, inner0, outer0FVar, inner0FVar, std::max(e0, e2), e0);
-        stitchStrip(outer1, inner1, outer1FVar, inner1FVar, std::max(e1, e3), e1);
-        stitchStrip(outer2, inner2, outer2FVar, inner2FVar, std::max(e0, e2), e2);
-        stitchStrip(outer3, inner3, outer3FVar, inner3FVar, std::max(e1, e3), e3);
+        const int mU = std::max(e0, e2);
+        const int mV = std::max(e1, e3);
+        const size_t stitchingTriStart = indices.size() / 3;
+        std::vector<size_t> stitchingFVarTriStart(size_t(fvarAttrCount), 0);
+        for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+        {
+            const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+            stitchingFVarTriStart[size_t(fvarSlot)] =
+                attrBuilders[builderIndex].indices.size() / 3;
+        }
+        const int emittedStitchPos0 = stitchStripToBuffer(outer0, inner0, outer0, inner0, &indices, mU, e0, true);
+        const int emittedStitchPos1 = stitchStripToBuffer(outer1, inner1, outer1, inner1, &indices, mV, e1, true);
+        const int emittedStitchPos2 = stitchStripToBuffer(outer2, inner2, outer2, inner2, &indices, mU, e2, true);
+        const int emittedStitchPos3 = stitchStripToBuffer(outer3, inner3, outer3, inner3, &indices, mV, e3, true);
+        const int emittedStitchPosTotal = emittedStitchPos0 + emittedStitchPos1 + emittedStitchPos2 + emittedStitchPos3;
+
+        for (int fvarSlot = 0; fvarSlot < fvarAttrCount; ++fvarSlot)
+        {
+            YBI_ASSERT(outer0FVar[size_t(fvarSlot)].size() == outer0.size());
+            YBI_ASSERT(inner0FVar[size_t(fvarSlot)].size() == inner0.size());
+            YBI_ASSERT(outer1FVar[size_t(fvarSlot)].size() == outer1.size());
+            YBI_ASSERT(inner1FVar[size_t(fvarSlot)].size() == inner1.size());
+            YBI_ASSERT(outer2FVar[size_t(fvarSlot)].size() == outer2.size());
+            YBI_ASSERT(inner2FVar[size_t(fvarSlot)].size() == inner2.size());
+            YBI_ASSERT(outer3FVar[size_t(fvarSlot)].size() == outer3.size());
+            YBI_ASSERT(inner3FVar[size_t(fvarSlot)].size() == inner3.size());
+
+            const int builderIndex = faceVaryingBuilderIndices[fvarSlot];
+            const int emittedFVar0 = stitchStripToBuffer(outer0,
+                                                         inner0,
+                                                         outer0FVar[size_t(fvarSlot)],
+                                                         inner0FVar[size_t(fvarSlot)],
+                                                         &attrBuilders[builderIndex].indices,
+                                                         mU,
+                                                         e0,
+                                                         false);
+            const int emittedFVar1 = stitchStripToBuffer(outer1,
+                                                         inner1,
+                                                         outer1FVar[size_t(fvarSlot)],
+                                                         inner1FVar[size_t(fvarSlot)],
+                                                         &attrBuilders[builderIndex].indices,
+                                                         mV,
+                                                         e1,
+                                                         false);
+            const int emittedFVar2 = stitchStripToBuffer(outer2,
+                                                         inner2,
+                                                         outer2FVar[size_t(fvarSlot)],
+                                                         inner2FVar[size_t(fvarSlot)],
+                                                         &attrBuilders[builderIndex].indices,
+                                                         mU,
+                                                         e2,
+                                                         false);
+            const int emittedFVar3 = stitchStripToBuffer(outer3,
+                                                         inner3,
+                                                         outer3FVar[size_t(fvarSlot)],
+                                                         inner3FVar[size_t(fvarSlot)],
+                                                         &attrBuilders[builderIndex].indices,
+                                                         mV,
+                                                         e3,
+                                                         false);
+            const int emittedFVarTotal = emittedFVar0 + emittedFVar1 + emittedFVar2 + emittedFVar3;
+            YBI_ASSERT(emittedFVarTotal == emittedStitchPosTotal);
+            const int emittedFVarBySize =
+                int(attrBuilders[builderIndex].indices.size() / 3 -
+                    stitchingFVarTriStart[size_t(fvarSlot)]);
+            YBI_ASSERT(emittedFVarBySize == emittedStitchPosTotal);
+        }
     }
 
     outMesh->positions = std::move(positions);
@@ -773,6 +874,16 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     outMesh->attributes.reserve(attrBuilders.size());
     for (TessellationAttributeBuilder &builder : attrBuilders)
     {
+        if (!builder.isFaceVarying)
+        {
+            builder.indices.Resize(outMesh->indices.size());
+            if (outMesh->indices.size() > 0)
+            {
+                memcpy(builder.indices.data(),
+                       outMesh->indices.data(),
+                       sizeof(int) * outMesh->indices.size());
+            }
+        }
         YBI_ASSERT(builder.indices.size() == outMesh->indices.size());
         outMesh->attributes.emplace_back(std::move(builder.values),
                                          std::move(builder.indices),
