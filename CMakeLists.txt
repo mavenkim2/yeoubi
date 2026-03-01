@@ -120,6 +120,7 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/ntc.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/exr_utils.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tiles.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/tile_binary.cpp
@@ -262,7 +263,8 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
 
     if (WITH_NTC)
         target_sources(yeoubi_optix_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp)
         target_compile_definitions(yeoubi_optix_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
         target_include_directories(yeoubi_optix_harness PRIVATE ${NTC_INCLUDE_DIRS})
         target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})

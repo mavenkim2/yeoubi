@@ -1,6 +1,7 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
 #include "scene/scene.h"
+#include "texture/exr_io.h"
 #include "texture/udim_utils.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
@@ -29,11 +30,6 @@
 
 #include <cuda_runtime_api.h>
 #include <optix_stubs.h>
-
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-#define TINYEXR_IMPLEMENTATION
-#include <tinyexr.h>
-#endif
 
 using namespace ybi;
 
@@ -607,145 +603,20 @@ static bool LoadExrRgba8(const std::string &path,
     *outHeight = 0;
     outRgba8->clear();
 
-    auto assignAndFree = [&](float *rawData, int w, int h) {
-        *outWidth = w;
-        *outHeight = h;
-        const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
-        outRgba8->resize(pixelCount * 4u);
-        for (int y = 0; y < h; ++y)
-        {
-            const int srcY = h - 1 - y;
-            for (int x = 0; x < w; ++x)
-            {
-                const size_t dstBase = (static_cast<size_t>(y) * static_cast<size_t>(w) +
-                                        static_cast<size_t>(x)) *
-                                       4u;
-                const size_t srcBase = (static_cast<size_t>(srcY) * static_cast<size_t>(w) +
-                                        static_cast<size_t>(x)) *
-                                       4u;
-                for (int c = 0; c < 4; ++c)
-                {
-                    const float value = std::min(1.0f, std::max(0.0f, rawData[srcBase + c]));
-                    (*outRgba8)[dstBase + static_cast<size_t>(c)] =
-                        static_cast<unsigned char>(value * 255.0f + 0.5f);
-                }
-            }
-        }
-        std::free(rawData);
-    };
-
-    float *raw = nullptr;
-    const char *err = nullptr;
-    int rc = LoadEXR(&raw, outWidth, outHeight, path.c_str(), &err);
-    if (rc == TINYEXR_SUCCESS && raw)
+    std::vector<float> rgba;
+    if (!ybi::texture::LoadExrRgba(path, outWidth, outHeight, &rgba, outReason, true))
     {
-        assignAndFree(raw, *outWidth, *outHeight);
-        return true;
-    }
-
-    std::string primaryError;
-    if (err)
-    {
-        primaryError = err;
-        FreeEXRErrorMessage(err);
-        err = nullptr;
-    }
-
-    if (rc != TINYEXR_ERROR_LAYER_NOT_FOUND)
-    {
-        if (outReason)
-        {
-            *outReason = "LoadEXR failed for " + path;
-            if (!primaryError.empty())
-            {
-                *outReason += " (" + primaryError + ")";
-            }
-        }
         return false;
     }
 
-    const char **layerNames = nullptr;
-    int numLayers = 0;
-    const char *layersErr = nullptr;
-    rc = EXRLayers(path.c_str(), &layerNames, &numLayers, &layersErr);
-    if (rc != TINYEXR_SUCCESS || !layerNames || numLayers <= 0)
+    const size_t pixelCount = static_cast<size_t>(*outWidth) * static_cast<size_t>(*outHeight);
+    outRgba8->resize(pixelCount * 4u);
+    for (size_t i = 0; i < pixelCount * 4u; ++i)
     {
-        if (outReason)
-        {
-            *outReason = "LoadEXR failed for " + path;
-            if (!primaryError.empty())
-            {
-                *outReason += " (" + primaryError + ")";
-            }
-            if (layersErr)
-            {
-                *outReason += " [EXRLayers: ";
-                *outReason += layersErr;
-                *outReason += "]";
-                FreeEXRErrorMessage(layersErr);
-            }
-        }
-        if (layerNames)
-        {
-            for (int i = 0; i < numLayers; ++i)
-            {
-                if (layerNames[i])
-                {
-                    std::free((void *)layerNames[i]);
-                }
-            }
-            std::free((void *)layerNames);
-        }
-        return false;
+        const float value = std::min(1.0f, std::max(0.0f, rgba[i]));
+        (*outRgba8)[i] = static_cast<unsigned char>(value * 255.0f + 0.5f);
     }
-
-    std::string layerError;
-    for (int i = 0; i < numLayers; ++i)
-    {
-        float *layerRaw = nullptr;
-        int layerWidth = 0;
-        int layerHeight = 0;
-        const char *layerErr = nullptr;
-        const int layerRc = LoadEXRWithLayer(
-            &layerRaw, &layerWidth, &layerHeight, path.c_str(), layerNames[i], &layerErr);
-        if (layerRc == TINYEXR_SUCCESS && layerRaw)
-        {
-            assignAndFree(layerRaw, layerWidth, layerHeight);
-            for (int j = 0; j < numLayers; ++j)
-            {
-                if (layerNames[j])
-                {
-                    std::free((void *)layerNames[j]);
-                }
-            }
-            std::free((void *)layerNames);
-            return true;
-        }
-        if (layerErr)
-        {
-            layerError = layerErr;
-            FreeEXRErrorMessage(layerErr);
-        }
-    }
-
-    for (int i = 0; i < numLayers; ++i)
-    {
-        if (layerNames[i])
-        {
-            std::free((void *)layerNames[i]);
-        }
-    }
-    std::free((void *)layerNames);
-
-    if (outReason)
-    {
-        *outReason = "LoadEXRWithLayer failed for " + path;
-        if (!layerError.empty())
-        {
-            *outReason += " (" + layerError + ")";
-        }
-    }
-    return false;
+    return true;
 }
 #endif
 
