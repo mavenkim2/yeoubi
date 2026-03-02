@@ -2,13 +2,16 @@
 
 #include <pxr/usd/usd/stage.h>
 
-#include <libntc/ntc.h>
-
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace ntc
+{
+class IContext;
+}
 
 namespace fs = std::filesystem;
 

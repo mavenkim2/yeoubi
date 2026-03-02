@@ -113,6 +113,28 @@ if (WITH_USD)
     target_include_directories(yeoubi_usd_instance_dag_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_usd_instance_dag_test PRIVATE ${OPENUSD_LIBRARIES})
 
+    add_executable(yeoubi_usd_tile_prepare
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/main.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/cli.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tiles.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
+    target_compile_definitions(yeoubi_usd_tile_prepare PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_usd_tile_prepare PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    target_include_directories(yeoubi_usd_tile_prepare PRIVATE
+        ${YBI_INCLUDE_DIRECTORIES}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_include_directories(yeoubi_usd_tile_prepare SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_usd_tile_prepare PRIVATE ${OPENUSD_LIBRARIES})
+
     if (YBI_HAS_CUDA AND WITH_NTC)
         add_executable(yeoubi_usd_ntc_encode
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/main.cpp
