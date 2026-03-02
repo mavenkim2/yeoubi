@@ -51,6 +51,8 @@ struct LaunchParams
     unsigned long long materialTextureRefs;
     int materialTextureRefCount;
     int materialTextureRefStride;
+    int materialTextureRefSemanticCount;
+    int textureViewSemantic;
     unsigned long long feedbackKeys;
     unsigned long long feedbackStats;
     int feedbackCapacity;
@@ -77,6 +79,12 @@ extern "C"
 {
     __constant__ LaunchParams params;
 }
+
+static constexpr int kSemanticRoughness = 1;
+static constexpr int kSemanticMetallic = 2;
+static constexpr int kSemanticOcclusion = 3;
+static constexpr int kSemanticIor = 5;
+static constexpr int kSemanticOpacity = 7;
 
 __device__ unsigned int g_try_sample_logged = 0u;
 __device__ unsigned int g_try_sample_fail_mask = 0u;
@@ -235,15 +243,6 @@ static __forceinline__ __device__ float3 SkyColor(const float3 &direction)
                        (1.0f - t) * top.z + t * bottom.z);
 }
 
-static __forceinline__ __device__ float3 MakeFlatAlbedo(unsigned int id)
-{
-    const unsigned int h = Hash32(id + 1u);
-    const float r = 0.2f + 0.8f * float(h & 0xFFu) / 255.0f;
-    const float g = 0.2f + 0.8f * float((h >> 8) & 0xFFu) / 255.0f;
-    const float b = 0.2f + 0.8f * float((h >> 16) & 0xFFu) / 255.0f;
-    return make_float3(r, g, b);
-}
-
 static __forceinline__ __device__ bool
 TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
                          unsigned int primitiveIndex,
@@ -336,11 +335,18 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
         return false;
     }
     const int materialIndex = geomRef.materialIndex;
+    if (params.textureViewSemantic < 0 || params.textureViewSemantic >= params.materialTextureRefSemanticCount)
+    {
+        return false;
+    }
     const LaunchParams::MaterialTextureRef *materialRefs =
         reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
-    const int base = materialIndex * params.materialTextureRefStride;
+    const int base = (materialIndex * params.materialTextureRefSemanticCount +
+                      params.textureViewSemantic) *
+                     params.materialTextureRefStride;
     const int slot = base + udimSlot;
-    const int maxSlots = params.materialTextureRefCount * params.materialTextureRefStride;
+    const int maxSlots = params.materialTextureRefCount * params.materialTextureRefSemanticCount *
+                         params.materialTextureRefStride;
     if (slot < 0 || slot >= maxSlots)
     {
         const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
@@ -358,10 +364,6 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     LaunchParams::MaterialTextureRef textureRef = materialRefs[slot];
     if (textureRef.textureObject == 0ull || textureRef.valid == 0)
     {
-        textureRef = materialRefs[base];
-    }
-    if (textureRef.textureObject == 0ull || textureRef.valid == 0)
-    {
         const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
         if ((prev & (1u << 4)) == 0u)
         {
@@ -377,7 +379,16 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     const cudaTextureObject_t textureObject =
         static_cast<cudaTextureObject_t>(textureRef.textureObject);
     const float4 sample = tex2D<float4>(textureObject, uu, vv);
-    outColor = make_float3(sample.x, sample.y, sample.z);
+    if (params.textureViewSemantic == kSemanticRoughness || params.textureViewSemantic == kSemanticMetallic ||
+        params.textureViewSemantic == kSemanticOcclusion || params.textureViewSemantic == kSemanticIor ||
+        params.textureViewSemantic == kSemanticOpacity)
+    {
+        outColor = make_float3(sample.x, sample.x, sample.x);
+    }
+    else
+    {
+        outColor = make_float3(sample.x, sample.y, sample.z);
+    }
     TryWriteTextureFeedback(
         geomRef, primitiveIndex, u, v, uu, vv, textureRef.width, textureRef.height);
     return true;
@@ -578,7 +589,7 @@ extern "C" __global__ void __closesthit__primary()
                 TrySampleMaterialTexture(ref, optixGetPrimitiveIndex(), barycentrics, color);
             if (!sampled)
             {
-                color = MakeFlatAlbedo(instanceId);
+                color = make_float3(0.0f, 0.0f, 0.0f);
             }
             else if (atomicCAS(&g_try_sample_logged, 0u, 1u) == 0u)
             {

@@ -110,6 +110,8 @@ struct LaunchParams
     unsigned long long materialTextureRefs;
     int materialTextureRefCount;
     int materialTextureRefStride;
+    int materialTextureRefSemanticCount;
+    int textureViewSemantic;
     unsigned long long feedbackKeys;
     unsigned long long feedbackStats;
     int feedbackCapacity;
@@ -124,9 +126,23 @@ enum class IntegratorType
     AO
 };
 
+enum class MaterialTextureSemantic : int
+{
+    Diffuse = 0,
+    Roughness = 1,
+    Metallic = 2,
+    Occlusion = 3,
+    Normal = 4,
+    Ior = 5,
+    Emissive = 6,
+    Opacity = 7,
+    Count = 8
+};
+
 struct CliOptions
 {
     IntegratorType integrator = IntegratorType::Primary;
+    MaterialTextureSemantic textureView = MaterialTextureSemantic::Diffuse;
     std::string inputPath;
     std::string outputPath = "optix_usd_scene.png";
     std::optional<ybi::float3> cameraPosition;
@@ -327,11 +343,115 @@ static bool ParsePurposeList(const std::string &csv, std::vector<std::string> *o
     return !outPurposes->empty();
 }
 
+static std::string ToLowerCopy(const std::string &value)
+{
+    std::string out = value;
+    for (char &c : out)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+static bool ParseTextureViewSemantic(const std::string &input, MaterialTextureSemantic *outSemantic)
+{
+    YBI_ASSERT(outSemantic);
+    const std::string token = ToLowerCopy(input);
+    if (token == "diffuse")
+    {
+        *outSemantic = MaterialTextureSemantic::Diffuse;
+        return true;
+    }
+    if (token == "roughness")
+    {
+        *outSemantic = MaterialTextureSemantic::Roughness;
+        return true;
+    }
+    if (token == "metallic" || token == "metalness")
+    {
+        *outSemantic = MaterialTextureSemantic::Metallic;
+        return true;
+    }
+    if (token == "occlusion" || token == "ao")
+    {
+        *outSemantic = MaterialTextureSemantic::Occlusion;
+        return true;
+    }
+    if (token == "normal")
+    {
+        *outSemantic = MaterialTextureSemantic::Normal;
+        return true;
+    }
+    if (token == "ior")
+    {
+        *outSemantic = MaterialTextureSemantic::Ior;
+        return true;
+    }
+    if (token == "emissive" || token == "emissivecolor")
+    {
+        *outSemantic = MaterialTextureSemantic::Emissive;
+        return true;
+    }
+    if (token == "opacity")
+    {
+        *outSemantic = MaterialTextureSemantic::Opacity;
+        return true;
+    }
+    return false;
+}
+
+static bool TryMapInputNameToSemantic(const std::string &inputName, MaterialTextureSemantic *outSemantic)
+{
+    YBI_ASSERT(outSemantic);
+    if (inputName == "diffuseColor")
+    {
+        *outSemantic = MaterialTextureSemantic::Diffuse;
+        return true;
+    }
+    if (inputName == "roughness")
+    {
+        *outSemantic = MaterialTextureSemantic::Roughness;
+        return true;
+    }
+    if (inputName == "metallic")
+    {
+        *outSemantic = MaterialTextureSemantic::Metallic;
+        return true;
+    }
+    if (inputName == "occlusion")
+    {
+        *outSemantic = MaterialTextureSemantic::Occlusion;
+        return true;
+    }
+    if (inputName == "normal")
+    {
+        *outSemantic = MaterialTextureSemantic::Normal;
+        return true;
+    }
+    if (inputName == "ior")
+    {
+        *outSemantic = MaterialTextureSemantic::Ior;
+        return true;
+    }
+    if (inputName == "emissiveColor")
+    {
+        *outSemantic = MaterialTextureSemantic::Emissive;
+        return true;
+    }
+    if (inputName == "opacity")
+    {
+        *outSemantic = MaterialTextureSemantic::Opacity;
+        return true;
+    }
+    return false;
+}
+
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao] [--spp N] "
-           "[--cam-pos x y z] [--look-at x y z] [--ntc] [--purposes csv] [--purpose name]\n",
+           "[--cam-pos x y z] [--look-at x y z] [--ntc] [--view name] "
+           "[--purposes csv] [--purpose name]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
@@ -340,6 +460,7 @@ static void PrintUsage(const char *exeName)
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
     printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
+    printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
     printf("  --purpose single purpose token, repeatable; overrides defaults\n");
 }
@@ -438,6 +559,22 @@ static CliOptions ParseCli(int argc, char **argv)
             options.useNtc = true;
             continue;
         }
+        if (arg == "--view")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            MaterialTextureSemantic semantic = MaterialTextureSemantic::Diffuse;
+            if (!ParseTextureViewSemantic(argv[++i], &semantic))
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.textureView = semantic;
+            continue;
+        }
         if (arg == "--purposes")
         {
             if (i + 1 >= argc)
@@ -522,8 +659,10 @@ struct UploadedMaterialTextures
 static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1100u;
 static constexpr int kUdimSlotCount = 128;
+static constexpr int kMaterialSemanticCount = static_cast<int>(MaterialTextureSemantic::Count);
 
-static int MaterialUdimSlotIndex(size_t materialIndex, uint32_t udim)
+static int MaterialTextureSlotIndex(
+    size_t materialIndex, MaterialTextureSemantic semantic, uint32_t udim)
 {
     int udimSlot = 0;
     if (udim >= kUdimMin && udim <= kUdimMax)
@@ -531,7 +670,10 @@ static int MaterialUdimSlotIndex(size_t materialIndex, uint32_t udim)
         udimSlot = static_cast<int>(udim - kUdimMin);
     }
     udimSlot = std::max(0, std::min(udimSlot, kUdimSlotCount - 1));
-    return static_cast<int>(materialIndex) * kUdimSlotCount + udimSlot;
+    const int semanticIndex = static_cast<int>(semantic);
+    return (static_cast<int>(materialIndex) * kMaterialSemanticCount + semanticIndex) *
+               kUdimSlotCount +
+           udimSlot;
 }
 
 static bool CheckCudaRuntime(cudaError_t result, std::string *outError, const char *callName)
@@ -567,11 +709,17 @@ static cudaTextureAddressMode ToCudaAddressMode(TextureWrapMode mode)
     return cudaAddressModeWrap;
 }
 
-static const MaterialTextureInput *FindDiffuseTextureInput(const MaterialInfo &material)
+static const MaterialTextureInput *
+FindTextureInputBySemantic(const MaterialInfo &material, MaterialTextureSemantic semantic)
 {
     for (const MaterialTextureInput &input : material.textureInputs)
     {
-        if (input.inputName == "diffuseColor" && !input.texturePath.empty())
+        if (input.texturePath.empty())
+        {
+            continue;
+        }
+        MaterialTextureSemantic inputSemantic = MaterialTextureSemantic::Diffuse;
+        if (TryMapInputNameToSemantic(input.inputName, &inputSemantic) && inputSemantic == semantic)
         {
             return &input;
         }
@@ -662,85 +810,96 @@ static bool LoadImageRgba8(const std::string &path,
     return true;
 }
 
-static bool DecodeDiffuseImageTextures(const std::vector<MaterialInfo> &materials,
-                                       std::vector<DecodedMaterialTexture> *outTextures)
+static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
+                                std::vector<DecodedMaterialTexture> *outTextures)
 {
     YBI_ASSERT(outTextures);
     outTextures->clear();
-    outTextures->resize(materials.size() * static_cast<size_t>(kUdimSlotCount));
+    outTextures->resize(materials.size() * static_cast<size_t>(kMaterialSemanticCount) *
+                        static_cast<size_t>(kUdimSlotCount));
 
     std::unordered_map<std::string, DecodedMaterialTexture> decodedByPath;
     int decodedTiles = 0;
     for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
     {
-        const MaterialTextureInput *diffuse = FindDiffuseTextureInput(materials[materialIndex]);
-        if (!diffuse)
+        const MaterialInfo &material = materials[materialIndex];
+        for (const MaterialTextureInput &input : material.textureInputs)
         {
-            continue;
-        }
-
-        std::unordered_map<uint32_t, std::string> udimPaths;
-        std::string udimReason;
-        if (!ybi::usd_ntc::CollectUdimPaths(diffuse->texturePath, udimPaths, udimReason))
-        {
-            std::printf("Image runtime: failed to resolve UDIMs for material %zu diffuse (%s): %s\n",
-                        materialIndex,
-                        diffuse->texturePath.c_str(),
-                        udimReason.c_str());
-            continue;
-        }
-
-        for (const auto &entry : udimPaths)
-        {
-            const uint32_t udim = entry.first;
-            const std::string &tilePath = entry.second;
-            const int dstIndex = MaterialUdimSlotIndex(materialIndex, udim);
-            YBI_ASSERT(dstIndex >= 0 && static_cast<size_t>(dstIndex) < outTextures->size());
-
-            auto cached = decodedByPath.find(tilePath);
-            if (cached != decodedByPath.end())
+            if (input.texturePath.empty())
             {
-                DecodedMaterialTexture tile = cached->second;
-                tile.udim = udim;
-                tile.wrapS = diffuse->wrapS;
-                tile.wrapT = diffuse->wrapT;
-                (*outTextures)[static_cast<size_t>(dstIndex)] = std::move(tile);
-                decodedTiles++;
+                continue;
+            }
+            MaterialTextureSemantic semantic = MaterialTextureSemantic::Diffuse;
+            if (!TryMapInputNameToSemantic(input.inputName, &semantic))
+            {
                 continue;
             }
 
-            DecodedMaterialTexture texture = {};
-            texture.valid = true;
-            texture.udim = udim;
-            texture.sourcePath = tilePath;
-            texture.wrapS = diffuse->wrapS;
-            texture.wrapT = diffuse->wrapT;
-
-            std::string reason;
-            if (!LoadImageRgba8(tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
+            std::unordered_map<uint32_t, std::string> udimPaths;
+            std::string udimReason;
+            if (!ybi::usd_ntc::CollectUdimPaths(input.texturePath, udimPaths, udimReason))
             {
-                std::printf("Image runtime: failed to load material %zu tile %u (%s): %s\n",
+                std::printf("Image runtime: failed to resolve UDIMs for material %zu input %s (%s): %s\n",
                             materialIndex,
-                            udim,
-                            tilePath.c_str(),
-                            reason.c_str());
+                            input.inputName.c_str(),
+                            input.texturePath.c_str(),
+                            udimReason.c_str());
                 continue;
             }
 
-            (*outTextures)[static_cast<size_t>(dstIndex)] = texture;
-            decodedByPath.emplace(tilePath, std::move(texture));
-            decodedTiles++;
+            for (const auto &entry : udimPaths)
+            {
+                const uint32_t udim = entry.first;
+                const std::string &tilePath = entry.second;
+                const int dstIndex = MaterialTextureSlotIndex(materialIndex, semantic, udim);
+                YBI_ASSERT(dstIndex >= 0 && static_cast<size_t>(dstIndex) < outTextures->size());
+
+                auto cached = decodedByPath.find(tilePath);
+                if (cached != decodedByPath.end())
+                {
+                    DecodedMaterialTexture tile = cached->second;
+                    tile.udim = udim;
+                    tile.wrapS = input.wrapS;
+                    tile.wrapT = input.wrapT;
+                    (*outTextures)[static_cast<size_t>(dstIndex)] = std::move(tile);
+                    decodedTiles++;
+                    continue;
+                }
+
+                DecodedMaterialTexture texture = {};
+                texture.valid = true;
+                texture.udim = udim;
+                texture.sourcePath = tilePath;
+                texture.wrapS = input.wrapS;
+                texture.wrapT = input.wrapT;
+
+                std::string reason;
+                if (!LoadImageRgba8(tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
+                {
+                    std::printf("Image runtime: failed to load material %zu input %s tile %u (%s): %s\n",
+                                materialIndex,
+                                input.inputName.c_str(),
+                                udim,
+                                tilePath.c_str(),
+                                reason.c_str());
+                    continue;
+                }
+
+                (*outTextures)[static_cast<size_t>(dstIndex)] = texture;
+                decodedByPath.emplace(tilePath, std::move(texture));
+                decodedTiles++;
+            }
         }
     }
 
     std::printf("Image runtime: decoded %d/%zu material UDIM tiles\n",
                 decodedTiles,
-                materials.size() * static_cast<size_t>(kUdimSlotCount));
+                materials.size() * static_cast<size_t>(kMaterialSemanticCount) *
+                    static_cast<size_t>(kUdimSlotCount));
     return true;
 }
 
-static bool UploadDecodedTexturesToCuda(const std::vector<MaterialInfo> &materials,
-                                        const std::vector<DecodedMaterialTexture> &decodedTextures,
+static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &decodedTextures,
                                         UploadedMaterialTextures *outTextures,
                                         std::string *outError)
 {
@@ -772,16 +931,6 @@ static bool UploadDecodedTexturesToCuda(const std::vector<MaterialInfo> &materia
             continue;
         }
 
-        const MaterialTextureInput *diffuse = nullptr;
-        if (!materials.empty())
-        {
-            const size_t materialIndex = i / static_cast<size_t>(kUdimSlotCount);
-            if (materialIndex < materials.size())
-            {
-                diffuse = FindDiffuseTextureInput(materials[materialIndex]);
-            }
-        }
-
         cudaChannelFormatDesc channelDesc =
             cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
         cudaArray_t array = nullptr;
@@ -811,10 +960,8 @@ static bool UploadDecodedTexturesToCuda(const std::vector<MaterialInfo> &materia
         resourceDesc.res.array.array = array;
 
         cudaTextureDesc textureDesc = {};
-        textureDesc.addressMode[0] =
-            ToCudaAddressMode(diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT);
-        textureDesc.addressMode[1] =
-            ToCudaAddressMode(diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT);
+        textureDesc.addressMode[0] = ToCudaAddressMode(src.wrapS);
+        textureDesc.addressMode[1] = ToCudaAddressMode(src.wrapT);
         textureDesc.filterMode = cudaFilterModePoint;
         textureDesc.readMode = cudaReadModeNormalizedFloat;
         textureDesc.normalizedCoords = 1;
@@ -982,6 +1129,8 @@ static void RenderTraversable(OptixPipeline pipeline,
                               CUdeviceptr materialTextureRefsBuffer,
                               int materialTextureRefCount,
                               int materialTextureRefStride,
+                              int materialTextureRefSemanticCount,
+                              MaterialTextureSemantic textureViewSemantic,
                               const std::optional<RenderCameraOverride> &cameraOverride,
                               const std::optional<ybi::float3> &cameraPositionOverride,
                               const std::optional<ybi::float3> &lookAtOverride)
@@ -1067,6 +1216,8 @@ static void RenderTraversable(OptixPipeline pipeline,
     params.materialTextureRefs = (unsigned long long)materialTextureRefsBuffer;
     params.materialTextureRefCount = materialTextureRefCount;
     params.materialTextureRefStride = materialTextureRefStride;
+    params.materialTextureRefSemanticCount = materialTextureRefSemanticCount;
+    params.textureViewSemantic = static_cast<int>(textureViewSemantic);
     params.feedbackKeys = (unsigned long long)feedbackKeysBuffer;
     params.feedbackStats = (unsigned long long)feedbackStatsBuffer;
     params.feedbackCapacity = feedbackCapacity;
@@ -1245,9 +1396,10 @@ int main(int argc, char **argv)
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
     int materialTextureRefCount = 0;
     int materialTextureRefStride = kUdimSlotCount;
+    int materialTextureRefSemanticCount = kMaterialSemanticCount;
     UploadedMaterialTextures uploadedMaterialTextures = {};
     std::vector<DecodedMaterialTexture> decodedTextures;
-    if (!DecodeDiffuseImageTextures(scenePool.materials, &decodedTextures))
+    if (!DecodeImageTextures(scenePool.materials, &decodedTextures))
     {
         fprintf(stderr, "Image runtime decode failed.\n");
         return 1;
@@ -1268,7 +1420,8 @@ int main(int argc, char **argv)
                 {
                     continue;
                 }
-                const int slot = MaterialUdimSlotIndex(i, kUdimMin);
+                const int slot =
+                    MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
                 YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < decodedTextures.size());
                 DecodedMaterialTexture &dst = decodedTextures[static_cast<size_t>(slot)];
                 dst.valid = true;
@@ -1277,7 +1430,8 @@ int main(int argc, char **argv)
                 dst.height = ntcTextures[i].height;
                 dst.rgba8 = std::move(ntcTextures[i].rgba8);
                 dst.sourcePath = ntcTextures[i].ntcPath;
-                const MaterialTextureInput *diffuse = FindDiffuseTextureInput(scenePool.materials[i]);
+                const MaterialTextureInput *diffuse =
+                    FindTextureInputBySemantic(scenePool.materials[i], MaterialTextureSemantic::Diffuse);
                 dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
                 dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
                 overrideCount++;
@@ -1296,8 +1450,7 @@ int main(int argc, char **argv)
     }
 
     std::string textureUploadError;
-    if (!UploadDecodedTexturesToCuda(
-            scenePool.materials, decodedTextures, &uploadedMaterialTextures, &textureUploadError))
+    if (!UploadDecodedTexturesToCuda(decodedTextures, &uploadedMaterialTextures, &textureUploadError))
     {
         fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
         return 1;
@@ -1380,6 +1533,8 @@ int main(int argc, char **argv)
                       (CUdeviceptr)materialTextureRefsBuffer.data(),
                       materialTextureRefCount,
                       materialTextureRefStride,
+                      materialTextureRefSemanticCount,
+                      options.textureView,
                       usdCamera,
                       options.cameraPosition,
                       options.lookAt);
