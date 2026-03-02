@@ -1,4 +1,4 @@
-#include "shared.h"
+#include "../usd_ntc_encode/shared.h"
 #include "tile_binary.h"
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"

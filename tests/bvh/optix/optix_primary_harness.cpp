@@ -6,6 +6,7 @@
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
 #include "texture/virtual_texture_key.h"
+#include "texture/virtual_texture_tile_file.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -29,6 +30,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <cuda_runtime_api.h>
@@ -152,6 +154,7 @@ struct CliOptions
     int spp = 1;
     bool useNtc = false;
     bool virtualTexture = false;
+    std::string virtualTextureTilesDir;
     std::vector<std::string> purposes = {"default", "render"};
 };
 
@@ -512,6 +515,7 @@ static void PrintUsage(const char *exeName)
     printf("  --look-at optional look-at target (default bounds center)\n");
     printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
     printf("  --virtual-texture run feedback prepass raygen before beauty\n");
+    printf("  --vt-tiles-dir path to *.tiles.bin directory for --virtual-texture\n");
     printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
     printf("  --purpose single purpose token, repeatable; overrides defaults\n");
@@ -614,6 +618,16 @@ static CliOptions ParseCli(int argc, char **argv)
         if (arg == "--virtual-texture")
         {
             options.virtualTexture = true;
+            continue;
+        }
+        if (arg == "--vt-tiles-dir")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.virtualTextureTilesDir = argv[++i];
             continue;
         }
         if (arg == "--view")
@@ -1099,6 +1113,91 @@ static unsigned int FeedbackMip(unsigned long long key)
     return ybi::texture::UnpackVirtualTextureKeyMip(key);
 }
 
+struct HostVirtualTextureTile
+{
+    unsigned long long key = 0ull;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint64_t sourceBytes = 0;
+    std::vector<unsigned char> rgba8;
+};
+
+static std::string SanitizeTileStem(const std::string &s)
+{
+    std::string out = s;
+    for (char &c : out)
+    {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.'))
+        {
+            c = '_';
+        }
+    }
+    if (out.empty())
+    {
+        out = "texture";
+    }
+    return out;
+}
+
+static std::string ResolveVirtualTextureTileBinPath(const std::string &tilesDir,
+                                                    const std::string &texturePath)
+{
+    const std::string baseNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
+    const std::string stem = SanitizeTileStem(baseNoUdim);
+    return (std::filesystem::path(tilesDir) / (stem + ".tiles.bin")).string();
+}
+
+static std::unordered_map<unsigned int, std::string>
+BuildVirtualTextureTileFileMap(const std::vector<MaterialInfo> &materials,
+                               MaterialTextureSemantic semantic,
+                               const std::string &tilesDir)
+{
+    std::unordered_map<unsigned int, std::string> out;
+    if (tilesDir.empty())
+    {
+        return out;
+    }
+    out.reserve(materials.size());
+    for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
+    {
+        const MaterialTextureInput *input = FindTextureInputBySemantic(materials[materialIndex], semantic);
+        if (!input || input->texturePath.empty())
+        {
+            continue;
+        }
+        const std::string binPath =
+            ResolveVirtualTextureTileBinPath(tilesDir, input->texturePath);
+        out.emplace(static_cast<unsigned int>(materialIndex), binPath);
+    }
+    return out;
+}
+
+static void BuildFeedbackHistogram(const std::vector<unsigned long long> &keys,
+                                   unsigned int count,
+                                   std::vector<std::pair<unsigned long long, unsigned int>> *out)
+{
+    YBI_ASSERT(out);
+    out->clear();
+    if (count == 0)
+    {
+        return;
+    }
+    std::vector<unsigned long long> sorted(keys.begin(), keys.begin() + count);
+    std::sort(sorted.begin(), sorted.end());
+    unsigned int runCount = 1;
+    for (size_t i = 1; i < sorted.size(); ++i)
+    {
+        if (sorted[i] == sorted[i - 1])
+        {
+            ++runCount;
+            continue;
+        }
+        out->push_back({sorted[i - 1], runCount});
+        runCount = 1;
+    }
+    out->push_back({sorted.back(), runCount});
+}
+
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
@@ -1197,6 +1296,7 @@ static void RenderTraversable(OptixPipeline pipeline,
                               int materialTextureRefSemanticCount,
                               MaterialTextureSemantic textureViewSemantic,
                               bool virtualTexture,
+                              const std::unordered_map<unsigned int, std::string> &virtualTextureTileFiles,
                               const std::optional<RenderCameraOverride> &cameraOverride,
                               const std::optional<ybi::float3> &cameraPositionOverride,
                               const std::optional<ybi::float3> &lookAtOverride)
@@ -1302,17 +1402,18 @@ static void RenderTraversable(OptixPipeline pipeline,
     std::vector<unsigned long long> feedbackKeysHost(feedbackCapacity, 0ull);
     unsigned int feedbackStatsHost[2] = {0u, 0u};
     unsigned int feedbackStatsZero[2] = {0u, 0u};
+    std::unordered_map<unsigned long long, HostVirtualTextureTile> virtualTextureHostCache;
+    std::unordered_map<unsigned int, ybi::texture::VirtualTextureTileFile> virtualTextureFileHandles;
+    uint64_t virtualTextureResidentBytes = 0;
+    uint64_t virtualTextureTotalBytes = 0;
+    std::unordered_set<std::string> virtualTextureOpenedPaths;
     auto WriteFeedbackFile = [&](const char *name,
                                  int sppIndex,
                                  unsigned int sampledCount,
                                  unsigned int copyCount,
                                  unsigned int overflowCount) {
-        std::unordered_map<unsigned long long, unsigned int> histogram;
-        histogram.reserve(copyCount);
-        for (unsigned int i = 0; i < copyCount; ++i)
-        {
-            histogram[feedbackKeysHost[i]] += 1u;
-        }
+        std::vector<std::pair<unsigned long long, unsigned int>> histogram;
+        BuildFeedbackHistogram(feedbackKeysHost, copyCount, &histogram);
 
         const std::filesystem::path feedbackPath = feedbackDir / name;
         std::FILE *feedbackFile = std::fopen(feedbackPath.string().c_str(), "w");
@@ -1342,6 +1443,7 @@ static void RenderTraversable(OptixPipeline pipeline,
                          it.second);
         }
         std::fclose(feedbackFile);
+        return histogram;
     };
 
     if (virtualTexture)
@@ -1370,12 +1472,105 @@ static void RenderTraversable(OptixPipeline pipeline,
                                      feedbackKeysBuffer,
                                      size_t(copyCount) * sizeof(unsigned long long)));
         }
-        WriteFeedbackFile(
-            "prepass.txt", -1, sampledCount, copyCount, overflowCount);
+        const std::vector<std::pair<unsigned long long, unsigned int>> histogram =
+            WriteFeedbackFile("prepass.txt", -1, sampledCount, copyCount, overflowCount);
         std::printf("virtual-texture prepass feedback: sampled=%u stored=%u overflow=%u\n",
                     sampledCount,
                     copyCount,
                     overflowCount);
+
+        size_t loadedTiles = 0;
+        size_t failedTiles = 0;
+        for (const auto &item : histogram)
+        {
+            const unsigned long long key = item.first;
+            const unsigned int textureId = FeedbackTextureId(key);
+            auto tilePathIter = virtualTextureTileFiles.find(textureId);
+            if (tilePathIter == virtualTextureTileFiles.end())
+            {
+                failedTiles++;
+                continue;
+            }
+
+            auto handleIter = virtualTextureFileHandles.find(textureId);
+            if (handleIter == virtualTextureFileHandles.end())
+            {
+                ybi::texture::VirtualTextureTileFile handle = {};
+                std::string openError;
+                if (!ybi::texture::OpenVirtualTextureTileFile(
+                        tilePathIter->second, &handle, &openError))
+                {
+                    std::fprintf(stderr,
+                                 "virtual-texture: failed opening tile file tex=%u path=%s err=%s\n",
+                                 textureId,
+                                 tilePathIter->second.c_str(),
+                                 openError.c_str());
+                    failedTiles++;
+                    continue;
+                }
+                if (virtualTextureOpenedPaths.insert(tilePathIter->second).second)
+                {
+                    virtualTextureTotalBytes += handle.totalTextureBytes;
+                }
+                handleIter = virtualTextureFileHandles.emplace(textureId, std::move(handle)).first;
+            }
+
+            if (virtualTextureHostCache.find(key) != virtualTextureHostCache.end())
+            {
+                continue;
+            }
+
+            std::vector<unsigned char> rgba8;
+            uint32_t tileWidth = 0;
+            uint32_t tileHeight = 0;
+            uint64_t sourceBytes = 0;
+            std::string readError;
+            if (!ybi::texture::ReadVirtualTextureTile(&handleIter->second,
+                                                      FeedbackUdim(key),
+                                                      FeedbackTileX(key),
+                                                      FeedbackTileY(key),
+                                                      &rgba8,
+                                                      &tileWidth,
+                                                      &tileHeight,
+                                                      &sourceBytes,
+                                                      &readError))
+            {
+                std::fprintf(stderr,
+                             "virtual-texture: failed reading tile key=%llu tex=%u err=%s\n",
+                             key,
+                             textureId,
+                             readError.c_str());
+                failedTiles++;
+                continue;
+            }
+
+            HostVirtualTextureTile tile = {};
+            tile.key = key;
+            tile.width = tileWidth;
+            tile.height = tileHeight;
+            tile.sourceBytes = sourceBytes;
+            tile.rgba8 = std::move(rgba8);
+            virtualTextureResidentBytes += sourceBytes;
+            virtualTextureHostCache.emplace(key, std::move(tile));
+            loadedTiles++;
+        }
+
+        const double residentMiB = double(virtualTextureResidentBytes) / (1024.0 * 1024.0);
+        const double totalMiB = double(virtualTextureTotalBytes) / (1024.0 * 1024.0);
+        const double ratio =
+            virtualTextureTotalBytes > 0
+                ? (100.0 * double(virtualTextureResidentBytes) / double(virtualTextureTotalBytes))
+                : 0.0;
+        std::printf(
+            "virtual-texture host-cache: uniqueFeedback=%zu loaded=%zu failed=%zu residentTiles=%zu "
+            "tileMem=%.3f MiB totalTexMem=%.3f MiB (%.2f%%)\n",
+            histogram.size(),
+            loadedTiles,
+            failedTiles,
+            virtualTextureHostCache.size(),
+            residentMiB,
+            totalMiB,
+            ratio);
 
         params.integrator = integrator == IntegratorType::AO ? 1 : 0;
         params.feedbackSamplePercent = 10;
@@ -1414,7 +1609,7 @@ static void RenderTraversable(OptixPipeline pipeline,
 
         char feedbackFileName[256];
         std::snprintf(feedbackFileName, sizeof(feedbackFileName), "spp_%04d.txt", sppIndex);
-        WriteFeedbackFile(feedbackFileName, sppIndex, sampledCount, copyCount, overflowCount);
+        (void)WriteFeedbackFile(feedbackFileName, sppIndex, sampledCount, copyCount, overflowCount);
     }
 
     std::vector<uint8_t> hostImage(imageSize, 0);
@@ -1591,6 +1786,24 @@ int main(int argc, char **argv)
         materialTextureRefCount = static_cast<int>(scenePool.materials.size());
     }
 
+    std::unordered_map<unsigned int, std::string> virtualTextureTileFiles = {};
+    if (options.virtualTexture)
+    {
+        if (options.virtualTextureTilesDir.empty())
+        {
+            std::fprintf(stderr,
+                         "virtual-texture: --vt-tiles-dir not set; tile loading disabled\n");
+        }
+        else
+        {
+            virtualTextureTileFiles = BuildVirtualTextureTileFileMap(
+                scenePool.materials, options.textureView, options.virtualTextureTilesDir);
+            std::printf("virtual-texture: mapped %zu material texture ids to tile bins from %s\n",
+                        virtualTextureTileFiles.size(),
+                        options.virtualTextureTilesDir.c_str());
+        }
+    }
+
     std::vector<SceneMeshUploadRef> meshUploadRefs;
     CollectScenePoolMeshUploadRefs(&flattenedScenePool, &meshUploadRefs);
 
@@ -1654,6 +1867,7 @@ int main(int argc, char **argv)
                       materialTextureRefSemanticCount,
                       options.textureView,
                       options.virtualTexture,
+                      virtualTextureTileFiles,
                       usdCamera,
                       options.cameraPosition,
                       options.lookAt);
