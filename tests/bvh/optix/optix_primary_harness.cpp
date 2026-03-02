@@ -1907,18 +1907,32 @@ int main(int argc, char **argv)
 #endif
     }
 
-    std::string textureUploadError;
-    if (!UploadDecodedTexturesToCuda(
-            decodedTextures, &uploadedMaterialTextures, &textureUploadError))
+    std::vector<LaunchParams::MaterialTextureRef> launchRefs(decodedTextures.size());
+    if (options.virtualTexture)
     {
-        fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
-        return 1;
+        for (size_t i = 0; i < decodedTextures.size(); ++i)
+        {
+            const DecodedMaterialTexture &src = decodedTextures[i];
+            launchRefs[i] = {0ull,
+                             src.width,
+                             src.height,
+                             src.valid ? 1 : 0,
+                             static_cast<int>(src.wrapS),
+                             static_cast<int>(src.wrapT),
+                             0,
+                             0};
+        }
+        std::printf("virtual-texture: skipping CUDA image texture upload; using metadata refs only\n");
     }
-
-    if (!uploadedMaterialTextures.refs.empty())
+    else
     {
-        std::vector<LaunchParams::MaterialTextureRef> launchRefs(
-            uploadedMaterialTextures.refs.size());
+        std::string textureUploadError;
+        if (!UploadDecodedTexturesToCuda(
+                decodedTextures, &uploadedMaterialTextures, &textureUploadError))
+        {
+            fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
+            return 1;
+        }
         for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
@@ -1931,6 +1945,10 @@ int main(int argc, char **argv)
                              0,
                              0};
         }
+    }
+
+    if (!launchRefs.empty())
+    {
         const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
         materialTextureRefsBuffer = device.AllocBytes(refsBytes);
         device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);

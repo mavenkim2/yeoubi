@@ -591,6 +591,15 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     }
 
     LaunchParams::MaterialTextureRef textureRef = materialRefs[slot];
+    if (params.virtualTextureEnabled != 0)
+    {
+        if (TrySampleVirtualTexture(
+                geomRef, primitiveIndex, textureRef, u, v, uu, vv, outColor))
+        {
+            return true;
+        }
+    }
+
     if (textureRef.textureObject == 0ull || textureRef.valid == 0)
     {
         const unsigned int prev = atomicOr(&g_try_sample_fail_mask, 1u << 4);
@@ -603,15 +612,6 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
                    udim);
         }
         return false;
-    }
-
-    if (params.virtualTextureEnabled != 0)
-    {
-        if (TrySampleVirtualTexture(
-                geomRef, primitiveIndex, textureRef, u, v, uu, vv, outColor))
-        {
-            return true;
-        }
     }
 
     const cudaTextureObject_t textureObject =
