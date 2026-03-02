@@ -94,6 +94,18 @@ struct LaunchParams
         int width;
         int height;
         int valid;
+        int wrapS;
+        int wrapT;
+        int _padding0;
+        int _padding1;
+    };
+
+    struct VirtualTextureTileEntry
+    {
+        unsigned long long key;
+        unsigned long long pixelOffset;
+        unsigned int width;
+        unsigned int height;
     };
 
     OptixTraversableHandle traversable;
@@ -122,6 +134,10 @@ struct LaunchParams
     int feedbackSamplePercent;
     int feedbackTileSize;
     int currentSpp;
+    unsigned long long virtualTextureTileEntries;
+    unsigned long long virtualTextureTilePixels;
+    int virtualTextureTileEntryCapacity;
+    int virtualTextureEnabled;
 };
 
 enum class IntegratorType
@@ -731,6 +747,7 @@ static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1100u;
 static constexpr int kUdimSlotCount = 128;
 static constexpr int kMaterialSemanticCount = static_cast<int>(MaterialTextureSemantic::Count);
+static constexpr unsigned long long kVirtualTextureEmptyKey = ~0ull;
 
 static int
 MaterialTextureSlotIndex(size_t materialIndex, MaterialTextureSemantic semantic, uint32_t udim)
@@ -1058,6 +1075,10 @@ static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture
         outTextures->refs[i].width = src.width;
         outTextures->refs[i].height = src.height;
         outTextures->refs[i].valid = 1;
+        outTextures->refs[i].wrapS = static_cast<int>(src.wrapS);
+        outTextures->refs[i].wrapT = static_cast<int>(src.wrapT);
+        outTextures->refs[i]._padding0 = 0;
+        outTextures->refs[i]._padding1 = 0;
     }
 
     return true;
@@ -1198,6 +1219,79 @@ static void BuildFeedbackHistogram(const std::vector<unsigned long long> &keys,
     out->push_back({sorted.back(), runCount});
 }
 
+static int BuildVirtualTextureHashTable(
+    const std::unordered_map<unsigned long long, HostVirtualTextureTile> &tiles,
+    std::vector<LaunchParams::VirtualTextureTileEntry> *outEntries,
+    std::vector<unsigned char> *outPixels)
+{
+    YBI_ASSERT(outEntries);
+    YBI_ASSERT(outPixels);
+    outEntries->clear();
+    outPixels->clear();
+    if (tiles.empty())
+    {
+        return 0;
+    }
+
+    int capacity = 1;
+    const int minCapacity = static_cast<int>(tiles.size()) * 2;
+    while (capacity < minCapacity)
+    {
+        capacity <<= 1;
+    }
+    outEntries->resize(static_cast<size_t>(capacity));
+    for (LaunchParams::VirtualTextureTileEntry &entry : *outEntries)
+    {
+        entry.key = kVirtualTextureEmptyKey;
+        entry.pixelOffset = 0ull;
+        entry.width = 0u;
+        entry.height = 0u;
+    }
+
+    size_t pixelBytes = 0;
+    for (const auto &it : tiles)
+    {
+        pixelBytes += it.second.rgba8.size();
+    }
+    outPixels->reserve(pixelBytes);
+
+    const unsigned int mask = static_cast<unsigned int>(capacity - 1);
+    for (const auto &it : tiles)
+    {
+        const HostVirtualTextureTile &tile = it.second;
+        const unsigned long long key = tile.key;
+        if (tile.rgba8.empty() || tile.width == 0u || tile.height == 0u)
+        {
+            continue;
+        }
+
+        const unsigned long long offset =
+            static_cast<unsigned long long>(outPixels->size());
+        outPixels->insert(outPixels->end(), tile.rgba8.begin(), tile.rgba8.end());
+
+        unsigned int slot = ybi::texture::HashVirtualTextureKey(key) & mask;
+        bool inserted = false;
+        for (int probe = 0; probe < capacity; ++probe)
+        {
+            LaunchParams::VirtualTextureTileEntry &entry =
+                (*outEntries)[static_cast<size_t>(slot)];
+            if (entry.key == kVirtualTextureEmptyKey)
+            {
+                entry.key = key;
+                entry.pixelOffset = offset;
+                entry.width = tile.width;
+                entry.height = tile.height;
+                inserted = true;
+                break;
+            }
+            slot = (slot + 1u) & mask;
+        }
+        YBI_ASSERT(inserted);
+    }
+
+    return capacity;
+}
+
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
@@ -1318,6 +1412,8 @@ static void RenderTraversable(OptixPipeline pipeline,
     const size_t feedbackStatsBytes = 2u * sizeof(unsigned int);
     CUdeviceptr feedbackKeysBuffer = 0;
     CUdeviceptr feedbackStatsBuffer = 0;
+    CUdeviceptr virtualTextureTileEntriesBuffer = 0;
+    CUdeviceptr virtualTextureTilePixelsBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&feedbackKeysBuffer, feedbackKeysBytes));
     CUDA_ASSERT(cuMemAlloc(&feedbackStatsBuffer, feedbackStatsBytes));
 
@@ -1390,6 +1486,10 @@ static void RenderTraversable(OptixPipeline pipeline,
     params.feedbackSamplePercent = 10;
     params.feedbackTileSize = 128;
     params.currentSpp = 0;
+    params.virtualTextureTileEntries = 0ull;
+    params.virtualTextureTilePixels = 0ull;
+    params.virtualTextureTileEntryCapacity = 0;
+    params.virtualTextureEnabled = virtualTexture ? 1 : 0;
 
     CUdeviceptr paramsBuffer = 0;
     CUDA_ASSERT(cuMemAlloc(&paramsBuffer, sizeof(LaunchParams)));
@@ -1572,6 +1672,42 @@ static void RenderTraversable(OptixPipeline pipeline,
             totalMiB,
             ratio);
 
+        std::vector<LaunchParams::VirtualTextureTileEntry> virtualTextureEntriesHost;
+        std::vector<unsigned char> virtualTexturePixelsHost;
+        const int virtualTextureTableCapacity = BuildVirtualTextureHashTable(
+            virtualTextureHostCache, &virtualTextureEntriesHost, &virtualTexturePixelsHost);
+        if (virtualTextureTableCapacity > 0)
+        {
+            const size_t entriesBytes = virtualTextureEntriesHost.size() *
+                                        sizeof(LaunchParams::VirtualTextureTileEntry);
+            const size_t pixelsBytes = virtualTexturePixelsHost.size();
+            CUDA_ASSERT(cuMemAlloc(&virtualTextureTileEntriesBuffer, entriesBytes));
+            CUDA_ASSERT(cuMemAlloc(&virtualTextureTilePixelsBuffer, pixelsBytes));
+            CUDA_ASSERT(cuMemcpyHtoD(virtualTextureTileEntriesBuffer,
+                                     virtualTextureEntriesHost.data(),
+                                     entriesBytes));
+            CUDA_ASSERT(cuMemcpyHtoD(virtualTextureTilePixelsBuffer,
+                                     virtualTexturePixelsHost.data(),
+                                     pixelsBytes));
+            params.virtualTextureTileEntries =
+                static_cast<unsigned long long>(virtualTextureTileEntriesBuffer);
+            params.virtualTextureTilePixels =
+                static_cast<unsigned long long>(virtualTextureTilePixelsBuffer);
+            params.virtualTextureTileEntryCapacity = virtualTextureTableCapacity;
+            std::printf(
+                "virtual-texture gpu-cache: entries=%zu capacity=%d pixels=%zu bytes\n",
+                virtualTextureHostCache.size(),
+                virtualTextureTableCapacity,
+                virtualTexturePixelsHost.size());
+        }
+        else
+        {
+            params.virtualTextureTileEntries = 0ull;
+            params.virtualTextureTilePixels = 0ull;
+            params.virtualTextureTileEntryCapacity = 0;
+            std::printf("virtual-texture gpu-cache: no resident tiles\n");
+        }
+
         params.integrator = integrator == IntegratorType::AO ? 1 : 0;
         params.feedbackSamplePercent = 10;
     }
@@ -1636,6 +1772,14 @@ static void RenderTraversable(OptixPipeline pipeline,
     }
 
     CUDA_ASSERT(cuMemFree(paramsBuffer));
+    if (virtualTextureTilePixelsBuffer != 0)
+    {
+        CUDA_ASSERT(cuMemFree(virtualTextureTilePixelsBuffer));
+    }
+    if (virtualTextureTileEntriesBuffer != 0)
+    {
+        CUDA_ASSERT(cuMemFree(virtualTextureTileEntriesBuffer));
+    }
     CUDA_ASSERT(cuMemFree(feedbackStatsBuffer));
     CUDA_ASSERT(cuMemFree(feedbackKeysBuffer));
     CUDA_ASSERT(cuMemFree(imageBuffer));
@@ -1778,7 +1922,14 @@ int main(int argc, char **argv)
         for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
-            launchRefs[i] = {src.textureObject, src.width, src.height, src.valid};
+            launchRefs[i] = {src.textureObject,
+                             src.width,
+                             src.height,
+                             src.valid,
+                             src.wrapS,
+                             src.wrapT,
+                             0,
+                             0};
         }
         const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
         materialTextureRefsBuffer = device.AllocBytes(refsBytes);

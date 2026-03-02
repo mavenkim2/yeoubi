@@ -32,6 +32,18 @@ struct LaunchParams
         int width;
         int height;
         int valid;
+        int wrapS;
+        int wrapT;
+        int _padding0;
+        int _padding1;
+    };
+
+    struct VirtualTextureTileEntry
+    {
+        unsigned long long key;
+        unsigned long long pixelOffset;
+        unsigned int width;
+        unsigned int height;
     };
 
     OptixTraversableHandle traversable;
@@ -60,6 +72,10 @@ struct LaunchParams
     int feedbackSamplePercent;
     int feedbackTileSize;
     int currentSpp;
+    unsigned long long virtualTextureTileEntries;
+    unsigned long long virtualTextureTilePixels;
+    int virtualTextureTileEntryCapacity;
+    int virtualTextureEnabled;
 };
 
 struct HitgroupData
@@ -86,6 +102,13 @@ static constexpr int kSemanticMetallic = 2;
 static constexpr int kSemanticOcclusion = 3;
 static constexpr int kSemanticIor = 5;
 static constexpr int kSemanticOpacity = 7;
+static constexpr int kWrapModeUnknown = 0;
+static constexpr int kWrapModeRepeat = 1;
+static constexpr int kWrapModeClamp = 2;
+static constexpr int kWrapModeMirror = 3;
+static constexpr int kWrapModeBlack = 4;
+static constexpr int kWrapModeUseMetadata = 5;
+static constexpr unsigned long long kVirtualTextureEmptyKey = ~0ull;
 
 __device__ unsigned int g_try_sample_logged = 0u;
 __device__ unsigned int g_try_sample_fail_mask = 0u;
@@ -158,6 +181,156 @@ static __forceinline__ __device__ unsigned int PackColor(float r, float g, float
 static __forceinline__ __device__ int ClampInt(int v, int lo, int hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static __forceinline__ __device__ void TryWriteTextureFeedback(
+    const LaunchParams::InstanceGeomRef &geomRef,
+    unsigned int primitiveIndex,
+    float u,
+    float v,
+    float uu,
+    float vv,
+    int textureWidth,
+    int textureHeight,
+    unsigned int mip);
+
+static __forceinline__ __device__ float Clamp01(float v)
+{
+    return fminf(fmaxf(v, 0.0f), 1.0f);
+}
+
+static __forceinline__ __device__ float ApplyWrapMode(float uv, int wrapMode, bool *outBlack)
+{
+    *outBlack = false;
+    switch (wrapMode)
+    {
+        case kWrapModeClamp:
+            return Clamp01(uv);
+        case kWrapModeMirror:
+        {
+            float t = fmodf(uv, 2.0f);
+            if (t < 0.0f)
+            {
+                t += 2.0f;
+            }
+            const float mirrored = (t <= 1.0f) ? t : (2.0f - t);
+            return Clamp01(mirrored);
+        }
+        case kWrapModeBlack:
+            if (uv < 0.0f || uv > 1.0f)
+            {
+                *outBlack = true;
+                return 0.0f;
+            }
+            return uv;
+        case kWrapModeRepeat:
+        case kWrapModeUseMetadata:
+        case kWrapModeUnknown:
+        default:
+            return uv - floorf(uv);
+    }
+}
+
+static __forceinline__ __device__ float3 MaterialSampleToViewColor(const float4 &sample)
+{
+    if (params.textureViewSemantic == kSemanticRoughness || params.textureViewSemantic == kSemanticMetallic ||
+        params.textureViewSemantic == kSemanticOcclusion || params.textureViewSemantic == kSemanticIor ||
+        params.textureViewSemantic == kSemanticOpacity)
+    {
+        return make_float3(sample.x, sample.x, sample.x);
+    }
+    return make_float3(sample.x, sample.y, sample.z);
+}
+
+static __forceinline__ __device__ bool TrySampleVirtualTexture(const LaunchParams::InstanceGeomRef &geomRef,
+                                                               unsigned int primitiveIndex,
+                                                               const LaunchParams::MaterialTextureRef &textureRef,
+                                                               float u,
+                                                               float v,
+                                                               float uu,
+                                                               float vv,
+                                                               float3 &outColor)
+{
+    if (params.virtualTextureEnabled == 0)
+    {
+        return false;
+    }
+
+    if (params.virtualTextureTileEntries == 0ull || params.virtualTextureTilePixels == 0ull ||
+        params.virtualTextureTileEntryCapacity <= 0)
+    {
+        outColor = make_float3(1.0f, 0.0f, 1.0f);
+        return true;
+    }
+
+    bool blackS = false;
+    bool blackT = false;
+    const float wrappedU = ApplyWrapMode(uu, textureRef.wrapS, &blackS);
+    const float wrappedV = ApplyWrapMode(vv, textureRef.wrapT, &blackT);
+    if (blackS || blackT)
+    {
+        outColor = make_float3(0.0f, 0.0f, 0.0f);
+        return true;
+    }
+
+    const int tileSize = max(params.feedbackTileSize, 1);
+    const int texelX = ybi::texture::TexelFromUnitUV(wrappedU, textureRef.width);
+    const int texelY = ybi::texture::TexelFromUnitUV(wrappedV, textureRef.height);
+    const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
+    const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
+    const int udim = ybi::texture::UdimFromUV(u, v);
+    const unsigned int udimBits = ybi::texture::UdimBitsFromUdim(udim);
+    const unsigned int textureId =
+        (unsigned int)ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u));
+    const unsigned int mip = 1u;
+    const unsigned long long key =
+        ybi::texture::PackVirtualTextureKey(tileX, tileY, udimBits, textureId, mip);
+
+    const LaunchParams::VirtualTextureTileEntry *entries =
+        reinterpret_cast<const LaunchParams::VirtualTextureTileEntry *>(
+            params.virtualTextureTileEntries);
+    const int capacity = params.virtualTextureTileEntryCapacity;
+    const unsigned int mask = static_cast<unsigned int>(capacity - 1);
+    unsigned int slot = ybi::texture::HashVirtualTextureKey(key) & mask;
+    const LaunchParams::VirtualTextureTileEntry *match = nullptr;
+    for (int probe = 0; probe < capacity; ++probe)
+    {
+        const LaunchParams::VirtualTextureTileEntry &entry = entries[slot];
+        if (entry.key == key)
+        {
+            match = &entry;
+            break;
+        }
+        if (entry.key == kVirtualTextureEmptyKey)
+        {
+            break;
+        }
+        slot = (slot + 1u) & mask;
+    }
+
+    if (!match || match->width == 0u || match->height == 0u)
+    {
+        outColor = make_float3(1.0f, 0.0f, 1.0f);
+        return true;
+    }
+
+    const int localX = ClampInt(texelX - int(tileX) * tileSize, 0, int(match->width) - 1);
+    const int localY = ClampInt(texelY - int(tileY) * tileSize, 0, int(match->height) - 1);
+    const unsigned long long sampleOffset =
+        match->pixelOffset +
+        (static_cast<unsigned long long>(localY) * static_cast<unsigned long long>(match->width) +
+         static_cast<unsigned long long>(localX)) *
+            4ull;
+    const unsigned char *pixels =
+        reinterpret_cast<const unsigned char *>(params.virtualTextureTilePixels);
+    const float4 sample = make_float4(float(pixels[sampleOffset + 0]) * (1.0f / 255.0f),
+                                      float(pixels[sampleOffset + 1]) * (1.0f / 255.0f),
+                                      float(pixels[sampleOffset + 2]) * (1.0f / 255.0f),
+                                      float(pixels[sampleOffset + 3]) * (1.0f / 255.0f));
+    outColor = MaterialSampleToViewColor(sample);
+    TryWriteTextureFeedback(
+        geomRef, primitiveIndex, u, v, wrappedU, wrappedV, textureRef.width, textureRef.height, mip);
+    return true;
 }
 
 static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParams::InstanceGeomRef &geomRef,
@@ -432,19 +605,19 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
         return false;
     }
 
+    if (params.virtualTextureEnabled != 0)
+    {
+        if (TrySampleVirtualTexture(
+                geomRef, primitiveIndex, textureRef, u, v, uu, vv, outColor))
+        {
+            return true;
+        }
+    }
+
     const cudaTextureObject_t textureObject =
         static_cast<cudaTextureObject_t>(textureRef.textureObject);
     const float4 sample = tex2D<float4>(textureObject, uu, vv);
-    if (params.textureViewSemantic == kSemanticRoughness || params.textureViewSemantic == kSemanticMetallic ||
-        params.textureViewSemantic == kSemanticOcclusion || params.textureViewSemantic == kSemanticIor ||
-        params.textureViewSemantic == kSemanticOpacity)
-    {
-        outColor = make_float3(sample.x, sample.x, sample.x);
-    }
-    else
-    {
-        outColor = make_float3(sample.x, sample.y, sample.z);
-    }
+    outColor = MaterialSampleToViewColor(sample);
     TryWriteTextureFeedback(
         geomRef, primitiveIndex, u, v, uu, vv, textureRef.width, textureRef.height, 0u);
     return true;
