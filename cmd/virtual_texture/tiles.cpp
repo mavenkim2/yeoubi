@@ -232,7 +232,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             int width = 0;
             int height = 0;
             std::string reason;
-            if (!ybi::texture::LoadExrRgba(udimPath.second, &width, &height, &image.rgba, &reason, false))
+            if (!ybi::texture::LoadExrRgba(udimPath.second, &width, &height, &image.rgba, &reason, true))
             {
                 if (outError)
                 {
