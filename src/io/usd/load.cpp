@@ -904,7 +904,11 @@ static void ProcessPrimvars(pxr::UsdPrim prim, pxr::UsdTimeCode timeCode, Scene 
 }
 
 static void
-ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode timeCode = 0.0)
+ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh,
+                        Scene *scene,
+                        int materialIndex,
+                        const float3x4 &parentFromLocal,
+                        pxr::UsdTimeCode timeCode = 0.0)
 {
     pxr::VtVec3fArray positions;
     pxr::VtIntArray faceIndices;
@@ -1019,6 +1023,8 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh, Scene *scene, pxr::UsdTimeCode t
                                           triangleSubdivision);
     SubdivisionMesh &subdivMesh = scene->subdivisionMeshes.back();
     subdivMesh.primPath = prim.GetPath().GetString();
+    subdivMesh.materialIndex = materialIndex;
+    subdivMesh.parentFromLocal = parentFromLocal;
     Attribute stAttr;
     if (BuildSubdivisionMeshSTAttribute(mesh, faceIndices, &stAttr))
     {
@@ -1523,7 +1529,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             mesh.GetSubdivisionSchemeAttr().Get(&scheme);
             if (scheme == pxr::UsdGeomTokens->catmullClark)
             {
-                ProcessCatmullClarkMesh(mesh, outScene);
+                ProcessCatmullClarkMesh(mesh, outScene, materialIndex, meshRef.parentFromLocal);
                 total++;
                 continue;
             }

@@ -4,6 +4,7 @@
 #include "util/array.h"
 #include "util/float2.h"
 #include "util/float3.h"
+#include "util/float3x4.h"
 
 #include <string>
 #include <vector>
@@ -42,6 +43,9 @@ enum TriangleSubdivisionRule
 struct SubdivisionMesh
 {
     std::string primPath;
+    int materialIndex = -1;
+    float3x4 parentFromLocal =
+        float3x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 
     Array<float3> vertices;
     Array<int> indices;

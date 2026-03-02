@@ -1,6 +1,7 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
 #include "scene/scene.h"
+#include "tessellation/subdivision.h"
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
@@ -276,6 +277,51 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
     out.V = up * tanHalfFov;
     out.W = forward;
     return out;
+}
+
+static bool TessellateRootSubdivisionMeshes(Scene *rootScene, const Camera &camera)
+{
+    YBI_ASSERT(rootScene);
+    if (rootScene->subdivisionMeshes.empty())
+    {
+        return true;
+    }
+    if (!camera.hasValidCamera)
+    {
+        fprintf(stderr, "Subdivision requires a valid USD camera.\n");
+        return false;
+    }
+
+    SubdivisionRunOptions options = {};
+    options.level = 3;
+    options.useCameraMatrices = true;
+    options.cameraFromWorld = camera.cameraFromWorld;
+    options.clipFromCamera = camera.clipFromCamera;
+    options.viewportWidth = std::max(1, camera.viewportWidth);
+    options.viewportHeight = std::max(1, camera.viewportHeight);
+    options.verticalFovDegrees = camera.verticalFovDegrees;
+
+    const size_t srcCount = rootScene->subdivisionMeshes.size();
+    rootScene->meshes.reserve(rootScene->meshes.size() + srcCount);
+    for (size_t i = 0; i < srcCount; ++i)
+    {
+        const SubdivisionMesh &subdivMesh = rootScene->subdivisionMeshes[i];
+        SubdivisionRunResult result = {};
+        if (!SubdivideAdaptive(subdivMesh, options, &result))
+        {
+            fprintf(stderr,
+                    "Subdivision failed for rootScene->subdivisionMeshes[%zu] prim=%s\n",
+                    i,
+                    subdivMesh.primPath.c_str());
+            return false;
+        }
+
+        result.mesh.materialIndex = subdivMesh.materialIndex;
+        result.mesh.parentFromLocal = subdivMesh.parentFromLocal;
+        rootScene->meshes.push_back(std::move(result.mesh));
+    }
+    rootScene->subdivisionMeshes.clear();
+    return true;
 }
 
 static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valueOut)
@@ -1392,6 +1438,12 @@ int main(int argc, char **argv)
                 options.inputPath.c_str());
         return 1;
     }
+    Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
+    YBI_ASSERT(rootScene);
+    if (!TessellateRootSubdivisionMeshes(rootScene, flattenedScenePool.camera))
+    {
+        return 1;
+    }
 
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
     int materialTextureRefCount = 0;
@@ -1469,9 +1521,6 @@ int main(int argc, char **argv)
         device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
         materialTextureRefCount = static_cast<int>(scenePool.materials.size());
     }
-
-    Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
-    YBI_ASSERT(rootScene);
 
     std::vector<SceneMeshUploadRef> meshUploadRefs;
     CollectScenePoolMeshUploadRefs(&flattenedScenePool, &meshUploadRefs);

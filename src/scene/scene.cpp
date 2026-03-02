@@ -127,6 +127,7 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
     std::unique_ptr<Scene> dstRoot = std::make_unique<Scene>();
     dstRoot->meshes = std::move(srcRoot->meshes);
     dstRoot->curves = std::move(srcRoot->curves);
+    dstRoot->subdivisionMeshes = std::move(srcRoot->subdivisionMeshes);
 
     std::unordered_map<PrimitiveKey, uint32_t, PrimitiveKeyHash> leafSceneByPrimitive;
     leafSceneByPrimitive.reserve(src->scenes.size() * 4);

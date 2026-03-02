@@ -250,6 +250,8 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/subdivision.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/edge_map_validation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
     if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
         target_sources(yeoubi_optix_harness PRIVATE
