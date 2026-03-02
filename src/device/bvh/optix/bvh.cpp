@@ -199,6 +199,24 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
         return false;
     }
 
+    OptixProgramGroupDesc feedbackRaygenDesc = {};
+    feedbackRaygenDesc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
+    feedbackRaygenDesc.raygen.module = optixPrimaryPipeline.module;
+    feedbackRaygenDesc.raygen.entryFunctionName = "__raygen__feedback";
+    logSize = sizeof(log);
+    if (!CheckOptixResult(optixProgramGroupCreate(optixDeviceContext,
+                                                  &feedbackRaygenDesc,
+                                                  1,
+                                                  &programGroupOptions,
+                                                  log,
+                                                  &logSize,
+                                                  &optixPrimaryPipeline.feedbackRaygenGroup),
+                          "optixProgramGroupCreate(feedback raygen)"))
+    {
+        DestroyOptixPrimaryPipeline();
+        return false;
+    }
+
     OptixProgramGroupDesc missDesc = {};
     missDesc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
     missDesc.miss.module = optixPrimaryPipeline.module;
@@ -241,6 +259,7 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
 
     OptixProgramGroup groups[] = {
         optixPrimaryPipeline.raygenGroup,
+        optixPrimaryPipeline.feedbackRaygenGroup,
         optixPrimaryPipeline.missGroup,
         optixPrimaryPipeline.hitgroupGroup,
     };
@@ -252,7 +271,7 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
                                               &pipelineCompileOptions,
                                               &pipelineLinkOptions,
                                               groups,
-                                              3,
+                                              4,
                                               log,
                                               &logSize,
                                               &optixPrimaryPipeline.pipeline),
@@ -266,6 +285,9 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
     if (!CheckOptixResult(
             AccumulateStackSizesCompat(optixPrimaryPipeline.raygenGroup, &stackSizes, optixPrimaryPipeline.pipeline),
             "optixUtilAccumulateStackSizes(raygen)") ||
+        !CheckOptixResult(AccumulateStackSizesCompat(
+                              optixPrimaryPipeline.feedbackRaygenGroup, &stackSizes, optixPrimaryPipeline.pipeline),
+                          "optixUtilAccumulateStackSizes(feedback raygen)") ||
         !CheckOptixResult(
             AccumulateStackSizesCompat(optixPrimaryPipeline.missGroup, &stackSizes, optixPrimaryPipeline.pipeline),
             "optixUtilAccumulateStackSizes(miss)") ||
@@ -300,10 +322,14 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
     }
 
     PipelineSbtRecord<EmptySbtData> raygenRecord = {};
+    PipelineSbtRecord<EmptySbtData> feedbackRaygenRecord = {};
     PipelineSbtRecord<EmptySbtData> missRecord = {};
     PipelineSbtRecord<EmptySbtData> hitgroupRecord = {};
     if (!CheckOptixResult(optixSbtRecordPackHeader(optixPrimaryPipeline.raygenGroup, &raygenRecord),
                           "optixSbtRecordPackHeader(raygen)") ||
+        !CheckOptixResult(
+            optixSbtRecordPackHeader(optixPrimaryPipeline.feedbackRaygenGroup, &feedbackRaygenRecord),
+            "optixSbtRecordPackHeader(feedback raygen)") ||
         !CheckOptixResult(optixSbtRecordPackHeader(optixPrimaryPipeline.missGroup, &missRecord),
                           "optixSbtRecordPackHeader(miss)") ||
         !CheckOptixResult(optixSbtRecordPackHeader(optixPrimaryPipeline.hitgroupGroup, &hitgroupRecord),
@@ -314,10 +340,15 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
     }
 
     CUDA_ASSERT(cuMemAlloc(&optixPrimaryPipeline.raygenRecordBuffer, sizeof(raygenRecord)));
+    CUDA_ASSERT(
+        cuMemAlloc(&optixPrimaryPipeline.feedbackRaygenRecordBuffer, sizeof(feedbackRaygenRecord)));
     CUDA_ASSERT(cuMemAlloc(&optixPrimaryPipeline.missRecordBuffer, sizeof(missRecord)));
     CUDA_ASSERT(cuMemAlloc(&optixPrimaryPipeline.hitgroupRecordBuffer, sizeof(hitgroupRecord)));
     CUDA_ASSERT(cuMemcpyHtoD(
         optixPrimaryPipeline.raygenRecordBuffer, &raygenRecord, sizeof(raygenRecord)));
+    CUDA_ASSERT(cuMemcpyHtoD(optixPrimaryPipeline.feedbackRaygenRecordBuffer,
+                             &feedbackRaygenRecord,
+                             sizeof(feedbackRaygenRecord)));
     CUDA_ASSERT(
         cuMemcpyHtoD(optixPrimaryPipeline.missRecordBuffer, &missRecord, sizeof(missRecord)));
     CUDA_ASSERT(cuMemcpyHtoD(
@@ -351,6 +382,11 @@ void CUDADevice::DestroyOptixPrimaryPipeline()
         CUDA_ASSERT(cuMemFree(optixPrimaryPipeline.raygenRecordBuffer));
         optixPrimaryPipeline.raygenRecordBuffer = 0;
     }
+    if (optixPrimaryPipeline.feedbackRaygenRecordBuffer)
+    {
+        CUDA_ASSERT(cuMemFree(optixPrimaryPipeline.feedbackRaygenRecordBuffer));
+        optixPrimaryPipeline.feedbackRaygenRecordBuffer = 0;
+    }
     if (optixPrimaryPipeline.pipeline)
     {
         OPTIX_ASSERT(optixPipelineDestroy(optixPrimaryPipeline.pipeline));
@@ -370,6 +406,11 @@ void CUDADevice::DestroyOptixPrimaryPipeline()
     {
         OPTIX_ASSERT(optixProgramGroupDestroy(optixPrimaryPipeline.raygenGroup));
         optixPrimaryPipeline.raygenGroup = nullptr;
+    }
+    if (optixPrimaryPipeline.feedbackRaygenGroup)
+    {
+        OPTIX_ASSERT(optixProgramGroupDestroy(optixPrimaryPipeline.feedbackRaygenGroup));
+        optixPrimaryPipeline.feedbackRaygenGroup = nullptr;
     }
     if (optixPrimaryPipeline.curveModule)
     {

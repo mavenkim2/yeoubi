@@ -5,6 +5,7 @@
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
+#include "texture/virtual_texture_key.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -150,6 +151,7 @@ struct CliOptions
     std::optional<ybi::float3> lookAt;
     int spp = 1;
     bool useNtc = false;
+    bool virtualTexture = false;
     std::vector<std::string> purposes = {"default", "render"};
 };
 
@@ -375,7 +377,8 @@ static bool ParsePurposeList(const std::string &csv, std::vector<std::string> *o
             {
                 return false;
             }
-            if (std::find(outPurposes->begin(), outPurposes->end(), normalized) == outPurposes->end())
+            if (std::find(outPurposes->begin(), outPurposes->end(), normalized) ==
+                outPurposes->end())
             {
                 outPurposes->push_back(std::move(normalized));
             }
@@ -399,7 +402,8 @@ static std::string ToLowerCopy(const std::string &value)
     return out;
 }
 
-static bool ParseTextureViewSemantic(const std::string &input, MaterialTextureSemantic *outSemantic)
+static bool ParseTextureViewSemantic(const std::string &input,
+                                     MaterialTextureSemantic *outSemantic)
 {
     YBI_ASSERT(outSemantic);
     const std::string token = ToLowerCopy(input);
@@ -446,7 +450,8 @@ static bool ParseTextureViewSemantic(const std::string &input, MaterialTextureSe
     return false;
 }
 
-static bool TryMapInputNameToSemantic(const std::string &inputName, MaterialTextureSemantic *outSemantic)
+static bool TryMapInputNameToSemantic(const std::string &inputName,
+                                      MaterialTextureSemantic *outSemantic)
 {
     YBI_ASSERT(outSemantic);
     if (inputName == "diffuseColor")
@@ -506,6 +511,7 @@ static void PrintUsage(const char *exeName)
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
     printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
+    printf("  --virtual-texture run feedback prepass raygen before beauty\n");
     printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
     printf("  --purpose single purpose token, repeatable; overrides defaults\n");
@@ -603,6 +609,11 @@ static CliOptions ParseCli(int argc, char **argv)
         if (arg == "--ntc")
         {
             options.useNtc = true;
+            continue;
+        }
+        if (arg == "--virtual-texture")
+        {
+            options.virtualTexture = true;
             continue;
         }
         if (arg == "--view")
@@ -707,8 +718,8 @@ static constexpr uint32_t kUdimMax = 1100u;
 static constexpr int kUdimSlotCount = 128;
 static constexpr int kMaterialSemanticCount = static_cast<int>(MaterialTextureSemantic::Count);
 
-static int MaterialTextureSlotIndex(
-    size_t materialIndex, MaterialTextureSemantic semantic, uint32_t udim)
+static int
+MaterialTextureSlotIndex(size_t materialIndex, MaterialTextureSemantic semantic, uint32_t udim)
 {
     int udimSlot = 0;
     if (udim >= kUdimMin && udim <= kUdimMax)
@@ -755,8 +766,8 @@ static cudaTextureAddressMode ToCudaAddressMode(TextureWrapMode mode)
     return cudaAddressModeWrap;
 }
 
-static const MaterialTextureInput *
-FindTextureInputBySemantic(const MaterialInfo &material, MaterialTextureSemantic semantic)
+static const MaterialTextureInput *FindTextureInputBySemantic(const MaterialInfo &material,
+                                                              MaterialTextureSemantic semantic)
 {
     for (const MaterialTextureInput &input : material.textureInputs)
     {
@@ -765,7 +776,8 @@ FindTextureInputBySemantic(const MaterialInfo &material, MaterialTextureSemantic
             continue;
         }
         MaterialTextureSemantic inputSemantic = MaterialTextureSemantic::Diffuse;
-        if (TryMapInputNameToSemantic(input.inputName, &inputSemantic) && inputSemantic == semantic)
+        if (TryMapInputNameToSemantic(input.inputName, &inputSemantic) &&
+            inputSemantic == semantic)
         {
             return &input;
         }
@@ -885,11 +897,12 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
             std::string udimReason;
             if (!ybi::usd_ntc::CollectUdimPaths(input.texturePath, udimPaths, udimReason))
             {
-                std::printf("Image runtime: failed to resolve UDIMs for material %zu input %s (%s): %s\n",
-                            materialIndex,
-                            input.inputName.c_str(),
-                            input.texturePath.c_str(),
-                            udimReason.c_str());
+                std::printf(
+                    "Image runtime: failed to resolve UDIMs for material %zu input %s (%s): %s\n",
+                    materialIndex,
+                    input.inputName.c_str(),
+                    input.texturePath.c_str(),
+                    udimReason.c_str());
                 continue;
             }
 
@@ -920,14 +933,16 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                 texture.wrapT = input.wrapT;
 
                 std::string reason;
-                if (!LoadImageRgba8(tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
+                if (!LoadImageRgba8(
+                        tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
                 {
-                    std::printf("Image runtime: failed to load material %zu input %s tile %u (%s): %s\n",
-                                materialIndex,
-                                input.inputName.c_str(),
-                                udim,
-                                tilePath.c_str(),
-                                reason.c_str());
+                    std::printf(
+                        "Image runtime: failed to load material %zu input %s tile %u (%s): %s\n",
+                        materialIndex,
+                        input.inputName.c_str(),
+                        udim,
+                        tilePath.c_str(),
+                        reason.c_str());
                     continue;
                 }
 
@@ -980,8 +995,9 @@ static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture
         cudaChannelFormatDesc channelDesc =
             cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
         cudaArray_t array = nullptr;
-        if (!CheckCudaRuntime(
-                cudaMallocArray(&array, &channelDesc, src.width, src.height), outError, "cudaMallocArray"))
+        if (!CheckCudaRuntime(cudaMallocArray(&array, &channelDesc, src.width, src.height),
+                              outError,
+                              "cudaMallocArray"))
         {
             return false;
         }
@@ -1013,9 +1029,10 @@ static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture
         textureDesc.normalizedCoords = 1;
 
         cudaTextureObject_t textureObject = 0;
-        if (!CheckCudaRuntime(cudaCreateTextureObject(&textureObject, &resourceDesc, &textureDesc, nullptr),
-                              outError,
-                              "cudaCreateTextureObject"))
+        if (!CheckCudaRuntime(
+                cudaCreateTextureObject(&textureObject, &resourceDesc, &textureDesc, nullptr),
+                outError,
+                "cudaCreateTextureObject"))
         {
             cudaFreeArray(array);
             return false;
@@ -1059,27 +1076,27 @@ static void DestroyUploadedTextures(UploadedMaterialTextures *textures)
 
 static unsigned int FeedbackTileX(unsigned long long key)
 {
-    return static_cast<unsigned int>((key >> 0u) & 0x1ffull);
+    return ybi::texture::UnpackVirtualTextureKeyTileX(key);
 }
 
 static unsigned int FeedbackTileY(unsigned long long key)
 {
-    return static_cast<unsigned int>((key >> 9u) & 0x1ffull);
+    return ybi::texture::UnpackVirtualTextureKeyTileY(key);
 }
 
 static unsigned int FeedbackUdim(unsigned long long key)
 {
-    return 1001u + static_cast<unsigned int>((key >> 18u) & 0x7full);
+    return ybi::texture::UnpackVirtualTextureKeyUdim(key);
 }
 
 static unsigned int FeedbackTextureId(unsigned long long key)
 {
-    return static_cast<unsigned int>((key >> 25u) & 0x7fffffull);
+    return ybi::texture::UnpackVirtualTextureKeyTextureId(key);
 }
 
 static unsigned int FeedbackMip(unsigned long long key)
 {
-    return static_cast<unsigned int>((key >> 48u) & 0xfull);
+    return ybi::texture::UnpackVirtualTextureKeyMip(key);
 }
 
 struct UploadedMeshRefs
@@ -1104,8 +1121,8 @@ static const Attribute *FindMeshSTAttribute(const Mesh &mesh)
     return nullptr;
 }
 
-static UploadedMeshRefs UploadScenePoolMeshRefs(
-    CUDADevice *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
+static UploadedMeshRefs
+UploadScenePoolMeshRefs(CUDADevice *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
 {
     YBI_ASSERT(device);
     UploadedMeshRefs out;
@@ -1140,7 +1157,8 @@ static UploadedMeshRefs UploadScenePoolMeshRefs(
             texcoordsBuffer = device->AllocBytes(texcoordsBytes);
             texcoordIndicesBuffer = device->AllocBytes(texcoordIndicesBytes);
             device->CopyBytesToDevice(texcoordsBuffer, stAttr->data.data(), texcoordsBytes);
-            device->CopyBytesToDevice(texcoordIndicesBuffer, stAttr->indices.data(), texcoordIndicesBytes);
+            device->CopyBytesToDevice(
+                texcoordIndicesBuffer, stAttr->indices.data(), texcoordIndicesBytes);
             out.ownedBuffers.push_back(texcoordsBuffer);
             out.ownedBuffers.push_back(texcoordIndicesBuffer);
             texcoordCount = int(stAttr->data.size() / sizeof(ybi::float2));
@@ -1164,6 +1182,7 @@ static UploadedMeshRefs UploadScenePoolMeshRefs(
 
 static void RenderTraversable(OptixPipeline pipeline,
                               const OptixShaderBindingTable &sbt,
+                              CUdeviceptr feedbackRaygenRecordBuffer,
                               OptixTraversableHandle traversable,
                               const ybi::float3 &boundsMin,
                               const ybi::float3 &boundsMax,
@@ -1177,6 +1196,7 @@ static void RenderTraversable(OptixPipeline pipeline,
                               int materialTextureRefStride,
                               int materialTextureRefSemanticCount,
                               MaterialTextureSemantic textureViewSemantic,
+                              bool virtualTexture,
                               const std::optional<RenderCameraOverride> &cameraOverride,
                               const std::optional<ybi::float3> &cameraPositionOverride,
                               const std::optional<ybi::float3> &lookAtOverride)
@@ -1277,41 +1297,16 @@ static void RenderTraversable(OptixPipeline pipeline,
     fflush(stdout);
 
     std::vector<uint8_t> hostPassImage(imageSize, 0);
-    std::vector<float> accumRgb(static_cast<size_t>(width) * static_cast<size_t>(height) * 3u, 0.0f);
+    std::vector<float> accumRgb(static_cast<size_t>(width) * static_cast<size_t>(height) * 3u,
+                                0.0f);
     std::vector<unsigned long long> feedbackKeysHost(feedbackCapacity, 0ull);
     unsigned int feedbackStatsHost[2] = {0u, 0u};
     unsigned int feedbackStatsZero[2] = {0u, 0u};
-
-    for (int sppIndex = 0; sppIndex < sppPassCount; ++sppIndex)
-    {
-        params.spp = integrator == IntegratorType::AO ? 1 : 1;
-        params.currentSpp = sppIndex;
-        CUDA_ASSERT(cuMemcpyHtoD(paramsBuffer, &params, sizeof(LaunchParams)));
-        CUDA_ASSERT(cuMemcpyHtoD(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes));
-
-        OPTIX_CHECK(
-            optixLaunch(pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
-        CUDA_ASSERT(cuStreamSynchronize(0));
-
-        CUDA_ASSERT(cuMemcpyDtoH(hostPassImage.data(), imageBuffer, imageSize));
-        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-        for (size_t i = 0; i < pixelCount; ++i)
-        {
-            accumRgb[i * 3 + 0] += hostPassImage[i * 4 + 0] / 255.0f;
-            accumRgb[i * 3 + 1] += hostPassImage[i * 4 + 1] / 255.0f;
-            accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
-        }
-
-        CUDA_ASSERT(cuMemcpyDtoH(feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes));
-        const unsigned int sampledCount = feedbackStatsHost[0];
-        const unsigned int overflowCount = feedbackStatsHost[1];
-        const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
-        if (copyCount > 0)
-        {
-            CUDA_ASSERT(cuMemcpyDtoH(
-                feedbackKeysHost.data(), feedbackKeysBuffer, size_t(copyCount) * sizeof(unsigned long long)));
-        }
-
+    auto WriteFeedbackFile = [&](const char *name,
+                                 int sppIndex,
+                                 unsigned int sampledCount,
+                                 unsigned int copyCount,
+                                 unsigned int overflowCount) {
         std::unordered_map<unsigned long long, unsigned int> histogram;
         histogram.reserve(copyCount);
         for (unsigned int i = 0; i < copyCount; ++i)
@@ -1319,9 +1314,7 @@ static void RenderTraversable(OptixPipeline pipeline,
             histogram[feedbackKeysHost[i]] += 1u;
         }
 
-        char feedbackFileName[256];
-        std::snprintf(feedbackFileName, sizeof(feedbackFileName), "spp_%04d.txt", sppIndex);
-        const std::filesystem::path feedbackPath = feedbackDir / feedbackFileName;
+        const std::filesystem::path feedbackPath = feedbackDir / name;
         std::FILE *feedbackFile = std::fopen(feedbackPath.string().c_str(), "w");
         if (!feedbackFile)
         {
@@ -1349,11 +1342,85 @@ static void RenderTraversable(OptixPipeline pipeline,
                          it.second);
         }
         std::fclose(feedbackFile);
+    };
+
+    if (virtualTexture)
+    {
+        YBI_ASSERT(feedbackRaygenRecordBuffer != 0);
+        OptixShaderBindingTable feedbackSbt = sbt;
+        feedbackSbt.raygenRecord = feedbackRaygenRecordBuffer;
+
+        params.integrator = 2;
+        params.spp = 1;
+        params.currentSpp = 0;
+        params.feedbackSamplePercent = 100;
+        CUDA_ASSERT(cuMemcpyHtoD(paramsBuffer, &params, sizeof(LaunchParams)));
+        CUDA_ASSERT(cuMemcpyHtoD(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes));
+        OPTIX_CHECK(optixLaunch(
+            pipeline, 0, paramsBuffer, sizeof(LaunchParams), &feedbackSbt, width, height, 1));
+        CUDA_ASSERT(cuStreamSynchronize(0));
+
+        CUDA_ASSERT(cuMemcpyDtoH(feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes));
+        const unsigned int sampledCount = feedbackStatsHost[0];
+        const unsigned int overflowCount = feedbackStatsHost[1];
+        const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
+        if (copyCount > 0)
+        {
+            CUDA_ASSERT(cuMemcpyDtoH(feedbackKeysHost.data(),
+                                     feedbackKeysBuffer,
+                                     size_t(copyCount) * sizeof(unsigned long long)));
+        }
+        WriteFeedbackFile(
+            "prepass.txt", -1, sampledCount, copyCount, overflowCount);
+        std::printf("virtual-texture prepass feedback: sampled=%u stored=%u overflow=%u\n",
+                    sampledCount,
+                    copyCount,
+                    overflowCount);
+
+        params.integrator = integrator == IntegratorType::AO ? 1 : 0;
+        params.feedbackSamplePercent = 10;
+    }
+
+    for (int sppIndex = 0; sppIndex < sppPassCount; ++sppIndex)
+    {
+        params.spp = integrator == IntegratorType::AO ? 1 : 1;
+        params.currentSpp = sppIndex;
+        CUDA_ASSERT(cuMemcpyHtoD(paramsBuffer, &params, sizeof(LaunchParams)));
+        CUDA_ASSERT(cuMemcpyHtoD(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes));
+
+        OPTIX_CHECK(
+            optixLaunch(pipeline, 0, paramsBuffer, sizeof(LaunchParams), &sbt, width, height, 1));
+        CUDA_ASSERT(cuStreamSynchronize(0));
+
+        CUDA_ASSERT(cuMemcpyDtoH(hostPassImage.data(), imageBuffer, imageSize));
+        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            accumRgb[i * 3 + 0] += hostPassImage[i * 4 + 0] / 255.0f;
+            accumRgb[i * 3 + 1] += hostPassImage[i * 4 + 1] / 255.0f;
+            accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
+        }
+
+        CUDA_ASSERT(cuMemcpyDtoH(feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes));
+        const unsigned int sampledCount = feedbackStatsHost[0];
+        const unsigned int overflowCount = feedbackStatsHost[1];
+        const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
+        if (copyCount > 0)
+        {
+            CUDA_ASSERT(cuMemcpyDtoH(feedbackKeysHost.data(),
+                                     feedbackKeysBuffer,
+                                     size_t(copyCount) * sizeof(unsigned long long)));
+        }
+
+        char feedbackFileName[256];
+        std::snprintf(feedbackFileName, sizeof(feedbackFileName), "spp_%04d.txt", sppIndex);
+        WriteFeedbackFile(feedbackFileName, sppIndex, sampledCount, copyCount, overflowCount);
     }
 
     std::vector<uint8_t> hostImage(imageSize, 0);
     const float invSpp = 1.0f / float(sppPassCount);
-    for (size_t i = 0, pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height); i < pixelCount;
+    for (size_t i = 0, pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+         i < pixelCount;
          ++i)
     {
         const float r = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 0] * invSpp));
@@ -1417,9 +1484,8 @@ int main(int argc, char **argv)
     LoadUSDScene(&scenePool, options.inputPath, loadOptions);
     if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
     {
-        fprintf(stderr,
-                "Failed to load USD scene or invalid root: %s\n",
-                options.inputPath.c_str());
+        fprintf(
+            stderr, "Failed to load USD scene or invalid root: %s\n", options.inputPath.c_str());
         return 1;
     }
 
@@ -1433,9 +1499,8 @@ int main(int argc, char **argv)
     if (flattenedScenePool.scenes.empty() ||
         flattenedScenePool.rootSceneIndex >= flattenedScenePool.scenes.size())
     {
-        fprintf(stderr,
-                "Flattened ScenePool invalid for USD scene: %s\n",
-                options.inputPath.c_str());
+        fprintf(
+            stderr, "Flattened ScenePool invalid for USD scene: %s\n", options.inputPath.c_str());
         return 1;
     }
     Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
@@ -1482,8 +1547,8 @@ int main(int argc, char **argv)
                 dst.height = ntcTextures[i].height;
                 dst.rgba8 = std::move(ntcTextures[i].rgba8);
                 dst.sourcePath = ntcTextures[i].ntcPath;
-                const MaterialTextureInput *diffuse =
-                    FindTextureInputBySemantic(scenePool.materials[i], MaterialTextureSemantic::Diffuse);
+                const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
+                    scenePool.materials[i], MaterialTextureSemantic::Diffuse);
                 dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
                 dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
                 overrideCount++;
@@ -1492,7 +1557,9 @@ int main(int argc, char **argv)
         }
         else
         {
-            fprintf(stderr, "NTC runtime decode failed (continuing with image textures): %s\n", ntcError.c_str());
+            fprintf(stderr,
+                    "NTC runtime decode failed (continuing with image textures): %s\n",
+                    ntcError.c_str());
         }
 #else
         fprintf(stderr,
@@ -1502,7 +1569,8 @@ int main(int argc, char **argv)
     }
 
     std::string textureUploadError;
-    if (!UploadDecodedTexturesToCuda(decodedTextures, &uploadedMaterialTextures, &textureUploadError))
+    if (!UploadDecodedTexturesToCuda(
+            decodedTextures, &uploadedMaterialTextures, &textureUploadError))
     {
         fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
         return 1;
@@ -1510,7 +1578,8 @@ int main(int argc, char **argv)
 
     if (!uploadedMaterialTextures.refs.empty())
     {
-        std::vector<LaunchParams::MaterialTextureRef> launchRefs(uploadedMaterialTextures.refs.size());
+        std::vector<LaunchParams::MaterialTextureRef> launchRefs(
+            uploadedMaterialTextures.refs.size());
         for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
@@ -1542,8 +1611,7 @@ int main(int argc, char **argv)
     DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
     if (!uploadedRefs.refs.empty())
     {
-        const size_t refsBytes =
-            uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
+        const size_t refsBytes = uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
         instanceGeomRefsBuffer = device.AllocBytes(refsBytes);
         device.CopyBytesToDevice(instanceGeomRefsBuffer, uploadedRefs.refs.data(), refsBytes);
     }
@@ -1571,6 +1639,7 @@ int main(int argc, char **argv)
 
     RenderTraversable(pipeline,
                       sbt,
+                      device.optixPrimaryPipeline.feedbackRaygenRecordBuffer,
                       (OptixTraversableHandle)rootScene->bvhHandle,
                       dummyBoundsMin,
                       dummyBoundsMax,
@@ -1584,6 +1653,7 @@ int main(int argc, char **argv)
                       materialTextureRefStride,
                       materialTextureRefSemanticCount,
                       options.textureView,
+                      options.virtualTexture,
                       usdCamera,
                       options.cameraPosition,
                       options.lookAt);

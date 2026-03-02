@@ -1,6 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 #include <assert.h>
+#include "texture/virtual_texture_key.h"
 
 struct LaunchParams
 {
@@ -159,19 +160,6 @@ static __forceinline__ __device__ int ClampInt(int v, int lo, int hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-static __forceinline__ __device__ unsigned long long PackFeedbackKey(unsigned int tileX,
-                                                                     unsigned int tileY,
-                                                                     unsigned int udimBits,
-                                                                     unsigned int textureId,
-                                                                     unsigned int mip)
-{
-    return (static_cast<unsigned long long>(tileX & 0x1ffu) << 0u) |
-           (static_cast<unsigned long long>(tileY & 0x1ffu) << 9u) |
-           (static_cast<unsigned long long>(udimBits & 0x7fu) << 18u) |
-           (static_cast<unsigned long long>(textureId & 0x7fffffu) << 25u) |
-           (static_cast<unsigned long long>(mip & 0xfu) << 48u);
-}
-
 static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParams::InstanceGeomRef &geomRef,
                                                                unsigned int primitiveIndex,
                                                                float u,
@@ -179,7 +167,8 @@ static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParam
                                                                float uu,
                                                                float vv,
                                                                int textureWidth,
-                                                               int textureHeight)
+                                                               int textureHeight,
+                                                               unsigned int mip)
 {
     if (params.feedbackKeys == 0ull || params.feedbackStats == 0ull || params.feedbackCapacity <= 0 ||
         params.feedbackSamplePercent <= 0)
@@ -199,26 +188,18 @@ static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParam
     }
 
     const int tileSize = max(params.feedbackTileSize, 1);
-    const int maxX = max(textureWidth - 1, 0);
-    const int maxY = max(textureHeight - 1, 0);
-    const int texelX = ClampInt(int(floorf(uu * float(textureWidth))), 0, maxX);
-    const int texelY = ClampInt(int(floorf(vv * float(textureHeight))), 0, maxY);
-    const int tileXInt = texelX / tileSize;
-    const int tileYInt = texelY / tileSize;
-    assert(tileXInt >= 0 && tileXInt <= 511);
-    assert(tileYInt >= 0 && tileYInt <= 511);
-    const unsigned int tileX = (unsigned int)tileXInt;
-    const unsigned int tileY = (unsigned int)tileYInt;
+    const int texelX = ybi::texture::TexelFromUnitUV(uu, textureWidth);
+    const int texelY = ybi::texture::TexelFromUnitUV(vv, textureHeight);
+    const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
+    const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
 
-    const int udimU = int(floorf(u));
-    const int udimV = int(floorf(v));
-    const int udim = 1001 + udimU + 10 * udimV;
-    const unsigned int udimBits = (unsigned int)ClampInt(udim - 1001, 0, 127);
+    const int udim = ybi::texture::UdimFromUV(u, v);
+    const unsigned int udimBits = ybi::texture::UdimBitsFromUdim(udim);
 
     const unsigned int textureId =
         (unsigned int)ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u));
-    const unsigned int mip = 0u;
-    const unsigned long long key = PackFeedbackKey(tileX, tileY, udimBits, textureId, mip);
+    const unsigned long long key =
+        ybi::texture::PackVirtualTextureKey(tileX, tileY, udimBits, textureId, mip);
 
     unsigned int *stats = reinterpret_cast<unsigned int *>(params.feedbackStats);
     unsigned long long *keys = reinterpret_cast<unsigned long long *>(params.feedbackKeys);
@@ -231,6 +212,83 @@ static __forceinline__ __device__ void TryWriteTextureFeedback(const LaunchParam
     {
         atomicAdd(&stats[1], 1u);
     }
+}
+
+static __forceinline__ __device__ bool
+TryWriteFeedbackOnly(const LaunchParams::InstanceGeomRef &geomRef,
+                     unsigned int primitiveIndex,
+                     const float3 &barycentrics,
+                     unsigned int mip)
+{
+    if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
+        params.materialTextureRefStride <= 0)
+    {
+        return false;
+    }
+    if (geomRef.texcoords == 0ull || geomRef.texcoordIndices == 0ull)
+    {
+        return false;
+    }
+
+    const int triCornerBase = int(primitiveIndex) * 3;
+    if (triCornerBase + 2 >= geomRef.numTexcoordIndices)
+    {
+        return false;
+    }
+
+    const int *tcIndices = reinterpret_cast<const int *>(geomRef.texcoordIndices);
+    const int t0 = tcIndices[triCornerBase + 0];
+    const int t1 = tcIndices[triCornerBase + 1];
+    const int t2 = tcIndices[triCornerBase + 2];
+    if (t0 < 0 || t0 >= geomRef.numTexcoords || t1 < 0 || t1 >= geomRef.numTexcoords || t2 < 0 ||
+        t2 >= geomRef.numTexcoords)
+    {
+        return false;
+    }
+
+    const float2_simple *texcoords = reinterpret_cast<const float2_simple *>(geomRef.texcoords);
+    const float2_simple uv0 = texcoords[t0];
+    const float2_simple uv1 = texcoords[t1];
+    const float2_simple uv2 = texcoords[t2];
+    const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y + uv2.x * barycentrics.z;
+    const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y + uv2.y * barycentrics.z;
+    const int udim = ybi::texture::UdimFromUV(u, v);
+    const int udimSlot = ybi::texture::UdimSlotFromUdim(udim, params.materialTextureRefStride);
+    const float uu = ybi::texture::UnitUV(u);
+    const float vv = ybi::texture::UnitUV(v);
+
+    if (geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
+    {
+        return false;
+    }
+    if (params.textureViewSemantic < 0 || params.textureViewSemantic >= params.materialTextureRefSemanticCount)
+    {
+        return false;
+    }
+
+    const int materialIndex = geomRef.materialIndex;
+    const LaunchParams::MaterialTextureRef *materialRefs =
+        reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
+    const int base = (materialIndex * params.materialTextureRefSemanticCount +
+                      params.textureViewSemantic) *
+                     params.materialTextureRefStride;
+    const int slot = base + udimSlot;
+    const int maxSlots = params.materialTextureRefCount * params.materialTextureRefSemanticCount *
+                         params.materialTextureRefStride;
+    if (slot < 0 || slot >= maxSlots)
+    {
+        return false;
+    }
+
+    const LaunchParams::MaterialTextureRef textureRef = materialRefs[slot];
+    if (textureRef.width <= 0 || textureRef.height <= 0)
+    {
+        return false;
+    }
+
+    TryWriteTextureFeedback(
+        geomRef, primitiveIndex, u, v, uu, vv, textureRef.width, textureRef.height, mip);
+    return true;
 }
 
 static __forceinline__ __device__ float3 SkyColor(const float3 &direction)
@@ -316,12 +374,10 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
     const float2_simple uv2 = texcoords[t2];
     const float u = uv0.x * barycentrics.x + uv1.x * barycentrics.y + uv2.x * barycentrics.z;
     const float v = uv0.y * barycentrics.x + uv1.y * barycentrics.y + uv2.y * barycentrics.z;
-    const int udimU = int(floorf(u));
-    const int udimV = int(floorf(v));
-    const int udim = 1001 + udimU + 10 * udimV;
-    const int udimSlot = ClampInt(udim - 1001, 0, params.materialTextureRefStride - 1);
-    const float uu = u - floorf(u);
-    const float vv = v - floorf(v);
+    const int udim = ybi::texture::UdimFromUV(u, v);
+    const int udimSlot = ybi::texture::UdimSlotFromUdim(udim, params.materialTextureRefStride);
+    const float uu = ybi::texture::UnitUV(u);
+    const float vv = ybi::texture::UnitUV(v);
 
     if (geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount)
     {
@@ -390,7 +446,7 @@ TrySampleMaterialTexture(const LaunchParams::InstanceGeomRef &geomRef,
         outColor = make_float3(sample.x, sample.y, sample.z);
     }
     TryWriteTextureFeedback(
-        geomRef, primitiveIndex, u, v, uu, vv, textureRef.width, textureRef.height);
+        geomRef, primitiveIndex, u, v, uu, vv, textureRef.width, textureRef.height, 0u);
     return true;
 }
 
@@ -463,6 +519,15 @@ extern "C" __global__ void __raygen__primary()
                                     255u);
 }
 
+extern "C" __global__ void __raygen__feedback()
+{
+    const uint3 launchIndex = optixGetLaunchIndex();
+    const uint3 launchDims = optixGetLaunchDimensions();
+    const float2 centerOffset = make_float2(0.5f, 0.5f);
+    const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
+    TraceColor(params.cameraOrigin, centerDirection);
+}
+
 extern "C" __global__ void __miss__primary()
 {
     const unsigned int payload = optixGetPayload_0();
@@ -489,6 +554,28 @@ extern "C" __global__ void __anyhit__primary()
 
 extern "C" __global__ void __closesthit__primary()
 {
+    if (params.integrator == 2)
+    {
+        const unsigned int hitKind = optixGetHitKind();
+        if (hitKind == OPTIX_HIT_KIND_TRIANGLE_FRONT_FACE ||
+            hitKind == OPTIX_HIT_KIND_TRIANGLE_BACK_FACE)
+        {
+            const float2 bary = optixGetTriangleBarycentrics();
+            const float3 barycentrics = make_float3(1.0f - bary.x - bary.y, bary.x, bary.y);
+            const unsigned int instanceId = optixGetInstanceId();
+            if (params.instanceGeomRefs != 0ull &&
+                instanceId < (unsigned int)params.instanceGeomRefCount)
+            {
+                const LaunchParams::InstanceGeomRef *refs =
+                    reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+                const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+                TryWriteFeedbackOnly(ref, optixGetPrimitiveIndex(), barycentrics, 1u);
+            }
+        }
+        optixSetPayload_0(0u);
+        return;
+    }
+
     if (params.integrator == 1)
     {
         const int spp = max(params.spp, 1);

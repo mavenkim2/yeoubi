@@ -32,11 +32,13 @@ struct OptixPrimaryPipelineState
     OptixPipeline pipeline = nullptr;
     OptixShaderBindingTable sbt = {};
     CUdeviceptr raygenRecordBuffer = 0;
+    CUdeviceptr feedbackRaygenRecordBuffer = 0;
     CUdeviceptr missRecordBuffer = 0;
     CUdeviceptr hitgroupRecordBuffer = 0;
     OptixModule module = nullptr;
     OptixModule curveModule = nullptr;
     OptixProgramGroup raygenGroup = nullptr;
+    OptixProgramGroup feedbackRaygenGroup = nullptr;
     OptixProgramGroup missGroup = nullptr;
     OptixProgramGroup hitgroupGroup = nullptr;
 };
