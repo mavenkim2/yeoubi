@@ -41,6 +41,9 @@ struct CPUDevice : Device
     void CopyBytesToHost(void *dst,
                          DeviceMemoryView<const uint8_t> src,
                          size_t numBytes) override;
+    bool InitializeKernels(const std::string &kernelBlob, std::string *outError) override;
+    void DestroyKernels() override;
+    void ClearTransientMemory() override;
     bool CreateTexture(const DeviceTextureCreateInfo &info,
                        DeviceTexture *outTexture,
                        std::string *outError) override;

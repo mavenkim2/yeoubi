@@ -159,7 +159,7 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
 CUDADevice::~CUDADevice()
 {
     deviceArena.reset();
-    DestroyOptixPrimaryPipeline();
+    DestroyKernels();
     CUDA_ASSERT(cuDevicePrimaryCtxRelease(device));
 
     if (optixDeviceContext)
@@ -171,6 +171,32 @@ CUDADevice::~CUDADevice()
 DeviceKind CUDADevice::GetKind() const
 {
     return DeviceKind::GPU;
+}
+
+bool CUDADevice::InitializeKernels(const std::string &kernelBlob, std::string *outError)
+{
+    if (CreateOptixPrimaryPipeline(kernelBlob))
+    {
+        return true;
+    }
+    if (outError)
+    {
+        *outError = "CreateOptixPrimaryPipeline failed.";
+    }
+    return false;
+}
+
+void CUDADevice::DestroyKernels()
+{
+    DestroyOptixPrimaryPipeline();
+}
+
+void CUDADevice::ClearTransientMemory()
+{
+    if (deviceArena)
+    {
+        deviceArena->Clear();
+    }
 }
 
 template <typename T>

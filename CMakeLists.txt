@@ -303,6 +303,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
 
     add_executable(yeoubi_optix_template_harness
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix_template_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
@@ -319,6 +320,11 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
         target_sources(yeoubi_optix_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
+    endif()
+    if (WITH_EMBREE AND EMBREE_FOUND)
+        target_sources(yeoubi_optix_template_harness PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp)
     endif()
     add_dependencies(yeoubi_optix_template_harness yeoubi_optix_primary_programs_ptx)
 

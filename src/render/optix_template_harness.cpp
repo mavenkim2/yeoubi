@@ -1,4 +1,4 @@
-#include "device/cuda_device.h"
+#include "device/device.h"
 #include "io/usd/load.h"
 #include "render/dispatch_types.h"
 #include "scene/scene.h"
@@ -28,20 +28,18 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include <cuda_runtime_api.h>
-#include <optix_stubs.h>
-
-using namespace ybi;
-
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
 #include "../../tests/bvh/optix/optix_ntc_runtime.h"
 #endif
+
+using namespace ybi;
 
 #ifndef YBI_OPTIX_PRIMARY_PTX_PATH
 #define YBI_OPTIX_PRIMARY_PTX_PATH ""
@@ -49,84 +47,6 @@ using namespace ybi;
 
 namespace
 {
-static void OptixCheckImpl(OptixResult result, const char *expr, const char *file, int line)
-{
-    if (result != OPTIX_SUCCESS)
-    {
-        fprintf(stderr,
-                "OptiX call failed: %s -> %s (%s) at %s:%d\n",
-                expr,
-                optixGetErrorName(result),
-                optixGetErrorString(result),
-                file,
-                line);
-        std::abort();
-    }
-}
-
-#define OPTIX_CHECK(expr) OptixCheckImpl((expr), #expr, __FILE__, __LINE__)
-
-template <typename DeviceT>
-struct DeviceOps
-{
-    static DeviceMemoryView<uint8_t> Alloc(DeviceT *device, size_t numBytes)
-    {
-        return device->AllocBytes(numBytes);
-    }
-
-    static void Free(DeviceT *device, DeviceMemoryView<uint8_t> &view)
-    {
-        device->FreeBytes(view);
-    }
-
-    static void
-    CopyToDevice(DeviceT *device, DeviceMemoryView<uint8_t> dst, const void *src, size_t numBytes)
-    {
-        device->CopyBytesToDevice(dst, src, numBytes);
-    }
-
-    static void
-    CopyToHost(DeviceT *device, void *dst, DeviceMemoryView<uint8_t> src, size_t numBytes)
-    {
-        device->CopyBytesToHost(dst, {(const uint8_t *)src.data(), src.size()}, numBytes);
-    }
-
-    static void Synchronize(DeviceT *) {}
-};
-
-template <>
-struct DeviceOps<CUDADevice>
-{
-    static DeviceMemoryView<uint8_t> Alloc(CUDADevice *device, size_t numBytes)
-    {
-        return device->AllocBytes(numBytes);
-    }
-
-    static void Free(CUDADevice *device, DeviceMemoryView<uint8_t> &view)
-    {
-        device->FreeBytes(view);
-    }
-
-    static void CopyToDevice(CUDADevice *device,
-                             DeviceMemoryView<uint8_t> dst,
-                             const void *src,
-                             size_t numBytes)
-    {
-        device->CopyBytesToDevice(dst, src, numBytes);
-    }
-
-    static void
-    CopyToHost(CUDADevice *device, void *dst, DeviceMemoryView<uint8_t> src, size_t numBytes)
-    {
-        device->CopyBytesToHost(dst, {(const uint8_t *)src.data(), src.size()}, numBytes);
-    }
-
-    static void Synchronize(CUDADevice *)
-    {
-        CUDA_ASSERT(cuStreamSynchronize(0));
-    }
-};
-
 struct LaunchParams
 {
     struct InstanceGeomRef
@@ -170,8 +90,8 @@ struct LaunchParams
         unsigned int height;
     };
 
-    OptixTraversableHandle traversable;
-    CUdeviceptr image;
+    BVHHandle traversable;
+    DevicePtr image;
     int width;
     int height;
     ybi::float3 cameraOrigin;
@@ -1312,7 +1232,7 @@ static const Attribute *FindMeshSTAttribute(const Mesh &mesh)
 }
 
 static UploadedMeshRefs
-UploadScenePoolMeshRefs(CUDADevice *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
+UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
 {
     YBI_ASSERT(device);
     UploadedMeshRefs out;
@@ -1371,16 +1291,16 @@ UploadScenePoolMeshRefs(CUDADevice *device, const std::vector<SceneMeshUploadRef
 }
 
 static void
-RenderTraversable(CUDADevice *device,
-                  OptixTraversableHandle traversable,
+RenderTraversable(Device *device,
+                  BVHHandle traversable,
                   const ybi::float3 &boundsMin,
                   const ybi::float3 &boundsMax,
                   const char *outputFile,
                   IntegratorType integrator,
                   int spp,
-                  CUdeviceptr instanceGeomRefsBuffer,
+                  DevicePtr instanceGeomRefsBuffer,
                   int instanceGeomRefCount,
-                  CUdeviceptr materialTextureRefsBuffer,
+                  DevicePtr materialTextureRefsBuffer,
                   int materialTextureRefCount,
                   int materialTextureRefStride,
                   int materialTextureRefSemanticCount,
@@ -1397,7 +1317,7 @@ RenderTraversable(CUDADevice *device,
     const int width = cameraOverride.has_value() ? cameraOverride->width : 1280;
     const int height = cameraOverride.has_value() ? cameraOverride->height : 720;
     const size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-    DeviceMemoryView<uint8_t> imageBuffer = DeviceOps<CUDADevice>::Alloc(device, imageSize);
+    DeviceMemoryView<uint8_t> imageBuffer = device->AllocBytes(imageSize);
     printf("render: image buffer allocated\n");
     fflush(stdout);
 
@@ -1406,10 +1326,8 @@ RenderTraversable(CUDADevice *device,
     const size_t feedbackKeysBytes =
         static_cast<size_t>(feedbackCapacity) * sizeof(unsigned long long);
     const size_t feedbackStatsBytes = 2u * sizeof(unsigned int);
-    DeviceMemoryView<uint8_t> feedbackKeysBuffer =
-        DeviceOps<CUDADevice>::Alloc(device, feedbackKeysBytes);
-    DeviceMemoryView<uint8_t> feedbackStatsBuffer =
-        DeviceOps<CUDADevice>::Alloc(device, feedbackStatsBytes);
+    DeviceMemoryView<uint8_t> feedbackKeysBuffer = device->AllocBytes(feedbackKeysBytes);
+    DeviceMemoryView<uint8_t> feedbackStatsBuffer = device->AllocBytes(feedbackStatsBytes);
     DeviceMemoryView<uint8_t> virtualTextureTileEntriesBuffer = {};
     DeviceMemoryView<uint8_t> virtualTextureTilePixelsBuffer = {};
 
@@ -1429,7 +1347,7 @@ RenderTraversable(CUDADevice *device,
 
     LaunchParams params = {};
     params.traversable = traversable;
-    params.image = CUdeviceptr(imageBuffer.data());
+    params.image = reinterpret_cast<DevicePtr>(imageBuffer.data());
     params.width = width;
     params.height = height;
     if (cameraOverride.has_value())
@@ -1487,8 +1405,7 @@ RenderTraversable(CUDADevice *device,
     params.virtualTextureTileEntryCapacity = 0;
     params.virtualTextureEnabled = virtualTexture ? 1 : 0;
 
-    DeviceMemoryView<uint8_t> paramsBuffer =
-        DeviceOps<CUDADevice>::Alloc(device, sizeof(LaunchParams));
+    DeviceMemoryView<uint8_t> paramsBuffer = device->AllocBytes(sizeof(LaunchParams));
     printf("render: params buffer allocated\n");
     fflush(stdout);
 
@@ -1549,9 +1466,8 @@ RenderTraversable(CUDADevice *device,
         params.spp = 1;
         params.currentSpp = 0;
         params.feedbackSamplePercent = 100;
-        DeviceOps<CUDADevice>::CopyToDevice(device, paramsBuffer, &params, sizeof(LaunchParams));
-        DeviceOps<CUDADevice>::CopyToDevice(
-            device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
+        device->CopyBytesToDevice(paramsBuffer, &params, sizeof(LaunchParams));
+        device->CopyBytesToDevice(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
         DispatchParams dispatchParams = {};
         dispatchParams.width = static_cast<uint32_t>(width);
@@ -1566,17 +1482,16 @@ RenderTraversable(CUDADevice *device,
             std::abort();
         }
 
-        DeviceOps<CUDADevice>::CopyToHost(
-            device, feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes);
+        device->CopyBytesToHost(
+            feedbackStatsHost, {feedbackStatsBuffer.data(), feedbackStatsBuffer.size()}, feedbackStatsBytes);
         const unsigned int sampledCount = feedbackStatsHost[0];
         const unsigned int overflowCount = feedbackStatsHost[1];
         const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
         if (copyCount > 0)
         {
-            DeviceOps<CUDADevice>::CopyToHost(device,
-                                              feedbackKeysHost.data(),
-                                              feedbackKeysBuffer,
-                                              size_t(copyCount) * sizeof(unsigned long long));
+            device->CopyBytesToHost(feedbackKeysHost.data(),
+                                    {feedbackKeysBuffer.data(), feedbackKeysBuffer.size()},
+                                    size_t(copyCount) * sizeof(unsigned long long));
         }
         const std::vector<std::pair<unsigned long long, unsigned int>> histogram =
             WriteFeedbackFile("prepass.txt", -1, sampledCount, copyCount, overflowCount);
@@ -1688,16 +1603,12 @@ RenderTraversable(CUDADevice *device,
             const size_t entriesBytes =
                 virtualTextureEntriesHost.size() * sizeof(LaunchParams::VirtualTextureTileEntry);
             const size_t pixelsBytes = virtualTexturePixelsHost.size();
-            virtualTextureTileEntriesBuffer = DeviceOps<CUDADevice>::Alloc(device, entriesBytes);
-            virtualTextureTilePixelsBuffer = DeviceOps<CUDADevice>::Alloc(device, pixelsBytes);
-            DeviceOps<CUDADevice>::CopyToDevice(device,
-                                                virtualTextureTileEntriesBuffer,
-                                                virtualTextureEntriesHost.data(),
-                                                entriesBytes);
-            DeviceOps<CUDADevice>::CopyToDevice(device,
-                                                virtualTextureTilePixelsBuffer,
-                                                virtualTexturePixelsHost.data(),
-                                                pixelsBytes);
+            virtualTextureTileEntriesBuffer = device->AllocBytes(entriesBytes);
+            virtualTextureTilePixelsBuffer = device->AllocBytes(pixelsBytes);
+            device->CopyBytesToDevice(
+                virtualTextureTileEntriesBuffer, virtualTextureEntriesHost.data(), entriesBytes);
+            device->CopyBytesToDevice(
+                virtualTextureTilePixelsBuffer, virtualTexturePixelsHost.data(), pixelsBytes);
             params.virtualTextureTileEntries =
                 reinterpret_cast<unsigned long long>(virtualTextureTileEntriesBuffer.data());
             params.virtualTextureTilePixels =
@@ -1724,9 +1635,8 @@ RenderTraversable(CUDADevice *device,
     {
         params.spp = integrator == IntegratorType::AO ? 1 : 1;
         params.currentSpp = sppIndex;
-        DeviceOps<CUDADevice>::CopyToDevice(device, paramsBuffer, &params, sizeof(LaunchParams));
-        DeviceOps<CUDADevice>::CopyToDevice(
-            device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
+        device->CopyBytesToDevice(paramsBuffer, &params, sizeof(LaunchParams));
+        device->CopyBytesToDevice(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
         DispatchParams dispatchParams = {};
         dispatchParams.width = static_cast<uint32_t>(width);
@@ -1744,7 +1654,7 @@ RenderTraversable(CUDADevice *device,
             std::abort();
         }
 
-        DeviceOps<CUDADevice>::CopyToHost(device, hostPassImage.data(), imageBuffer, imageSize);
+        device->CopyBytesToHost(hostPassImage.data(), {imageBuffer.data(), imageBuffer.size()}, imageSize);
         const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
         for (size_t i = 0; i < pixelCount; ++i)
         {
@@ -1753,17 +1663,16 @@ RenderTraversable(CUDADevice *device,
             accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
         }
 
-        DeviceOps<CUDADevice>::CopyToHost(
-            device, feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes);
+        device->CopyBytesToHost(
+            feedbackStatsHost, {feedbackStatsBuffer.data(), feedbackStatsBuffer.size()}, feedbackStatsBytes);
         const unsigned int sampledCount = feedbackStatsHost[0];
         const unsigned int overflowCount = feedbackStatsHost[1];
         const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
         if (copyCount > 0)
         {
-            DeviceOps<CUDADevice>::CopyToHost(device,
-                                              feedbackKeysHost.data(),
-                                              feedbackKeysBuffer,
-                                              size_t(copyCount) * sizeof(unsigned long long));
+            device->CopyBytesToHost(feedbackKeysHost.data(),
+                                    {feedbackKeysBuffer.data(), feedbackKeysBuffer.size()},
+                                    size_t(copyCount) * sizeof(unsigned long long));
         }
 
         char feedbackFileName[256];
@@ -1795,18 +1704,18 @@ RenderTraversable(CUDADevice *device,
         fprintf(stderr, "Failed to write PNG: %s\n", outputFile);
     }
 
-    DeviceOps<CUDADevice>::Free(device, paramsBuffer);
+    device->FreeBytes(paramsBuffer);
     if (virtualTextureTilePixelsBuffer.data() != nullptr)
     {
-        DeviceOps<CUDADevice>::Free(device, virtualTextureTilePixelsBuffer);
+        device->FreeBytes(virtualTextureTilePixelsBuffer);
     }
     if (virtualTextureTileEntriesBuffer.data() != nullptr)
     {
-        DeviceOps<CUDADevice>::Free(device, virtualTextureTileEntriesBuffer);
+        device->FreeBytes(virtualTextureTileEntriesBuffer);
     }
-    DeviceOps<CUDADevice>::Free(device, feedbackStatsBuffer);
-    DeviceOps<CUDADevice>::Free(device, feedbackKeysBuffer);
-    DeviceOps<CUDADevice>::Free(device, imageBuffer);
+    device->FreeBytes(feedbackStatsBuffer);
+    device->FreeBytes(feedbackKeysBuffer);
+    device->FreeBytes(imageBuffer);
     printf("render: end\n");
     fflush(stdout);
 }
@@ -1832,7 +1741,7 @@ struct HarnessState
     std::optional<RenderCameraOverride> usdCamera = std::nullopt;
 };
 
-static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, HarnessState *state)
+static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessState *state)
 {
     YBI_ASSERT(device);
     YBI_ASSERT(state);
@@ -2027,16 +1936,17 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
     return true;
 }
 
-static bool RenderPhase(CUDADevice *device, const CliOptions &options, const HarnessState &state)
+static bool RenderPhase(Device *device, const CliOptions &options, const HarnessState &state)
 {
     YBI_ASSERT(device);
     const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
     printf("optix_harness: ptx loaded\n");
     fflush(stdout);
 
-    if (!device->CreateOptixPrimaryPipeline(ptx))
+    std::string kernelInitError;
+    if (!device->InitializeKernels(ptx, &kernelInitError))
     {
-        fprintf(stderr, "Failed to create OptiX primary pipeline.\n");
+        fprintf(stderr, "Failed to initialize kernels: %s\n", kernelInitError.c_str());
         return false;
     }
     printf("optix_harness: pipeline created\n");
@@ -2045,15 +1955,15 @@ static bool RenderPhase(CUDADevice *device, const CliOptions &options, const Har
     const ybi::float3 dummyBoundsMin = ybi::make_float3(-1.0f, -1.0f, -1.0f);
     const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
     RenderTraversable(device,
-                      (OptixTraversableHandle)state.rootScene->bvhHandle,
+                      state.rootScene->bvhHandle,
                       dummyBoundsMin,
                       dummyBoundsMax,
                       options.outputPath.c_str(),
                       options.integrator,
                       options.spp,
-                      (CUdeviceptr)state.instanceGeomRefsBuffer.data(),
+                      reinterpret_cast<DevicePtr>(state.instanceGeomRefsBuffer.data()),
                       (int)state.uploadedRefs.refs.size(),
-                      (CUdeviceptr)state.materialTextureRefsBuffer.data(),
+                      reinterpret_cast<DevicePtr>(state.materialTextureRefsBuffer.data()),
                       state.materialTextureRefCount,
                       state.materialTextureRefStride,
                       state.materialTextureRefSemanticCount,
@@ -2067,7 +1977,7 @@ static bool RenderPhase(CUDADevice *device, const CliOptions &options, const Har
     return true;
 }
 
-static void DeinitPhase(CUDADevice *device, HostMemoryArena *hostArena, HarnessState *state)
+static void DeinitPhase(Device *device, HostMemoryArena *hostArena, HarnessState *state)
 {
     YBI_ASSERT(device);
     YBI_ASSERT(hostArena);
@@ -2087,8 +1997,8 @@ static void DeinitPhase(CUDADevice *device, HostMemoryArena *hostArena, HarnessS
         device->FreeBytes(buffer);
     }
     hostArena->Clear();
-    device->deviceArena->Clear();
-    device->DestroyOptixPrimaryPipeline();
+    device->ClearTransientMemory();
+    device->DestroyKernels();
 }
 
 int main(int argc, char **argv)
@@ -2099,18 +2009,24 @@ int main(int argc, char **argv)
     printf("optix_harness: parsed cli\n");
     fflush(stdout);
 
-    CUDADevice device;
+    std::unique_ptr<Device> deviceStorage;
+    Device *device = Device::CreateDevice(DeviceKind::GPU, deviceStorage);
+    if (!device)
+    {
+        fprintf(stderr, "Failed to create GPU device.\n");
+        return 1;
+    }
     printf("optix_harness: cuda device ready\n");
     fflush(stdout);
     HostMemoryArena hostArena;
     HarnessState state = {};
-    const bool uploadOk = UploadScenePhase(&device, options, &state);
+    const bool uploadOk = UploadScenePhase(device, options, &state);
     bool renderOk = false;
     if (uploadOk)
     {
-        renderOk = RenderPhase(&device, options, state);
+        renderOk = RenderPhase(device, options, state);
     }
-    DeinitPhase(&device, &hostArena, &state);
+    DeinitPhase(device, &hostArena, &state);
     if (!uploadOk || !renderOk)
     {
         return 1;

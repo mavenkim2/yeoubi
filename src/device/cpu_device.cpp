@@ -102,6 +102,19 @@ void CPUDevice::CopyBytesToHost(void *dst,
     std::memcpy(dst, src.data(), numBytes);
 }
 
+bool CPUDevice::InitializeKernels(const std::string &, std::string *)
+{
+    return true;
+}
+
+void CPUDevice::DestroyKernels()
+{
+}
+
+void CPUDevice::ClearTransientMemory()
+{
+}
+
 bool CPUDevice::CreateTexture(const DeviceTextureCreateInfo &info,
                               DeviceTexture *outTexture,
                               std::string *outError)
