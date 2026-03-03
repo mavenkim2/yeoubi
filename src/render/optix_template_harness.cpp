@@ -19,6 +19,7 @@
 #include "util/float4x4.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -1746,12 +1747,23 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     YBI_ASSERT(device);
     YBI_ASSERT(state);
 
+    using Clock = std::chrono::steady_clock;
+    const auto phaseStart = Clock::now();
+    auto LogPhase = [](const char *label, Clock::time_point start) {
+        const auto now = Clock::now();
+        const double ms =
+            std::chrono::duration<double, std::milli>(now - start).count();
+        std::printf("profile: %s %.3f ms\n", label, ms);
+        return now;
+    };
+
     printf("optix_harness: loading usd scene %s\n", options.inputPath.c_str());
     fflush(stdout);
 
     USDLoadOptions loadOptions = {};
     loadOptions.purposes = options.purposes;
     LoadUSDScene(&state->scenePool, options.inputPath, loadOptions);
+    auto tLoad = LogPhase("usd_load", phaseStart);
     if (state->scenePool.scenes.empty() ||
         state->scenePool.rootSceneIndex >= state->scenePool.scenes.size())
     {
@@ -1767,6 +1779,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
         return false;
     }
+    auto tFlatten = LogPhase("flatten_scene_pool", tLoad);
     if (state->flattenedScenePool.scenes.empty() ||
         state->flattenedScenePool.rootSceneIndex >= state->flattenedScenePool.scenes.size())
     {
@@ -1781,6 +1794,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     {
         return false;
     }
+    auto tTess = LogPhase("tessellate_subdivision", tFlatten);
 
     std::vector<DecodedMaterialTexture> decodedTextures;
     if (!DecodeImageTextures(state->scenePool.materials, &decodedTextures))
@@ -1788,6 +1802,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         fprintf(stderr, "Image runtime decode failed.\n");
         return false;
     }
+    auto tDecode = LogPhase("decode_image_textures", tTess);
 
     if (options.useNtc)
     {
@@ -1863,6 +1878,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
             fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
             return false;
         }
+        LogPhase("upload_textures", tDecode);
         for (size_t i = 0; i < state->uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = state->uploadedMaterialTextures.refs[i];
@@ -1878,6 +1894,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         device->CopyBytesToDevice(state->materialTextureRefsBuffer, launchRefs.data(), refsBytes);
         state->materialTextureRefCount = static_cast<int>(state->scenePool.materials.size());
     }
+    auto tTexRefs = LogPhase("upload_texture_refs", tDecode);
 
     if (options.virtualTexture)
     {
@@ -1897,19 +1914,24 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     }
 
     CollectScenePoolMeshUploadRefs(&state->flattenedScenePool, &state->meshUploadRefs);
+    auto tCollect = LogPhase("collect_mesh_upload_refs", tTexRefs);
+    auto bvhStart = Clock::now();
     for (const std::unique_ptr<Scene> &scenePtr : state->flattenedScenePool.scenes)
     {
         Scene *scene = scenePtr.get();
         YBI_ASSERT(scene);
         device->BuildBVH(scene);
     }
+    LogPhase("build_bvh_total", bvhStart);
     if (state->rootScene->bvhHandle == 0)
     {
         fprintf(stderr, "USD root scene BVH is invalid: %s\n", options.inputPath.c_str());
         return false;
     }
+    auto tBvh = LogPhase("build_bvh_phase", tCollect);
 
     state->uploadedRefs = UploadScenePoolMeshRefs(device, state->meshUploadRefs);
+    auto tUploadRefs = LogPhase("upload_scene_mesh_refs", tBvh);
     if (!state->uploadedRefs.refs.empty())
     {
         const size_t refsBytes =
@@ -1918,6 +1940,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         device->CopyBytesToDevice(
             state->instanceGeomRefsBuffer, state->uploadedRefs.refs.data(), refsBytes);
     }
+    auto tInstanceRefs = LogPhase("upload_instance_geom_refs", tUploadRefs);
 
     if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
     {
@@ -1933,6 +1956,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         fflush(stdout);
     }
 
+    LogPhase("upload_scene_total", phaseStart);
     return true;
 }
 
