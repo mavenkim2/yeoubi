@@ -1,6 +1,7 @@
 #include <optix.h>
 #include <optix_device.h>
 #include <assert.h>
+#include "render/shading_core.h"
 #include "texture/virtual_texture_key.h"
 
 struct LaunchParams
@@ -172,10 +173,7 @@ static __forceinline__ __device__ float3 FaceForward(const float3 &normal,
 
 static __forceinline__ __device__ unsigned int PackColor(float r, float g, float b)
 {
-    const unsigned int ru = (unsigned int)(fminf(fmaxf(r, 0.0f), 1.0f) * 255.0f + 0.5f);
-    const unsigned int gu = (unsigned int)(fminf(fmaxf(g, 0.0f), 1.0f) * 255.0f + 0.5f);
-    const unsigned int bu = (unsigned int)(fminf(fmaxf(b, 0.0f), 1.0f) * 255.0f + 0.5f);
-    return ru | (gu << 8) | (bu << 16);
+    return ybi::render::PackRGB8(r, g, b);
 }
 
 static __forceinline__ __device__ int ClampInt(int v, int lo, int hi)
@@ -825,7 +823,7 @@ extern "C" __global__ void __closesthit__primary()
             }
         }
 
-        const float ao = float(visible) / float(spp);
+        const float ao = ybi::render::EvalAOVisibility(visible, spp);
         const float3 aoColor = make_float3(ao, ao, ao);
         optixSetPayload_0(PackColor(aoColor.x, aoColor.y, aoColor.z));
         return;
@@ -847,11 +845,13 @@ extern "C" __global__ void __closesthit__primary()
             const LaunchParams::InstanceGeomRef ref = refs[instanceId];
             const bool sampled =
                 TrySampleMaterialTexture(ref, optixGetPrimitiveIndex(), barycentrics, color);
-            if (!sampled)
-            {
-                color = make_float3(0.0f, 0.0f, 0.0f);
-            }
-            else if (atomicCAS(&g_try_sample_logged, 0u, 1u) == 0u)
+            float outR = 0.0f;
+            float outG = 0.0f;
+            float outB = 0.0f;
+            ybi::render::EvalPrimaryDiffuseCore(
+                sampled, color.x, color.y, color.z, outR, outG, outB);
+            color = make_float3(outR, outG, outB);
+            if (sampled && atomicCAS(&g_try_sample_logged, 0u, 1u) == 0u)
             {
                 printf("TrySampleMaterialTexture succeeded\n");
             }

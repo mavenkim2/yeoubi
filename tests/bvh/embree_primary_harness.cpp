@@ -1,5 +1,6 @@
 #include "device/cpu_device.h"
 #include "io/usd/load.h"
+#include "render/shading_core.h"
 #include "scene/scene.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
@@ -412,19 +413,6 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
 }
 
-static float Clamp01(float x)
-{
-    if (x < 0.0f)
-    {
-        return 0.0f;
-    }
-    if (x > 1.0f)
-    {
-        return 1.0f;
-    }
-    return x;
-}
-
 static std::vector<uint8_t> RenderImage(RTCScene rootScene,
                                         const RenderCamera &camera,
                                         IntegratorType integrator,
@@ -494,7 +482,12 @@ static std::vector<uint8_t> RenderImage(RTCScene rootScene,
 
                 if (integrator == IntegratorType::Primary)
                 {
-                    pixelColor += albedo;
+                    float outR = 0.0f;
+                    float outG = 0.0f;
+                    float outB = 0.0f;
+                    ybi::render::EvalPrimaryDiffuseCore(
+                        true, albedo.x, albedo.y, albedo.z, outR, outG, outB);
+                    pixelColor += make_float3(outR, outG, outB);
                     continue;
                 }
 
@@ -527,7 +520,8 @@ static std::vector<uint8_t> RenderImage(RTCScene rootScene,
                 rtcOccluded1(rootScene, &shadowContext, &shadowRay);
 #endif
 
-                const float visibility = shadowRay.tfar < 0.0f ? 0.0f : 1.0f;
+                const int visible = shadowRay.tfar < 0.0f ? 0 : 1;
+                const float visibility = ybi::render::EvalAOVisibility(visible, 1);
                 pixelColor += albedo * visibility;
             }
 
@@ -535,9 +529,10 @@ static std::vector<uint8_t> RenderImage(RTCScene rootScene,
             const size_t idx = (static_cast<size_t>(y) * static_cast<size_t>(width) +
                                 static_cast<size_t>(x)) *
                                4u;
-            image[idx + 0] = static_cast<uint8_t>(Clamp01(pixelColor.x) * 255.0f + 0.5f);
-            image[idx + 1] = static_cast<uint8_t>(Clamp01(pixelColor.y) * 255.0f + 0.5f);
-            image[idx + 2] = static_cast<uint8_t>(Clamp01(pixelColor.z) * 255.0f + 0.5f);
+            const uint32_t packed = ybi::render::PackRGB8(pixelColor.x, pixelColor.y, pixelColor.z);
+            image[idx + 0] = static_cast<uint8_t>(packed & 0xffu);
+            image[idx + 1] = static_cast<uint8_t>((packed >> 8) & 0xffu);
+            image[idx + 2] = static_cast<uint8_t>((packed >> 16) & 0xffu);
             image[idx + 3] = 255u;
         }
     }});
