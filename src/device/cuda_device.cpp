@@ -337,6 +337,14 @@ void CUDADevice::CreateGridClusterTemplates()
 #endif
 }
 
+bool CUDADevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &params)
+{
+    (void)kernel;
+    (void)params;
+    fprintf(stderr, "CUDADevice::DispatchKernel is not wired yet.\n");
+    return false;
+}
+
 #endif
 
 YBI_NAMESPACE_END

@@ -39,6 +39,7 @@ struct CPUDevice : Device
                          size_t numBytes) override;
     size_t GetBVHAllocatedBytes() const override;
     void BuildBVH(Scene *scene) override;
+    bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) override;
 };
 
 void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene);
@@ -46,4 +47,3 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene);
 YBI_NAMESPACE_END
 
 #endif
-

@@ -10,6 +10,8 @@
 YBI_NAMESPACE_BEGIN
 
 struct Scene;
+enum class RenderKernelId : uint8_t;
+struct DispatchParams;
 
 enum class DeviceKind : uint32_t
 {
@@ -25,6 +27,7 @@ struct Device
 
     virtual DeviceKind GetKind() const = 0;
     virtual void BuildBVH(Scene *scene) = 0;
+    virtual bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) = 0;
 
     virtual DeviceMemoryView<uint8_t> AllocBytes(size_t numBytes) = 0;
     virtual void FreeBytes(DeviceMemoryView<uint8_t> &view) = 0;

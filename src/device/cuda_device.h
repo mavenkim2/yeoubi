@@ -99,6 +99,7 @@ struct CUDADevice : Device
     bool SupportsGrids() const;
     bool SupportsClusterAccel() const;
     ClusterAccelerationStructureLimits GetClusterAccelerationStructureLimits() const;
+    bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) override;
 
     bool CreateOptixPrimaryPipeline(const std::string &ptx);
     void DestroyOptixPrimaryPipeline();

@@ -85,6 +85,14 @@ void CPUDevice::BuildBVH(Scene *scene)
     BuildEmbreeBVH(this, scene);
 }
 
+bool CPUDevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &params)
+{
+    (void)kernel;
+    (void)params;
+    fprintf(stderr, "CPUDevice::DispatchKernel is not wired yet.\n");
+    return false;
+}
+
 YBI_NAMESPACE_END
 
 #endif
