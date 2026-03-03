@@ -1882,75 +1882,67 @@ static void RenderTraversable(CUDADevice *device,
 }
 } // namespace
 
-int main(int argc, char **argv)
+struct HarnessState
 {
-    printf("optix_harness: start\n");
-    fflush(stdout);
-    const CliOptions options = ParseCli(argc, argv);
-    printf("optix_harness: parsed cli\n");
-    fflush(stdout);
-
-    CUDADevice device;
-    printf("optix_harness: cuda device ready\n");
-    fflush(stdout);
-    HostMemoryArena hostArena;
-    const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
-    printf("optix_harness: ptx loaded\n");
-    fflush(stdout);
-
-    if (!device.CreateOptixPrimaryPipeline(ptx))
-    {
-        fprintf(stderr, "Failed to create OptiX primary pipeline.\n");
-        return 1;
-    }
-    printf("optix_harness: pipeline created\n");
-    fflush(stdout);
-
-    printf("optix_harness: loading usd scene %s\n", options.inputPath.c_str());
-    fflush(stdout);
-
     ScenePool scenePool = {};
-    USDLoadOptions loadOptions = {};
-    loadOptions.purposes = options.purposes;
-    LoadUSDScene(&scenePool, options.inputPath, loadOptions);
-    if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
-    {
-        fprintf(
-            stderr, "Failed to load USD scene or invalid root: %s\n", options.inputPath.c_str());
-        return 1;
-    }
-
     ScenePool flattenedScenePool = {};
-    std::string flattenError;
-    if (!FlattenScenePoolToRootChildren(&scenePool, &flattenedScenePool, &flattenError))
-    {
-        fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
-        return 1;
-    }
-    if (flattenedScenePool.scenes.empty() ||
-        flattenedScenePool.rootSceneIndex >= flattenedScenePool.scenes.size())
-    {
-        fprintf(
-            stderr, "Flattened ScenePool invalid for USD scene: %s\n", options.inputPath.c_str());
-        return 1;
-    }
-    Scene *rootScene = flattenedScenePool.scenes[flattenedScenePool.rootSceneIndex].get();
-    YBI_ASSERT(rootScene);
-    if (!TessellateRootSubdivisionMeshes(rootScene, flattenedScenePool.camera))
-    {
-        return 1;
-    }
+    Scene *rootScene = nullptr;
 
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
     int materialTextureRefCount = 0;
     int materialTextureRefStride = kUdimSlotCount;
     int materialTextureRefSemanticCount = kMaterialSemanticCount;
     UploadedMaterialTextures uploadedMaterialTextures = {};
+    std::unordered_map<unsigned int, std::string> virtualTextureTileFiles = {};
+
+    std::vector<SceneMeshUploadRef> meshUploadRefs;
+    UploadedMeshRefs uploadedRefs = {};
+    DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
+
+    std::optional<RenderCameraOverride> usdCamera = std::nullopt;
+};
+
+static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, HarnessState *state)
+{
+    YBI_ASSERT(device);
+    YBI_ASSERT(state);
+
+    printf("optix_harness: loading usd scene %s\n", options.inputPath.c_str());
+    fflush(stdout);
+
+    USDLoadOptions loadOptions = {};
+    loadOptions.purposes = options.purposes;
+    LoadUSDScene(&state->scenePool, options.inputPath, loadOptions);
+    if (state->scenePool.scenes.empty() || state->scenePool.rootSceneIndex >= state->scenePool.scenes.size())
+    {
+        fprintf(stderr, "Failed to load USD scene or invalid root: %s\n", options.inputPath.c_str());
+        return false;
+    }
+
+    std::string flattenError;
+    if (!FlattenScenePoolToRootChildren(&state->scenePool, &state->flattenedScenePool, &flattenError))
+    {
+        fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
+        return false;
+    }
+    if (state->flattenedScenePool.scenes.empty() ||
+        state->flattenedScenePool.rootSceneIndex >= state->flattenedScenePool.scenes.size())
+    {
+        fprintf(stderr, "Flattened ScenePool invalid for USD scene: %s\n", options.inputPath.c_str());
+        return false;
+    }
+    state->rootScene = state->flattenedScenePool.scenes[state->flattenedScenePool.rootSceneIndex].get();
+    YBI_ASSERT(state->rootScene);
+    if (!TessellateRootSubdivisionMeshes(state->rootScene, state->flattenedScenePool.camera))
+    {
+        return false;
+    }
+
     std::vector<DecodedMaterialTexture> decodedTextures;
-    if (!DecodeImageTextures(scenePool.materials, &decodedTextures))
+    if (!DecodeImageTextures(state->scenePool.materials, &decodedTextures))
     {
         fprintf(stderr, "Image runtime decode failed.\n");
-        return 1;
+        return false;
     }
 
     if (options.useNtc)
@@ -1958,18 +1950,17 @@ int main(int argc, char **argv)
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
         std::vector<testbvh::DecodedMaterialTexture> ntcTextures;
         std::string ntcError;
-        if (testbvh::DecodeNtcDiffuseTextures(scenePool.materials, &ntcTextures, &ntcError))
+        if (testbvh::DecodeNtcDiffuseTextures(state->scenePool.materials, &ntcTextures, &ntcError))
         {
             int overrideCount = 0;
-            const size_t numMaterials = std::min(scenePool.materials.size(), ntcTextures.size());
+            const size_t numMaterials = std::min(state->scenePool.materials.size(), ntcTextures.size());
             for (size_t i = 0; i < numMaterials; ++i)
             {
                 if (!ntcTextures[i].valid)
                 {
                     continue;
                 }
-                const int slot =
-                    MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
+                const int slot = MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
                 YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < decodedTextures.size());
                 DecodedMaterialTexture &dst = decodedTextures[static_cast<size_t>(slot)];
                 dst.valid = true;
@@ -1978,8 +1969,8 @@ int main(int argc, char **argv)
                 dst.height = ntcTextures[i].height;
                 dst.rgba8 = std::move(ntcTextures[i].rgba8);
                 dst.sourcePath = ntcTextures[i].ntcPath;
-                const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
-                    scenePool.materials[i], MaterialTextureSemantic::Diffuse);
+                const MaterialTextureInput *diffuse =
+                    FindTextureInputBySemantic(state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
                 dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
                 dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
                 overrideCount++;
@@ -2019,15 +2010,14 @@ int main(int argc, char **argv)
     else
     {
         std::string textureUploadError;
-        if (!UploadDecodedTexturesToCuda(
-                decodedTextures, &uploadedMaterialTextures, &textureUploadError))
+        if (!UploadDecodedTexturesToCuda(decodedTextures, &state->uploadedMaterialTextures, &textureUploadError))
         {
             fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
-            return 1;
+            return false;
         }
-        for (size_t i = 0; i < uploadedMaterialTextures.refs.size(); ++i)
+        for (size_t i = 0; i < state->uploadedMaterialTextures.refs.size(); ++i)
         {
-            const LaunchParams::MaterialTextureRef &src = uploadedMaterialTextures.refs[i];
+            const LaunchParams::MaterialTextureRef &src = state->uploadedMaterialTextures.refs[i];
             launchRefs[i] = {src.textureObject,
                              src.width,
                              src.height,
@@ -2042,112 +2032,154 @@ int main(int argc, char **argv)
     if (!launchRefs.empty())
     {
         const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
-        materialTextureRefsBuffer = device.AllocBytes(refsBytes);
-        device.CopyBytesToDevice(materialTextureRefsBuffer, launchRefs.data(), refsBytes);
-        materialTextureRefCount = static_cast<int>(scenePool.materials.size());
+        state->materialTextureRefsBuffer = device->AllocBytes(refsBytes);
+        device->CopyBytesToDevice(state->materialTextureRefsBuffer, launchRefs.data(), refsBytes);
+        state->materialTextureRefCount = static_cast<int>(state->scenePool.materials.size());
     }
 
-    std::unordered_map<unsigned int, std::string> virtualTextureTileFiles = {};
     if (options.virtualTexture)
     {
         if (options.virtualTextureTilesDir.empty())
         {
-            std::fprintf(stderr,
-                         "virtual-texture: --vt-tiles-dir not set; tile loading disabled\n");
+            std::fprintf(stderr, "virtual-texture: --vt-tiles-dir not set; tile loading disabled\n");
         }
         else
         {
-            virtualTextureTileFiles = BuildVirtualTextureTileFileMap(
-                scenePool.materials, options.textureView, options.virtualTextureTilesDir);
+            state->virtualTextureTileFiles =
+                BuildVirtualTextureTileFileMap(
+                    state->scenePool.materials, options.textureView, options.virtualTextureTilesDir);
             std::printf("virtual-texture: mapped %zu material texture ids to tile bins from %s\n",
-                        virtualTextureTileFiles.size(),
+                        state->virtualTextureTileFiles.size(),
                         options.virtualTextureTilesDir.c_str());
         }
     }
 
-    std::vector<SceneMeshUploadRef> meshUploadRefs;
-    CollectScenePoolMeshUploadRefs(&flattenedScenePool, &meshUploadRefs);
-
-    for (const std::unique_ptr<Scene> &scenePtr : flattenedScenePool.scenes)
+    CollectScenePoolMeshUploadRefs(&state->flattenedScenePool, &state->meshUploadRefs);
+    for (const std::unique_ptr<Scene> &scenePtr : state->flattenedScenePool.scenes)
     {
         Scene *scene = scenePtr.get();
         YBI_ASSERT(scene);
-        device.BuildBVH(scene);
+        device->BuildBVH(scene);
     }
-    if (rootScene->bvhHandle == 0)
+    if (state->rootScene->bvhHandle == 0)
     {
         fprintf(stderr, "USD root scene BVH is invalid: %s\n", options.inputPath.c_str());
-        return 1;
+        return false;
     }
 
-    UploadedMeshRefs uploadedRefs = UploadScenePoolMeshRefs(&device, meshUploadRefs);
-
-    DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
-    if (!uploadedRefs.refs.empty())
+    state->uploadedRefs = UploadScenePoolMeshRefs(device, state->meshUploadRefs);
+    if (!state->uploadedRefs.refs.empty())
     {
-        const size_t refsBytes = uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
-        instanceGeomRefsBuffer = device.AllocBytes(refsBytes);
-        device.CopyBytesToDevice(instanceGeomRefsBuffer, uploadedRefs.refs.data(), refsBytes);
+        const size_t refsBytes = state->uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
+        state->instanceGeomRefsBuffer = device->AllocBytes(refsBytes);
+        device->CopyBytesToDevice(state->instanceGeomRefsBuffer, state->uploadedRefs.refs.data(), refsBytes);
     }
 
-    std::optional<RenderCameraOverride> usdCamera = std::nullopt;
     if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
     {
-        usdCamera = BuildUsdRenderCamera(flattenedScenePool.camera);
-        if (usdCamera.has_value())
-        {
-            printf("optix_harness: using usd camera viewport=%dx%d\n",
-                   usdCamera->width,
-                   usdCamera->height);
-        }
-        else
+        state->usdCamera = BuildUsdRenderCamera(state->flattenedScenePool.camera);
+        if (!state->usdCamera.has_value())
         {
             fprintf(stderr, "USD camera missing/invalid: %s\n", options.inputPath.c_str());
-            return 1;
+            return false;
         }
+        printf("optix_harness: using usd camera viewport=%dx%d\n",
+               state->usdCamera->width,
+               state->usdCamera->height);
         fflush(stdout);
     }
 
+    return true;
+}
+
+static bool RenderPhase(CUDADevice *device, const CliOptions &options, const HarnessState &state)
+{
+    YBI_ASSERT(device);
+    const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
+    printf("optix_harness: ptx loaded\n");
+    fflush(stdout);
+
+    if (!device->CreateOptixPrimaryPipeline(ptx))
+    {
+        fprintf(stderr, "Failed to create OptiX primary pipeline.\n");
+        return false;
+    }
+    printf("optix_harness: pipeline created\n");
+    fflush(stdout);
+
     const ybi::float3 dummyBoundsMin = ybi::make_float3(-1.0f, -1.0f, -1.0f);
     const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
-
-    RenderTraversable(&device,
-                      (OptixTraversableHandle)rootScene->bvhHandle,
+    RenderTraversable(device,
+                      (OptixTraversableHandle)state.rootScene->bvhHandle,
                       dummyBoundsMin,
                       dummyBoundsMax,
                       options.outputPath.c_str(),
                       options.integrator,
                       options.spp,
-                      (CUdeviceptr)instanceGeomRefsBuffer.data(),
-                      (int)uploadedRefs.refs.size(),
-                      (CUdeviceptr)materialTextureRefsBuffer.data(),
-                      materialTextureRefCount,
-                      materialTextureRefStride,
-                      materialTextureRefSemanticCount,
+                      (CUdeviceptr)state.instanceGeomRefsBuffer.data(),
+                      (int)state.uploadedRefs.refs.size(),
+                      (CUdeviceptr)state.materialTextureRefsBuffer.data(),
+                      state.materialTextureRefCount,
+                      state.materialTextureRefStride,
+                      state.materialTextureRefSemanticCount,
                       options.textureView,
                       options.virtualTexture,
-                      virtualTextureTileFiles,
-                      usdCamera,
+                      state.virtualTextureTileFiles,
+                      state.usdCamera,
                       options.cameraPosition,
                       options.lookAt);
     printf("Wrote %s\n", options.outputPath.c_str());
-    if (instanceGeomRefsBuffer.data())
-    {
-        device.FreeBytes(instanceGeomRefsBuffer);
-    }
-    if (materialTextureRefsBuffer.data())
-    {
-        device.FreeBytes(materialTextureRefsBuffer);
-    }
-    DestroyUploadedTextures(&uploadedMaterialTextures);
-    for (DeviceMemoryView<uint8_t> &buffer : uploadedRefs.ownedBuffers)
-    {
-        device.FreeBytes(buffer);
-    }
-    hostArena.Clear();
-    device.deviceArena->Clear();
+    return true;
+}
 
-    device.DestroyOptixPrimaryPipeline();
+static void DeinitPhase(CUDADevice *device, HostMemoryArena *hostArena, HarnessState *state)
+{
+    YBI_ASSERT(device);
+    YBI_ASSERT(hostArena);
+    YBI_ASSERT(state);
+
+    if (state->instanceGeomRefsBuffer.data())
+    {
+        device->FreeBytes(state->instanceGeomRefsBuffer);
+    }
+    if (state->materialTextureRefsBuffer.data())
+    {
+        device->FreeBytes(state->materialTextureRefsBuffer);
+    }
+    DestroyUploadedTextures(&state->uploadedMaterialTextures);
+    for (DeviceMemoryView<uint8_t> &buffer : state->uploadedRefs.ownedBuffers)
+    {
+        device->FreeBytes(buffer);
+    }
+    hostArena->Clear();
+    device->deviceArena->Clear();
+    device->DestroyOptixPrimaryPipeline();
+}
+
+int main(int argc, char **argv)
+{
+    printf("optix_harness: start\n");
+    fflush(stdout);
+    const CliOptions options = ParseCli(argc, argv);
+    printf("optix_harness: parsed cli\n");
+    fflush(stdout);
+
+    CUDADevice device;
+    printf("optix_harness: cuda device ready\n");
+    fflush(stdout);
+    HostMemoryArena hostArena;
+    HarnessState state = {};
+    const bool uploadOk = UploadScenePhase(&device, options, &state);
+    bool renderOk = false;
+    if (uploadOk)
+    {
+        renderOk = RenderPhase(&device, options, state);
+    }
+    DeinitPhase(&device, &hostArena, &state);
+    if (!uploadOk || !renderOk)
+    {
+        return 1;
+    }
     std::fflush(stdout);
     std::fflush(stderr);
     std::_Exit(0);
