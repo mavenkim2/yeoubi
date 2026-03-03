@@ -1616,10 +1616,6 @@ static void RenderTraversable(CUDADevice *device,
 
     if (virtualTexture)
     {
-        YBI_ASSERT(device->optixPrimaryPipeline.feedbackRaygenRecordBuffer != 0);
-        OptixShaderBindingTable feedbackSbt = device->optixPrimaryPipeline.sbt;
-        feedbackSbt.raygenRecord = device->optixPrimaryPipeline.feedbackRaygenRecordBuffer;
-
         params.integrator = 2;
         params.spp = 1;
         params.currentSpp = 0;
@@ -1628,16 +1624,19 @@ static void RenderTraversable(CUDADevice *device,
             device, paramsBuffer, &params, sizeof(LaunchParams));
         DeviceOps<CUDADevice>::CopyToDevice(
             device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
-        OPTIX_CHECK(optixLaunch(
-            device->optixPrimaryPipeline.pipeline,
-            0,
-            CUdeviceptr(paramsBuffer.data()),
-            sizeof(LaunchParams),
-            &feedbackSbt,
-            width,
-            height,
-            1));
-        DeviceOps<CUDADevice>::Synchronize(device);
+
+        DispatchParams dispatchParams = {};
+        dispatchParams.width = static_cast<uint32_t>(width);
+        dispatchParams.height = static_cast<uint32_t>(height);
+        dispatchParams.spp = static_cast<uint32_t>(params.spp);
+        dispatchParams.launchParamsDevice = reinterpret_cast<uint64_t>(paramsBuffer.data());
+        dispatchParams.launchParamsSize = sizeof(LaunchParams);
+        dispatchParams.outputRGBA8 = imageBuffer;
+        if (!device->DispatchKernel(RenderKernelId::PrimaryDiffuse, dispatchParams))
+        {
+            fprintf(stderr, "DispatchKernel failed for VT prepass.\n");
+            std::abort();
+        }
 
         DeviceOps<CUDADevice>::CopyToHost(
             device, feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes);
