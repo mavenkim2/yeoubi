@@ -105,6 +105,7 @@ struct CUDADevice : Device
     ClusterAccelerationStructureLimits GetClusterAccelerationStructureLimits() const;
     bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) override;
     void RegisterKernel(RenderKernelId kernel, KernelFn fn);
+    bool LaunchPrimaryKernel(const DispatchParams &params);
 
     bool CreateOptixPrimaryPipeline(const std::string &ptx);
     void DestroyOptixPrimaryPipeline();

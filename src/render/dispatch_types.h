@@ -25,6 +25,8 @@ struct DispatchParams
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t spp = 1;
+    uint64_t launchParamsDevice = 0;
+    uint64_t launchParamsSize = 0;
 
     DeviceMemoryView<uint8_t> outputRGBA8 = {};
     DeviceMemoryView<uint8_t> feedbackBytes = {};

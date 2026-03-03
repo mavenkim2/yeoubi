@@ -17,10 +17,7 @@ static size_t KernelIndex(RenderKernelId kernel)
 
 static bool CUDAPrimaryDiffuseStub(CUDADevice *device, const DispatchParams &params)
 {
-    (void)device;
-    (void)params;
-    fprintf(stderr, "CUDA primary diffuse kernel is not wired yet.\n");
-    return false;
+    return device->LaunchPrimaryKernel(params);
 }
 
 #if (OPTIX_VERSION >= 90000)
@@ -369,6 +366,38 @@ void CUDADevice::RegisterKernel(RenderKernelId kernel, KernelFn fn)
     const size_t idx = KernelIndex(kernel);
     YBI_ASSERT(idx < kernels.size());
     kernels[idx] = fn;
+}
+
+bool CUDADevice::LaunchPrimaryKernel(const DispatchParams &params)
+{
+    if (!optixPrimaryPipeline.pipeline)
+    {
+        fprintf(stderr, "LaunchPrimaryKernel failed: pipeline not initialized.\n");
+        return false;
+    }
+    if (params.launchParamsDevice == 0 || params.launchParamsSize == 0)
+    {
+        fprintf(stderr, "LaunchPrimaryKernel failed: launch params missing.\n");
+        return false;
+    }
+    if (params.width == 0 || params.height == 0)
+    {
+        fprintf(stderr, "LaunchPrimaryKernel failed: invalid launch dimensions.\n");
+        return false;
+    }
+
+    OptixShaderBindingTable sbt = optixPrimaryPipeline.sbt;
+    sbt.raygenRecord = optixPrimaryPipeline.raygenRecordBuffer;
+    OPTIX_ASSERT(optixLaunch(optixPrimaryPipeline.pipeline,
+                             0,
+                             static_cast<CUdeviceptr>(params.launchParamsDevice),
+                             static_cast<size_t>(params.launchParamsSize),
+                             &sbt,
+                             params.width,
+                             params.height,
+                             1));
+    CUDA_ASSERT(cuStreamSynchronize(0));
+    return true;
 }
 
 #endif
