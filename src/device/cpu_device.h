@@ -5,6 +5,7 @@
 #include "device/device.h"
 #include "util/assert.h"
 #include "util/base.h"
+#include <array>
 #include <cstddef>
 
 #if __has_include(<embree4/rtcore.h>)
@@ -21,9 +22,12 @@ struct Scene;
 
 struct CPUDevice : Device
 {
+    using KernelFn = bool (*)(CPUDevice *, const DispatchParams &);
+
     RTCDevice embreeDevice = nullptr;
     size_t totalAllocated = 0;
     size_t bvhTotalAllocated = 0;
+    std::array<KernelFn, 2> kernels = {};
 
     CPUDevice();
     ~CPUDevice() override;
@@ -40,6 +44,7 @@ struct CPUDevice : Device
     size_t GetBVHAllocatedBytes() const override;
     void BuildBVH(Scene *scene) override;
     bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) override;
+    void RegisterKernel(RenderKernelId kernel, KernelFn fn);
 };
 
 void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene);

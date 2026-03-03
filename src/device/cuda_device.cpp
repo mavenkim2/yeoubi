@@ -1,4 +1,5 @@
 #include "device/cuda_device.h"
+#include "render/dispatch_types.h"
 #include "cuda.h"
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,19 @@ YBI_NAMESPACE_BEGIN
 
 namespace
 {
+static size_t KernelIndex(RenderKernelId kernel)
+{
+    return static_cast<size_t>(kernel);
+}
+
+static bool CUDAPrimaryDiffuseStub(CUDADevice *device, const DispatchParams &params)
+{
+    (void)device;
+    (void)params;
+    fprintf(stderr, "CUDA primary diffuse kernel is not wired yet.\n");
+    return false;
+}
+
 #if (OPTIX_VERSION >= 90000)
 static bool QueryOptixUIntProperty(OptixDeviceContext context,
                                    OptixDeviceProperty property,
@@ -122,6 +136,8 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
     void *mem = util::AlignedAlloc(sizeof(CUDAMemoryArena), alignof(CUDAMemoryArena));
     YBI_ASSERT(mem != nullptr);
     deviceArena.reset(new (mem) CUDAMemoryArena());
+
+    RegisterKernel(RenderKernelId::PrimaryDiffuse, CUDAPrimaryDiffuseStub);
 }
 
 CUDADevice::~CUDADevice()
@@ -339,10 +355,20 @@ void CUDADevice::CreateGridClusterTemplates()
 
 bool CUDADevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &params)
 {
-    (void)kernel;
-    (void)params;
-    fprintf(stderr, "CUDADevice::DispatchKernel is not wired yet.\n");
-    return false;
+    const size_t idx = KernelIndex(kernel);
+    if (idx >= kernels.size() || kernels[idx] == nullptr)
+    {
+        fprintf(stderr, "CUDADevice::DispatchKernel missing kernel %zu.\n", idx);
+        return false;
+    }
+    return kernels[idx](this, params);
+}
+
+void CUDADevice::RegisterKernel(RenderKernelId kernel, KernelFn fn)
+{
+    const size_t idx = KernelIndex(kernel);
+    YBI_ASSERT(idx < kernels.size());
+    kernels[idx] = fn;
 }
 
 #endif

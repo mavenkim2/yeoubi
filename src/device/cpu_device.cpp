@@ -1,4 +1,5 @@
 #include "device/cpu_device.h"
+#include "render/dispatch_types.h"
 
 #if defined(WITH_EMBREE)
 
@@ -10,6 +11,22 @@
 
 YBI_NAMESPACE_BEGIN
 
+namespace
+{
+static size_t KernelIndex(RenderKernelId kernel)
+{
+    return static_cast<size_t>(kernel);
+}
+
+static bool CPUPrimaryDiffuseStub(CPUDevice *device, const DispatchParams &params)
+{
+    (void)device;
+    (void)params;
+    fprintf(stderr, "CPU primary diffuse kernel is not wired yet.\n");
+    return false;
+}
+} // namespace
+
 CPUDevice::CPUDevice()
 {
     embreeDevice = rtcNewDevice(nullptr);
@@ -18,6 +35,7 @@ CPUDevice::CPUDevice()
         fprintf(stderr, "Embree init failed: rtcNewDevice returned null.\n");
         std::abort();
     }
+    RegisterKernel(RenderKernelId::PrimaryDiffuse, CPUPrimaryDiffuseStub);
 }
 
 CPUDevice::~CPUDevice()
@@ -87,10 +105,20 @@ void CPUDevice::BuildBVH(Scene *scene)
 
 bool CPUDevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &params)
 {
-    (void)kernel;
-    (void)params;
-    fprintf(stderr, "CPUDevice::DispatchKernel is not wired yet.\n");
-    return false;
+    const size_t idx = KernelIndex(kernel);
+    if (idx >= kernels.size() || kernels[idx] == nullptr)
+    {
+        fprintf(stderr, "CPUDevice::DispatchKernel missing kernel %zu.\n", idx);
+        return false;
+    }
+    return kernels[idx](this, params);
+}
+
+void CPUDevice::RegisterKernel(RenderKernelId kernel, KernelFn fn)
+{
+    const size_t idx = KernelIndex(kernel);
+    YBI_ASSERT(idx < kernels.size());
+    kernels[idx] = fn;
 }
 
 YBI_NAMESPACE_END

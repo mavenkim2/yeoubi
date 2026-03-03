@@ -15,6 +15,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
+#include <array>
 #include <memory>
 #include <optix_stubs.h>
 #include <optix_types.h>
@@ -63,6 +64,8 @@ struct CUDAMemoryArenaDeleter
 
 struct CUDADevice : Device
 {
+    using KernelFn = bool (*)(CUDADevice *, const DispatchParams &);
+
     CUdevice device;
     CUcontext cudaContext;
     OptixDeviceContext optixDeviceContext;
@@ -77,6 +80,7 @@ struct CUDADevice : Device
 #endif
 
     OptixPrimaryPipelineState optixPrimaryPipeline;
+    std::array<KernelFn, 2> kernels = {};
 
     CUDADevice();
     ~CUDADevice();
@@ -100,6 +104,7 @@ struct CUDADevice : Device
     bool SupportsClusterAccel() const;
     ClusterAccelerationStructureLimits GetClusterAccelerationStructureLimits() const;
     bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) override;
+    void RegisterKernel(RenderKernelId kernel, KernelFn fn);
 
     bool CreateOptixPrimaryPipeline(const std::string &ptx);
     void DestroyOptixPrimaryPipeline();
