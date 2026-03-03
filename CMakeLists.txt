@@ -182,6 +182,9 @@ if (MESHOPTIMIZER_FOUND)
     list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${MESHOPTIMIZER_INCLUDE_DIR})
 endif()
 
+add_executable(yeoubi_render
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmd/render/main.cpp)
+
 if (WITH_EMBREE)
     find_package(Embree MODULE)
     if (EMBREE_FOUND)
