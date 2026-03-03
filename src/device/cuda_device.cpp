@@ -10,21 +10,6 @@ YBI_NAMESPACE_BEGIN
 
 namespace
 {
-static size_t KernelIndex(RenderKernelId kernel)
-{
-    return static_cast<size_t>(kernel);
-}
-
-static bool CUDAPrimaryDiffuseStub(CUDADevice *device, const DispatchParams &params)
-{
-    return device->LaunchPrimaryKernel(params);
-}
-
-static bool CUDAAOStub(CUDADevice *device, const DispatchParams &params)
-{
-    return device->LaunchPrimaryKernel(params);
-}
-
 #if (OPTIX_VERSION >= 90000)
 static bool QueryOptixUIntProperty(OptixDeviceContext context,
                                    OptixDeviceProperty property,
@@ -138,9 +123,6 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
     void *mem = util::AlignedAlloc(sizeof(CUDAMemoryArena), alignof(CUDAMemoryArena));
     YBI_ASSERT(mem != nullptr);
     deviceArena.reset(new (mem) CUDAMemoryArena());
-
-    RegisterKernel(RenderKernelId::PrimaryDiffuse, CUDAPrimaryDiffuseStub);
-    RegisterKernel(RenderKernelId::AO, CUDAAOStub);
 }
 
 CUDADevice::~CUDADevice()
@@ -358,43 +340,39 @@ void CUDADevice::CreateGridClusterTemplates()
 
 bool CUDADevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &params)
 {
-    const size_t idx = KernelIndex(kernel);
-    if (idx >= kernels.size() || kernels[idx] == nullptr)
-    {
-        fprintf(stderr, "CUDADevice::DispatchKernel missing kernel %zu.\n", idx);
-        return false;
-    }
-    return kernels[idx](this, params);
-}
-
-void CUDADevice::RegisterKernel(RenderKernelId kernel, KernelFn fn)
-{
-    const size_t idx = KernelIndex(kernel);
-    YBI_ASSERT(idx < kernels.size());
-    kernels[idx] = fn;
-}
-
-bool CUDADevice::LaunchPrimaryKernel(const DispatchParams &params)
-{
     if (!optixPrimaryPipeline.pipeline)
     {
-        fprintf(stderr, "LaunchPrimaryKernel failed: pipeline not initialized.\n");
+        fprintf(stderr, "DispatchKernel failed: pipeline not initialized.\n");
         return false;
     }
     if (params.launchParamsDevice == 0 || params.launchParamsSize == 0)
     {
-        fprintf(stderr, "LaunchPrimaryKernel failed: launch params missing.\n");
+        fprintf(stderr, "DispatchKernel failed: launch params missing.\n");
         return false;
     }
     if (params.width == 0 || params.height == 0)
     {
-        fprintf(stderr, "LaunchPrimaryKernel failed: invalid launch dimensions.\n");
+        fprintf(stderr, "DispatchKernel failed: invalid launch dimensions.\n");
         return false;
     }
 
+    OptixPipeline optixPipeline = nullptr;
     OptixShaderBindingTable sbt = optixPrimaryPipeline.sbt;
-    sbt.raygenRecord = optixPrimaryPipeline.raygenRecordBuffer;
-    OPTIX_ASSERT(optixLaunch(optixPrimaryPipeline.pipeline,
+
+    switch (kernel)
+    {
+        case RenderKernelId::PrimaryDiffuse:
+        case RenderKernelId::AO:
+            optixPipeline = optixPrimaryPipeline.pipeline;
+            sbt.raygenRecord = optixPrimaryPipeline.raygenRecordBuffer;
+            break;
+        default:
+            fprintf(stderr, "DispatchKernel failed: unsupported kernel id.\n");
+            return false;
+    }
+
+    YBI_ASSERT(optixPipeline != nullptr);
+    OPTIX_ASSERT(optixLaunch(optixPipeline,
                              0,
                              static_cast<CUdeviceptr>(params.launchParamsDevice),
                              static_cast<size_t>(params.launchParamsSize),
