@@ -300,6 +300,43 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_include_directories(yeoubi_optix_harness PRIVATE ${NTC_INCLUDE_DIRS})
         target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})
     endif()
+
+    add_executable(yeoubi_optix_template_harness
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix_template_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture_tile_file.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/subdivision.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/edge_map_validation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
+    if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
+        target_sources(yeoubi_optix_template_harness PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
+    endif()
+    add_dependencies(yeoubi_optix_template_harness yeoubi_optix_primary_programs_ptx)
+
+    target_compile_definitions(yeoubi_optix_template_harness PRIVATE
+        ${YBI_COMPILE_DEFINITIONS}
+        YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_PATH}")
+    target_include_directories(yeoubi_optix_template_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_optix_template_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_optix_template_harness PRIVATE ${YBI_DEPENDENCIES})
+
+    if (WITH_NTC)
+        target_sources(yeoubi_optix_template_harness PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp)
+        target_compile_definitions(yeoubi_optix_template_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
+        target_include_directories(yeoubi_optix_template_harness PRIVATE ${NTC_INCLUDE_DIRS})
+        target_link_libraries(yeoubi_optix_template_harness PRIVATE ${NTC_LIBRARIES})
+    endif()
 endif()
 
 if (WITH_USD AND WITH_EMBREE AND EMBREE_FOUND)
