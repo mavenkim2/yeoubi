@@ -20,6 +20,11 @@ static bool CUDAPrimaryDiffuseStub(CUDADevice *device, const DispatchParams &par
     return device->LaunchPrimaryKernel(params);
 }
 
+static bool CUDAAOStub(CUDADevice *device, const DispatchParams &params)
+{
+    return device->LaunchPrimaryKernel(params);
+}
+
 #if (OPTIX_VERSION >= 90000)
 static bool QueryOptixUIntProperty(OptixDeviceContext context,
                                    OptixDeviceProperty property,
@@ -135,6 +140,7 @@ CUDADevice::CUDADevice() : totalAllocated(0), bvhTotalAllocated(0)
     deviceArena.reset(new (mem) CUDAMemoryArena());
 
     RegisterKernel(RenderKernelId::PrimaryDiffuse, CUDAPrimaryDiffuseStub);
+    RegisterKernel(RenderKernelId::AO, CUDAAOStub);
 }
 
 CUDADevice::~CUDADevice()
