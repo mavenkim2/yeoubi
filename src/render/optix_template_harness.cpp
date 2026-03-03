@@ -1,5 +1,6 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
+#include "render/dispatch_types.h"
 #include "scene/scene.h"
 #include "tessellation/subdivision.h"
 #include "texture/exr_io.h"
@@ -1442,11 +1443,7 @@ UploadScenePoolMeshRefs(CUDADevice *device, const std::vector<SceneMeshUploadRef
     return out;
 }
 
-template <typename DeviceT>
-static void RenderTraversable(DeviceT *device,
-                              OptixPipeline pipeline,
-                              const OptixShaderBindingTable &sbt,
-                              CUdeviceptr feedbackRaygenRecordBuffer,
+static void RenderTraversable(CUDADevice *device,
                               OptixTraversableHandle traversable,
                               const ybi::float3 &boundsMin,
                               const ybi::float3 &boundsMax,
@@ -1472,7 +1469,7 @@ static void RenderTraversable(DeviceT *device,
     const int width = cameraOverride.has_value() ? cameraOverride->width : 1280;
     const int height = cameraOverride.has_value() ? cameraOverride->height : 720;
     const size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-    DeviceMemoryView<uint8_t> imageBuffer = DeviceOps<DeviceT>::Alloc(device, imageSize);
+    DeviceMemoryView<uint8_t> imageBuffer = DeviceOps<CUDADevice>::Alloc(device, imageSize);
     printf("render: image buffer allocated\n");
     fflush(stdout);
 
@@ -1481,8 +1478,10 @@ static void RenderTraversable(DeviceT *device,
     const size_t feedbackKeysBytes =
         static_cast<size_t>(feedbackCapacity) * sizeof(unsigned long long);
     const size_t feedbackStatsBytes = 2u * sizeof(unsigned int);
-    DeviceMemoryView<uint8_t> feedbackKeysBuffer = DeviceOps<DeviceT>::Alloc(device, feedbackKeysBytes);
-    DeviceMemoryView<uint8_t> feedbackStatsBuffer = DeviceOps<DeviceT>::Alloc(device, feedbackStatsBytes);
+    DeviceMemoryView<uint8_t> feedbackKeysBuffer =
+        DeviceOps<CUDADevice>::Alloc(device, feedbackKeysBytes);
+    DeviceMemoryView<uint8_t> feedbackStatsBuffer =
+        DeviceOps<CUDADevice>::Alloc(device, feedbackStatsBytes);
     DeviceMemoryView<uint8_t> virtualTextureTileEntriesBuffer = {};
     DeviceMemoryView<uint8_t> virtualTextureTilePixelsBuffer = {};
 
@@ -1560,7 +1559,8 @@ static void RenderTraversable(DeviceT *device,
     params.virtualTextureTileEntryCapacity = 0;
     params.virtualTextureEnabled = virtualTexture ? 1 : 0;
 
-    DeviceMemoryView<uint8_t> paramsBuffer = DeviceOps<DeviceT>::Alloc(device, sizeof(LaunchParams));
+    DeviceMemoryView<uint8_t> paramsBuffer =
+        DeviceOps<CUDADevice>::Alloc(device, sizeof(LaunchParams));
     printf("render: params buffer allocated\n");
     fflush(stdout);
 
@@ -1616,20 +1616,20 @@ static void RenderTraversable(DeviceT *device,
 
     if (virtualTexture)
     {
-        YBI_ASSERT(feedbackRaygenRecordBuffer != 0);
-        OptixShaderBindingTable feedbackSbt = sbt;
-        feedbackSbt.raygenRecord = feedbackRaygenRecordBuffer;
+        YBI_ASSERT(device->optixPrimaryPipeline.feedbackRaygenRecordBuffer != 0);
+        OptixShaderBindingTable feedbackSbt = device->optixPrimaryPipeline.sbt;
+        feedbackSbt.raygenRecord = device->optixPrimaryPipeline.feedbackRaygenRecordBuffer;
 
         params.integrator = 2;
         params.spp = 1;
         params.currentSpp = 0;
         params.feedbackSamplePercent = 100;
-        DeviceOps<DeviceT>::CopyToDevice(
+        DeviceOps<CUDADevice>::CopyToDevice(
             device, paramsBuffer, &params, sizeof(LaunchParams));
-        DeviceOps<DeviceT>::CopyToDevice(
+        DeviceOps<CUDADevice>::CopyToDevice(
             device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
         OPTIX_CHECK(optixLaunch(
-            pipeline,
+            device->optixPrimaryPipeline.pipeline,
             0,
             CUdeviceptr(paramsBuffer.data()),
             sizeof(LaunchParams),
@@ -1637,19 +1637,20 @@ static void RenderTraversable(DeviceT *device,
             width,
             height,
             1));
-        DeviceOps<DeviceT>::Synchronize(device);
+        DeviceOps<CUDADevice>::Synchronize(device);
 
-        DeviceOps<DeviceT>::CopyToHost(
+        DeviceOps<CUDADevice>::CopyToHost(
             device, feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes);
         const unsigned int sampledCount = feedbackStatsHost[0];
         const unsigned int overflowCount = feedbackStatsHost[1];
         const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
         if (copyCount > 0)
         {
-            DeviceOps<DeviceT>::CopyToHost(device,
-                                           feedbackKeysHost.data(),
-                                           feedbackKeysBuffer,
-                                           size_t(copyCount) * sizeof(unsigned long long));
+            DeviceOps<CUDADevice>::CopyToHost(
+                device,
+                feedbackKeysHost.data(),
+                feedbackKeysBuffer,
+                size_t(copyCount) * sizeof(unsigned long long));
         }
         const std::vector<std::pair<unsigned long long, unsigned int>> histogram =
             WriteFeedbackFile("prepass.txt", -1, sampledCount, copyCount, overflowCount);
@@ -1760,11 +1761,11 @@ static void RenderTraversable(DeviceT *device,
             const size_t entriesBytes = virtualTextureEntriesHost.size() *
                                         sizeof(LaunchParams::VirtualTextureTileEntry);
             const size_t pixelsBytes = virtualTexturePixelsHost.size();
-            virtualTextureTileEntriesBuffer = DeviceOps<DeviceT>::Alloc(device, entriesBytes);
-            virtualTextureTilePixelsBuffer = DeviceOps<DeviceT>::Alloc(device, pixelsBytes);
-            DeviceOps<DeviceT>::CopyToDevice(
+            virtualTextureTileEntriesBuffer = DeviceOps<CUDADevice>::Alloc(device, entriesBytes);
+            virtualTextureTilePixelsBuffer = DeviceOps<CUDADevice>::Alloc(device, pixelsBytes);
+            DeviceOps<CUDADevice>::CopyToDevice(
                 device, virtualTextureTileEntriesBuffer, virtualTextureEntriesHost.data(), entriesBytes);
-            DeviceOps<DeviceT>::CopyToDevice(
+            DeviceOps<CUDADevice>::CopyToDevice(
                 device, virtualTextureTilePixelsBuffer, virtualTexturePixelsHost.data(), pixelsBytes);
             params.virtualTextureTileEntries =
                 reinterpret_cast<unsigned long long>(virtualTextureTileEntriesBuffer.data());
@@ -1793,17 +1794,28 @@ static void RenderTraversable(DeviceT *device,
     {
         params.spp = integrator == IntegratorType::AO ? 1 : 1;
         params.currentSpp = sppIndex;
-        DeviceOps<DeviceT>::CopyToDevice(
+        DeviceOps<CUDADevice>::CopyToDevice(
             device, paramsBuffer, &params, sizeof(LaunchParams));
-        DeviceOps<DeviceT>::CopyToDevice(
+        DeviceOps<CUDADevice>::CopyToDevice(
             device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
-        OPTIX_CHECK(
-            optixLaunch(
-                pipeline, 0, CUdeviceptr(paramsBuffer.data()), sizeof(LaunchParams), &sbt, width, height, 1));
-        DeviceOps<DeviceT>::Synchronize(device);
+        DispatchParams dispatchParams = {};
+        dispatchParams.width = static_cast<uint32_t>(width);
+        dispatchParams.height = static_cast<uint32_t>(height);
+        dispatchParams.spp = static_cast<uint32_t>(params.spp);
+        dispatchParams.launchParamsDevice = reinterpret_cast<uint64_t>(paramsBuffer.data());
+        dispatchParams.launchParamsSize = sizeof(LaunchParams);
+        dispatchParams.outputRGBA8 = imageBuffer;
 
-        DeviceOps<DeviceT>::CopyToHost(device, hostPassImage.data(), imageBuffer, imageSize);
+        const RenderKernelId kernelId = integrator == IntegratorType::AO ? RenderKernelId::AO
+                                                                          : RenderKernelId::PrimaryDiffuse;
+        if (!device->DispatchKernel(kernelId, dispatchParams))
+        {
+            fprintf(stderr, "DispatchKernel failed.\n");
+            std::abort();
+        }
+
+        DeviceOps<CUDADevice>::CopyToHost(device, hostPassImage.data(), imageBuffer, imageSize);
         const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
         for (size_t i = 0; i < pixelCount; ++i)
         {
@@ -1812,17 +1824,18 @@ static void RenderTraversable(DeviceT *device,
             accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
         }
 
-        DeviceOps<DeviceT>::CopyToHost(
+        DeviceOps<CUDADevice>::CopyToHost(
             device, feedbackStatsHost, feedbackStatsBuffer, feedbackStatsBytes);
         const unsigned int sampledCount = feedbackStatsHost[0];
         const unsigned int overflowCount = feedbackStatsHost[1];
         const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
         if (copyCount > 0)
         {
-            DeviceOps<DeviceT>::CopyToHost(device,
-                                           feedbackKeysHost.data(),
-                                           feedbackKeysBuffer,
-                                           size_t(copyCount) * sizeof(unsigned long long));
+            DeviceOps<CUDADevice>::CopyToHost(
+                device,
+                feedbackKeysHost.data(),
+                feedbackKeysBuffer,
+                size_t(copyCount) * sizeof(unsigned long long));
         }
 
         char feedbackFileName[256];
@@ -1853,18 +1866,18 @@ static void RenderTraversable(DeviceT *device,
         fprintf(stderr, "Failed to write PNG: %s\n", outputFile);
     }
 
-    DeviceOps<DeviceT>::Free(device, paramsBuffer);
+    DeviceOps<CUDADevice>::Free(device, paramsBuffer);
     if (virtualTextureTilePixelsBuffer.data() != nullptr)
     {
-        DeviceOps<DeviceT>::Free(device, virtualTextureTilePixelsBuffer);
+        DeviceOps<CUDADevice>::Free(device, virtualTextureTilePixelsBuffer);
     }
     if (virtualTextureTileEntriesBuffer.data() != nullptr)
     {
-        DeviceOps<DeviceT>::Free(device, virtualTextureTileEntriesBuffer);
+        DeviceOps<CUDADevice>::Free(device, virtualTextureTileEntriesBuffer);
     }
-    DeviceOps<DeviceT>::Free(device, feedbackStatsBuffer);
-    DeviceOps<DeviceT>::Free(device, feedbackKeysBuffer);
-    DeviceOps<DeviceT>::Free(device, imageBuffer);
+    DeviceOps<CUDADevice>::Free(device, feedbackStatsBuffer);
+    DeviceOps<CUDADevice>::Free(device, feedbackKeysBuffer);
+    DeviceOps<CUDADevice>::Free(device, imageBuffer);
     printf("render: end\n");
     fflush(stdout);
 }
@@ -1891,8 +1904,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "Failed to create OptiX primary pipeline.\n");
         return 1;
     }
-    const OptixPipeline pipeline = device.optixPrimaryPipeline.pipeline;
-    const OptixShaderBindingTable &sbt = device.optixPrimaryPipeline.sbt;
     printf("optix_harness: pipeline created\n");
     fflush(stdout);
 
@@ -2102,9 +2113,6 @@ int main(int argc, char **argv)
     const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
 
     RenderTraversable(&device,
-                      pipeline,
-                      sbt,
-                      device.optixPrimaryPipeline.feedbackRaygenRecordBuffer,
                       (OptixTraversableHandle)rootScene->bvhHandle,
                       dummyBoundsMin,
                       dummyBoundsMax,
