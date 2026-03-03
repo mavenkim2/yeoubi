@@ -102,6 +102,81 @@ void CPUDevice::CopyBytesToHost(void *dst,
     std::memcpy(dst, src.data(), numBytes);
 }
 
+bool CPUDevice::CreateTexture(const DeviceTextureCreateInfo &info,
+                              DeviceTexture *outTexture,
+                              std::string *outError)
+{
+    if (!outTexture)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: outTexture is null";
+        }
+        return false;
+    }
+    *outTexture = {};
+
+    if (info.format != DeviceTextureFormat::RGBA8_UNORM)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: unsupported format";
+        }
+        return false;
+    }
+    if (info.pixels == nullptr || info.width == 0 || info.height == 0)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: invalid texture input";
+        }
+        return false;
+    }
+
+    const size_t expectedBytes = size_t(info.width) * size_t(info.height) * 4u;
+    if (info.pixelBytes < expectedBytes)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: pixelBytes too small";
+        }
+        return false;
+    }
+
+    constexpr size_t kTextureAlignment = 64;
+    void *storage = util::AlignedAlloc(expectedBytes, kTextureAlignment);
+    if (!storage)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: allocation failed";
+        }
+        return false;
+    }
+
+    std::memcpy(storage, info.pixels, expectedBytes);
+
+    outTexture->handle = reinterpret_cast<uint64_t>(storage);
+    outTexture->allocation = reinterpret_cast<uint64_t>(storage);
+    outTexture->width = info.width;
+    outTexture->height = info.height;
+    outTexture->wrapS = info.wrapS;
+    outTexture->wrapT = info.wrapT;
+    outTexture->filter = info.filter;
+    outTexture->format = info.format;
+    outTexture->valid = true;
+    return true;
+}
+
+void CPUDevice::DestroyTexture(DeviceTexture &texture)
+{
+    if (texture.allocation != 0)
+    {
+        util::AlignedFree(reinterpret_cast<void *>(texture.allocation));
+    }
+    texture = {};
+}
+
 size_t CPUDevice::GetBVHAllocatedBytes() const
 {
     return bvhTotalAllocated;

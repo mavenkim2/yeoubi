@@ -79,25 +79,19 @@ struct DeviceOps
         device->FreeBytes(view);
     }
 
-    static void CopyToDevice(DeviceT *device,
-                             DeviceMemoryView<uint8_t> dst,
-                             const void *src,
-                             size_t numBytes)
+    static void
+    CopyToDevice(DeviceT *device, DeviceMemoryView<uint8_t> dst, const void *src, size_t numBytes)
     {
         device->CopyBytesToDevice(dst, src, numBytes);
     }
 
-    static void CopyToHost(DeviceT *device,
-                           void *dst,
-                           DeviceMemoryView<uint8_t> src,
-                           size_t numBytes)
+    static void
+    CopyToHost(DeviceT *device, void *dst, DeviceMemoryView<uint8_t> src, size_t numBytes)
     {
         device->CopyBytesToHost(dst, {(const uint8_t *)src.data(), src.size()}, numBytes);
     }
 
-    static void Synchronize(DeviceT *)
-    {
-    }
+    static void Synchronize(DeviceT *) {}
 };
 
 template <>
@@ -121,10 +115,8 @@ struct DeviceOps<CUDADevice>
         device->CopyBytesToDevice(dst, src, numBytes);
     }
 
-    static void CopyToHost(CUDADevice *device,
-                           void *dst,
-                           DeviceMemoryView<uint8_t> src,
-                           size_t numBytes)
+    static void
+    CopyToHost(CUDADevice *device, void *dst, DeviceMemoryView<uint8_t> src, size_t numBytes)
     {
         device->CopyBytesToHost(dst, {(const uint8_t *)src.data(), src.size()}, numBytes);
     }
@@ -809,8 +801,7 @@ struct DecodedMaterialTexture
 struct UploadedMaterialTextures
 {
     std::vector<LaunchParams::MaterialTextureRef> refs;
-    std::vector<cudaArray_t> arrays;
-    std::vector<cudaTextureObject_t> textureObjects;
+    std::vector<DeviceTexture> textures;
 };
 
 static constexpr uint32_t kUdimMin = 1001u;
@@ -832,39 +823,6 @@ MaterialTextureSlotIndex(size_t materialIndex, MaterialTextureSemantic semantic,
     return (static_cast<int>(materialIndex) * kMaterialSemanticCount + semanticIndex) *
                kUdimSlotCount +
            udimSlot;
-}
-
-static bool CheckCudaRuntime(cudaError_t result, std::string *outError, const char *callName)
-{
-    if (result == cudaSuccess)
-    {
-        return true;
-    }
-    if (outError)
-    {
-        *outError = std::string(callName) + " failed: " + cudaGetErrorString(result);
-    }
-    return false;
-}
-
-static cudaTextureAddressMode ToCudaAddressMode(TextureWrapMode mode)
-{
-    switch (mode)
-    {
-        case TEXTURE_WRAP_MODE_CLAMP:
-            return cudaAddressModeClamp;
-        case TEXTURE_WRAP_MODE_MIRROR:
-            return cudaAddressModeMirror;
-        case TEXTURE_WRAP_MODE_BLACK:
-            return cudaAddressModeBorder;
-        case TEXTURE_WRAP_MODE_REPEAT:
-            return cudaAddressModeWrap;
-        case TEXTURE_WRAP_MODE_USE_METADATA:
-            return cudaAddressModeWrap;
-        case TEXTURE_WRAP_MODE_UNKNOWN:
-            return cudaAddressModeWrap;
-    }
-    return cudaAddressModeWrap;
 }
 
 static const MaterialTextureInput *FindTextureInputBySemantic(const MaterialInfo &material,
@@ -1061,27 +1019,38 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
     return true;
 }
 
-static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &decodedTextures,
-                                        UploadedMaterialTextures *outTextures,
-                                        std::string *outError)
+static DeviceTextureWrapMode ToDeviceTextureWrapMode(const ybi::TextureWrapMode mode)
 {
+    switch (mode)
+    {
+        case TEXTURE_WRAP_MODE_REPEAT:
+            return DeviceTextureWrapMode::Repeat;
+        case TEXTURE_WRAP_MODE_CLAMP:
+            return DeviceTextureWrapMode::Clamp;
+        case TEXTURE_WRAP_MODE_MIRROR:
+            return DeviceTextureWrapMode::Mirror;
+        case TEXTURE_WRAP_MODE_BLACK:
+            return DeviceTextureWrapMode::Black;
+        case TEXTURE_WRAP_MODE_USE_METADATA:
+            return DeviceTextureWrapMode::UseMetadata;
+        case TEXTURE_WRAP_MODE_UNKNOWN:
+        default:
+            return DeviceTextureWrapMode::Unknown;
+    }
+}
+
+static bool UploadDecodedTextures(Device *device,
+                                  const std::vector<DecodedMaterialTexture> &decodedTextures,
+                                  UploadedMaterialTextures *outTextures,
+                                  std::string *outError)
+{
+    YBI_ASSERT(device);
     YBI_ASSERT(outTextures);
-    for (cudaTextureObject_t textureObject : outTextures->textureObjects)
+    for (DeviceTexture &texture : outTextures->textures)
     {
-        if (textureObject)
-        {
-            cudaDestroyTextureObject(textureObject);
-        }
+        device->DestroyTexture(texture);
     }
-    for (cudaArray_t array : outTextures->arrays)
-    {
-        if (array)
-        {
-            cudaFreeArray(array);
-        }
-    }
-    outTextures->arrays.clear();
-    outTextures->textureObjects.clear();
+    outTextures->textures.clear();
     outTextures->refs.clear();
     outTextures->refs.resize(decodedTextures.size());
 
@@ -1093,55 +1062,24 @@ static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture
             continue;
         }
 
-        cudaChannelFormatDesc channelDesc =
-            cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
-        cudaArray_t array = nullptr;
-        if (!CheckCudaRuntime(cudaMallocArray(&array, &channelDesc, src.width, src.height),
-                              outError,
-                              "cudaMallocArray"))
+        DeviceTextureCreateInfo createInfo = {};
+        createInfo.pixels = src.rgba8.data();
+        createInfo.pixelBytes = src.rgba8.size();
+        createInfo.width = static_cast<uint32_t>(src.width);
+        createInfo.height = static_cast<uint32_t>(src.height);
+        createInfo.wrapS = ToDeviceTextureWrapMode(src.wrapS);
+        createInfo.wrapT = ToDeviceTextureWrapMode(src.wrapT);
+        createInfo.filter = DeviceTextureFilterMode::Nearest;
+        createInfo.format = DeviceTextureFormat::RGBA8_UNORM;
+
+        DeviceTexture texture = {};
+        if (!device->CreateTexture(createInfo, &texture, outError))
         {
             return false;
         }
 
-        if (!CheckCudaRuntime(cudaMemcpy2DToArray(array,
-                                                  0,
-                                                  0,
-                                                  src.rgba8.data(),
-                                                  static_cast<size_t>(src.width) * 4u,
-                                                  static_cast<size_t>(src.width) * 4u,
-                                                  src.height,
-                                                  cudaMemcpyHostToDevice),
-                              outError,
-                              "cudaMemcpy2DToArray"))
-        {
-            cudaFreeArray(array);
-            return false;
-        }
-
-        cudaResourceDesc resourceDesc = {};
-        resourceDesc.resType = cudaResourceTypeArray;
-        resourceDesc.res.array.array = array;
-
-        cudaTextureDesc textureDesc = {};
-        textureDesc.addressMode[0] = ToCudaAddressMode(src.wrapS);
-        textureDesc.addressMode[1] = ToCudaAddressMode(src.wrapT);
-        textureDesc.filterMode = cudaFilterModePoint;
-        textureDesc.readMode = cudaReadModeNormalizedFloat;
-        textureDesc.normalizedCoords = 1;
-
-        cudaTextureObject_t textureObject = 0;
-        if (!CheckCudaRuntime(
-                cudaCreateTextureObject(&textureObject, &resourceDesc, &textureDesc, nullptr),
-                outError,
-                "cudaCreateTextureObject"))
-        {
-            cudaFreeArray(array);
-            return false;
-        }
-
-        outTextures->arrays.push_back(array);
-        outTextures->textureObjects.push_back(textureObject);
-        outTextures->refs[i].textureObject = static_cast<unsigned long long>(textureObject);
+        outTextures->textures.push_back(texture);
+        outTextures->refs[i].textureObject = texture.handle;
         outTextures->refs[i].width = src.width;
         outTextures->refs[i].height = src.height;
         outTextures->refs[i].valid = 1;
@@ -1154,28 +1092,18 @@ static bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture
     return true;
 }
 
-static void DestroyUploadedTextures(UploadedMaterialTextures *textures)
+static void DestroyUploadedTextures(Device *device, UploadedMaterialTextures *textures)
 {
+    YBI_ASSERT(device);
     if (!textures)
     {
         return;
     }
-    for (cudaTextureObject_t textureObject : textures->textureObjects)
+    for (DeviceTexture &texture : textures->textures)
     {
-        if (textureObject)
-        {
-            cudaDestroyTextureObject(textureObject);
-        }
+        device->DestroyTexture(texture);
     }
-    for (cudaArray_t array : textures->arrays)
-    {
-        if (array)
-        {
-            cudaFreeArray(array);
-        }
-    }
-    textures->textureObjects.clear();
-    textures->arrays.clear();
+    textures->textures.clear();
     textures->refs.clear();
 }
 
@@ -1251,13 +1179,13 @@ BuildVirtualTextureTileFileMap(const std::vector<MaterialInfo> &materials,
     out.reserve(materials.size());
     for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
     {
-        const MaterialTextureInput *input = FindTextureInputBySemantic(materials[materialIndex], semantic);
+        const MaterialTextureInput *input =
+            FindTextureInputBySemantic(materials[materialIndex], semantic);
         if (!input || input->texturePath.empty())
         {
             continue;
         }
-        const std::string binPath =
-            ResolveVirtualTextureTileBinPath(tilesDir, input->texturePath);
+        const std::string binPath = ResolveVirtualTextureTileBinPath(tilesDir, input->texturePath);
         out.emplace(static_cast<unsigned int>(materialIndex), binPath);
     }
     return out;
@@ -1335,8 +1263,7 @@ static int BuildVirtualTextureHashTable(
             continue;
         }
 
-        const unsigned long long offset =
-            static_cast<unsigned long long>(outPixels->size());
+        const unsigned long long offset = static_cast<unsigned long long>(outPixels->size());
         outPixels->insert(outPixels->end(), tile.rgba8.begin(), tile.rgba8.end());
 
         unsigned int slot = ybi::texture::HashVirtualTextureKey(key) & mask;
@@ -1443,25 +1370,26 @@ UploadScenePoolMeshRefs(CUDADevice *device, const std::vector<SceneMeshUploadRef
     return out;
 }
 
-static void RenderTraversable(CUDADevice *device,
-                              OptixTraversableHandle traversable,
-                              const ybi::float3 &boundsMin,
-                              const ybi::float3 &boundsMax,
-                              const char *outputFile,
-                              IntegratorType integrator,
-                              int spp,
-                              CUdeviceptr instanceGeomRefsBuffer,
-                              int instanceGeomRefCount,
-                              CUdeviceptr materialTextureRefsBuffer,
-                              int materialTextureRefCount,
-                              int materialTextureRefStride,
-                              int materialTextureRefSemanticCount,
-                              MaterialTextureSemantic textureViewSemantic,
-                              bool virtualTexture,
-                              const std::unordered_map<unsigned int, std::string> &virtualTextureTileFiles,
-                              const std::optional<RenderCameraOverride> &cameraOverride,
-                              const std::optional<ybi::float3> &cameraPositionOverride,
-                              const std::optional<ybi::float3> &lookAtOverride)
+static void
+RenderTraversable(CUDADevice *device,
+                  OptixTraversableHandle traversable,
+                  const ybi::float3 &boundsMin,
+                  const ybi::float3 &boundsMax,
+                  const char *outputFile,
+                  IntegratorType integrator,
+                  int spp,
+                  CUdeviceptr instanceGeomRefsBuffer,
+                  int instanceGeomRefCount,
+                  CUdeviceptr materialTextureRefsBuffer,
+                  int materialTextureRefCount,
+                  int materialTextureRefStride,
+                  int materialTextureRefSemanticCount,
+                  MaterialTextureSemantic textureViewSemantic,
+                  bool virtualTexture,
+                  const std::unordered_map<unsigned int, std::string> &virtualTextureTileFiles,
+                  const std::optional<RenderCameraOverride> &cameraOverride,
+                  const std::optional<ybi::float3> &cameraPositionOverride,
+                  const std::optional<ybi::float3> &lookAtOverride)
 {
     YBI_ASSERT(device);
     printf("render: begin\n");
@@ -1571,7 +1499,8 @@ static void RenderTraversable(CUDADevice *device,
     unsigned int feedbackStatsHost[2] = {0u, 0u};
     unsigned int feedbackStatsZero[2] = {0u, 0u};
     std::unordered_map<unsigned long long, HostVirtualTextureTile> virtualTextureHostCache;
-    std::unordered_map<unsigned int, ybi::texture::VirtualTextureTileFile> virtualTextureFileHandles;
+    std::unordered_map<unsigned int, ybi::texture::VirtualTextureTileFile>
+        virtualTextureFileHandles;
     uint64_t virtualTextureResidentBytes = 0;
     uint64_t virtualTextureTotalBytes = 0;
     std::unordered_set<std::string> virtualTextureOpenedPaths;
@@ -1620,8 +1549,7 @@ static void RenderTraversable(CUDADevice *device,
         params.spp = 1;
         params.currentSpp = 0;
         params.feedbackSamplePercent = 100;
-        DeviceOps<CUDADevice>::CopyToDevice(
-            device, paramsBuffer, &params, sizeof(LaunchParams));
+        DeviceOps<CUDADevice>::CopyToDevice(device, paramsBuffer, &params, sizeof(LaunchParams));
         DeviceOps<CUDADevice>::CopyToDevice(
             device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
@@ -1645,11 +1573,10 @@ static void RenderTraversable(CUDADevice *device,
         const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
         if (copyCount > 0)
         {
-            DeviceOps<CUDADevice>::CopyToHost(
-                device,
-                feedbackKeysHost.data(),
-                feedbackKeysBuffer,
-                size_t(copyCount) * sizeof(unsigned long long));
+            DeviceOps<CUDADevice>::CopyToHost(device,
+                                              feedbackKeysHost.data(),
+                                              feedbackKeysBuffer,
+                                              size_t(copyCount) * sizeof(unsigned long long));
         }
         const std::vector<std::pair<unsigned long long, unsigned int>> histogram =
             WriteFeedbackFile("prepass.txt", -1, sampledCount, copyCount, overflowCount);
@@ -1679,11 +1606,12 @@ static void RenderTraversable(CUDADevice *device,
                 if (!ybi::texture::OpenVirtualTextureTileFile(
                         tilePathIter->second, &handle, &openError))
                 {
-                    std::fprintf(stderr,
-                                 "virtual-texture: failed opening tile file tex=%u path=%s err=%s\n",
-                                 textureId,
-                                 tilePathIter->second.c_str(),
-                                 openError.c_str());
+                    std::fprintf(
+                        stderr,
+                        "virtual-texture: failed opening tile file tex=%u path=%s err=%s\n",
+                        textureId,
+                        tilePathIter->second.c_str(),
+                        openError.c_str());
                     failedTiles++;
                     continue;
                 }
@@ -1740,16 +1668,16 @@ static void RenderTraversable(CUDADevice *device,
             virtualTextureTotalBytes > 0
                 ? (100.0 * double(virtualTextureResidentBytes) / double(virtualTextureTotalBytes))
                 : 0.0;
-        std::printf(
-            "virtual-texture host-cache: uniqueFeedback=%zu loaded=%zu failed=%zu residentTiles=%zu "
-            "tileMem=%.3f MiB totalTexMem=%.3f MiB (%.2f%%)\n",
-            histogram.size(),
-            loadedTiles,
-            failedTiles,
-            virtualTextureHostCache.size(),
-            residentMiB,
-            totalMiB,
-            ratio);
+        std::printf("virtual-texture host-cache: uniqueFeedback=%zu loaded=%zu failed=%zu "
+                    "residentTiles=%zu "
+                    "tileMem=%.3f MiB totalTexMem=%.3f MiB (%.2f%%)\n",
+                    histogram.size(),
+                    loadedTiles,
+                    failedTiles,
+                    virtualTextureHostCache.size(),
+                    residentMiB,
+                    totalMiB,
+                    ratio);
 
         std::vector<LaunchParams::VirtualTextureTileEntry> virtualTextureEntriesHost;
         std::vector<unsigned char> virtualTexturePixelsHost;
@@ -1757,25 +1685,28 @@ static void RenderTraversable(CUDADevice *device,
             virtualTextureHostCache, &virtualTextureEntriesHost, &virtualTexturePixelsHost);
         if (virtualTextureTableCapacity > 0)
         {
-            const size_t entriesBytes = virtualTextureEntriesHost.size() *
-                                        sizeof(LaunchParams::VirtualTextureTileEntry);
+            const size_t entriesBytes =
+                virtualTextureEntriesHost.size() * sizeof(LaunchParams::VirtualTextureTileEntry);
             const size_t pixelsBytes = virtualTexturePixelsHost.size();
             virtualTextureTileEntriesBuffer = DeviceOps<CUDADevice>::Alloc(device, entriesBytes);
             virtualTextureTilePixelsBuffer = DeviceOps<CUDADevice>::Alloc(device, pixelsBytes);
-            DeviceOps<CUDADevice>::CopyToDevice(
-                device, virtualTextureTileEntriesBuffer, virtualTextureEntriesHost.data(), entriesBytes);
-            DeviceOps<CUDADevice>::CopyToDevice(
-                device, virtualTextureTilePixelsBuffer, virtualTexturePixelsHost.data(), pixelsBytes);
+            DeviceOps<CUDADevice>::CopyToDevice(device,
+                                                virtualTextureTileEntriesBuffer,
+                                                virtualTextureEntriesHost.data(),
+                                                entriesBytes);
+            DeviceOps<CUDADevice>::CopyToDevice(device,
+                                                virtualTextureTilePixelsBuffer,
+                                                virtualTexturePixelsHost.data(),
+                                                pixelsBytes);
             params.virtualTextureTileEntries =
                 reinterpret_cast<unsigned long long>(virtualTextureTileEntriesBuffer.data());
             params.virtualTextureTilePixels =
                 reinterpret_cast<unsigned long long>(virtualTextureTilePixelsBuffer.data());
             params.virtualTextureTileEntryCapacity = virtualTextureTableCapacity;
-            std::printf(
-                "virtual-texture gpu-cache: entries=%zu capacity=%d pixels=%zu bytes\n",
-                virtualTextureHostCache.size(),
-                virtualTextureTableCapacity,
-                virtualTexturePixelsHost.size());
+            std::printf("virtual-texture gpu-cache: entries=%zu capacity=%d pixels=%zu bytes\n",
+                        virtualTextureHostCache.size(),
+                        virtualTextureTableCapacity,
+                        virtualTexturePixelsHost.size());
         }
         else
         {
@@ -1793,8 +1724,7 @@ static void RenderTraversable(CUDADevice *device,
     {
         params.spp = integrator == IntegratorType::AO ? 1 : 1;
         params.currentSpp = sppIndex;
-        DeviceOps<CUDADevice>::CopyToDevice(
-            device, paramsBuffer, &params, sizeof(LaunchParams));
+        DeviceOps<CUDADevice>::CopyToDevice(device, paramsBuffer, &params, sizeof(LaunchParams));
         DeviceOps<CUDADevice>::CopyToDevice(
             device, feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
@@ -1806,8 +1736,8 @@ static void RenderTraversable(CUDADevice *device,
         dispatchParams.launchParamsSize = sizeof(LaunchParams);
         dispatchParams.outputRGBA8 = imageBuffer;
 
-        const RenderKernelId kernelId = integrator == IntegratorType::AO ? RenderKernelId::AO
-                                                                          : RenderKernelId::PrimaryDiffuse;
+        const RenderKernelId kernelId =
+            integrator == IntegratorType::AO ? RenderKernelId::AO : RenderKernelId::PrimaryDiffuse;
         if (!device->DispatchKernel(kernelId, dispatchParams))
         {
             fprintf(stderr, "DispatchKernel failed.\n");
@@ -1830,16 +1760,16 @@ static void RenderTraversable(CUDADevice *device,
         const unsigned int copyCount = std::min(sampledCount, (unsigned int)feedbackCapacity);
         if (copyCount > 0)
         {
-            DeviceOps<CUDADevice>::CopyToHost(
-                device,
-                feedbackKeysHost.data(),
-                feedbackKeysBuffer,
-                size_t(copyCount) * sizeof(unsigned long long));
+            DeviceOps<CUDADevice>::CopyToHost(device,
+                                              feedbackKeysHost.data(),
+                                              feedbackKeysBuffer,
+                                              size_t(copyCount) * sizeof(unsigned long long));
         }
 
         char feedbackFileName[256];
         std::snprintf(feedbackFileName, sizeof(feedbackFileName), "spp_%04d.txt", sppIndex);
-        (void)WriteFeedbackFile(feedbackFileName, sppIndex, sampledCount, copyCount, overflowCount);
+        (void)WriteFeedbackFile(
+            feedbackFileName, sppIndex, sampledCount, copyCount, overflowCount);
     }
 
     std::vector<uint8_t> hostImage(imageSize, 0);
@@ -1913,14 +1843,17 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
     USDLoadOptions loadOptions = {};
     loadOptions.purposes = options.purposes;
     LoadUSDScene(&state->scenePool, options.inputPath, loadOptions);
-    if (state->scenePool.scenes.empty() || state->scenePool.rootSceneIndex >= state->scenePool.scenes.size())
+    if (state->scenePool.scenes.empty() ||
+        state->scenePool.rootSceneIndex >= state->scenePool.scenes.size())
     {
-        fprintf(stderr, "Failed to load USD scene or invalid root: %s\n", options.inputPath.c_str());
+        fprintf(
+            stderr, "Failed to load USD scene or invalid root: %s\n", options.inputPath.c_str());
         return false;
     }
 
     std::string flattenError;
-    if (!FlattenScenePoolToRootChildren(&state->scenePool, &state->flattenedScenePool, &flattenError))
+    if (!FlattenScenePoolToRootChildren(
+            &state->scenePool, &state->flattenedScenePool, &flattenError))
     {
         fprintf(stderr, "Failed to flatten USD ScenePool: %s\n", flattenError.c_str());
         return false;
@@ -1928,10 +1861,12 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
     if (state->flattenedScenePool.scenes.empty() ||
         state->flattenedScenePool.rootSceneIndex >= state->flattenedScenePool.scenes.size())
     {
-        fprintf(stderr, "Flattened ScenePool invalid for USD scene: %s\n", options.inputPath.c_str());
+        fprintf(
+            stderr, "Flattened ScenePool invalid for USD scene: %s\n", options.inputPath.c_str());
         return false;
     }
-    state->rootScene = state->flattenedScenePool.scenes[state->flattenedScenePool.rootSceneIndex].get();
+    state->rootScene =
+        state->flattenedScenePool.scenes[state->flattenedScenePool.rootSceneIndex].get();
     YBI_ASSERT(state->rootScene);
     if (!TessellateRootSubdivisionMeshes(state->rootScene, state->flattenedScenePool.camera))
     {
@@ -1953,14 +1888,16 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
         if (testbvh::DecodeNtcDiffuseTextures(state->scenePool.materials, &ntcTextures, &ntcError))
         {
             int overrideCount = 0;
-            const size_t numMaterials = std::min(state->scenePool.materials.size(), ntcTextures.size());
+            const size_t numMaterials =
+                std::min(state->scenePool.materials.size(), ntcTextures.size());
             for (size_t i = 0; i < numMaterials; ++i)
             {
                 if (!ntcTextures[i].valid)
                 {
                     continue;
                 }
-                const int slot = MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
+                const int slot =
+                    MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
                 YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < decodedTextures.size());
                 DecodedMaterialTexture &dst = decodedTextures[static_cast<size_t>(slot)];
                 dst.valid = true;
@@ -1969,8 +1906,8 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
                 dst.height = ntcTextures[i].height;
                 dst.rgba8 = std::move(ntcTextures[i].rgba8);
                 dst.sourcePath = ntcTextures[i].ntcPath;
-                const MaterialTextureInput *diffuse =
-                    FindTextureInputBySemantic(state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
+                const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
+                    state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
                 dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
                 dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
                 overrideCount++;
@@ -2005,12 +1942,14 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
                              0,
                              0};
         }
-        std::printf("virtual-texture: skipping CUDA image texture upload; using metadata refs only\n");
+        std::printf(
+            "virtual-texture: skipping CUDA image texture upload; using metadata refs only\n");
     }
     else
     {
         std::string textureUploadError;
-        if (!UploadDecodedTexturesToCuda(decodedTextures, &state->uploadedMaterialTextures, &textureUploadError))
+        if (!UploadDecodedTextures(
+                device, decodedTextures, &state->uploadedMaterialTextures, &textureUploadError))
         {
             fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
             return false;
@@ -2018,14 +1957,8 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
         for (size_t i = 0; i < state->uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = state->uploadedMaterialTextures.refs[i];
-            launchRefs[i] = {src.textureObject,
-                             src.width,
-                             src.height,
-                             src.valid,
-                             src.wrapS,
-                             src.wrapT,
-                             0,
-                             0};
+            launchRefs[i] = {
+                src.textureObject, src.width, src.height, src.valid, src.wrapS, src.wrapT, 0, 0};
         }
     }
 
@@ -2041,13 +1974,13 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
     {
         if (options.virtualTextureTilesDir.empty())
         {
-            std::fprintf(stderr, "virtual-texture: --vt-tiles-dir not set; tile loading disabled\n");
+            std::fprintf(stderr,
+                         "virtual-texture: --vt-tiles-dir not set; tile loading disabled\n");
         }
         else
         {
-            state->virtualTextureTileFiles =
-                BuildVirtualTextureTileFileMap(
-                    state->scenePool.materials, options.textureView, options.virtualTextureTilesDir);
+            state->virtualTextureTileFiles = BuildVirtualTextureTileFileMap(
+                state->scenePool.materials, options.textureView, options.virtualTextureTilesDir);
             std::printf("virtual-texture: mapped %zu material texture ids to tile bins from %s\n",
                         state->virtualTextureTileFiles.size(),
                         options.virtualTextureTilesDir.c_str());
@@ -2070,9 +2003,11 @@ static bool UploadScenePhase(CUDADevice *device, const CliOptions &options, Harn
     state->uploadedRefs = UploadScenePoolMeshRefs(device, state->meshUploadRefs);
     if (!state->uploadedRefs.refs.empty())
     {
-        const size_t refsBytes = state->uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
+        const size_t refsBytes =
+            state->uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
         state->instanceGeomRefsBuffer = device->AllocBytes(refsBytes);
-        device->CopyBytesToDevice(state->instanceGeomRefsBuffer, state->uploadedRefs.refs.data(), refsBytes);
+        device->CopyBytesToDevice(
+            state->instanceGeomRefsBuffer, state->uploadedRefs.refs.data(), refsBytes);
     }
 
     if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
@@ -2146,7 +2081,7 @@ static void DeinitPhase(CUDADevice *device, HostMemoryArena *hostArena, HarnessS
     {
         device->FreeBytes(state->materialTextureRefsBuffer);
     }
-    DestroyUploadedTextures(&state->uploadedMaterialTextures);
+    DestroyUploadedTextures(device, &state->uploadedMaterialTextures);
     for (DeviceMemoryView<uint8_t> &buffer : state->uploadedRefs.ownedBuffers)
     {
         device->FreeBytes(buffer);

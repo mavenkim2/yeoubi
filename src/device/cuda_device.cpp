@@ -10,6 +10,37 @@ YBI_NAMESPACE_BEGIN
 
 namespace
 {
+static bool CheckCudaRuntime(cudaError_t result, std::string *outError, const char *callName)
+{
+    if (result == cudaSuccess)
+    {
+        return true;
+    }
+    if (outError)
+    {
+        *outError = std::string(callName) + " failed: " + cudaGetErrorString(result);
+    }
+    return false;
+}
+
+static cudaTextureAddressMode ToCudaAddressMode(DeviceTextureWrapMode mode)
+{
+    switch (mode)
+    {
+        case DeviceTextureWrapMode::Clamp:
+            return cudaAddressModeClamp;
+        case DeviceTextureWrapMode::Mirror:
+            return cudaAddressModeMirror;
+        case DeviceTextureWrapMode::Black:
+            return cudaAddressModeBorder;
+        case DeviceTextureWrapMode::Repeat:
+        case DeviceTextureWrapMode::UseMetadata:
+        case DeviceTextureWrapMode::Unknown:
+        default:
+            return cudaAddressModeWrap;
+    }
+}
+
 #if (OPTIX_VERSION >= 90000)
 static bool QueryOptixUIntProperty(OptixDeviceContext context,
                                    OptixDeviceProperty property,
@@ -229,6 +260,121 @@ void CUDADevice::CopyBytesToHost(void *dst,
     YBI_ASSERT(src.data());
     YBI_ASSERT(numBytes <= src.numBytes());
     CUDA_ASSERT(cuMemcpyDtoH(dst, CUdeviceptr(src.data()), numBytes));
+}
+
+bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
+                               DeviceTexture *outTexture,
+                               std::string *outError)
+{
+    if (!outTexture)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: outTexture is null";
+        }
+        return false;
+    }
+    *outTexture = {};
+
+    if (info.format != DeviceTextureFormat::RGBA8_UNORM)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: unsupported format";
+        }
+        return false;
+    }
+    if (info.pixels == nullptr || info.width == 0 || info.height == 0)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: invalid texture input";
+        }
+        return false;
+    }
+
+    const size_t rowBytes = size_t(info.width) * 4u;
+    const size_t expectedBytes = rowBytes * size_t(info.height);
+    if (info.pixelBytes < expectedBytes)
+    {
+        if (outError)
+        {
+            *outError = "CreateTexture: pixelBytes too small";
+        }
+        return false;
+    }
+
+    cudaChannelFormatDesc channelDesc =
+        cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
+    cudaArray_t array = nullptr;
+    if (!CheckCudaRuntime(cudaMallocArray(&array, &channelDesc, info.width, info.height),
+                          outError,
+                          "cudaMallocArray"))
+    {
+        return false;
+    }
+
+    if (!CheckCudaRuntime(cudaMemcpy2DToArray(array,
+                                              0,
+                                              0,
+                                              info.pixels,
+                                              rowBytes,
+                                              rowBytes,
+                                              info.height,
+                                              cudaMemcpyHostToDevice),
+                          outError,
+                          "cudaMemcpy2DToArray"))
+    {
+        cudaFreeArray(array);
+        return false;
+    }
+
+    cudaResourceDesc resourceDesc = {};
+    resourceDesc.resType = cudaResourceTypeArray;
+    resourceDesc.res.array.array = array;
+
+    cudaTextureDesc textureDesc = {};
+    textureDesc.addressMode[0] = ToCudaAddressMode(info.wrapS);
+    textureDesc.addressMode[1] = ToCudaAddressMode(info.wrapT);
+    textureDesc.filterMode =
+        (info.filter == DeviceTextureFilterMode::Linear) ? cudaFilterModeLinear
+                                                         : cudaFilterModePoint;
+    textureDesc.readMode = cudaReadModeNormalizedFloat;
+    textureDesc.normalizedCoords = 1;
+
+    cudaTextureObject_t textureObject = 0;
+    if (!CheckCudaRuntime(
+            cudaCreateTextureObject(&textureObject, &resourceDesc, &textureDesc, nullptr),
+            outError,
+            "cudaCreateTextureObject"))
+    {
+        cudaFreeArray(array);
+        return false;
+    }
+
+    outTexture->handle = static_cast<uint64_t>(textureObject);
+    outTexture->allocation = reinterpret_cast<uint64_t>(array);
+    outTexture->width = info.width;
+    outTexture->height = info.height;
+    outTexture->wrapS = info.wrapS;
+    outTexture->wrapT = info.wrapT;
+    outTexture->filter = info.filter;
+    outTexture->format = info.format;
+    outTexture->valid = true;
+    return true;
+}
+
+void CUDADevice::DestroyTexture(DeviceTexture &texture)
+{
+    if (texture.handle != 0)
+    {
+        cudaDestroyTextureObject(static_cast<cudaTextureObject_t>(texture.handle));
+    }
+    if (texture.allocation != 0)
+    {
+        cudaFreeArray(reinterpret_cast<cudaArray_t>(texture.allocation));
+    }
+    texture = {};
 }
 
 size_t CUDADevice::GetBVHAllocatedBytes() const

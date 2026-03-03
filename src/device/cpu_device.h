@@ -41,6 +41,10 @@ struct CPUDevice : Device
     void CopyBytesToHost(void *dst,
                          DeviceMemoryView<const uint8_t> src,
                          size_t numBytes) override;
+    bool CreateTexture(const DeviceTextureCreateInfo &info,
+                       DeviceTexture *outTexture,
+                       std::string *outError) override;
+    void DestroyTexture(DeviceTexture &texture) override;
     size_t GetBVHAllocatedBytes() const override;
     void BuildBVH(Scene *scene) override;
     bool DispatchKernel(RenderKernelId kernel, const DispatchParams &params) override;

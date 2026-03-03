@@ -19,6 +19,52 @@ enum class DeviceKind : uint32_t
     GPU = 1,
 };
 
+enum class DeviceTextureWrapMode : uint8_t
+{
+    Unknown = 0,
+    Repeat = 1,
+    Clamp = 2,
+    Mirror = 3,
+    Black = 4,
+    UseMetadata = 5,
+};
+
+enum class DeviceTextureFilterMode : uint8_t
+{
+    Nearest = 0,
+    Linear = 1,
+};
+
+enum class DeviceTextureFormat : uint8_t
+{
+    RGBA8_UNORM = 0,
+};
+
+struct DeviceTextureCreateInfo
+{
+    const void *pixels = nullptr;
+    size_t pixelBytes = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    DeviceTextureWrapMode wrapS = DeviceTextureWrapMode::Repeat;
+    DeviceTextureWrapMode wrapT = DeviceTextureWrapMode::Repeat;
+    DeviceTextureFilterMode filter = DeviceTextureFilterMode::Nearest;
+    DeviceTextureFormat format = DeviceTextureFormat::RGBA8_UNORM;
+};
+
+struct DeviceTexture
+{
+    uint64_t handle = 0;
+    uint64_t allocation = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    DeviceTextureWrapMode wrapS = DeviceTextureWrapMode::Repeat;
+    DeviceTextureWrapMode wrapT = DeviceTextureWrapMode::Repeat;
+    DeviceTextureFilterMode filter = DeviceTextureFilterMode::Nearest;
+    DeviceTextureFormat format = DeviceTextureFormat::RGBA8_UNORM;
+    bool valid = false;
+};
+
 struct Device
 {
     virtual ~Device() = default;
@@ -37,6 +83,10 @@ struct Device
     virtual void CopyBytesToHost(void *dst,
                                  DeviceMemoryView<const uint8_t> src,
                                  size_t numBytes) = 0;
+    virtual bool CreateTexture(const DeviceTextureCreateInfo &info,
+                               DeviceTexture *outTexture,
+                               std::string *outError) = 0;
+    virtual void DestroyTexture(DeviceTexture &texture) = 0;
     virtual size_t GetBVHAllocatedBytes() const = 0;
 
     template <typename T>
