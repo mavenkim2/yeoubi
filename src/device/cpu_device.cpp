@@ -25,6 +25,14 @@ static bool CPUPrimaryDiffuseStub(CPUDevice *device, const DispatchParams &param
     fprintf(stderr, "CPU primary diffuse kernel is not wired yet.\n");
     return false;
 }
+
+static bool CPUAOStub(CPUDevice *device, const DispatchParams &params)
+{
+    (void)device;
+    (void)params;
+    fprintf(stderr, "CPU AO kernel is not wired yet.\n");
+    return false;
+}
 } // namespace
 
 CPUDevice::CPUDevice()
@@ -36,6 +44,7 @@ CPUDevice::CPUDevice()
         std::abort();
     }
     RegisterKernel(RenderKernelId::PrimaryDiffuse, CPUPrimaryDiffuseStub);
+    RegisterKernel(RenderKernelId::AO, CPUAOStub);
 }
 
 CPUDevice::~CPUDevice()
