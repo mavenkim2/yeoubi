@@ -1,7 +1,5 @@
 #include "device/cpu_device.h"
 #include "render/cpu_kernels.h"
-#include "render/dispatch_types.h"
-
 #if defined(WITH_EMBREE)
 
 #include "util/aligned_malloc.h"
@@ -12,14 +10,6 @@
 
 YBI_NAMESPACE_BEGIN
 
-namespace
-{
-static size_t KernelIndex(RenderKernelId kernel)
-{
-    return static_cast<size_t>(kernel);
-}
-} // namespace
-
 CPUDevice::CPUDevice()
 {
     embreeDevice = rtcNewDevice(nullptr);
@@ -28,7 +18,6 @@ CPUDevice::CPUDevice()
         fprintf(stderr, "Embree init failed: rtcNewDevice returned null.\n");
         std::abort();
     }
-    RegisterCPUDefaultKernels(this);
 }
 
 CPUDevice::~CPUDevice()
@@ -186,20 +175,7 @@ void CPUDevice::BuildBVH(Scene *scene)
 
 bool CPUDevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &params)
 {
-    const size_t idx = KernelIndex(kernel);
-    if (idx >= kernels.size() || kernels[idx] == nullptr)
-    {
-        fprintf(stderr, "CPUDevice::DispatchKernel missing kernel %zu.\n", idx);
-        return false;
-    }
-    return kernels[idx](this, params);
-}
-
-void CPUDevice::RegisterKernel(RenderKernelId kernel, KernelFn fn)
-{
-    const size_t idx = KernelIndex(kernel);
-    YBI_ASSERT(idx < kernels.size());
-    kernels[idx] = fn;
+    return CPUDispatchKernel(params, kernel);
 }
 
 YBI_NAMESPACE_END

@@ -3,7 +3,6 @@
 #if defined(WITH_EMBREE)
 
 #include "device/cpu_device.h"
-#include "render/dispatch_types.h"
 #include "render/integrator_ao.h"
 #include "render/integrator_primary.h"
 #include "render/launch_params.h"
@@ -250,16 +249,10 @@ static bool TracePrimary(const LaunchParams &params,
 
     return true;
 }
+} // namespace
 
-static bool CPUDispatchKernel(CPUDevice *device,
-                              const DispatchParams &dispatchParams,
-                              RenderKernelId kernelId)
+bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kernelId)
 {
-    if (!device)
-    {
-        std::fprintf(stderr, "CPU kernel dispatch: device missing.\n");
-        return false;
-    }
     if (dispatchParams.launchParamsDevice == 0 ||
         dispatchParams.launchParamsSize != sizeof(LaunchParams))
     {
@@ -391,27 +384,6 @@ static bool CPUDispatchKernel(CPUDevice *device,
     }
 
     return true;
-}
-
-static bool CPUPrimaryDiffuseKernel(CPUDevice *device, const DispatchParams &params)
-{
-    return CPUDispatchKernel(device, params, RenderKernelId::PrimaryDiffuse);
-}
-
-static bool CPUAOKernel(CPUDevice *device, const DispatchParams &params)
-{
-    return CPUDispatchKernel(device, params, RenderKernelId::AO);
-}
-} // namespace
-
-void RegisterCPUDefaultKernels(CPUDevice *device)
-{
-    if (!device)
-    {
-        return;
-    }
-    device->RegisterKernel(RenderKernelId::PrimaryDiffuse, CPUPrimaryDiffuseKernel);
-    device->RegisterKernel(RenderKernelId::AO, CPUAOKernel);
 }
 
 YBI_NAMESPACE_END
