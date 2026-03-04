@@ -755,7 +755,6 @@ static const MaterialTextureInput *FindTextureInputBySemantic(const MaterialInfo
     return nullptr;
 }
 
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
 static bool LoadExrRgba8(const std::string &path,
                          int *outWidth,
                          int *outHeight,
@@ -785,7 +784,6 @@ static bool LoadExrRgba8(const std::string &path,
     }
     return true;
 }
-#endif
 
 static bool LoadImageRgba8(const std::string &path,
                            int *outWidth,
@@ -803,15 +801,7 @@ static bool LoadImageRgba8(const std::string &path,
 
     if (ybi::texture::LowerExt(path) == ".exr")
     {
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
         return LoadExrRgba8(path, outWidth, outHeight, outRgba8, outReason);
-#else
-        if (outReason)
-        {
-            *outReason = "EXR loading unavailable (harness built without NTC/tinyexr): " + path;
-        }
-        return false;
-#endif
     }
 
     int channels = 0;

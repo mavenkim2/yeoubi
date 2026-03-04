@@ -311,6 +311,7 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/helpers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/feedback.cpp
@@ -345,13 +346,15 @@ if (WITH_USD)
 
     target_compile_definitions(yeoubi_template_harness PRIVATE ${YBI_COMPILE_DEFINITIONS})
     target_include_directories(yeoubi_template_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_template_harness PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz)
     target_include_directories(yeoubi_template_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_template_harness PRIVATE ${YBI_DEPENDENCIES})
 
     if (WITH_NTC AND CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_sources(yeoubi_template_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp)
         target_compile_definitions(yeoubi_template_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
         target_include_directories(yeoubi_template_harness PRIVATE ${NTC_INCLUDE_DIRS})
         target_link_libraries(yeoubi_template_harness PRIVATE ${NTC_LIBRARIES})
