@@ -1827,7 +1827,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         return now;
     };
 
-    printf("optix_harness: loading usd scene %s\n", options.inputPath.c_str());
+    printf("template_harness: loading usd scene %s\n", options.inputPath.c_str());
     fflush(stdout);
 
     USDLoadOptions loadOptions = {};
@@ -2020,7 +2020,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
             fprintf(stderr, "USD camera missing/invalid: %s\n", options.inputPath.c_str());
             return false;
         }
-        printf("optix_harness: using usd camera viewport=%dx%d\n",
+        printf("template_harness: using usd camera viewport=%dx%d\n",
                state->usdCamera->width,
                state->usdCamera->height);
         fflush(stdout);
@@ -2036,7 +2036,7 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
     if (device->GetKind() == DeviceKind::GPU)
     {
         const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
-        printf("optix_harness: ptx loaded\n");
+        printf("template_harness: ptx loaded\n");
         fflush(stdout);
 
         std::string kernelInitError;
@@ -2045,7 +2045,7 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
             fprintf(stderr, "Failed to initialize kernels: %s\n", kernelInitError.c_str());
             return false;
         }
-        printf("optix_harness: pipeline created\n");
+        printf("template_harness: pipeline created\n");
         fflush(stdout);
     }
     else
@@ -2109,10 +2109,10 @@ static void DeinitPhase(Device *device, HostMemoryArena *hostArena, HarnessState
 
 int main(int argc, char **argv)
 {
-    printf("optix_harness: start\n");
+    printf("template_harness: start\n");
     fflush(stdout);
     const CliOptions options = ParseCli(argc, argv);
-    printf("optix_harness: parsed cli\n");
+    printf("template_harness: parsed cli\n");
     fflush(stdout);
 
     std::unique_ptr<Device> deviceStorage;
@@ -2124,11 +2124,11 @@ int main(int argc, char **argv)
     }
     if (device->GetKind() == DeviceKind::GPU)
     {
-        printf("optix_harness: cuda device ready\n");
+        printf("template_harness: cuda device ready\n");
     }
     else
     {
-        printf("optix_harness: cpu device ready\n");
+        printf("template_harness: cpu device ready\n");
     }
     fflush(stdout);
     HostMemoryArena hostArena;
