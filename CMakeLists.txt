@@ -302,11 +302,12 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})
     endif()
 
+endif()
+
+if (WITH_USD)
     add_executable(yeoubi_template_harness
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/template_harness.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
@@ -320,26 +321,34 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/subdivision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/edge_map_validation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
-    if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
-        target_sources(yeoubi_template_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
-    endif()
+
     if (WITH_EMBREE AND EMBREE_FOUND)
         target_sources(yeoubi_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/cpu_kernels.cpp)
     endif()
-    add_dependencies(yeoubi_template_harness yeoubi_optix_primary_programs_ptx)
 
-    target_compile_definitions(yeoubi_template_harness PRIVATE
-        ${YBI_COMPILE_DEFINITIONS}
-        YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_PATH}")
+    if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
+        target_sources(yeoubi_template_harness PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp)
+        if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
+            target_sources(yeoubi_template_harness PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
+        endif()
+
+        target_compile_definitions(yeoubi_template_harness PRIVATE
+            YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_PATH}")
+        add_dependencies(yeoubi_template_harness yeoubi_optix_primary_programs_ptx)
+    endif()
+
+    target_compile_definitions(yeoubi_template_harness PRIVATE ${YBI_COMPILE_DEFINITIONS})
     target_include_directories(yeoubi_template_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
     target_include_directories(yeoubi_template_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_template_harness PRIVATE ${YBI_DEPENDENCIES})
 
-    if (WITH_NTC)
+    if (WITH_NTC AND CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_sources(yeoubi_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp)
