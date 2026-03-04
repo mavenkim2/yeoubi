@@ -7,8 +7,9 @@
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
-#include "texture/virtual_texture_key.h"
-#include "texture/virtual_texture_tile_file.h"
+#include "texture/virtual_texture/feedback.h"
+#include "texture/virtual_texture/helpers.h"
+#include "texture/virtual_texture/tile_file.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -719,7 +720,6 @@ static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1100u;
 static constexpr int kUdimSlotCount = 128;
 static constexpr int kMaterialSemanticCount = static_cast<int>(MaterialTextureSemantic::Count);
-static constexpr unsigned long long kVirtualTextureEmptyKey = ~0ull;
 
 static int
 MaterialTextureSlotIndex(size_t materialIndex, MaterialTextureSemantic semantic, uint32_t udim)
@@ -1098,188 +1098,6 @@ static void DestroyUploadedTextures(Device *device, UploadedMaterialTextures *te
     textures->refs.clear();
 }
 
-static unsigned int FeedbackTileX(unsigned long long key)
-{
-    return ybi::texture::UnpackVirtualTextureKeyTileX(key);
-}
-
-static unsigned int FeedbackTileY(unsigned long long key)
-{
-    return ybi::texture::UnpackVirtualTextureKeyTileY(key);
-}
-
-static unsigned int FeedbackUdim(unsigned long long key)
-{
-    return ybi::texture::UnpackVirtualTextureKeyUdim(key);
-}
-
-static unsigned int FeedbackTextureId(unsigned long long key)
-{
-    return ybi::texture::UnpackVirtualTextureKeyTextureId(key);
-}
-
-static unsigned int FeedbackMip(unsigned long long key)
-{
-    return ybi::texture::UnpackVirtualTextureKeyMip(key);
-}
-
-struct HostVirtualTextureTile
-{
-    unsigned long long key = 0ull;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint64_t sourceBytes = 0;
-    std::vector<unsigned char> rgba8;
-};
-
-static std::string SanitizeTileStem(const std::string &s)
-{
-    std::string out = s;
-    for (char &c : out)
-    {
-        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.'))
-        {
-            c = '_';
-        }
-    }
-    if (out.empty())
-    {
-        out = "texture";
-    }
-    return out;
-}
-
-static std::string ResolveVirtualTextureTileBinPath(const std::string &tilesDir,
-                                                    const std::string &texturePath)
-{
-    const std::string baseNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
-    const std::string stem = SanitizeTileStem(baseNoUdim);
-    return (std::filesystem::path(tilesDir) / (stem + ".tiles.bin")).string();
-}
-
-static std::unordered_map<unsigned int, std::string>
-BuildVirtualTextureTileFileMap(const std::vector<MaterialInfo> &materials,
-                               MaterialTextureSemantic semantic,
-                               const std::string &tilesDir)
-{
-    std::unordered_map<unsigned int, std::string> out;
-    if (tilesDir.empty())
-    {
-        return out;
-    }
-    out.reserve(materials.size());
-    for (size_t materialIndex = 0; materialIndex < materials.size(); ++materialIndex)
-    {
-        const MaterialTextureInput *input =
-            FindTextureInputBySemantic(materials[materialIndex], semantic);
-        if (!input || input->texturePath.empty())
-        {
-            continue;
-        }
-        const std::string binPath = ResolveVirtualTextureTileBinPath(tilesDir, input->texturePath);
-        out.emplace(static_cast<unsigned int>(materialIndex), binPath);
-    }
-    return out;
-}
-
-static void BuildFeedbackHistogram(const std::vector<unsigned long long> &keys,
-                                   unsigned int count,
-                                   std::vector<std::pair<unsigned long long, unsigned int>> *out)
-{
-    YBI_ASSERT(out);
-    out->clear();
-    if (count == 0)
-    {
-        return;
-    }
-    std::vector<unsigned long long> sorted(keys.begin(), keys.begin() + count);
-    std::sort(sorted.begin(), sorted.end());
-    unsigned int runCount = 1;
-    for (size_t i = 1; i < sorted.size(); ++i)
-    {
-        if (sorted[i] == sorted[i - 1])
-        {
-            ++runCount;
-            continue;
-        }
-        out->push_back({sorted[i - 1], runCount});
-        runCount = 1;
-    }
-    out->push_back({sorted.back(), runCount});
-}
-
-static int BuildVirtualTextureHashTable(
-    const std::unordered_map<unsigned long long, HostVirtualTextureTile> &tiles,
-    std::vector<LaunchParams::VirtualTextureTileEntry> *outEntries,
-    std::vector<unsigned char> *outPixels)
-{
-    YBI_ASSERT(outEntries);
-    YBI_ASSERT(outPixels);
-    outEntries->clear();
-    outPixels->clear();
-    if (tiles.empty())
-    {
-        return 0;
-    }
-
-    int capacity = 1;
-    const int minCapacity = static_cast<int>(tiles.size()) * 2;
-    while (capacity < minCapacity)
-    {
-        capacity <<= 1;
-    }
-    outEntries->resize(static_cast<size_t>(capacity));
-    for (LaunchParams::VirtualTextureTileEntry &entry : *outEntries)
-    {
-        entry.key = kVirtualTextureEmptyKey;
-        entry.pixelOffset = 0ull;
-        entry.width = 0u;
-        entry.height = 0u;
-    }
-
-    size_t pixelBytes = 0;
-    for (const auto &it : tiles)
-    {
-        pixelBytes += it.second.rgba8.size();
-    }
-    outPixels->reserve(pixelBytes);
-
-    const unsigned int mask = static_cast<unsigned int>(capacity - 1);
-    for (const auto &it : tiles)
-    {
-        const HostVirtualTextureTile &tile = it.second;
-        const unsigned long long key = tile.key;
-        if (tile.rgba8.empty() || tile.width == 0u || tile.height == 0u)
-        {
-            continue;
-        }
-
-        const unsigned long long offset = static_cast<unsigned long long>(outPixels->size());
-        outPixels->insert(outPixels->end(), tile.rgba8.begin(), tile.rgba8.end());
-
-        unsigned int slot = ybi::texture::HashVirtualTextureKey(key) & mask;
-        bool inserted = false;
-        for (int probe = 0; probe < capacity; ++probe)
-        {
-            LaunchParams::VirtualTextureTileEntry &entry =
-                (*outEntries)[static_cast<size_t>(slot)];
-            if (entry.key == kVirtualTextureEmptyKey)
-            {
-                entry.key = key;
-                entry.pixelOffset = offset;
-                entry.width = tile.width;
-                entry.height = tile.height;
-                inserted = true;
-                break;
-            }
-            slot = (slot + 1u) & mask;
-        }
-        YBI_ASSERT(inserted);
-    }
-
-    return capacity;
-}
-
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
@@ -1486,7 +1304,8 @@ RenderTraversable(Device *device,
     std::vector<unsigned long long> feedbackKeysHost(feedbackCapacity, 0ull);
     unsigned int feedbackStatsHost[2] = {0u, 0u};
     unsigned int feedbackStatsZero[2] = {0u, 0u};
-    std::unordered_map<unsigned long long, HostVirtualTextureTile> virtualTextureHostCache;
+    std::unordered_map<unsigned long long, ybi::texture::HostVirtualTextureTile>
+        virtualTextureHostCache;
     std::unordered_map<unsigned int, ybi::texture::VirtualTextureTileFile>
         virtualTextureFileHandles;
     uint64_t virtualTextureResidentBytes = 0;
@@ -1497,37 +1316,24 @@ RenderTraversable(Device *device,
                                  unsigned int sampledCount,
                                  unsigned int copyCount,
                                  unsigned int overflowCount) {
-        std::vector<std::pair<unsigned long long, unsigned int>> histogram;
-        BuildFeedbackHistogram(feedbackKeysHost, copyCount, &histogram);
-
+        std::vector<ybi::texture::VirtualTextureFeedbackEntry> histogram;
         const std::filesystem::path feedbackPath = feedbackDir / name;
-        std::FILE *feedbackFile = std::fopen(feedbackPath.string().c_str(), "w");
-        if (!feedbackFile)
+        std::string feedbackError;
+        if (!ybi::texture::WriteFeedbackFile(feedbackPath,
+                                             sppIndex,
+                                             sampledCount,
+                                             copyCount,
+                                             overflowCount,
+                                             feedbackKeysHost,
+                                             &histogram,
+                                             &feedbackError))
         {
-            fprintf(stderr, "Failed to write feedback file: %s\n", feedbackPath.string().c_str());
+            fprintf(stderr,
+                    "Failed to write feedback file: %s (%s)\n",
+                    feedbackPath.string().c_str(),
+                    feedbackError.c_str());
             std::abort();
         }
-        std::fprintf(feedbackFile,
-                     "spp=%d sampled=%u stored=%u overflow=%u unique=%zu\n",
-                     sppIndex,
-                     sampledCount,
-                     copyCount,
-                     overflowCount,
-                     histogram.size());
-        std::fprintf(feedbackFile, "textureId udim tileX tileY mip count\n");
-        for (const auto &it : histogram)
-        {
-            const unsigned long long key = it.first;
-            std::fprintf(feedbackFile,
-                         "%u %u %u %u %u %u\n",
-                         FeedbackTextureId(key),
-                         FeedbackUdim(key),
-                         FeedbackTileX(key),
-                         FeedbackTileY(key),
-                         FeedbackMip(key),
-                         it.second);
-        }
-        std::fclose(feedbackFile);
         return histogram;
     };
 
@@ -1564,7 +1370,7 @@ RenderTraversable(Device *device,
                                     {feedbackKeysBuffer.data(), feedbackKeysBuffer.size()},
                                     size_t(copyCount) * sizeof(unsigned long long));
         }
-        const std::vector<std::pair<unsigned long long, unsigned int>> histogram =
+        const std::vector<ybi::texture::VirtualTextureFeedbackEntry> histogram =
             WriteFeedbackFile("prepass.txt", -1, sampledCount, copyCount, overflowCount);
         std::printf("virtual-texture prepass feedback: sampled=%u stored=%u overflow=%u\n",
                     sampledCount,
@@ -1575,8 +1381,8 @@ RenderTraversable(Device *device,
         size_t failedTiles = 0;
         for (const auto &item : histogram)
         {
-            const unsigned long long key = item.first;
-            const unsigned int textureId = FeedbackTextureId(key);
+            const unsigned long long key = item.key;
+            const unsigned int textureId = ybi::texture::FeedbackTextureId(key);
             auto tilePathIter = virtualTextureTileFiles.find(textureId);
             if (tilePathIter == virtualTextureTileFiles.end())
             {
@@ -1619,9 +1425,9 @@ RenderTraversable(Device *device,
             uint64_t sourceBytes = 0;
             std::string readError;
             if (!ybi::texture::ReadVirtualTextureTile(&handleIter->second,
-                                                      FeedbackUdim(key),
-                                                      FeedbackTileX(key),
-                                                      FeedbackTileY(key),
+                                                      ybi::texture::FeedbackUdim(key),
+                                                      ybi::texture::FeedbackTileX(key),
+                                                      ybi::texture::FeedbackTileY(key),
                                                       &rgba8,
                                                       &tileWidth,
                                                       &tileHeight,
@@ -1637,7 +1443,7 @@ RenderTraversable(Device *device,
                 continue;
             }
 
-            HostVirtualTextureTile tile = {};
+            ybi::texture::HostVirtualTextureTile tile = {};
             tile.key = key;
             tile.width = tileWidth;
             tile.height = tileHeight;
@@ -1667,8 +1473,18 @@ RenderTraversable(Device *device,
 
         std::vector<LaunchParams::VirtualTextureTileEntry> virtualTextureEntriesHost;
         std::vector<unsigned char> virtualTexturePixelsHost;
-        const int virtualTextureTableCapacity = BuildVirtualTextureHashTable(
-            virtualTextureHostCache, &virtualTextureEntriesHost, &virtualTexturePixelsHost);
+        std::string virtualTextureTableError;
+        const int virtualTextureTableCapacity = ybi::texture::BuildVirtualTextureHashTable(
+            virtualTextureHostCache,
+            &virtualTextureEntriesHost,
+            &virtualTexturePixelsHost,
+            &virtualTextureTableError);
+        if (virtualTextureTableCapacity == 0 && !virtualTextureHostCache.empty() &&
+            !virtualTextureTableError.empty())
+        {
+            fprintf(stderr, "virtual-texture hash table build failed: %s\n", virtualTextureTableError.c_str());
+            std::abort();
+        }
         if (virtualTextureTableCapacity > 0)
         {
             const size_t entriesBytes =
@@ -1975,8 +1791,23 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         }
         else
         {
-            state->virtualTextureTileFiles = BuildVirtualTextureTileFileMap(
-                state->scenePool.materials, options.textureView, options.virtualTextureTilesDir);
+            std::vector<std::pair<unsigned int, std::string>> texturePaths;
+            texturePaths.reserve(state->scenePool.materials.size());
+            for (size_t materialIndex = 0; materialIndex < state->scenePool.materials.size();
+                 ++materialIndex)
+            {
+                const MaterialTextureInput *input =
+                    FindTextureInputBySemantic(state->scenePool.materials[materialIndex],
+                                               options.textureView);
+                if (!input || input->texturePath.empty())
+                {
+                    continue;
+                }
+                texturePaths.emplace_back(static_cast<unsigned int>(materialIndex),
+                                          input->texturePath);
+            }
+            state->virtualTextureTileFiles = ybi::texture::BuildVirtualTextureTileFileMap(
+                texturePaths, options.virtualTextureTilesDir);
             std::printf("virtual-texture: mapped %zu material texture ids to tile bins from %s\n",
                         state->virtualTextureTileFiles.size(),
                         options.virtualTextureTilesDir.c_str());

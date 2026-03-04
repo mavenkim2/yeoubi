@@ -2,7 +2,7 @@
 
 #include "render/integrator_common.h"
 #include "render/launch_params.h"
-#include "texture/virtual_texture_key.h"
+#include "texture/virtual_texture/key.h"
 
 namespace ybi
 {

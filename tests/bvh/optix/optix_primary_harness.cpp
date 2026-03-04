@@ -6,8 +6,8 @@
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
-#include "texture/virtual_texture_key.h"
-#include "texture/virtual_texture_tile_file.h"
+#include "texture/virtual_texture/key.h"
+#include "texture/virtual_texture/tile_file.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION

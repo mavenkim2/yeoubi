@@ -7,7 +7,7 @@
 #include "render/integrator_primary.h"
 #include "render/launch_params.h"
 #include "render/shading_core.h"
-#include "texture/virtual_texture_key.h"
+#include "texture/virtual_texture/key.h"
 
 #include <algorithm>
 #include <atomic>

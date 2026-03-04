@@ -275,7 +275,7 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture_tile_file.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
@@ -311,7 +311,9 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture_tile_file.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/helpers.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/feedback.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
