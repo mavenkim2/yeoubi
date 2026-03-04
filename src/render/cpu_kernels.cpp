@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -207,10 +208,30 @@ static bool TracePrimary(const LaunchParams &params,
 
     if (outHit)
     {
+        int instanceId = static_cast<int>(rayHit.hit.geomID);
+        RTCScene embreeScene = reinterpret_cast<RTCScene>(params.traversable);
+        const unsigned int instId = rayHit.hit.instID[0];
+        const unsigned int geomId =
+            (instId != RTC_INVALID_GEOMETRY_ID) ? instId : rayHit.hit.geomID;
+        RTCGeometry geometry = rtcGetGeometry(embreeScene, geomId);
+        if (geometry)
+        {
+            const void *userData = rtcGetGeometryUserData(geometry);
+            if (userData)
+            {
+                const uint32_t refIndex =
+                    static_cast<uint32_t>(reinterpret_cast<uintptr_t>(userData));
+                if (refIndex != UINT32_MAX)
+                {
+                    instanceId = static_cast<int>(refIndex);
+                }
+            }
+        }
+
         outHit->rayOrigin = origin;
         outHit->rayDir = direction;
         outHit->t = rayHit.ray.tfar;
-        outHit->instanceId = static_cast<int>(rayHit.hit.geomID);
+        outHit->instanceId = instanceId;
         outHit->primitiveIndex = static_cast<int>(rayHit.hit.primID);
         outHit->geomNormal = ybi::render::integrator::Normalize(
             ybi::render::integrator::MakeVec3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z));

@@ -194,6 +194,9 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
         RTCGeometry instance = rtcNewGeometry(cpuDevice->embreeDevice, RTC_GEOMETRY_TYPE_INSTANCE);
         YBI_ASSERT(instance);
         rtcSetGeometryInstancedScene(instance, leafScene);
+        rtcSetGeometryUserData(
+            instance,
+            reinterpret_cast<void *>(static_cast<uintptr_t>(mesh.refIndex)));
         float transform[12] = {};
         CopyTransformMatrix(mesh.parentFromLocal, transform);
         rtcSetGeometryTransform(instance, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform);
@@ -226,6 +229,7 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
         RTCGeometry instance = rtcNewGeometry(cpuDevice->embreeDevice, RTC_GEOMETRY_TYPE_INSTANCE);
         YBI_ASSERT(instance);
         rtcSetGeometryInstancedScene(instance, leafScene);
+        rtcSetGeometryUserData(instance, reinterpret_cast<void *>(static_cast<uintptr_t>(UINT32_MAX)));
         float transform[12] = {};
         CopyTransformMatrix(curves.parentFromLocal, transform);
         rtcSetGeometryTransform(instance, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform);
@@ -258,6 +262,14 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
             rtcNewGeometry(cpuDevice->embreeDevice, RTC_GEOMETRY_TYPE_INSTANCE);
         YBI_ASSERT(childInstance);
         rtcSetGeometryInstancedScene(childInstance, childEmbreeScene);
+        uint32_t childRefIndex = UINT32_MAX;
+        if (!childScene->meshes.empty())
+        {
+            childRefIndex = childScene->meshes[0].refIndex;
+        }
+        rtcSetGeometryUserData(
+            childInstance,
+            reinterpret_cast<void *>(static_cast<uintptr_t>(childRefIndex)));
         float transform[12] = {};
         CopyTransformMatrix(instanceData.parentFromLocal, transform);
         rtcSetGeometryTransform(childInstance, 0, RTC_FORMAT_FLOAT3X4_ROW_MAJOR, transform);

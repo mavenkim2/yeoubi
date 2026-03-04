@@ -72,6 +72,7 @@ struct CliOptions
 {
     IntegratorType integrator = IntegratorType::Primary;
     MaterialTextureSemantic textureView = MaterialTextureSemantic::Diffuse;
+    DeviceKind deviceKind = DeviceKind::GPU;
     std::string inputPath;
     std::string outputPath = "optix_usd_scene.png";
     std::optional<ybi::float3> cameraPosition;
@@ -429,13 +430,14 @@ static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao] [--spp N] "
-           "[--cam-pos x y z] [--look-at x y z] [--ntc] [--view name] "
+           "[--device gpu|cpu] [--cam-pos x y z] [--look-at x y z] [--ntc] [--view name] "
            "[--purposes csv] [--purpose name]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
     printf("  --integrator primary|ao\n");
     printf("  --spp spp passes; feedback dumped after each pass\n");
+    printf("  --device gpu|cpu (cpu requires Embree)\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
     printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
@@ -494,6 +496,29 @@ static CliOptions ParseCli(int argc, char **argv)
                 std::abort();
             }
             options.spp = std::max(1, std::stoi(argv[++i]));
+            continue;
+        }
+        if (arg == "--device")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            const std::string value = argv[++i];
+            if (value == "gpu")
+            {
+                options.deviceKind = DeviceKind::GPU;
+            }
+            else if (value == "cpu")
+            {
+                options.deviceKind = DeviceKind::CPU;
+            }
+            else
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
             continue;
         }
         if (arg == "--out")
@@ -2008,18 +2033,30 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
 static bool RenderPhase(Device *device, const CliOptions &options, const HarnessState &state)
 {
     YBI_ASSERT(device);
-    const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
-    printf("optix_harness: ptx loaded\n");
-    fflush(stdout);
-
-    std::string kernelInitError;
-    if (!device->InitializeKernels(ptx, &kernelInitError))
+    if (device->GetKind() == DeviceKind::GPU)
     {
-        fprintf(stderr, "Failed to initialize kernels: %s\n", kernelInitError.c_str());
-        return false;
+        const std::string ptx = ReadTextFile(YBI_OPTIX_PRIMARY_PTX_PATH);
+        printf("optix_harness: ptx loaded\n");
+        fflush(stdout);
+
+        std::string kernelInitError;
+        if (!device->InitializeKernels(ptx, &kernelInitError))
+        {
+            fprintf(stderr, "Failed to initialize kernels: %s\n", kernelInitError.c_str());
+            return false;
+        }
+        printf("optix_harness: pipeline created\n");
+        fflush(stdout);
     }
-    printf("optix_harness: pipeline created\n");
-    fflush(stdout);
+    else
+    {
+        std::string kernelInitError;
+        if (!device->InitializeKernels("", &kernelInitError))
+        {
+            fprintf(stderr, "Failed to initialize CPU kernels: %s\n", kernelInitError.c_str());
+            return false;
+        }
+    }
 
     const ybi::float3 dummyBoundsMin = ybi::make_float3(-1.0f, -1.0f, -1.0f);
     const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
@@ -2079,13 +2116,20 @@ int main(int argc, char **argv)
     fflush(stdout);
 
     std::unique_ptr<Device> deviceStorage;
-    Device *device = Device::CreateDevice(DeviceKind::GPU, deviceStorage);
+    Device *device = Device::CreateDevice(options.deviceKind, deviceStorage);
     if (!device)
     {
-        fprintf(stderr, "Failed to create GPU device.\n");
+        fprintf(stderr, "Failed to create device.\n");
         return 1;
     }
-    printf("optix_harness: cuda device ready\n");
+    if (device->GetKind() == DeviceKind::GPU)
+    {
+        printf("optix_harness: cuda device ready\n");
+    }
+    else
+    {
+        printf("optix_harness: cpu device ready\n");
+    }
     fflush(stdout);
     HostMemoryArena hostArena;
     HarnessState state = {};
