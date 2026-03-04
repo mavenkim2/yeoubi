@@ -267,41 +267,6 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         VERBATIM)
     add_custom_target(yeoubi_optix_primary_programs_ptx DEPENDS "${YBI_OPTIX_PRIMARY_PTX_PATH}")
 
-    add_executable(yeoubi_optix_harness
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_harness.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/subdivision.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/edge_map_validation.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
-    if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
-        target_sources(yeoubi_optix_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
-    endif()
-    target_compile_definitions(yeoubi_optix_harness PRIVATE
-        ${YBI_COMPILE_DEFINITIONS}
-        YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_FROZEN_PATH}")
-    target_include_directories(yeoubi_optix_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
-    target_include_directories(yeoubi_optix_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-    target_link_libraries(yeoubi_optix_harness PRIVATE ${YBI_DEPENDENCIES})
-
-    if (WITH_NTC)
-        target_sources(yeoubi_optix_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp)
-        target_compile_definitions(yeoubi_optix_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
-        target_include_directories(yeoubi_optix_harness PRIVATE ${NTC_INCLUDE_DIRS})
-        target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})
-    endif()
-
 endif()
 
 if (WITH_USD)
@@ -359,22 +324,4 @@ if (WITH_USD)
         target_include_directories(yeoubi_template_harness PRIVATE ${NTC_INCLUDE_DIRS})
         target_link_libraries(yeoubi_template_harness PRIVATE ${NTC_LIBRARIES})
     endif()
-endif()
-
-if (WITH_USD AND WITH_EMBREE AND EMBREE_FOUND)
-    add_executable(yeoubi_embree_harness
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/embree_primary_harness.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/attributes.cpp)
-    target_compile_definitions(yeoubi_embree_harness PRIVATE ${YBI_COMPILE_DEFINITIONS})
-    if (WIN32)
-        target_compile_definitions(yeoubi_embree_harness PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-    endif()
-    target_include_directories(yeoubi_embree_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
-    target_include_directories(yeoubi_embree_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-    target_link_libraries(yeoubi_embree_harness PRIVATE ${OPENUSD_LIBRARIES} ${EMBREE_LIBRARIES})
 endif()

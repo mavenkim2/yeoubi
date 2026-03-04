@@ -31,7 +31,7 @@ static void PrintUsage(const char *exe)
 {
     std::printf("Usage: %s --backend optix|embree [backend args...]\n", exe);
     std::printf("Examples:\n");
-    std::printf("  %s --backend optix --file scene.usda --out out.png --view diffuse\n", exe);
+    std::printf("  %s --backend optix --file scene.usda --out out.png --integrator primary\n", exe);
     std::printf("  %s --backend embree --file scene.usda --out out.png --integrator ao\n", exe);
 }
 
@@ -84,15 +84,20 @@ static bool ParseCli(int argc, char **argv, Cli *outCli)
     return haveBackend;
 }
 
-static std::string BackendBinaryName(Backend backend)
+static std::string BackendBinaryName()
 {
-    return backend == Backend::Optix ? "yeoubi_optix_harness" : "yeoubi_embree_harness";
+    return "yeoubi_template_harness";
 }
 
-static std::vector<std::string> BuildLaunchCandidates(const char *argv0, Backend backend)
+static std::string BackendDeviceArg(Backend backend)
+{
+    return backend == Backend::Optix ? "gpu" : "cpu";
+}
+
+static std::vector<std::string> BuildLaunchCandidates(const char *argv0)
 {
     std::vector<std::string> candidates;
-    const std::string binaryName = BackendBinaryName(backend);
+    const std::string binaryName = BackendBinaryName();
 
     std::error_code ec;
     const std::filesystem::path exePath(argv0 ? argv0 : "");
@@ -146,11 +151,20 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    const std::vector<std::string> candidates = BuildLaunchCandidates(argv[0], cli.backend);
+    std::vector<std::string> launchArgs;
+    launchArgs.reserve(cli.passthroughArgs.size() + 2);
+    launchArgs.push_back("--device");
+    launchArgs.push_back(BackendDeviceArg(cli.backend));
+    for (const std::string &arg : cli.passthroughArgs)
+    {
+        launchArgs.push_back(arg);
+    }
+
+    const std::vector<std::string> candidates = BuildLaunchCandidates(argv[0]);
     int lastError = ENOENT;
     for (const std::string &candidate : candidates)
     {
-        lastError = ExecBackend(candidate, cli.passthroughArgs);
+        lastError = ExecBackend(candidate, launchArgs);
         if (lastError != ENOENT)
         {
             break;
@@ -159,7 +173,7 @@ int main(int argc, char **argv)
 
     std::fprintf(stderr,
                  "Failed to launch backend '%s': %s\n",
-                 BackendBinaryName(cli.backend).c_str(),
+                 BackendBinaryName().c_str(),
                  std::strerror(lastError));
     return 1;
 }
