@@ -1,5 +1,6 @@
 #include "device/cuda_device.h"
 #include "io/usd/load.h"
+#include "render/launch_params.h"
 #include "scene/scene.h"
 #include "tessellation/subdivision.h"
 #include "texture/exr_io.h"
@@ -64,81 +65,6 @@ static void OptixCheckImpl(OptixResult result, const char *expr, const char *fil
 }
 
 #define OPTIX_CHECK(expr) OptixCheckImpl((expr), #expr, __FILE__, __LINE__)
-
-struct LaunchParams
-{
-    struct InstanceGeomRef
-    {
-        unsigned long long positions;
-        unsigned long long indices;
-        unsigned long long texcoords;
-        unsigned long long texcoordIndices;
-        int numPositions;
-        int numIndices;
-        int numTexcoords;
-        int numTexcoordIndices;
-        int materialIndex;
-    };
-
-    struct WireframeConfig
-    {
-        float lineWidth;
-        float lineFeather;
-        float edgeDarkness;
-        float padding;
-    };
-
-    struct MaterialTextureRef
-    {
-        unsigned long long textureObject;
-        int width;
-        int height;
-        int valid;
-        int wrapS;
-        int wrapT;
-        int _padding0;
-        int _padding1;
-    };
-
-    struct VirtualTextureTileEntry
-    {
-        unsigned long long key;
-        unsigned long long pixelOffset;
-        unsigned int width;
-        unsigned int height;
-    };
-
-    OptixTraversableHandle traversable;
-    CUdeviceptr image;
-    int width;
-    int height;
-    ybi::float3 cameraOrigin;
-    ybi::float3 cameraU;
-    ybi::float3 cameraV;
-    ybi::float3 cameraW;
-    WireframeConfig wireframe;
-    int integrator;
-    int spp;
-    float aoBias;
-    float aoMaxDistance;
-    unsigned long long instanceGeomRefs;
-    int instanceGeomRefCount;
-    unsigned long long materialTextureRefs;
-    int materialTextureRefCount;
-    int materialTextureRefStride;
-    int materialTextureRefSemanticCount;
-    int textureViewSemantic;
-    unsigned long long feedbackKeys;
-    unsigned long long feedbackStats;
-    int feedbackCapacity;
-    int feedbackSamplePercent;
-    int feedbackTileSize;
-    int currentSpp;
-    unsigned long long virtualTextureTileEntries;
-    unsigned long long virtualTextureTilePixels;
-    int virtualTextureTileEntryCapacity;
-    int virtualTextureEnabled;
-};
 
 enum class IntegratorType
 {
@@ -1432,8 +1358,8 @@ static void RenderTraversable(OptixPipeline pipeline,
     const float diagonal = std::max(0.001f, ybi::length(extent));
 
     LaunchParams params = {};
-    params.traversable = traversable;
-    params.image = imageBuffer;
+    params.traversable = static_cast<BVHHandle>(traversable);
+    params.image = static_cast<DevicePtr>(imageBuffer);
     params.width = width;
     params.height = height;
     if (cameraOverride.has_value())

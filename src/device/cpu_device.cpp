@@ -1,4 +1,5 @@
 #include "device/cpu_device.h"
+#include "render/cpu_kernels.h"
 #include "render/dispatch_types.h"
 
 #if defined(WITH_EMBREE)
@@ -17,22 +18,6 @@ static size_t KernelIndex(RenderKernelId kernel)
 {
     return static_cast<size_t>(kernel);
 }
-
-static bool CPUPrimaryDiffuseStub(CPUDevice *device, const DispatchParams &params)
-{
-    (void)device;
-    (void)params;
-    fprintf(stderr, "CPU primary diffuse kernel is not wired yet.\n");
-    return false;
-}
-
-static bool CPUAOStub(CPUDevice *device, const DispatchParams &params)
-{
-    (void)device;
-    (void)params;
-    fprintf(stderr, "CPU AO kernel is not wired yet.\n");
-    return false;
-}
 } // namespace
 
 CPUDevice::CPUDevice()
@@ -43,8 +28,7 @@ CPUDevice::CPUDevice()
         fprintf(stderr, "Embree init failed: rtcNewDevice returned null.\n");
         std::abort();
     }
-    RegisterKernel(RenderKernelId::PrimaryDiffuse, CPUPrimaryDiffuseStub);
-    RegisterKernel(RenderKernelId::AO, CPUAOStub);
+    RegisterCPUDefaultKernels(this);
 }
 
 CPUDevice::~CPUDevice()

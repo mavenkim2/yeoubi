@@ -193,6 +193,7 @@ if (WITH_EMBREE)
         list (APPEND YBI_COMPILE_DEFINITIONS WITH_EMBREE YBI_EMBREE_VERSION_MAJOR=${EMBREE_VERSION_MAJOR})
         list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp)
         list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp)
+        list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/render/cpu_kernels.cpp)
         message (STATUS "Embree Found: ${EMBREE_INCLUDE_DIRS} ${EMBREE_VERSION}")
     else()
         message(STATUS "Embree not found; CPU Embree backend disabled.")
@@ -324,7 +325,8 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     if (WITH_EMBREE AND EMBREE_FOUND)
         target_sources(yeoubi_optix_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/render/cpu_kernels.cpp)
     endif()
     add_dependencies(yeoubi_optix_template_harness yeoubi_optix_primary_programs_ptx)
 
