@@ -247,6 +247,8 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     set(YBI_OPTIX_PTX_GPU_ARCH "compute_89")
     message(STATUS "OptiX PTX compile arch: ${YBI_OPTIX_PTX_GPU_ARCH}")
     set(YBI_OPTIX_PRIMARY_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/optix_primary_programs.ptx")
+    set(YBI_OPTIX_PRIMARY_PTX_FROZEN_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/frozen/optix_primary_programs_2026_03_03.ptx")
     add_custom_command(
         OUTPUT "${YBI_OPTIX_PRIMARY_PTX_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
@@ -284,11 +286,9 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_sources(yeoubi_optix_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
     endif()
-    add_dependencies(yeoubi_optix_harness yeoubi_optix_primary_programs_ptx)
-
     target_compile_definitions(yeoubi_optix_harness PRIVATE
         ${YBI_COMPILE_DEFINITIONS}
-        YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_PATH}")
+        YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_FROZEN_PATH}")
     target_include_directories(yeoubi_optix_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
     target_include_directories(yeoubi_optix_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_optix_harness PRIVATE ${YBI_DEPENDENCIES})
@@ -302,8 +302,8 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_link_libraries(yeoubi_optix_harness PRIVATE ${NTC_LIBRARIES})
     endif()
 
-    add_executable(yeoubi_optix_template_harness
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix_template_harness.cpp
+    add_executable(yeoubi_template_harness
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/template_harness.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp
@@ -319,31 +319,31 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/tessellation/edge_map_validation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
     if (OPTIX_VERSION VERSION_GREATER_EQUAL 90000)
-        target_sources(yeoubi_optix_template_harness PRIVATE
+        target_sources(yeoubi_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/clusters.cu)
     endif()
     if (WITH_EMBREE AND EMBREE_FOUND)
-        target_sources(yeoubi_optix_template_harness PRIVATE
+        target_sources(yeoubi_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/embree/bvh.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/render/cpu_kernels.cpp)
     endif()
-    add_dependencies(yeoubi_optix_template_harness yeoubi_optix_primary_programs_ptx)
+    add_dependencies(yeoubi_template_harness yeoubi_optix_primary_programs_ptx)
 
-    target_compile_definitions(yeoubi_optix_template_harness PRIVATE
+    target_compile_definitions(yeoubi_template_harness PRIVATE
         ${YBI_COMPILE_DEFINITIONS}
         YBI_OPTIX_PRIMARY_PTX_PATH="${YBI_OPTIX_PRIMARY_PTX_PATH}")
-    target_include_directories(yeoubi_optix_template_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
-    target_include_directories(yeoubi_optix_template_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-    target_link_libraries(yeoubi_optix_template_harness PRIVATE ${YBI_DEPENDENCIES})
+    target_include_directories(yeoubi_template_harness PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+    target_include_directories(yeoubi_template_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+    target_link_libraries(yeoubi_template_harness PRIVATE ${YBI_DEPENDENCIES})
 
     if (WITH_NTC)
-        target_sources(yeoubi_optix_template_harness PRIVATE
+        target_sources(yeoubi_template_harness PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp)
-        target_compile_definitions(yeoubi_optix_template_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
-        target_include_directories(yeoubi_optix_template_harness PRIVATE ${NTC_INCLUDE_DIRS})
-        target_link_libraries(yeoubi_optix_template_harness PRIVATE ${NTC_LIBRARIES})
+        target_compile_definitions(yeoubi_template_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
+        target_include_directories(yeoubi_template_harness PRIVATE ${NTC_INCLUDE_DIRS})
+        target_link_libraries(yeoubi_template_harness PRIVATE ${NTC_LIBRARIES})
     endif()
 endif()
 
