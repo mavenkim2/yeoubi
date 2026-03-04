@@ -719,6 +719,45 @@ struct DecodedMaterialTexture
     TextureWrapMode wrapT = TEXTURE_WRAP_MODE_REPEAT;
 };
 
+struct ImageDecodeStats
+{
+    double totalMs = 0.0;
+    double udimResolveMs = 0.0;
+    double exrLoadMs = 0.0;
+    double exrConvertMs = 0.0;
+    double stbiLoadMs = 0.0;
+    double stbiCopyMs = 0.0;
+    size_t decodedBytes = 0;
+    int decodedTiles = 0;
+    int cacheHits = 0;
+    int cacheMisses = 0;
+    int exrTiles = 0;
+    int stbiTiles = 0;
+    std::vector<std::pair<double, std::string>> slowTiles;
+};
+
+static void RecordSlowTile(ImageDecodeStats *stats, double ms, const std::string &path)
+{
+    if (!stats)
+    {
+        return;
+    }
+    if (stats->slowTiles.size() < 10)
+    {
+        stats->slowTiles.emplace_back(ms, path);
+    }
+    else
+    {
+        auto minIt = std::min_element(stats->slowTiles.begin(), stats->slowTiles.end());
+        if (minIt != stats->slowTiles.end() && minIt->first < ms)
+        {
+            *minIt = {ms, path};
+        }
+    }
+    std::sort(stats->slowTiles.begin(), stats->slowTiles.end(),
+              [](const auto &a, const auto &b) { return a.first > b.first; });
+}
+
 struct UploadedMaterialTextures
 {
     std::vector<LaunchParams::MaterialTextureRef> refs;
@@ -851,6 +890,15 @@ static bool LoadImageRgba8(const std::string &path,
 static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                                 std::vector<DecodedMaterialTexture> *outTextures)
 {
+    using Clock = std::chrono::steady_clock;
+    auto ElapsedMs = [](Clock::time_point start, Clock::time_point end) {
+        return std::chrono::duration<double, std::milli>(end - start).count();
+    };
+
+    ImageDecodeStats stats = {};
+    double cacheHitMs = 0.0;
+    const auto totalStart = Clock::now();
+
     YBI_ASSERT(outTextures);
     outTextures->clear();
     outTextures->resize(materials.size() * static_cast<size_t>(kMaterialSemanticCount) *
@@ -875,6 +923,7 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
 
             std::unordered_map<uint32_t, std::string> udimPaths;
             std::string udimReason;
+            const auto udimStart = Clock::now();
             if (!ybi::usd_ntc::CollectUdimPaths(input.texturePath, udimPaths, udimReason))
             {
                 std::printf(
@@ -883,8 +932,10 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                     input.inputName.c_str(),
                     input.texturePath.c_str(),
                     udimReason.c_str());
+                stats.udimResolveMs += ElapsedMs(udimStart, Clock::now());
                 continue;
             }
+            stats.udimResolveMs += ElapsedMs(udimStart, Clock::now());
 
             for (const auto &entry : udimPaths)
             {
@@ -896,14 +947,19 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                 auto cached = decodedByPath.find(tilePath);
                 if (cached != decodedByPath.end())
                 {
+                    const auto cacheStart = Clock::now();
                     DecodedMaterialTexture tile = cached->second;
                     tile.udim = udim;
                     tile.wrapS = input.wrapS;
                     tile.wrapT = input.wrapT;
                     (*outTextures)[static_cast<size_t>(dstIndex)] = std::move(tile);
                     decodedTiles++;
+                    stats.cacheHits++;
+                    stats.decodedTiles++;
+                    cacheHitMs += ElapsedMs(cacheStart, Clock::now());
                     continue;
                 }
+                stats.cacheMisses++;
 
                 DecodedMaterialTexture texture = {};
                 texture.valid = true;
@@ -913,6 +969,7 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                 texture.wrapT = input.wrapT;
 
                 std::string reason;
+                const auto loadStart = Clock::now();
                 if (!LoadImageRgba8(
                         tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
                 {
@@ -925,6 +982,21 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                         reason.c_str());
                     continue;
                 }
+                const double loadMs = ElapsedMs(loadStart, Clock::now());
+                const bool isExr = (ybi::texture::LowerExt(tilePath) == ".exr");
+                if (isExr)
+                {
+                    stats.exrLoadMs += loadMs;
+                    stats.exrTiles++;
+                }
+                else
+                {
+                    stats.stbiLoadMs += loadMs;
+                    stats.stbiTiles++;
+                }
+                stats.decodedBytes += texture.rgba8.size();
+                stats.decodedTiles++;
+                RecordSlowTile(&stats, loadMs, tilePath);
 
                 (*outTextures)[static_cast<size_t>(dstIndex)] = texture;
                 decodedByPath.emplace(tilePath, std::move(texture));
@@ -933,10 +1005,57 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
         }
     }
 
+    stats.totalMs = ElapsedMs(totalStart, Clock::now());
+
     std::printf("Image runtime: decoded %d/%zu material UDIM tiles\n",
                 decodedTiles,
                 materials.size() * static_cast<size_t>(kMaterialSemanticCount) *
                     static_cast<size_t>(kUdimSlotCount));
+    const double imageLoadMs = stats.exrLoadMs + stats.stbiLoadMs;
+    const double otherMs =
+        std::max(0.0, stats.totalMs - (stats.udimResolveMs + imageLoadMs + cacheHitMs));
+    const char *bottleneck = "other";
+    double bottleneckMs = otherMs;
+    if (stats.udimResolveMs > bottleneckMs)
+    {
+        bottleneck = "udim_resolve";
+        bottleneckMs = stats.udimResolveMs;
+    }
+    if (cacheHitMs > bottleneckMs)
+    {
+        bottleneck = "cache_hit_copy";
+        bottleneckMs = cacheHitMs;
+    }
+    if (imageLoadMs > bottleneckMs)
+    {
+        bottleneck = "image_load";
+        bottleneckMs = imageLoadMs;
+    }
+    std::printf(
+        "Image runtime: decode timing total %.2f ms (udim %.2f ms, cache-hit %.2f ms, "
+        "image-load %.2f ms [exr %.2f ms/%d, stbi %.2f ms/%d], other %.2f ms)\n",
+        stats.totalMs,
+        stats.udimResolveMs,
+        cacheHitMs,
+        imageLoadMs,
+        stats.exrLoadMs,
+        stats.exrTiles,
+        stats.stbiLoadMs,
+        stats.stbiTiles,
+        otherMs);
+    std::printf("Image runtime: bottleneck guess %s (%.2f ms)\n", bottleneck, bottleneckMs);
+    std::printf("Image runtime: cache hits %d misses %d decoded bytes %zu\n",
+                stats.cacheHits,
+                stats.cacheMisses,
+                stats.decodedBytes);
+    if (!stats.slowTiles.empty())
+    {
+        std::printf("Image runtime: slow tiles (ms):\n");
+        for (const auto &entry : stats.slowTiles)
+        {
+            std::printf("  %.2f %s\n", entry.first, entry.second.c_str());
+        }
+    }
     return true;
 }
 
