@@ -3,6 +3,7 @@
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
+#include "third_party/tinyexr/tinyexr.h"
 
 #include <algorithm>
 #include <cctype>
@@ -23,6 +24,70 @@ struct TextureGroup
     std::string basePathNoUdim;
     std::unordered_map<uint32_t, std::string> udimPaths;
 };
+
+bool DetectExrMipmapLevels(const std::string &path,
+                           bool *outHasMipLevels,
+                           int *outTiled,
+                           int *outTileLevelMode,
+                           std::string *outReason)
+{
+    if (!outHasMipLevels || !outTiled || !outTileLevelMode)
+    {
+        if (outReason)
+        {
+            *outReason = "invalid output pointers";
+        }
+        return false;
+    }
+
+    *outHasMipLevels = false;
+    *outTiled = 0;
+    *outTileLevelMode = -1;
+    if (outReason)
+    {
+        outReason->clear();
+    }
+
+    EXRVersion version = {};
+    if (ParseEXRVersionFromFile(&version, path.c_str()) != TINYEXR_SUCCESS)
+    {
+        if (outReason)
+        {
+            *outReason = "ParseEXRVersionFromFile failed";
+        }
+        return false;
+    }
+
+    EXRHeader header;
+    InitEXRHeader(&header);
+    const char *err = nullptr;
+    const int parseRc = ParseEXRHeaderFromFile(&header, &version, path.c_str(), &err);
+    if (parseRc != TINYEXR_SUCCESS)
+    {
+        if (outReason)
+        {
+            *outReason = "ParseEXRHeaderFromFile failed";
+            if (err)
+            {
+                *outReason += " (";
+                *outReason += err;
+                *outReason += ")";
+            }
+        }
+        if (err)
+        {
+            FreeEXRErrorMessage(err);
+        }
+        FreeEXRHeader(&header);
+        return false;
+    }
+
+    *outTiled = header.tiled;
+    *outTileLevelMode = header.tile_level_mode;
+    *outHasMipLevels = (header.tiled != 0 && header.tile_level_mode == TINYEXR_TILE_MIPMAP_LEVELS);
+    FreeEXRHeader(&header);
+    return true;
+}
 
 void ExtractTileRgbaF32(const std::vector<float> &image,
                         int imageWidth,
@@ -229,6 +294,28 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         {
             ybi::tilebin::UdimImage image = {};
             image.udim = udimPath.first;
+            bool hasMipLevels = false;
+            int tiled = 0;
+            int tileLevelMode = -1;
+            std::string mipReason;
+            const bool mipDetected = DetectExrMipmapLevels(
+                udimPath.second, &hasMipLevels, &tiled, &tileLevelMode, &mipReason);
+            if (mipDetected)
+            {
+                std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d\n",
+                            udimPath.second.c_str(),
+                            udimPath.first,
+                            hasMipLevels ? "yes" : "no",
+                            tiled,
+                            tileLevelMode);
+            }
+            else
+            {
+                std::printf("Tile prep: exr %s udim=%u mipmap_levels=unknown reason=%s\n",
+                            udimPath.second.c_str(),
+                            udimPath.first,
+                            mipReason.c_str());
+            }
             int width = 0;
             int height = 0;
             std::string reason;
