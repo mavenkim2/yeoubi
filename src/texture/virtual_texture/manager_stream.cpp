@@ -81,9 +81,19 @@ bool VirtualTextureManager::ResolveKey(unsigned long long key, KeyVirtualInfo *o
     }
 
     const LaunchParams::VirtualTextureMipInfo &mipInfo = texture.mipInfos[mip];
+    if (static_cast<uint32_t>(local) >= mipInfo.udimInfoCount)
+    {
+        return false;
+    }
+    const uint32_t udimInfoIndex = mipInfo.udimInfoOffset + static_cast<uint32_t>(local);
+    if (udimInfoIndex >= texture.udimInfos.size())
+    {
+        return false;
+    }
+    const LaunchParams::VirtualTextureUdimInfo &udimInfo = texture.udimInfos[udimInfoIndex];
     const uint32_t tileX = FeedbackTileX(key);
     const uint32_t tileY = FeedbackTileY(key);
-    if (tileX >= mipInfo.pagesPerUdimX || tileY >= mipInfo.pagesPerUdimY)
+    if (tileX >= udimInfo.pageCountX || tileY >= udimInfo.pageCountY)
     {
         return false;
     }
@@ -97,8 +107,8 @@ bool VirtualTextureManager::ResolveKey(unsigned long long key, KeyVirtualInfo *o
     outInfo->udimLocal = static_cast<uint32_t>(local);
     outInfo->tileX = tileX;
     outInfo->tileY = tileY;
-    outInfo->vaX = mipInfo.basePageX + outInfo->udimLocal * mipInfo.pagesPerUdimX + tileX;
-    outInfo->vaY = mipInfo.basePageY + tileY;
+    outInfo->vaX = udimInfo.basePageX + tileX;
+    outInfo->vaY = udimInfo.basePageY + tileY;
     return true;
 }
 
@@ -156,40 +166,16 @@ bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
     uint64_t sourceBytes = 0u;
     std::string readError;
 
-    uint32_t sourceTileX = info.tileX;
-    uint32_t sourceTileY = info.tileY;
-    if (info.mip > 0u)
-    {
-        sourceTileX = info.tileX << info.mip;
-        sourceTileY = info.tileY << info.mip;
-    }
-
     if (!ReadVirtualTextureTile(&texture.tileFile,
                                 info.udim,
-                                sourceTileX,
-                                sourceTileY,
+                                info.tileX,
+                                info.tileY,
                                 &rgba8,
                                 &width,
                                 &height,
                                 &sourceBytes,
                                 &readError))
     {
-        if (info.mip > 0u &&
-            ReadVirtualTextureTile(&texture.tileFile,
-                                   info.udim,
-                                   info.tileX,
-                                   info.tileY,
-                                   &rgba8,
-                                   &width,
-                                   &height,
-                                   &sourceBytes,
-                                   &readError))
-        {
-            *outRgba8 = std::move(rgba8);
-            *outWidth = width;
-            *outHeight = height;
-            return true;
-        }
         if (outError)
         {
             *outError = readError;

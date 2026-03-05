@@ -59,13 +59,17 @@ struct LaunchParams
     struct VirtualTextureMipInfo
     {
         unsigned int level;
+        unsigned int udimInfoOffset;
+        unsigned int udimInfoCount;
+        unsigned int _padding0;
+    };
+
+    struct VirtualTextureUdimInfo
+    {
         unsigned int basePageX;
         unsigned int basePageY;
         unsigned int pageCountX;
         unsigned int pageCountY;
-        unsigned int pagesPerUdimX;
-        unsigned int pagesPerUdimY;
-        unsigned int _padding0;
     };
 
     struct VirtualTextureTextureMeta
@@ -126,6 +130,8 @@ struct LaunchParams
     int virtualTextureTextureMetaCount;
     unsigned long long virtualTextureMipInfos;
     int virtualTextureMipInfoCount;
+    unsigned long long virtualTextureUdimInfos;
+    int virtualTextureUdimInfoCount;
 };
 
 YBI_NAMESPACE_END

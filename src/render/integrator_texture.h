@@ -70,6 +70,7 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
                                                  unsigned int *outVay)
 {
     if (params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull ||
+        params.virtualTextureUdimInfos == 0ull ||
         geomRef.materialIndex < 0 || geomRef.materialIndex >= params.virtualTextureTextureMetaCount)
     {
         return false;
@@ -90,16 +91,33 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
 
     const LaunchParams::VirtualTextureMipInfo *mipInfos =
         reinterpret_cast<const LaunchParams::VirtualTextureMipInfo *>(params.virtualTextureMipInfos);
-    const LaunchParams::VirtualTextureMipInfo &mipInfo = mipInfos[meta.mipInfoOffset + mip];
-    if (tileX >= mipInfo.pagesPerUdimX || tileY >= mipInfo.pagesPerUdimY)
+    const unsigned int mipInfoIndex = meta.mipInfoOffset + mip;
+    if (mipInfoIndex >= static_cast<unsigned int>(MaxInt(params.virtualTextureMipInfoCount, 0)))
+    {
+        return false;
+    }
+    const LaunchParams::VirtualTextureMipInfo &mipInfo = mipInfos[mipInfoIndex];
+    if (static_cast<unsigned int>(localUdim) >= mipInfo.udimInfoCount)
+    {
+        return false;
+    }
+    const LaunchParams::VirtualTextureUdimInfo *udimInfos =
+        reinterpret_cast<const LaunchParams::VirtualTextureUdimInfo *>(params.virtualTextureUdimInfos);
+    const unsigned int udimInfoIndex = mipInfo.udimInfoOffset + static_cast<unsigned int>(localUdim);
+    if (udimInfoIndex >= static_cast<unsigned int>(MaxInt(params.virtualTextureUdimInfoCount, 0)))
+    {
+        return false;
+    }
+    const LaunchParams::VirtualTextureUdimInfo &udimInfo =
+        udimInfos[udimInfoIndex];
+    if (tileX >= udimInfo.pageCountX || tileY >= udimInfo.pageCountY)
     {
         return false;
     }
 
-    const unsigned int vaX =
-        mipInfo.basePageX + static_cast<unsigned int>(localUdim) * mipInfo.pagesPerUdimX + tileX;
-    const unsigned int vaY = mipInfo.basePageY + tileY;
-    if (vaX >= mipInfo.basePageX + mipInfo.pageCountX || vaY >= mipInfo.basePageY + mipInfo.pageCountY)
+    const unsigned int vaX = udimInfo.basePageX + tileX;
+    const unsigned int vaY = udimInfo.basePageY + tileY;
+    if (vaX >= udimInfo.basePageX + udimInfo.pageCountX || vaY >= udimInfo.basePageY + udimInfo.pageCountY)
     {
         return false;
     }

@@ -257,6 +257,18 @@ bool VirtualTextureManager::RegisterTexture(const VirtualTextureRegisterInput &i
     texture.activeUdims = input.activeUdims;
     texture.mipCount = ComputeMipCount(texture.width, texture.height);
     texture.udimToLocal.fill(-1);
+    texture.udimWidths.assign(texture.activeUdims.size(), texture.width);
+    texture.udimHeights.assign(texture.activeUdims.size(), texture.height);
+    std::unordered_map<uint32_t, VirtualTextureUdimExtent> extentByUdim;
+    extentByUdim.reserve(input.udimExtents.size());
+    for (const VirtualTextureUdimExtent &extent : input.udimExtents)
+    {
+        if (extent.width == 0u || extent.height == 0u)
+        {
+            continue;
+        }
+        extentByUdim[extent.udim] = extent;
+    }
     for (size_t i = 0; i < texture.activeUdims.size(); ++i)
     {
         const uint32_t udim = texture.activeUdims[i];
@@ -265,6 +277,12 @@ bool VirtualTextureManager::RegisterTexture(const VirtualTextureRegisterInput &i
             continue;
         }
         texture.udimToLocal[static_cast<size_t>(udim - kUdimMin)] = static_cast<int16_t>(i);
+        auto extentIt = extentByUdim.find(udim);
+        if (extentIt != extentByUdim.end())
+        {
+            texture.udimWidths[i] = extentIt->second.width;
+            texture.udimHeights[i] = extentIt->second.height;
+        }
     }
 
     uint32_t tailFirstMip = texture.mipCount;
@@ -312,16 +330,27 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
         TextureState &texture = textures_[textureIndex];
         texture.mipInfos.resize(texture.mipCount);
         const uint32_t udimCount = static_cast<uint32_t>(texture.activeUdims.size());
+        texture.udimInfos.assign(static_cast<size_t>(texture.mipCount) * static_cast<size_t>(udimCount),
+                                 LaunchParams::VirtualTextureUdimInfo{});
         for (uint32_t mip = 0u; mip < texture.mipCount; ++mip)
         {
-            const uint32_t mipW = std::max(1u, texture.width >> mip);
-            const uint32_t mipH = std::max(1u, texture.height >> mip);
-            const uint32_t pagesPerUdimX = std::max(1u, (mipW + config_.pageSize - 1u) / config_.pageSize);
-            const uint32_t pagesPerUdimY = std::max(1u, (mipH + config_.pageSize - 1u) / config_.pageSize);
-            const uint32_t rectW = std::max(1u, pagesPerUdimX * std::max(1u, udimCount));
-            const uint32_t rectH = std::max(1u, pagesPerUdimY);
-            levelRequests[mip].push_back(
-                {textureIndex, mip, rectW, rectH, pagesPerUdimX, pagesPerUdimY});
+            LaunchParams::VirtualTextureMipInfo &mipInfo = texture.mipInfos[mip];
+            mipInfo.level = mip;
+            mipInfo.udimInfoOffset = mip * udimCount;
+            mipInfo.udimInfoCount = udimCount;
+            mipInfo._padding0 = 0u;
+            for (uint32_t localUdim = 0u; localUdim < udimCount; ++localUdim)
+            {
+                const uint32_t udimW =
+                    (localUdim < texture.udimWidths.size()) ? texture.udimWidths[localUdim] : texture.width;
+                const uint32_t udimH =
+                    (localUdim < texture.udimHeights.size()) ? texture.udimHeights[localUdim] : texture.height;
+                const uint32_t mipW = std::max(1u, udimW >> mip);
+                const uint32_t mipH = std::max(1u, udimH >> mip);
+                const uint32_t rectW = std::max(1u, (mipW + config_.pageSize - 1u) / config_.pageSize);
+                const uint32_t rectH = std::max(1u, (mipH + config_.pageSize - 1u) / config_.pageSize);
+                levelRequests[mip].push_back({textureIndex, mip, localUdim, rectW, rectH});
+            }
         }
     }
 
@@ -371,14 +400,19 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
                 }
                 TextureState &texture = textures_[request.textureIndex];
                 LaunchParams::VirtualTextureMipInfo &mipInfo = texture.mipInfos[request.mip];
+                const uint32_t udimCount = static_cast<uint32_t>(texture.activeUdims.size());
+                const uint32_t localOffset = request.mip * udimCount + request.localUdim;
+                if (localOffset >= texture.udimInfos.size())
+                {
+                    packed = false;
+                    break;
+                }
+                LaunchParams::VirtualTextureUdimInfo &udimInfo = texture.udimInfos[localOffset];
                 mipInfo.level = level;
-                mipInfo.basePageX = cursorX;
-                mipInfo.basePageY = cursorY;
-                mipInfo.pageCountX = request.width;
-                mipInfo.pageCountY = request.height;
-                mipInfo.pagesPerUdimX = request.pagesPerUdimX;
-                mipInfo.pagesPerUdimY = request.pagesPerUdimY;
-                mipInfo._padding0 = 0u;
+                udimInfo.basePageX = cursorX;
+                udimInfo.basePageY = cursorY;
+                udimInfo.pageCountX = request.width;
+                udimInfo.pageCountY = request.height;
                 cursorX += request.width;
                 rowHeight = std::max(rowHeight, request.height);
             }
@@ -411,10 +445,17 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
     pageTableEntriesHost_.assign(offset, 0u);
 
     mipInfosHost_.clear();
+    udimInfosHost_.clear();
     for (TextureState &texture : textures_)
     {
         texture.mipInfoOffset = static_cast<uint32_t>(mipInfosHost_.size());
-        mipInfosHost_.insert(mipInfosHost_.end(), texture.mipInfos.begin(), texture.mipInfos.end());
+        texture.udimInfoOffset = static_cast<uint32_t>(udimInfosHost_.size());
+        for (LaunchParams::VirtualTextureMipInfo mipInfo : texture.mipInfos)
+        {
+            mipInfo.udimInfoOffset += texture.udimInfoOffset;
+            mipInfosHost_.push_back(mipInfo);
+        }
+        udimInfosHost_.insert(udimInfosHost_.end(), texture.udimInfos.begin(), texture.udimInfos.end());
     }
 
     uint32_t maxTextureId = 0u;
@@ -457,6 +498,7 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
         {
             const LaunchParams::VirtualTextureMipInfo &mipInfo =
                 mipInfosHost_[texture.mipInfoOffset + mip];
+            const uint32_t level = mipInfo.level;
             for (uint32_t localUdim = 0u; localUdim < texture.tailPageIndexByLocalUdim.size(); ++localUdim)
             {
                 const uint32_t tailPageIndex = texture.tailPageIndexByLocalUdim[localUdim];
@@ -464,18 +506,33 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
                 {
                     continue;
                 }
+                if (localUdim >= mipInfo.udimInfoCount)
+                {
+                    continue;
+                }
+                const uint32_t udimInfoIndex = mipInfo.udimInfoOffset + localUdim;
+                if (udimInfoIndex >= udimInfosHost_.size())
+                {
+                    continue;
+                }
+                const LaunchParams::VirtualTextureUdimInfo &udimInfo = udimInfosHost_[udimInfoIndex];
                 const uint32_t pageX = tailPageIndex;
                 const uint32_t pageY = 0u;
-                for (uint32_t ty = 0u; ty < mipInfo.pagesPerUdimY; ++ty)
+                for (uint32_t ty = 0u; ty < udimInfo.pageCountY; ++ty)
                 {
-                    for (uint32_t tx = 0u; tx < mipInfo.pagesPerUdimX; ++tx)
+                    for (uint32_t tx = 0u; tx < udimInfo.pageCountX; ++tx)
                     {
-                        const uint32_t vaX =
-                            mipInfo.basePageX + localUdim * mipInfo.pagesPerUdimX + tx;
-                        const uint32_t vaY = mipInfo.basePageY + ty;
+                        const uint32_t vaX = udimInfo.basePageX + tx;
+                        const uint32_t vaY = udimInfo.basePageY + ty;
                         const uint32_t packed = PackPageTableEntry(pageX, pageY, kPageTypeTail, 1u);
-                        const uint32_t index = pageTableMipOffsets_[mip] +
-                                               vaY * pageTableMipWidths_[mip] + vaX;
+                        if (level >= pageTableMipOffsets_.size() || level >= pageTableMipWidths_.size() ||
+                            level >= pageTableMipHeights_.size() || vaX >= pageTableMipWidths_[level] ||
+                            vaY >= pageTableMipHeights_[level])
+                        {
+                            continue;
+                        }
+                        const uint32_t index = pageTableMipOffsets_[level] +
+                                               vaY * pageTableMipWidths_[level] + vaX;
                         if (index < pageTableEntriesHost_.size())
                         {
                             pageTableEntriesHost_[index] = packed;

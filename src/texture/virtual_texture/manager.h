@@ -33,6 +33,13 @@ struct VirtualTextureTailSource
     size_t rgba8Bytes = 0u;
 };
 
+struct VirtualTextureUdimExtent
+{
+    uint32_t udim = 1001u;
+    uint32_t width = 0u;
+    uint32_t height = 0u;
+};
+
 struct VirtualTextureRegisterInput
 {
     uint32_t textureId = 0u;
@@ -40,6 +47,7 @@ struct VirtualTextureRegisterInput
     uint32_t height = 0u;
     std::string tileFilePath;
     std::vector<uint32_t> activeUdims;
+    std::vector<VirtualTextureUdimExtent> udimExtents;
     std::vector<VirtualTextureTailSource> tailSources;
 };
 
@@ -86,6 +94,10 @@ private:
 
         std::vector<LaunchParams::VirtualTextureMipInfo> mipInfos;
         uint32_t mipInfoOffset = 0u;
+        std::vector<LaunchParams::VirtualTextureUdimInfo> udimInfos;
+        uint32_t udimInfoOffset = 0u;
+        std::vector<uint32_t> udimWidths;
+        std::vector<uint32_t> udimHeights;
 
         std::vector<uint8_t> tailPixelsHost;
         DeviceMemoryView<uint8_t> tailPixelsDevice = {};
@@ -120,10 +132,9 @@ private:
     {
         uint32_t textureIndex = 0u;
         uint32_t mip = 0u;
+        uint32_t localUdim = 0u;
         uint32_t width = 0u;
         uint32_t height = 0u;
-        uint32_t pagesPerUdimX = 0u;
-        uint32_t pagesPerUdimY = 0u;
     };
 
     bool BuildMipReservations(std::string *outError);
@@ -170,6 +181,8 @@ private:
 
     std::vector<LaunchParams::VirtualTextureMipInfo> mipInfosHost_;
     DeviceMemoryView<uint8_t> mipInfosDevice_ = {};
+    std::vector<LaunchParams::VirtualTextureUdimInfo> udimInfosHost_;
+    DeviceMemoryView<uint8_t> udimInfosDevice_ = {};
     std::vector<LaunchParams::VirtualTextureTextureMeta> textureMetaHost_;
     DeviceMemoryView<uint8_t> textureMetaDevice_ = {};
 

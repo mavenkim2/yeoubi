@@ -42,6 +42,12 @@ bool VirtualTextureManager::AllocateDeviceState(std::string *outError)
         mipInfosDevice_ = device_->AllocBytes(bytes);
         device_->CopyBytesToDevice(mipInfosDevice_, mipInfosHost_.data(), bytes);
     }
+    if (!udimInfosHost_.empty())
+    {
+        const size_t bytes = udimInfosHost_.size() * sizeof(LaunchParams::VirtualTextureUdimInfo);
+        udimInfosDevice_ = device_->AllocBytes(bytes);
+        device_->CopyBytesToDevice(udimInfosDevice_, udimInfosHost_.data(), bytes);
+    }
 
     for (TextureState &texture : textures_)
     {
@@ -142,13 +148,16 @@ void VirtualTextureManager::BindLaunchParams(LaunchParams *params) const
         finalized_ ? reinterpret_cast<unsigned long long>(streamPixelsDevice_.data()) : 0ull;
     params->virtualTextureStreamPageCountX = finalized_ ? static_cast<int>(streamPageCountX_) : 0;
     params->virtualTextureStreamPageCountY = finalized_ ? static_cast<int>(streamPageCountY_) : 0;
-    params->virtualTextureSampleMip = 1;
+    params->virtualTextureSampleMip = 0;
     params->virtualTextureTextureMeta =
         finalized_ ? reinterpret_cast<unsigned long long>(textureMetaDevice_.data()) : 0ull;
     params->virtualTextureTextureMetaCount = finalized_ ? static_cast<int>(textureMetaHost_.size()) : 0;
     params->virtualTextureMipInfos =
         finalized_ ? reinterpret_cast<unsigned long long>(mipInfosDevice_.data()) : 0ull;
     params->virtualTextureMipInfoCount = finalized_ ? static_cast<int>(mipInfosHost_.size()) : 0;
+    params->virtualTextureUdimInfos =
+        finalized_ ? reinterpret_cast<unsigned long long>(udimInfosDevice_.data()) : 0ull;
+    params->virtualTextureUdimInfoCount = finalized_ ? static_cast<int>(udimInfosHost_.size()) : 0;
 
     params->virtualTextureTileEntries = 0ull;
     params->virtualTextureTilePixels = 0ull;
@@ -241,6 +250,10 @@ void VirtualTextureManager::Shutdown()
         {
             device_->FreeBytes(mipInfosDevice_);
         }
+        if (udimInfosDevice_.data() != nullptr)
+        {
+            device_->FreeBytes(udimInfosDevice_);
+        }
         if (pageTableMipHeightsDevice_.data() != nullptr)
         {
             device_->FreeBytes(pageTableMipHeightsDevice_);
@@ -268,6 +281,7 @@ void VirtualTextureManager::Shutdown()
     pageTableMipHeights_.clear();
     pageTableEntriesHost_.clear();
     mipInfosHost_.clear();
+    udimInfosHost_.clear();
     textureMetaHost_.clear();
     streamPixelsHost_.clear();
     streamSlots_.clear();

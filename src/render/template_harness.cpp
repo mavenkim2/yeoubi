@@ -1332,11 +1332,13 @@ RenderTraversable(Device *device,
     params.virtualTextureStreamPixels = 0ull;
     params.virtualTextureStreamPageCountX = 0;
     params.virtualTextureStreamPageCountY = 0;
-    params.virtualTextureSampleMip = 1;
+    params.virtualTextureSampleMip = 0;
     params.virtualTextureTextureMeta = 0ull;
     params.virtualTextureTextureMetaCount = 0;
     params.virtualTextureMipInfos = 0ull;
     params.virtualTextureMipInfoCount = 0;
+    params.virtualTextureUdimInfos = 0ull;
+    params.virtualTextureUdimInfoCount = 0;
 
     DeviceMemoryView<uint8_t> paramsBuffer = device->AllocBytes(sizeof(LaunchParams));
     printf("render: params buffer allocated\n");
@@ -1421,6 +1423,11 @@ RenderTraversable(Device *device,
                 reg.activeUdims.push_back(kUdimMin + static_cast<uint32_t>(udimSlot));
                 reg.width = std::max(reg.width, static_cast<uint32_t>(ref.width));
                 reg.height = std::max(reg.height, static_cast<uint32_t>(ref.height));
+                ybi::texture::VirtualTextureUdimExtent extent = {};
+                extent.udim = kUdimMin + static_cast<uint32_t>(udimSlot);
+                extent.width = static_cast<uint32_t>(ref.width);
+                extent.height = static_cast<uint32_t>(ref.height);
+                reg.udimExtents.push_back(extent);
 
                 if (base + udimSlot >= 0 &&
                     base + udimSlot < static_cast<int>(decodedTextures.size()))
