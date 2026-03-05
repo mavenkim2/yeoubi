@@ -57,7 +57,8 @@ YBI_INTEGRATOR_HD void IntegratorFeedbackOnly(State &state, const HitInfo &hit)
     }
 
     const LaunchParams::InstanceGeomRef geomRef = refs[hit.instanceId];
-    TryWriteFeedbackOnly(state, geomRef, hit.primitiveIndex, hit.barycentrics, 1u);
+    const unsigned int feedbackMip = static_cast<unsigned int>(MaxInt(params.virtualTextureSampleMip, 0));
+    TryWriteFeedbackOnly(state, geomRef, hit.primitiveIndex, hit.barycentrics, feedbackMip);
 }
 
 } // namespace integrator
