@@ -49,44 +49,6 @@ static uint32_t ComputeMipCount(uint32_t width, uint32_t height)
     return count;
 }
 
-static void Downsample2x2(const std::vector<uint8_t> &src,
-                          uint32_t srcW,
-                          uint32_t srcH,
-                          std::vector<uint8_t> *dst,
-                          uint32_t *dstW,
-                          uint32_t *dstH)
-{
-    *dstW = std::max(1u, srcW >> 1u);
-    *dstH = std::max(1u, srcH >> 1u);
-    dst->assign(static_cast<size_t>(*dstW) * static_cast<size_t>(*dstH) * 4u, 0u);
-    for (uint32_t y = 0; y < *dstH; ++y)
-    {
-        for (uint32_t x = 0; x < *dstW; ++x)
-        {
-            const uint32_t sx0 = std::min(srcW - 1u, x * 2u + 0u);
-            const uint32_t sx1 = std::min(srcW - 1u, x * 2u + 1u);
-            const uint32_t sy0 = std::min(srcH - 1u, y * 2u + 0u);
-            const uint32_t sy1 = std::min(srcH - 1u, y * 2u + 1u);
-            const size_t outBase =
-                (static_cast<size_t>(y) * static_cast<size_t>(*dstW) + static_cast<size_t>(x)) * 4u;
-            for (uint32_t c = 0; c < 4u; ++c)
-            {
-                const size_t i00 =
-                    (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) + static_cast<size_t>(sx0)) * 4u + c;
-                const size_t i10 =
-                    (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) + static_cast<size_t>(sx1)) * 4u + c;
-                const size_t i01 =
-                    (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) + static_cast<size_t>(sx0)) * 4u + c;
-                const size_t i11 =
-                    (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) + static_cast<size_t>(sx1)) * 4u + c;
-                const uint32_t sum =
-                    uint32_t(src[i00]) + uint32_t(src[i10]) + uint32_t(src[i01]) + uint32_t(src[i11]);
-                (*dst)[outBase + c] = static_cast<uint8_t>((sum + 2u) / 4u);
-            }
-        }
-    }
-}
-
 static void ResizeToPage(const std::vector<uint8_t> &src,
                          uint32_t srcW,
                          uint32_t srcH,
@@ -169,37 +131,10 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture,
     {
         return true;
     }
-
-    std::unordered_map<uint32_t, const VirtualTextureTailSource *> sourceByUdim;
-    for (const VirtualTextureTailSource &source : input.tailSources)
+    (void)input;
+    if (!OpenTileFileIfNeeded(texture, outError))
     {
-        if (!source.rgba8 || source.width == 0u || source.height == 0u)
-        {
-            continue;
-        }
-        const size_t expected =
-            static_cast<size_t>(source.width) * static_cast<size_t>(source.height) * 4u;
-        if (source.rgba8Bytes < expected)
-        {
-            continue;
-        }
-        sourceByUdim[source.udim] = &source;
-    }
-
-    if (!texture->tileFilePath.empty() && !texture->tileFileOpen)
-    {
-        std::string openError;
-        if (!OpenTileFileIfNeeded(texture, &openError))
-        {
-            if (sourceByUdim.empty())
-            {
-                if (outError)
-                {
-                    *outError = openError;
-                }
-                return false;
-            }
-        }
+        return false;
     }
 
     const size_t pageBytes =
@@ -208,72 +143,47 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture,
     for (size_t local = 0; local < texture->activeUdims.size(); ++local)
     {
         const uint32_t udim = texture->activeUdims[local];
-
-        std::vector<uint8_t> mipImage;
-        uint32_t mipW = 0u;
-        uint32_t mipH = 0u;
-        bool loaded = false;
-
-        if (texture->tileFileOpen)
+        std::vector<unsigned char> tailRgba8;
+        uint32_t tailW = 0u;
+        uint32_t tailH = 0u;
+        uint32_t tailMip = 0u;
+        uint64_t tailSourceBytes = 0u;
+        std::string tailError;
+        if (!ReadVirtualTextureTailMip(&texture->tileFile,
+                                       udim,
+                                       config_.tailMaxDim,
+                                       &tailRgba8,
+                                       &tailW,
+                                       &tailH,
+                                       &tailMip,
+                                       &tailSourceBytes,
+                                       &tailError))
         {
-            std::vector<unsigned char> tailRgba8;
-            uint32_t tailW = 0u;
-            uint32_t tailH = 0u;
-            uint32_t tailMip = 0u;
-            uint64_t tailSourceBytes = 0u;
-            std::string tailError;
-            if (ReadVirtualTextureTailMip(&texture->tileFile,
-                                          udim,
-                                          config_.tailMaxDim,
-                                          &tailRgba8,
-                                          &tailW,
-                                          &tailH,
-                                          &tailMip,
-                                          &tailSourceBytes,
-                                          &tailError))
+            if (outError)
             {
-                (void)tailMip;
-                (void)tailSourceBytes;
-                mipImage.assign(tailRgba8.begin(), tailRgba8.end());
-                mipW = tailW;
-                mipH = tailH;
-                loaded = true;
+                *outError = "VirtualTextureManager: required tail mip missing (textureId=" +
+                            std::to_string(texture->textureId) +
+                            " udim=" + std::to_string(udim) + "): " + tailError;
             }
+            return false;
         }
-
-        if (!loaded)
+        if (tailRgba8.empty() || tailW == 0u || tailH == 0u)
         {
-            auto sourceIt = sourceByUdim.find(udim);
-            if (sourceIt == sourceByUdim.end())
+            if (outError)
             {
-                continue;
+                *outError = "VirtualTextureManager: invalid tail mip data (textureId=" +
+                            std::to_string(texture->textureId) +
+                            " udim=" + std::to_string(udim) + ")";
             }
-            const VirtualTextureTailSource &source = *sourceIt->second;
-            mipImage.assign(source.rgba8, source.rgba8 + source.rgba8Bytes);
-            mipW = source.width;
-            mipH = source.height;
-            while ((mipW > config_.tailMaxDim || mipH > config_.tailMaxDim) && (mipW > 1u || mipH > 1u))
-            {
-                std::vector<uint8_t> next;
-                uint32_t nextW = 0u;
-                uint32_t nextH = 0u;
-                Downsample2x2(mipImage, mipW, mipH, &next, &nextW, &nextH);
-                mipImage.swap(next);
-                mipW = nextW;
-                mipH = nextH;
-            }
+            return false;
         }
-
-        if (mipImage.empty() || mipW == 0u || mipH == 0u)
-        {
-            continue;
-        }
+        (void)tailMip;
+        (void)tailSourceBytes;
 
         texture->tailPageIndexByLocalUdim[local] = tailPageCount++;
         const size_t oldSize = texture->tailPixelsHost.size();
         texture->tailPixelsHost.resize(oldSize + pageBytes, 0u);
-        ResizeToPage(
-            mipImage, mipW, mipH, config_.pageSize, texture->tailPixelsHost.data() + oldSize);
+        ResizeToPage(tailRgba8, tailW, tailH, config_.pageSize, texture->tailPixelsHost.data() + oldSize);
     }
 
     if (tailPageCount > 0u)
