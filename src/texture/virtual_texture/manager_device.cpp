@@ -159,9 +159,6 @@ void VirtualTextureManager::BindLaunchParams(LaunchParams *params) const
         finalized_ ? reinterpret_cast<unsigned long long>(udimInfosDevice_.data()) : 0ull;
     params->virtualTextureUdimInfoCount = finalized_ ? static_cast<int>(udimInfosHost_.size()) : 0;
 
-    params->virtualTextureTileEntries = 0ull;
-    params->virtualTextureTilePixels = 0ull;
-    params->virtualTextureTileEntryCapacity = 0;
 }
 
 uint32_t VirtualTextureManager::PackPageTableEntry(uint32_t pageX,

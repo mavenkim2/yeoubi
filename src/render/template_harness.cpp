@@ -1319,9 +1319,6 @@ RenderTraversable(Device *device,
     params.feedbackSamplePercent = 10;
     params.feedbackTileSize = 128;
     params.currentSpp = 0;
-    params.virtualTextureTileEntries = 0ull;
-    params.virtualTextureTilePixels = 0ull;
-    params.virtualTextureTileEntryCapacity = 0;
     params.virtualTextureEnabled = virtualTexture ? 1 : 0;
     params.virtualTexturePageTableEntries = 0ull;
     params.virtualTexturePageTableMipOffsets = 0ull;

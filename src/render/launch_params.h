@@ -48,14 +48,6 @@ struct LaunchParams
         int _padding1;
     };
 
-    struct VirtualTextureTileEntry
-    {
-        unsigned long long key;
-        unsigned long long pixelOffset;
-        unsigned int width;
-        unsigned int height;
-    };
-
     struct VirtualTextureMipInfo
     {
         unsigned int level;
@@ -111,9 +103,6 @@ struct LaunchParams
     int feedbackSamplePercent;
     int feedbackTileSize;
     int currentSpp;
-    unsigned long long virtualTextureTileEntries;
-    unsigned long long virtualTextureTilePixels;
-    int virtualTextureTileEntryCapacity;
     int virtualTextureEnabled;
 
     unsigned long long virtualTexturePageTableEntries;

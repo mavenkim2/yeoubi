@@ -96,17 +96,6 @@ YBI_VT_HD unsigned int TileCoordFromTexel(int texel, int tileSize)
     return static_cast<unsigned int>(VtClampInt(texel / safeTileSize, 0, 511));
 }
 
-YBI_VT_HD unsigned int HashVirtualTextureKey(unsigned long long key)
-{
-    unsigned int x = static_cast<unsigned int>((key >> 0u) ^ (key >> 32u));
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    return x;
-}
-
 } // namespace texture
 } // namespace ybi
 
