@@ -56,6 +56,31 @@ struct LaunchParams
         unsigned int height;
     };
 
+    struct VirtualTextureMipInfo
+    {
+        unsigned int level;
+        unsigned int basePageX;
+        unsigned int basePageY;
+        unsigned int pageCountX;
+        unsigned int pageCountY;
+        unsigned int pagesPerUdimX;
+        unsigned int pagesPerUdimY;
+        unsigned int _padding0;
+    };
+
+    struct VirtualTextureTextureMeta
+    {
+        unsigned int mipInfoOffset;
+        unsigned int mipCount;
+        unsigned int tailFirstMip;
+        unsigned int activeUdimCount;
+        unsigned long long tailPixels;
+        unsigned int tailPageCountX;
+        unsigned int tailPageCountY;
+        unsigned int _padding0;
+        short udimToLocal[128];
+    };
+
     BVHHandle traversable;
     DevicePtr image;
     int width;
@@ -86,6 +111,21 @@ struct LaunchParams
     unsigned long long virtualTextureTilePixels;
     int virtualTextureTileEntryCapacity;
     int virtualTextureEnabled;
+
+    unsigned long long virtualTexturePageTableEntries;
+    unsigned long long virtualTexturePageTableMipOffsets;
+    unsigned long long virtualTexturePageTableMipWidths;
+    unsigned long long virtualTexturePageTableMipHeights;
+    int virtualTexturePageTableMipCount;
+    int virtualTexturePageSize;
+    unsigned long long virtualTextureStreamPixels;
+    int virtualTextureStreamPageCountX;
+    int virtualTextureStreamPageCountY;
+    int virtualTextureSampleMip;
+    unsigned long long virtualTextureTextureMeta;
+    int virtualTextureTextureMetaCount;
+    unsigned long long virtualTextureMipInfos;
+    int virtualTextureMipInfoCount;
 };
 
 YBI_NAMESPACE_END

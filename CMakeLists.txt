@@ -278,6 +278,9 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/manager_core.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/manager_device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/manager_stream.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/helpers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/feedback.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file.cpp
