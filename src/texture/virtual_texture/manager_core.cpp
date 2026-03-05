@@ -14,7 +14,6 @@ namespace texture
 
 namespace
 {
-static constexpr uint32_t kPageTypeInvalid = 0u;
 static constexpr uint32_t kPageTypeStream = 1u;
 static constexpr uint32_t kPageTypeTail = 2u;
 static constexpr uint32_t kUdimMin = 1001u;
@@ -113,9 +112,7 @@ bool VirtualTextureManager::Initialize(Device *device,
     return true;
 }
 
-bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture,
-                                                     const VirtualTextureRegisterInput &input,
-                                                     std::string *outError)
+bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std::string *outError)
 {
     if (!texture)
     {
@@ -131,7 +128,7 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture,
     {
         return true;
     }
-    (void)input;
+
     if (!OpenTileFileIfNeeded(texture, outError))
     {
         return false;
@@ -177,8 +174,6 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture,
             }
             return false;
         }
-        (void)tailMip;
-        (void)tailSourceBytes;
 
         texture->tailPageIndexByLocalUdim[local] = tailPageCount++;
         const size_t oldSize = texture->tailPixelsHost.size();
@@ -266,7 +261,7 @@ bool VirtualTextureManager::RegisterTexture(const VirtualTextureRegisterInput &i
     }
     texture.tailFirstMip = tailFirstMip;
 
-    if (!BuildTailPagesForTexture(&texture, input, outError))
+    if (!BuildTailPagesForTexture(&texture, outError))
     {
         if (outError && outError->empty())
         {

@@ -1425,24 +1425,6 @@ RenderTraversable(Device *device,
                 extent.width = static_cast<uint32_t>(ref.width);
                 extent.height = static_cast<uint32_t>(ref.height);
                 reg.udimExtents.push_back(extent);
-
-                if (base + udimSlot >= 0 &&
-                    base + udimSlot < static_cast<int>(decodedTextures.size()))
-                {
-                    const DecodedMaterialTexture &decoded =
-                        decodedTextures[static_cast<size_t>(base + udimSlot)];
-                    if (decoded.valid && !decoded.rgba8.empty() && decoded.width > 0 &&
-                        decoded.height > 0)
-                    {
-                        ybi::texture::VirtualTextureTailSource tailSource = {};
-                        tailSource.udim = kUdimMin + static_cast<uint32_t>(udimSlot);
-                        tailSource.width = static_cast<uint32_t>(decoded.width);
-                        tailSource.height = static_cast<uint32_t>(decoded.height);
-                        tailSource.rgba8 = decoded.rgba8.data();
-                        tailSource.rgba8Bytes = decoded.rgba8.size();
-                        reg.tailSources.push_back(tailSource);
-                    }
-                }
             }
 
             if (reg.activeUdims.empty() || reg.width == 0u || reg.height == 0u)

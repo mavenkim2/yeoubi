@@ -24,15 +24,6 @@ struct VirtualTextureManagerConfig
     uint32_t maxUploadsPerPass = 1024u;
 };
 
-struct VirtualTextureTailSource
-{
-    uint32_t udim = 1001u;
-    uint32_t width = 0u;
-    uint32_t height = 0u;
-    const unsigned char *rgba8 = nullptr;
-    size_t rgba8Bytes = 0u;
-};
-
 struct VirtualTextureUdimExtent
 {
     uint32_t udim = 1001u;
@@ -48,7 +39,6 @@ struct VirtualTextureRegisterInput
     std::string tileFilePath;
     std::vector<uint32_t> activeUdims;
     std::vector<VirtualTextureUdimExtent> udimExtents;
-    std::vector<VirtualTextureTailSource> tailSources;
 };
 
 struct VirtualTextureUpdateStats
@@ -138,9 +128,7 @@ private:
     };
 
     bool BuildMipReservations(std::string *outError);
-    bool BuildTailPagesForTexture(TextureState *texture,
-                                  const VirtualTextureRegisterInput &input,
-                                  std::string *outError);
+    bool BuildTailPagesForTexture(TextureState *texture, std::string *outError);
     bool AllocateDeviceState(std::string *outError);
     bool OpenTileFileIfNeeded(TextureState *texture, std::string *outError);
     bool ResolveKey(unsigned long long key, KeyVirtualInfo *outInfo) const;
