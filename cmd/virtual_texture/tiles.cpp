@@ -1,9 +1,8 @@
 #include "../usd_ntc_encode/shared.h"
+#include "exr_mips.h"
 #include "tile_binary.h"
-#include "texture/exr_io.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
-#include "third_party/tinyexr/tinyexr.h"
 
 #include <algorithm>
 #include <cctype>
@@ -24,70 +23,6 @@ struct TextureGroup
     std::string basePathNoUdim;
     std::unordered_map<uint32_t, std::string> udimPaths;
 };
-
-bool DetectExrMipmapLevels(const std::string &path,
-                           bool *outHasMipLevels,
-                           int *outTiled,
-                           int *outTileLevelMode,
-                           std::string *outReason)
-{
-    if (!outHasMipLevels || !outTiled || !outTileLevelMode)
-    {
-        if (outReason)
-        {
-            *outReason = "invalid output pointers";
-        }
-        return false;
-    }
-
-    *outHasMipLevels = false;
-    *outTiled = 0;
-    *outTileLevelMode = -1;
-    if (outReason)
-    {
-        outReason->clear();
-    }
-
-    EXRVersion version = {};
-    if (ParseEXRVersionFromFile(&version, path.c_str()) != TINYEXR_SUCCESS)
-    {
-        if (outReason)
-        {
-            *outReason = "ParseEXRVersionFromFile failed";
-        }
-        return false;
-    }
-
-    EXRHeader header;
-    InitEXRHeader(&header);
-    const char *err = nullptr;
-    const int parseRc = ParseEXRHeaderFromFile(&header, &version, path.c_str(), &err);
-    if (parseRc != TINYEXR_SUCCESS)
-    {
-        if (outReason)
-        {
-            *outReason = "ParseEXRHeaderFromFile failed";
-            if (err)
-            {
-                *outReason += " (";
-                *outReason += err;
-                *outReason += ")";
-            }
-        }
-        if (err)
-        {
-            FreeEXRErrorMessage(err);
-        }
-        FreeEXRHeader(&header);
-        return false;
-    }
-
-    *outTiled = header.tiled;
-    *outTileLevelMode = header.tile_level_mode;
-    *outHasMipLevels = (header.tiled != 0 && header.tile_level_mode == TINYEXR_TILE_MIPMAP_LEVELS);
-    FreeEXRHeader(&header);
-    return true;
-}
 
 void ExtractTileRgbaF32(const std::vector<float> &image,
                         int imageWidth,
@@ -270,10 +205,16 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         }
     }
 
+    const int tileSize = 128;
+    if (cli.tileSize != tileSize)
+    {
+        std::printf("Tile prep: forcing tileSize=%d (requested=%d)\n", tileSize, cli.tileSize);
+    }
+
     std::printf("Tile prep: selected materials=%d textures=%zu tileSize=%d verifyCount=%d verifyPass=%s eps=%g\n",
                 selectedMaterials,
                 groups.size(),
-                cli.tileSize,
+                tileSize,
                 cli.tileVerifyCount,
                 cli.tileVerifyPass ? "on" : "off",
                 cli.tileVerifyEps);
@@ -294,48 +235,46 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         {
             ybi::tilebin::UdimImage image = {};
             image.udim = udimPath.first;
-            bool hasMipLevels = false;
-            int tiled = 0;
-            int tileLevelMode = -1;
+
+            ybi::tileprep::ExrMipChainResult mipResult = {};
             std::string mipReason;
-            const bool mipDetected = DetectExrMipmapLevels(
-                udimPath.second, &hasMipLevels, &tiled, &tileLevelMode, &mipReason);
-            if (mipDetected)
-            {
-                std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d\n",
-                            udimPath.second.c_str(),
-                            udimPath.first,
-                            hasMipLevels ? "yes" : "no",
-                            tiled,
-                            tileLevelMode);
-            }
-            else
-            {
-                std::printf("Tile prep: exr %s udim=%u mipmap_levels=unknown reason=%s\n",
-                            udimPath.second.c_str(),
-                            udimPath.first,
-                            mipReason.c_str());
-            }
-            int width = 0;
-            int height = 0;
-            std::string reason;
-            if (!ybi::texture::LoadExrRgba(udimPath.second, &width, &height, &image.rgba, &reason, true))
+            if (!ybi::tileprep::LoadExrMipChain(udimPath.second, true, &mipResult, &mipReason))
             {
                 if (outError)
                 {
-                    *outError = reason;
+                    *outError = mipReason;
                 }
                 return false;
             }
-            image.width = static_cast<uint32_t>(width);
-            image.height = static_cast<uint32_t>(height);
+
+            std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d loaded_mips=%zu\n",
+                        udimPath.second.c_str(),
+                        udimPath.first,
+                        mipResult.hasStoredMipLevels ? "yes" : "no",
+                        mipResult.tiled,
+                        mipResult.tileLevelMode,
+                        mipResult.mipLevels.size());
+
+            if (mipResult.mipLevels.empty())
+            {
+                if (outError)
+                {
+                    *outError = "empty mip chain for " + udimPath.second;
+                }
+                return false;
+            }
+
+            image.width = mipResult.mipLevels[0].width;
+            image.height = mipResult.mipLevels[0].height;
+            image.rgba = mipResult.mipLevels[0].rgba;
+            image.mipLevels = std::move(mipResult.mipLevels);
             images.push_back(std::move(image));
         }
 
         const std::string baseName = Sanitize(group.basePathNoUdim);
         const fs::path binPath = tileOutDir / (baseName + ".tiles.bin");
         std::string reason;
-        if (!ybi::tilebin::WriteTileBinary(binPath, cli.tileSize, images, &reason))
+        if (!ybi::tilebin::WriteTileBinary(binPath, tileSize, images, &reason))
         {
             if (outError)
             {
@@ -351,7 +290,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                                         img.udim,
                                         static_cast<int>(img.width),
                                         static_cast<int>(img.height),
-                                        cli.tileSize,
+                                        tileSize,
                                         img.rgba,
                                         cli.tileVerifyCount,
                                         reason))

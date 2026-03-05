@@ -152,7 +152,7 @@ int main(int argc, char **argv)
     int exrH = 0;
     std::vector<float> exrRgba;
     std::string error;
-    if (!ybi::texture::LoadExrRgba(exrPath, &exrW, &exrH, &exrRgba, &error, false))
+    if (!ybi::texture::LoadExrRgba(exrPath, &exrW, &exrH, &exrRgba, &error, true))
     {
         std::printf("verify failed: %s\n", error.c_str());
         return 2;

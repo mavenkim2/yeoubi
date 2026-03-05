@@ -138,7 +138,9 @@ private:
     };
 
     bool BuildMipReservations(std::string *outError);
-    bool BuildTailPagesForTexture(TextureState *texture, const VirtualTextureRegisterInput &input);
+    bool BuildTailPagesForTexture(TextureState *texture,
+                                  const VirtualTextureRegisterInput &input,
+                                  std::string *outError);
     bool AllocateDeviceState(std::string *outError);
     bool OpenTileFileIfNeeded(TextureState *texture, std::string *outError);
     bool ResolveKey(unsigned long long key, KeyVirtualInfo *outInfo) const;

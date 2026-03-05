@@ -168,6 +168,7 @@ bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
 
     if (!ReadVirtualTextureTile(&texture.tileFile,
                                 info.udim,
+                                info.mip,
                                 info.tileX,
                                 info.tileY,
                                 &rgba8,

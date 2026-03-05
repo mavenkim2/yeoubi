@@ -118,7 +118,9 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/cli.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tiles.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/exr_mips.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary_detail.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
@@ -145,7 +147,9 @@ if (WITH_USD)
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/path_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tiles.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/exr_mips.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary_detail.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
         target_compile_definitions(yeoubi_usd_ntc_encode PRIVATE ${YBI_COMPILE_DEFINITIONS})
         if (WIN32)
@@ -161,6 +165,7 @@ if (WITH_USD)
         add_executable(yeoubi_tile_verify
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_verify.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary_detail.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
@@ -283,6 +288,7 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/manager_stream.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/helpers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/feedback.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file_open.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/load.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd/instance_dag_build.cpp
