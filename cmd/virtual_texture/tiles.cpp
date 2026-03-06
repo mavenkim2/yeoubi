@@ -186,18 +186,23 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         {
             const std::string &texturePath = kv.second.texturePath;
             const std::string basePathNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
-            TextureGroup &group = groups[basePathNoUdim];
-            group.basePathNoUdim = basePathNoUdim;
             std::unordered_map<uint32_t, std::string> discovered;
             std::string reason;
             if (!ybi::usd_ntc::CollectUdimPaths(texturePath, discovered, reason))
             {
+                if (reason.rfind("missing texture file ", 0) == 0 || reason.rfind("no UDIM files found for ", 0) == 0)
+                {
+                    std::printf("Tile prep: skip missing texture %s\n", texturePath.c_str());
+                    continue;
+                }
                 if (outError)
                 {
                     *outError = reason;
                 }
                 return false;
             }
+            TextureGroup &group = groups[basePathNoUdim];
+            group.basePathNoUdim = basePathNoUdim;
             for (auto &entry : discovered)
             {
                 group.udimPaths.emplace(entry.first, std::move(entry.second));
