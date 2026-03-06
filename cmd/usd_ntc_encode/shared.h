@@ -29,8 +29,8 @@ struct Cli
     bool noEncode = false;
     bool prepareTiles = false;
     int tileSize = 128;
-    int tileVerifyCount = 4;
-    bool tileVerifyPass = true;
+    int tileVerifyCount = 0;
+    bool tileVerifyPass = false;
     float tileVerifyEps = 0.0f;
 };
 
