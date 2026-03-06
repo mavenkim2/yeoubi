@@ -5,6 +5,7 @@
 #include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/sdf/valueTypeName.h>
 #include <pxr/usd/usd/primRange.h>
+#include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/tokens.h>
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <unordered_set>
 
 namespace
 {
@@ -181,40 +183,93 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
     return true;
 }
 
+bool IsPurposeAllowedForPrim(const pxr::UsdPrim &prim, const std::vector<std::string> &allowedPurposes)
+{
+    pxr::UsdGeomImageable imageable(prim);
+    if (!imageable)
+    {
+        // Non-imageable instance roots can still bind to prototypes that contain
+        // renderable gprims; keep them to avoid dropping reachable materials.
+        return true;
+    }
+    return IsPurposeAllowed(imageable.ComputePurpose(), allowedPurposes);
+}
+
+void AddBoundMaterialForPrim(const pxr::UsdPrim &prim,
+                             std::unordered_map<std::string, pxr::UsdShadeMaterial> &materials)
+{
+    pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
+    pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->full);
+    if (!material)
+    {
+        return;
+    }
+    const std::string materialPath = material.GetPath().GetString();
+    materials.emplace(materialPath, material);
+}
+
 } // namespace
 
 std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr &stage,
                                                       const std::vector<std::string> &purposes)
 {
     std::unordered_map<std::string, pxr::UsdShadeMaterial> uniqueMaterials;
+    std::vector<pxr::UsdPrim> prototypeQueue;
+    std::unordered_set<std::string> queuedPrototypePaths;
+    prototypeQueue.reserve(64);
+    queuedPrototypePaths.reserve(64);
 
     const pxr::Usd_PrimFlagsPredicate pred =
         pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
+
+    const auto QueuePrototype = [&](const pxr::UsdPrim &instancePrim) {
+        if (!instancePrim || !instancePrim.IsInstance())
+        {
+            return;
+        }
+        const pxr::UsdPrim prototype = instancePrim.GetPrototype();
+        if (!prototype)
+        {
+            return;
+        }
+        const std::string prototypePath = prototype.GetPath().GetString();
+        if (queuedPrototypePaths.emplace(prototypePath).second)
+        {
+            prototypeQueue.push_back(prototype);
+        }
+    };
+
     for (const pxr::UsdPrim &prim : stage->GetPseudoRoot().GetFilteredDescendants(pred))
     {
-        if (!prim.IsA<pxr::UsdGeomMesh>() || prim.IsInPrototype())
-        {
-            continue;
-        }
-        pxr::UsdGeomImageable imageable(prim);
-        if (!imageable)
-        {
-            continue;
-        }
-        const pxr::TfToken purpose = imageable.ComputePurpose();
-        if (!IsPurposeAllowed(purpose, purposes))
+        if (prim.IsInPrototype())
         {
             continue;
         }
 
-        pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
-        pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->full);
-        if (!material)
+        if (prim.IsA<pxr::UsdGeomGprim>() && IsPurposeAllowedForPrim(prim, purposes))
         {
-            continue;
+            AddBoundMaterialForPrim(prim, uniqueMaterials);
         }
-        const std::string materialPath = material.GetPath().GetString();
-        uniqueMaterials.emplace(materialPath, material);
+
+        if (prim.IsInstance() && IsPurposeAllowedForPrim(prim, purposes))
+        {
+            QueuePrototype(prim);
+        }
+    }
+
+    for (size_t i = 0; i < prototypeQueue.size(); ++i)
+    {
+        for (const pxr::UsdPrim &prim : pxr::UsdPrimRange(prototypeQueue[i], pred))
+        {
+            if (prim.IsA<pxr::UsdGeomGprim>())
+            {
+                AddBoundMaterialForPrim(prim, uniqueMaterials);
+            }
+            if (prim.IsInstance())
+            {
+                QueuePrototype(prim);
+            }
+        }
     }
 
     std::vector<MaterialChannels> out;

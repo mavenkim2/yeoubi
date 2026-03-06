@@ -19,7 +19,10 @@ struct VirtualTextureTileRecord
     uint32_t width = 0;
     uint32_t height = 0;
     uint64_t byteOffset = 0;
-    uint64_t byteSize = 0;
+    uint64_t storedByteSize = 0;
+    uint64_t rawByteSize = 0;
+    uint32_t compression = 0;
+    uint32_t reserved0 = 0;
 };
 
 struct VirtualTextureMipTable
@@ -31,7 +34,9 @@ struct VirtualTextureMipTable
     uint32_t tileCountY = 0;
     bool isTail = false;
     uint64_t tailByteOffset = 0;
-    uint64_t tailByteSize = 0;
+    uint64_t tailStoredByteSize = 0;
+    uint64_t tailRawByteSize = 0;
+    uint32_t tailCompression = 0;
     std::vector<VirtualTextureTileRecord> records;
 };
 

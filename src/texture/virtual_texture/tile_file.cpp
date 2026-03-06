@@ -1,7 +1,11 @@
 #include "texture/virtual_texture/tile_file.h"
 
+#include "miniz.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <limits>
 
 namespace ybi
 {
@@ -10,6 +14,9 @@ namespace texture
 
 namespace
 {
+
+static constexpr uint32_t kCompressionNone = 0u;
+static constexpr uint32_t kCompressionDeflate = 1u;
 
 bool ReadBytes(std::ifstream *stream, void *dst, size_t bytes)
 {
@@ -25,6 +32,96 @@ void ConvertRgbaF32ToU8(const std::vector<float> &rgbaF32, std::vector<unsigned 
         const float v = std::min(1.0f, std::max(0.0f, rgbaF32[i]));
         (*outRgba8)[i] = static_cast<unsigned char>(std::round(v * 255.0f));
     }
+}
+
+bool EnsureMzUlongRange(uint64_t bytes, std::string *outError)
+{
+    if (bytes > static_cast<uint64_t>(std::numeric_limits<mz_ulong>::max()))
+    {
+        if (outError)
+        {
+            *outError = "payload too large for miniz";
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ReadPayloadAsFloats(VirtualTextureTileFile *file,
+                         uint64_t byteOffset,
+                         uint64_t storedByteSize,
+                         uint64_t rawByteSize,
+                         uint32_t compression,
+                         std::vector<float> *outRgbaF32,
+                         std::string *outError)
+{
+    if ((rawByteSize % sizeof(float)) != 0u)
+    {
+        if (outError)
+        {
+            *outError = "raw payload byte size is not float-aligned";
+        }
+        return false;
+    }
+    if (!EnsureMzUlongRange(storedByteSize, outError) || !EnsureMzUlongRange(rawByteSize, outError))
+    {
+        return false;
+    }
+
+    std::vector<unsigned char> stored(static_cast<size_t>(storedByteSize));
+    file->stream.clear();
+    file->stream.seekg(static_cast<std::streamoff>(byteOffset), std::ios::beg);
+    if (!ReadBytes(&file->stream, stored.data(), stored.size()))
+    {
+        if (outError)
+        {
+            *outError = "failed reading tile payload";
+        }
+        return false;
+    }
+
+    std::vector<unsigned char> raw;
+    if (compression == kCompressionNone)
+    {
+        if (storedByteSize != rawByteSize)
+        {
+            if (outError)
+            {
+                *outError = "raw payload size mismatch";
+            }
+            return false;
+        }
+        raw = std::move(stored);
+    }
+    else if (compression == kCompressionDeflate)
+    {
+        raw.assign(static_cast<size_t>(rawByteSize), 0u);
+        mz_ulong decodedBytes = static_cast<mz_ulong>(rawByteSize);
+        const int rc = mz_uncompress(raw.data(),
+                                     &decodedBytes,
+                                     stored.data(),
+                                     static_cast<mz_ulong>(storedByteSize));
+        if (rc != MZ_OK || decodedBytes != static_cast<mz_ulong>(rawByteSize))
+        {
+            if (outError)
+            {
+                *outError = "failed decompressing tile payload";
+            }
+            return false;
+        }
+    }
+    else
+    {
+        if (outError)
+        {
+            *outError = "unsupported tile payload compression";
+        }
+        return false;
+    }
+
+    outRgbaF32->assign(rawByteSize / sizeof(float), 0.0f);
+    std::memcpy(outRgbaF32->data(), raw.data(), static_cast<size_t>(rawByteSize));
+    return true;
 }
 
 } // namespace
@@ -80,9 +177,9 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
             }
             return false;
         }
-        const uint64_t expectedBytes = static_cast<uint64_t>(mipTable.width) *
-                                       static_cast<uint64_t>(mipTable.height) * 4u * sizeof(float);
-        if (mipTable.tailByteSize != expectedBytes)
+        const uint64_t expectedRawBytes = static_cast<uint64_t>(mipTable.width) *
+                                          static_cast<uint64_t>(mipTable.height) * 4u * sizeof(float);
+        if (mipTable.tailRawByteSize != expectedRawBytes)
         {
             if (outError)
             {
@@ -91,23 +188,22 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
             return false;
         }
 
-        std::vector<float> rgbaF32(static_cast<size_t>(mipTable.width) *
-                                   static_cast<size_t>(mipTable.height) * 4u);
-        file->stream.clear();
-        file->stream.seekg(static_cast<std::streamoff>(mipTable.tailByteOffset), std::ios::beg);
-        if (!ReadBytes(&file->stream, rgbaF32.data(), static_cast<size_t>(mipTable.tailByteSize)))
+        std::vector<float> rgbaF32;
+        if (!ReadPayloadAsFloats(file,
+                                 mipTable.tailByteOffset,
+                                 mipTable.tailStoredByteSize,
+                                 mipTable.tailRawByteSize,
+                                 mipTable.tailCompression,
+                                 &rgbaF32,
+                                 outError))
         {
-            if (outError)
-            {
-                *outError = "failed reading tail mip payload";
-            }
             return false;
         }
 
         ConvertRgbaF32ToU8(rgbaF32, outRgba8);
         *outWidth = mipTable.width;
         *outHeight = mipTable.height;
-        *outSourceBytes = mipTable.tailByteSize;
+        *outSourceBytes = mipTable.tailStoredByteSize;
         return true;
     }
 
@@ -140,9 +236,9 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
         return false;
     }
 
-    const uint64_t expectedBytes = static_cast<uint64_t>(record.width) *
-                                   static_cast<uint64_t>(record.height) * 4u * sizeof(float);
-    if (record.byteSize != expectedBytes)
+    const uint64_t expectedRawBytes = static_cast<uint64_t>(record.width) *
+                                      static_cast<uint64_t>(record.height) * 4u * sizeof(float);
+    if (record.rawByteSize != expectedRawBytes)
     {
         if (outError)
         {
@@ -151,23 +247,22 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
         return false;
     }
 
-    std::vector<float> rgbaF32(static_cast<size_t>(record.width) *
-                               static_cast<size_t>(record.height) * 4u);
-    file->stream.clear();
-    file->stream.seekg(static_cast<std::streamoff>(record.byteOffset), std::ios::beg);
-    if (!ReadBytes(&file->stream, rgbaF32.data(), static_cast<size_t>(record.byteSize)))
+    std::vector<float> rgbaF32;
+    if (!ReadPayloadAsFloats(file,
+                             record.byteOffset,
+                             record.storedByteSize,
+                             record.rawByteSize,
+                             record.compression,
+                             &rgbaF32,
+                             outError))
     {
-        if (outError)
-        {
-            *outError = "failed reading tile payload";
-        }
         return false;
     }
 
     ConvertRgbaF32ToU8(rgbaF32, outRgba8);
     *outWidth = record.width;
     *outHeight = record.height;
-    *outSourceBytes = record.byteSize;
+    *outSourceBytes = record.storedByteSize;
     return true;
 }
 

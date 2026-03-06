@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +24,12 @@ struct TextureGroup
     std::string basePathNoUdim;
     std::unordered_map<uint32_t, std::string> udimPaths;
 };
+
+std::string MakeTileOutputStem(const std::string &basePathNoUdim)
+{
+    return std::to_string(static_cast<unsigned long long>(std::hash<std::string>{}(basePathNoUdim))) + "_" +
+           Sanitize(fs::path(basePathNoUdim).filename().string());
+}
 
 void ExtractTileRgbaF32(const std::vector<float> &image,
                         int imageWidth,
@@ -276,7 +283,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             images.push_back(std::move(image));
         }
 
-        const std::string baseName = Sanitize(group.basePathNoUdim);
+        const std::string baseName = MakeTileOutputStem(group.basePathNoUdim);
         const fs::path binPath = tileOutDir / (baseName + ".tiles.bin");
         std::string reason;
         if (!ybi::tilebin::WriteTileBinary(binPath, tileSize, images, &reason))

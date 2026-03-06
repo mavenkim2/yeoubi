@@ -12,6 +12,7 @@ namespace
 
 static constexpr uint32_t kUdimMin = 1001;
 static constexpr uint32_t kUdimMax = 1100;
+static constexpr uint32_t kCompressionNone = 0u;
 
 struct TileFileHeader
 {
@@ -94,10 +95,55 @@ struct V3TileRecord
     uint64_t byteSize = 0;
 };
 
+struct V4MipRecord
+{
+    uint32_t mipLevel = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t tileCountX = 0;
+    uint32_t tileCountY = 0;
+    uint32_t firstTileRecord = 0;
+    uint32_t tileRecordCount = 0;
+    uint32_t isTail = 0;
+    uint64_t byteOffset = 0;
+    uint64_t storedByteSize = 0;
+    uint64_t rawByteSize = 0;
+    uint32_t compression = 0;
+    uint32_t reserved0 = 0;
+};
+
+struct V4TileRecord
+{
+    uint32_t mipLevel = 0;
+    uint32_t tileX = 0;
+    uint32_t tileY = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t compression = 0;
+    uint32_t reserved0 = 0;
+    uint64_t byteOffset = 0;
+    uint64_t storedByteSize = 0;
+    uint64_t rawByteSize = 0;
+};
+
 bool ReadBytes(std::ifstream *stream, void *dst, size_t bytes)
 {
     stream->read(reinterpret_cast<char *>(dst), static_cast<std::streamsize>(bytes));
     return stream->good();
+}
+
+bool ValidateBaseEntry(const V3UdimEntry &entry, const std::string &path, std::string *outError)
+{
+    if (entry.udim < kUdimMin || entry.udim > kUdimMax || entry.tileSize == 0 ||
+        entry.mipCount == 0 || entry.mipRecordCount != entry.mipCount)
+    {
+        if (outError)
+        {
+            *outError = "invalid tile UDIM entry in: " + path;
+        }
+        return false;
+    }
+    return true;
 }
 
 bool OpenTileFileV2(const TileFileHeader &header,
@@ -163,7 +209,9 @@ bool OpenTileFileV2(const TileFileHeader &header,
             dst.width = src.width;
             dst.height = src.height;
             dst.byteOffset = src.byteOffset;
-            dst.byteSize = src.byteSize;
+            dst.storedByteSize = src.byteSize;
+            dst.rawByteSize = src.byteSize;
+            dst.compression = kCompressionNone;
         }
 
         outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
@@ -191,13 +239,8 @@ bool OpenTileFileV3(const TileFileHeader &header,
 
     for (const V3UdimEntry &entry : entries)
     {
-        if (entry.udim < kUdimMin || entry.udim > kUdimMax || entry.tileSize == 0 ||
-            entry.mipCount == 0 || entry.mipRecordCount != entry.mipCount)
+        if (!ValidateBaseEntry(entry, outFile->path, outError))
         {
-            if (outError)
-            {
-                *outError = "invalid tile UDIM entry in: " + outFile->path;
-            }
             return false;
         }
 
@@ -257,13 +300,15 @@ bool OpenTileFileV3(const TileFileHeader &header,
             dstMip.tileCountY = srcMip.tileCountY;
             dstMip.isTail = (srcMip.isTail != 0u);
             dstMip.tailByteOffset = srcMip.byteOffset;
-            dstMip.tailByteSize = srcMip.byteSize;
+            dstMip.tailStoredByteSize = srcMip.byteSize;
+            dstMip.tailRawByteSize = srcMip.byteSize;
+            dstMip.tailCompression = kCompressionNone;
 
             if (dstMip.isTail)
             {
                 const uint64_t expectedBytes = static_cast<uint64_t>(dstMip.width) *
                                                static_cast<uint64_t>(dstMip.height) * 4u * sizeof(float);
-                if (dstMip.tailByteSize != expectedBytes)
+                if (dstMip.tailRawByteSize != expectedBytes)
                 {
                     if (outError)
                     {
@@ -294,7 +339,152 @@ bool OpenTileFileV3(const TileFileHeader &header,
                 dstTile.width = srcTile.width;
                 dstTile.height = srcTile.height;
                 dstTile.byteOffset = srcTile.byteOffset;
-                dstTile.byteSize = srcTile.byteSize;
+                dstTile.storedByteSize = srcTile.byteSize;
+                dstTile.rawByteSize = srcTile.byteSize;
+                dstTile.compression = kCompressionNone;
+            }
+        }
+
+        for (size_t mip = 0; mip < table.mips.size(); ++mip)
+        {
+            if (table.mips[mip].width == 0 || table.mips[mip].height == 0)
+            {
+                if (outError)
+                {
+                    *outError = "missing mip level in: " + outFile->path;
+                }
+                return false;
+            }
+        }
+
+        outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
+                                      static_cast<uint64_t>(entry.imageHeight) * 4u * sizeof(float);
+        outFile->udims.emplace(entry.udim, std::move(table));
+    }
+
+    return true;
+}
+
+bool OpenTileFileV4(const TileFileHeader &header,
+                    VirtualTextureTileFile *outFile,
+                    std::string *outError)
+{
+    std::vector<V3UdimEntry> entries(header.udimCount);
+    outFile->stream.seekg(static_cast<std::streamoff>(header.udimTableOffset), std::ios::beg);
+    if (!ReadBytes(&outFile->stream, entries.data(), entries.size() * sizeof(V3UdimEntry)))
+    {
+        if (outError)
+        {
+            *outError = "failed reading tile file v4 UDIM table: " + outFile->path;
+        }
+        return false;
+    }
+
+    for (const V3UdimEntry &entry : entries)
+    {
+        if (!ValidateBaseEntry(entry, outFile->path, outError))
+        {
+            return false;
+        }
+
+        std::vector<V4MipRecord> mipRecords(entry.mipRecordCount);
+        outFile->stream.seekg(static_cast<std::streamoff>(entry.mipRecordOffset), std::ios::beg);
+        if (!ReadBytes(&outFile->stream, mipRecords.data(), mipRecords.size() * sizeof(V4MipRecord)))
+        {
+            if (outError)
+            {
+                *outError = "failed reading v4 mip records in: " + outFile->path;
+            }
+            return false;
+        }
+
+        std::vector<V4TileRecord> tileRecords(entry.tileRecordCount);
+        outFile->stream.seekg(static_cast<std::streamoff>(entry.tileRecordOffset), std::ios::beg);
+        if (!ReadBytes(&outFile->stream, tileRecords.data(), tileRecords.size() * sizeof(V4TileRecord)))
+        {
+            if (outError)
+            {
+                *outError = "failed reading v4 tile records in: " + outFile->path;
+            }
+            return false;
+        }
+
+        VirtualTextureUdimTable table = {};
+        table.imageWidth = entry.imageWidth;
+        table.imageHeight = entry.imageHeight;
+        table.tileSize = entry.tileSize;
+        table.mips.resize(entry.mipCount);
+
+        for (const V4MipRecord &srcMip : mipRecords)
+        {
+            if (srcMip.mipLevel >= entry.mipCount)
+            {
+                if (outError)
+                {
+                    *outError = "mip level out of range in: " + outFile->path;
+                }
+                return false;
+            }
+
+            VirtualTextureMipTable &dstMip = table.mips[srcMip.mipLevel];
+            if (dstMip.width != 0 || dstMip.height != 0)
+            {
+                if (outError)
+                {
+                    *outError = "duplicate mip level in: " + outFile->path;
+                }
+                return false;
+            }
+
+            dstMip.level = srcMip.mipLevel;
+            dstMip.width = srcMip.width;
+            dstMip.height = srcMip.height;
+            dstMip.tileCountX = srcMip.tileCountX;
+            dstMip.tileCountY = srcMip.tileCountY;
+            dstMip.isTail = (srcMip.isTail != 0u);
+            dstMip.tailByteOffset = srcMip.byteOffset;
+            dstMip.tailStoredByteSize = srcMip.storedByteSize;
+            dstMip.tailRawByteSize = srcMip.rawByteSize;
+            dstMip.tailCompression = srcMip.compression;
+
+            if (dstMip.isTail)
+            {
+                const uint64_t expectedBytes = static_cast<uint64_t>(dstMip.width) *
+                                               static_cast<uint64_t>(dstMip.height) * 4u * sizeof(float);
+                if (dstMip.tailRawByteSize != expectedBytes)
+                {
+                    if (outError)
+                    {
+                        *outError = "tail mip raw byte size mismatch in: " + outFile->path;
+                    }
+                    return false;
+                }
+                continue;
+            }
+
+            if (srcMip.firstTileRecord + srcMip.tileRecordCount > tileRecords.size())
+            {
+                if (outError)
+                {
+                    *outError = "tile record range out of bounds in: " + outFile->path;
+                }
+                return false;
+            }
+
+            dstMip.records.resize(srcMip.tileRecordCount);
+            for (uint32_t i = 0u; i < srcMip.tileRecordCount; ++i)
+            {
+                const V4TileRecord &srcTile = tileRecords[srcMip.firstTileRecord + i];
+                VirtualTextureTileRecord &dstTile = dstMip.records[i];
+                dstTile.mipLevel = srcTile.mipLevel;
+                dstTile.tileX = srcTile.tileX;
+                dstTile.tileY = srcTile.tileY;
+                dstTile.width = srcTile.width;
+                dstTile.height = srcTile.height;
+                dstTile.byteOffset = srcTile.byteOffset;
+                dstTile.storedByteSize = srcTile.storedByteSize;
+                dstTile.rawByteSize = srcTile.rawByteSize;
+                dstTile.compression = srcTile.compression;
             }
         }
 
@@ -363,6 +553,11 @@ bool OpenVirtualTextureTileFile(const std::string &path,
             *outError = "invalid tile file header: " + path;
         }
         return false;
+    }
+
+    if (std::memcmp(header.magic, "YBITILE4", 8) == 0 && header.version == 4)
+    {
+        return OpenTileFileV4(header, outFile, outError);
     }
 
     if (std::memcmp(header.magic, "YBITILE3", 8) == 0 && header.version == 3)

@@ -13,7 +13,7 @@ namespace tilebin
 struct TileFileHeader
 {
     char magic[8];
-    uint32_t version = 3;
+    uint32_t version = 4;
     uint32_t channels = 4;
     uint32_t elementType = 1; // 1 = float32
     uint32_t udimCount = 0;
