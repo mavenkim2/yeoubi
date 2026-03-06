@@ -35,14 +35,6 @@ std::string ResolveVirtualTextureTileBinPath(const std::string &tilesDir,
                                              const std::string &texturePath)
 {
     const std::string baseNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
-    const std::string stem = SanitizeTileStem(baseNoUdim);
-    const std::filesystem::path primary =
-        std::filesystem::path(tilesDir) / (stem + ".tiles.bin");
-    if (std::filesystem::exists(primary))
-    {
-        return primary.string();
-    }
-
     const std::string suffix =
         SanitizeTileStem(std::filesystem::path(baseNoUdim).filename().string()) + ".tiles.bin";
     std::filesystem::path bestMatch = {};
@@ -75,7 +67,7 @@ std::string ResolveVirtualTextureTileBinPath(const std::string &tilesDir,
     {
         return bestMatch.string();
     }
-    return primary.string();
+    return {};
 }
 
 std::unordered_map<unsigned int, std::string>
