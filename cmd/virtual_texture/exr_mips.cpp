@@ -5,7 +5,6 @@
 #include <cstring>
 #include <map>
 #include <string>
-#include <unordered_map>
 #include <vector>
 namespace ybi
 {
@@ -361,17 +360,7 @@ bool LoadStoredMipChain(const std::string &path,
         }
         return false;
     }
-    std::sort(loaded.begin(), loaded.end(),
-              [](const tilebin::UdimMipImage &a, const tilebin::UdimMipImage &b) {
-                  return a.level < b.level;
-              });
-    std::unordered_map<uint32_t, const tilebin::UdimMipImage *> byLevel;
-    for (const tilebin::UdimMipImage &mip : loaded)
-    {
-        byLevel.emplace(mip.level, &mip);
-    }
-    auto level0It = byLevel.find(0u);
-    if (level0It == byLevel.end())
+    if (loaded.front().level != 0u)
     {
         if (outError)
         {
@@ -380,17 +369,27 @@ bool LoadStoredMipChain(const std::string &path,
         return false;
     }
     outMips->clear();
-    outMips->push_back(*level0It->second);
+    outMips->reserve(loaded.size());
+    outMips->push_back(std::move(loaded[0]));
+    size_t nextLoadedIndex = 1u;
     while (outMips->back().width > 1u || outMips->back().height > 1u)
     {
         const uint32_t nextLevel = static_cast<uint32_t>(outMips->size());
         const uint32_t expectedW = std::max(1u, outMips->back().width >> 1u);
         const uint32_t expectedH = std::max(1u, outMips->back().height >> 1u);
-        auto nextIt = byLevel.find(nextLevel);
-        if (nextIt != byLevel.end() && nextIt->second->width == expectedW &&
-            nextIt->second->height == expectedH)
+
+        // TinyEXR's mipmap loader appends next_level in ascending level order.
+        while (nextLoadedIndex < loaded.size() && loaded[nextLoadedIndex].level < nextLevel)
         {
-            outMips->push_back(*nextIt->second);
+            ++nextLoadedIndex;
+        }
+        if (nextLoadedIndex < loaded.size() &&
+            loaded[nextLoadedIndex].level == nextLevel &&
+            loaded[nextLoadedIndex].width == expectedW &&
+            loaded[nextLoadedIndex].height == expectedH)
+        {
+            outMips->push_back(std::move(loaded[nextLoadedIndex]));
+            ++nextLoadedIndex;
             continue;
         }
         tilebin::UdimMipImage next = {};
