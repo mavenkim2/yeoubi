@@ -8,6 +8,26 @@ namespace ybi
 namespace texture
 {
 
+namespace
+{
+
+uint64_t ComputeTileFileHostBytes(const VirtualTextureTileFile &file)
+{
+    uint64_t bytes = static_cast<uint64_t>(file.path.size());
+    for (const auto &udimEntry : file.udims)
+    {
+        bytes += sizeof(uint32_t) + sizeof(VirtualTextureUdimTable);
+        for (const VirtualTextureMipTable &mip : udimEntry.second.mips)
+        {
+            bytes += sizeof(VirtualTextureMipTable);
+            bytes += static_cast<uint64_t>(mip.records.size()) * sizeof(VirtualTextureTileRecord);
+        }
+    }
+    return bytes;
+}
+
+} // namespace
+
 bool VirtualTextureManager::AllocateDeviceState(std::string *outError)
 {
     YBI_ASSERT(device_);
@@ -99,6 +119,47 @@ bool VirtualTextureManager::AllocateDeviceState(std::string *outError)
     }
     (void)outError;
     return true;
+}
+
+VirtualTextureMemoryStats VirtualTextureManager::GetMemoryStats() const
+{
+    VirtualTextureMemoryStats stats = {};
+    stats.hostPageTableBytes += static_cast<uint64_t>(pageTableEntriesHost_.size()) * sizeof(uint32_t);
+    stats.hostPageTableBytes += static_cast<uint64_t>(pageTableMipOffsets_.size()) * sizeof(uint32_t);
+    stats.hostPageTableBytes += static_cast<uint64_t>(pageTableMipWidths_.size()) * sizeof(uint32_t);
+    stats.hostPageTableBytes += static_cast<uint64_t>(pageTableMipHeights_.size()) * sizeof(uint32_t);
+
+    stats.hostMetaBytes += static_cast<uint64_t>(mipInfosHost_.size()) *
+                           sizeof(LaunchParams::VirtualTextureMipInfo);
+    stats.hostMetaBytes += static_cast<uint64_t>(udimInfosHost_.size()) *
+                           sizeof(LaunchParams::VirtualTextureUdimInfo);
+    stats.hostMetaBytes += static_cast<uint64_t>(textureMetaHost_.size()) *
+                           sizeof(LaunchParams::VirtualTextureTextureMeta);
+    stats.hostStreamBytes += static_cast<uint64_t>(streamPixelsHost_.size());
+
+    stats.devicePageTableBytes += pageTableEntriesDevice_.numBytes();
+    stats.devicePageTableBytes += pageTableMipOffsetsDevice_.numBytes();
+    stats.devicePageTableBytes += pageTableMipWidthsDevice_.numBytes();
+    stats.devicePageTableBytes += pageTableMipHeightsDevice_.numBytes();
+    stats.deviceMetaBytes += mipInfosDevice_.numBytes();
+    stats.deviceMetaBytes += udimInfosDevice_.numBytes();
+    stats.deviceMetaBytes += textureMetaDevice_.numBytes();
+    stats.deviceStreamBytes += streamPixelsDevice_.numBytes();
+
+    for (const TextureState &texture : textures_)
+    {
+        stats.hostTailBytes += static_cast<uint64_t>(texture.tailPixelsHost.size());
+        if (texture.tileFileOpen)
+        {
+            stats.hostMetaBytes += ComputeTileFileHostBytes(texture.tileFile);
+        }
+        else
+        {
+            stats.hostMetaBytes += static_cast<uint64_t>(texture.tileFilePath.size());
+        }
+        stats.deviceTailBytes += texture.tailPixelsDevice.numBytes();
+    }
+    return stats;
 }
 
 bool VirtualTextureManager::Finalize(std::string *outError)

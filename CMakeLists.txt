@@ -277,6 +277,7 @@ endif()
 if (WITH_USD)
     add_executable(yeoubi_template_harness
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/template_harness.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/scene_memory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
@@ -287,6 +288,7 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/manager_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/manager_stream.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/helpers.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/material_metadata.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/feedback.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file_open.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/virtual_texture/tile_file.cpp

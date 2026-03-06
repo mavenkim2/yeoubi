@@ -2,6 +2,7 @@
 #include "io/usd/load.h"
 #include "render/dispatch_types.h"
 #include "render/launch_params.h"
+#include "render/scene_memory.h"
 #include "scene/scene.h"
 #include "tessellation/subdivision.h"
 #include "texture/exr_io.h"
@@ -10,6 +11,7 @@
 #include "texture/virtual_texture/feedback.h"
 #include "texture/virtual_texture/helpers.h"
 #include "texture/virtual_texture/manager.h"
+#include "texture/virtual_texture/material_metadata.h"
 #include "texture/virtual_texture/tile_file.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/embree/tutorials/common/image/stb_image.h"
@@ -751,6 +753,7 @@ struct UploadedMaterialTextures
 {
     std::vector<LaunchParams::MaterialTextureRef> refs;
     std::vector<DeviceTexture> textures;
+    uint64_t deviceBytes = 0u;
 };
 
 static constexpr uint32_t kUdimMin = 1001u;
@@ -1070,6 +1073,7 @@ static bool UploadDecodedTextures(Device *device,
     }
     outTextures->textures.clear();
     outTextures->refs.clear();
+    outTextures->deviceBytes = 0u;
     outTextures->refs.resize(decodedTextures.size());
 
     for (size_t i = 0; i < decodedTextures.size(); ++i)
@@ -1097,6 +1101,7 @@ static bool UploadDecodedTextures(Device *device,
         }
 
         outTextures->textures.push_back(texture);
+        outTextures->deviceBytes += static_cast<uint64_t>(src.width) * static_cast<uint64_t>(src.height) * 4u;
         outTextures->refs[i].textureObject = texture.handle;
         outTextures->refs[i].width = src.width;
         outTextures->refs[i].height = src.height;
@@ -1123,13 +1128,98 @@ static void DestroyUploadedTextures(Device *device, UploadedMaterialTextures *te
     }
     textures->textures.clear();
     textures->refs.clear();
+    textures->deviceBytes = 0u;
 }
 
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
     std::vector<DeviceMemoryView<uint8_t>> ownedBuffers;
+    uint64_t deviceBytes = 0u;
 };
+
+struct HarnessMemoryStats
+{
+    uint64_t hostSourceSceneBytes = 0u;
+    uint64_t hostFlattenedSceneBytes = 0u;
+    uint64_t hostTessellatedMeshBytes = 0u;
+    uint64_t hostDecodedTextureBytes = 0u;
+    uint64_t hostMaterialTextureRefBytes = 0u;
+    uint64_t virtualTextureVirtualBytes = 0u;
+    uint64_t deviceMaterialTextureRefBytes = 0u;
+    uint64_t deviceUploadedTextureBytes = 0u;
+    uint64_t deviceMeshUploadBytes = 0u;
+    uint64_t deviceInstanceRefBytes = 0u;
+    uint64_t deviceBvhBytes = 0u;
+};
+
+static double BytesToMiB(uint64_t bytes)
+{
+    return double(bytes) / (1024.0 * 1024.0);
+}
+
+static void PrintByteStat(const char *label, uint64_t bytes)
+{
+    std::printf("memory: %-28s %12llu bytes  %10.2f MiB\n",
+                label,
+                static_cast<unsigned long long>(bytes),
+                BytesToMiB(bytes));
+}
+
+static void PrintSetupMemoryStats(const HarnessMemoryStats &stats)
+{
+    const uint64_t totalHost = stats.hostSourceSceneBytes + stats.hostFlattenedSceneBytes +
+                               stats.hostDecodedTextureBytes + stats.hostMaterialTextureRefBytes;
+    const uint64_t totalDevice = stats.deviceMaterialTextureRefBytes + stats.deviceUploadedTextureBytes +
+                                 stats.deviceMeshUploadBytes + stats.deviceInstanceRefBytes +
+                                 stats.deviceBvhBytes;
+    std::printf("memory: setup\n");
+    PrintByteStat("host.scene.source", stats.hostSourceSceneBytes);
+    PrintByteStat("host.scene.flattened", stats.hostFlattenedSceneBytes);
+    PrintByteStat("host.scene.tessellated", stats.hostTessellatedMeshBytes);
+    PrintByteStat("host.textures.decoded", stats.hostDecodedTextureBytes);
+    PrintByteStat("host.texture_refs", stats.hostMaterialTextureRefBytes);
+    if (stats.virtualTextureVirtualBytes != 0u)
+    {
+        PrintByteStat("vt.virtual_source", stats.virtualTextureVirtualBytes);
+    }
+    PrintByteStat("device.texture_refs", stats.deviceMaterialTextureRefBytes);
+    PrintByteStat("device.textures.classic", stats.deviceUploadedTextureBytes);
+    PrintByteStat("device.mesh_uploads", stats.deviceMeshUploadBytes);
+    PrintByteStat("device.instance_refs", stats.deviceInstanceRefBytes);
+    PrintByteStat("device.bvh", stats.deviceBvhBytes);
+    PrintByteStat("host.total", totalHost);
+    PrintByteStat("device.total", totalDevice);
+}
+
+static void PrintVirtualTextureMemoryStats(const HarnessMemoryStats &setupStats,
+                                           const ybi::texture::VirtualTextureMemoryStats &vtStats,
+                                           uint64_t renderDeviceBytes,
+                                           uint64_t renderHostBytes)
+{
+    const uint64_t totalHost = setupStats.hostSourceSceneBytes + setupStats.hostFlattenedSceneBytes +
+                               setupStats.hostMaterialTextureRefBytes + vtStats.hostPageTableBytes +
+                               vtStats.hostMetaBytes + vtStats.hostTailBytes + vtStats.hostStreamBytes +
+                               renderHostBytes;
+    const uint64_t totalDevice = setupStats.deviceMaterialTextureRefBytes +
+                                 setupStats.deviceMeshUploadBytes + setupStats.deviceInstanceRefBytes +
+                                 setupStats.deviceBvhBytes + vtStats.devicePageTableBytes +
+                                 vtStats.deviceMetaBytes + vtStats.deviceTailBytes +
+                                 vtStats.deviceStreamBytes + renderDeviceBytes;
+    std::printf("memory: virtual-texture resident\n");
+    PrintByteStat("vt.host.page_table", vtStats.hostPageTableBytes);
+    PrintByteStat("vt.host.meta", vtStats.hostMetaBytes);
+    PrintByteStat("vt.host.tail", vtStats.hostTailBytes);
+    PrintByteStat("vt.host.stream", vtStats.hostStreamBytes);
+    PrintByteStat("vt.device.page_table", vtStats.devicePageTableBytes);
+    PrintByteStat("vt.device.meta", vtStats.deviceMetaBytes);
+    PrintByteStat("vt.device.tail", vtStats.deviceTailBytes);
+    PrintByteStat("vt.device.stream", vtStats.deviceStreamBytes);
+    PrintByteStat("render.host", renderHostBytes);
+    PrintByteStat("render.device", renderDeviceBytes);
+    PrintByteStat("host.total", totalHost);
+    PrintByteStat("device.total", totalDevice);
+}
 
 static const Attribute *FindMeshSTAttribute(const Mesh &mesh)
 {
@@ -1168,6 +1258,7 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
         const size_t indicesBytes = sizeof(int) * mesh.indices.size();
         DeviceMemoryView<uint8_t> positionsBuffer = device->AllocBytes(positionsBytes);
         DeviceMemoryView<uint8_t> indicesBuffer = device->AllocBytes(indicesBytes);
+        out.deviceBytes += positionsBuffer.numBytes() + indicesBuffer.numBytes();
         device->CopyBytesToDevice(positionsBuffer, mesh.positions.data(), positionsBytes);
         device->CopyBytesToDevice(indicesBuffer, mesh.indices.data(), indicesBytes);
 
@@ -1182,6 +1273,7 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
             const size_t texcoordIndicesBytes = sizeof(int) * stAttr->indices.size();
             texcoordsBuffer = device->AllocBytes(texcoordsBytes);
             texcoordIndicesBuffer = device->AllocBytes(texcoordIndicesBytes);
+            out.deviceBytes += texcoordsBuffer.numBytes() + texcoordIndicesBuffer.numBytes();
             device->CopyBytesToDevice(texcoordsBuffer, stAttr->data.data(), texcoordsBytes);
             device->CopyBytesToDevice(
                 texcoordIndicesBuffer, stAttr->indices.data(), texcoordIndicesBytes);
@@ -1222,9 +1314,8 @@ RenderTraversable(Device *device,
                   int materialTextureRefSemanticCount,
                   MaterialTextureSemantic textureViewSemantic,
                   bool virtualTexture,
-                  const std::unordered_map<unsigned int, std::string> &virtualTextureTileFiles,
-                  const std::vector<LaunchParams::MaterialTextureRef> &materialTextureRefsHost,
-                  const std::vector<DecodedMaterialTexture> &decodedTextures,
+                  const std::vector<ybi::texture::VirtualTextureRegisterInput> &virtualTextureRegistrations,
+                  const HarnessMemoryStats &setupMemoryStats,
                   uint64_t virtualTextureCacheBytes,
                   int virtualTextureTailMaxDim,
                   int virtualTextureMaxPageUploads,
@@ -1347,6 +1438,13 @@ RenderTraversable(Device *device,
     std::vector<unsigned long long> feedbackKeysHost(feedbackCapacity, 0ull);
     unsigned int feedbackStatsHost[2] = {0u, 0u};
     unsigned int feedbackStatsZero[2] = {0u, 0u};
+    const uint64_t renderDeviceBytes = imageBuffer.numBytes() + feedbackKeysBuffer.numBytes() +
+                                       feedbackStatsBuffer.numBytes() + paramsBuffer.numBytes();
+    const uint64_t renderHostBytes = static_cast<uint64_t>(hostPassImage.size()) +
+                                     static_cast<uint64_t>(accumRgb.size()) * sizeof(float) +
+                                     static_cast<uint64_t>(feedbackKeysHost.size()) *
+                                         sizeof(unsigned long long) +
+                                     sizeof(feedbackStatsHost) + sizeof(feedbackStatsZero);
     ybi::texture::VirtualTextureManager virtualTextureManager;
     auto WriteFeedbackFile = [&](const char *name,
                                  int sppIndex,
@@ -1388,54 +1486,13 @@ RenderTraversable(Device *device,
             std::abort();
         }
 
-        for (int materialIndex = 0; materialIndex < materialTextureRefCount; ++materialIndex)
+        for (const ybi::texture::VirtualTextureRegisterInput &reg : virtualTextureRegistrations)
         {
-            const auto tilePathIt =
-                virtualTextureTileFiles.find(static_cast<unsigned int>(materialIndex));
-            if (tilePathIt == virtualTextureTileFiles.end())
-            {
-                continue;
-            }
-
-            const int base = (materialIndex * materialTextureRefSemanticCount +
-                              static_cast<int>(textureViewSemantic)) *
-                             materialTextureRefStride;
-            if (base < 0 ||
-                base + materialTextureRefStride > static_cast<int>(materialTextureRefsHost.size()))
-            {
-                continue;
-            }
-
-            ybi::texture::VirtualTextureRegisterInput reg = {};
-            reg.textureId = static_cast<uint32_t>(materialIndex);
-            reg.tileFilePath = tilePathIt->second;
-            for (int udimSlot = 0; udimSlot < materialTextureRefStride; ++udimSlot)
-            {
-                const LaunchParams::MaterialTextureRef &ref =
-                    materialTextureRefsHost[static_cast<size_t>(base + udimSlot)];
-                if (ref.valid == 0 || ref.width <= 0 || ref.height <= 0)
-                {
-                    continue;
-                }
-                reg.activeUdims.push_back(kUdimMin + static_cast<uint32_t>(udimSlot));
-                reg.width = std::max(reg.width, static_cast<uint32_t>(ref.width));
-                reg.height = std::max(reg.height, static_cast<uint32_t>(ref.height));
-                ybi::texture::VirtualTextureUdimExtent extent = {};
-                extent.udim = kUdimMin + static_cast<uint32_t>(udimSlot);
-                extent.width = static_cast<uint32_t>(ref.width);
-                extent.height = static_cast<uint32_t>(ref.height);
-                reg.udimExtents.push_back(extent);
-            }
-
-            if (reg.activeUdims.empty() || reg.width == 0u || reg.height == 0u)
-            {
-                continue;
-            }
             if (!virtualTextureManager.RegisterTexture(reg, &vtError))
             {
                 fprintf(stderr,
-                        "virtual-texture manager register failed (material %d): %s\n",
-                        materialIndex,
+                        "virtual-texture manager register failed (material %u): %s\n",
+                        reg.textureId,
                         vtError.c_str());
                 std::abort();
             }
@@ -1498,10 +1555,18 @@ RenderTraversable(Device *device,
                     prepassStats.uploads,
                     prepassStats.evictions,
                     prepassStats.failed);
+        PrintVirtualTextureMemoryStats(
+            setupMemoryStats, virtualTextureManager.GetMemoryStats(), renderDeviceBytes, renderHostBytes);
         virtualTextureManager.BindLaunchParams(&params);
 
         params.integrator = integrator == IntegratorType::AO ? 1 : 0;
         params.feedbackSamplePercent = 10;
+    }
+    else
+    {
+        std::printf("memory: render resident\n");
+        PrintByteStat("render.host", renderHostBytes);
+        PrintByteStat("render.device", renderDeviceBytes);
     }
 
     for (int sppIndex = 0; sppIndex < sppPassCount; ++sppIndex)
@@ -1622,11 +1687,12 @@ struct HarnessState
     std::vector<LaunchParams::MaterialTextureRef> materialTextureRefsHost;
     std::vector<DecodedMaterialTexture> decodedTextures;
     UploadedMaterialTextures uploadedMaterialTextures = {};
-    std::unordered_map<unsigned int, std::string> virtualTextureTileFiles = {};
+    std::vector<ybi::texture::VirtualTextureRegisterInput> virtualTextureRegistrations;
 
     std::vector<SceneMeshUploadRef> meshUploadRefs;
     UploadedMeshRefs uploadedRefs = {};
     DeviceMemoryView<uint8_t> instanceGeomRefsBuffer = {};
+    HarnessMemoryStats memoryStats = {};
 
     std::optional<RenderCameraOverride> usdCamera = std::nullopt;
 };
@@ -1685,82 +1751,144 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     }
     auto tTess = LogPhase("tessellate_subdivision", tFlatten);
 
+    state->memoryStats = {};
+    state->memoryStats.hostSourceSceneBytes = ComputeScenePoolHostBytes(state->scenePool);
+    state->memoryStats.hostFlattenedSceneBytes = ComputeScenePoolHostBytes(state->flattenedScenePool);
+    state->memoryStats.hostTessellatedMeshBytes = ComputeMeshVectorHostBytes(state->rootScene->meshes);
+
     state->decodedTextures.clear();
-    if (!DecodeImageTextures(state->scenePool.materials, &state->decodedTextures))
-    {
-        fprintf(stderr, "Image runtime decode failed.\n");
-        return false;
-    }
-    auto tDecode = LogPhase("decode_image_textures", tTess);
-
-    if (options.useNtc)
-    {
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-        std::vector<testbvh::DecodedMaterialTexture> ntcTextures;
-        std::string ntcError;
-        if (testbvh::DecodeNtcDiffuseTextures(state->scenePool.materials, &ntcTextures, &ntcError))
-        {
-            int overrideCount = 0;
-            const size_t numMaterials =
-                std::min(state->scenePool.materials.size(), ntcTextures.size());
-            for (size_t i = 0; i < numMaterials; ++i)
-            {
-                if (!ntcTextures[i].valid)
-                {
-                    continue;
-                }
-                const int slot =
-                    MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
-                YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < state->decodedTextures.size());
-                DecodedMaterialTexture &dst = state->decodedTextures[static_cast<size_t>(slot)];
-                dst.valid = true;
-                dst.udim = kUdimMin;
-                dst.width = ntcTextures[i].width;
-                dst.height = ntcTextures[i].height;
-                dst.rgba8 = std::move(ntcTextures[i].rgba8);
-                dst.sourcePath = ntcTextures[i].ntcPath;
-                const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
-                    state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
-                dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
-                dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
-                overrideCount++;
-            }
-            printf("NTC runtime: applied %d material overrides\n", overrideCount);
-        }
-        else
-        {
-            fprintf(stderr,
-                    "NTC runtime decode failed (continuing with image textures): %s\n",
-                    ntcError.c_str());
-        }
-#else
-        fprintf(stderr,
-                "NTC runtime requested via --ntc, but harness built without WITH_NTC. "
-                "Using image textures only.\n");
-#endif
-    }
-
     state->materialTextureRefsHost.clear();
-    std::vector<LaunchParams::MaterialTextureRef> launchRefs(state->decodedTextures.size());
+    state->virtualTextureRegistrations.clear();
+
+    std::vector<LaunchParams::MaterialTextureRef> launchRefs(
+        state->scenePool.materials.size() * static_cast<size_t>(kMaterialSemanticCount) *
+        static_cast<size_t>(kUdimSlotCount));
+    Clock::time_point tTextureReady = tTess;
+
     if (options.virtualTexture)
     {
-        for (size_t i = 0; i < state->decodedTextures.size(); ++i)
+        if (options.useNtc)
         {
-            const DecodedMaterialTexture &src = state->decodedTextures[i];
-            launchRefs[i] = {0ull,
-                             src.width,
-                             src.height,
-                             src.valid ? 1 : 0,
-                             static_cast<int>(src.wrapS),
-                             static_cast<int>(src.wrapT),
-                             0,
-                             0};
+            std::fprintf(stderr,
+                         "virtual-texture: ignoring --ntc; strict VT path uses tile bins only\n");
         }
+        if (options.virtualTextureTilesDir.empty())
+        {
+            std::fprintf(stderr, "virtual-texture: --vt-tiles-dir is required\n");
+            return false;
+        }
+
+        std::vector<std::pair<unsigned int, std::string>> texturePaths;
+        std::vector<ybi::texture::VirtualTextureMaterialSource> vtSources;
+        texturePaths.reserve(state->scenePool.materials.size());
+        vtSources.reserve(state->scenePool.materials.size());
+        for (size_t materialIndex = 0; materialIndex < state->scenePool.materials.size(); ++materialIndex)
+        {
+            const MaterialTextureInput *input =
+                FindTextureInputBySemantic(state->scenePool.materials[materialIndex], options.textureView);
+            if (!input || input->texturePath.empty())
+            {
+                continue;
+            }
+            texturePaths.emplace_back(static_cast<unsigned int>(materialIndex), input->texturePath);
+            ybi::texture::VirtualTextureMaterialSource source = {};
+            source.materialIndex = static_cast<uint32_t>(materialIndex);
+            source.texturePath = input->texturePath;
+            source.wrapS = input->wrapS;
+            source.wrapT = input->wrapT;
+            vtSources.push_back(std::move(source));
+        }
+
+        const std::unordered_map<unsigned int, std::string> tileFiles =
+            ybi::texture::BuildVirtualTextureTileFileMap(texturePaths, options.virtualTextureTilesDir);
+        ybi::texture::VirtualTextureMaterialBuildResult vtBuild = {};
+        std::string vtError;
+        if (!ybi::texture::BuildVirtualTextureMaterialMetadata(state->scenePool.materials.size(),
+                                                               static_cast<int>(options.textureView),
+                                                               state->materialTextureRefSemanticCount,
+                                                               state->materialTextureRefStride,
+                                                               vtSources,
+                                                               tileFiles,
+                                                               &vtBuild,
+                                                               &vtError))
+        {
+            std::fprintf(stderr, "%s\n", vtError.c_str());
+            return false;
+        }
+        launchRefs = std::move(vtBuild.materialTextureRefs);
+        state->virtualTextureRegistrations = std::move(vtBuild.registrations);
+        state->memoryStats.virtualTextureVirtualBytes = vtBuild.totalVirtualTextureBytes;
+        std::printf("virtual-texture: mapped %u materials and %u active UDIMs from %s\n",
+                    vtBuild.mappedMaterialCount,
+                    vtBuild.activeUdimCount,
+                    options.virtualTextureTilesDir.c_str());
         std::printf(
-            "virtual-texture: skipping CUDA image texture upload; using metadata refs only\n");
+            "virtual-texture: strict VT path enabled; skipping image decode and classic texture upload\n");
+        tTextureReady = LogPhase("build_virtual_texture_metadata", tTess);
     }
     else
     {
+        if (!DecodeImageTextures(state->scenePool.materials, &state->decodedTextures))
+        {
+            fprintf(stderr, "Image runtime decode failed.\n");
+            return false;
+        }
+#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
+        if (options.useNtc)
+        {
+            std::vector<testbvh::DecodedMaterialTexture> ntcTextures;
+            std::string ntcError;
+            if (testbvh::DecodeNtcDiffuseTextures(state->scenePool.materials, &ntcTextures, &ntcError))
+            {
+                int overrideCount = 0;
+                const size_t numMaterials =
+                    std::min(state->scenePool.materials.size(), ntcTextures.size());
+                for (size_t i = 0; i < numMaterials; ++i)
+                {
+                    if (!ntcTextures[i].valid)
+                    {
+                        continue;
+                    }
+                    const int slot =
+                        MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
+                    YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < state->decodedTextures.size());
+                    DecodedMaterialTexture &dst = state->decodedTextures[static_cast<size_t>(slot)];
+                    dst.valid = true;
+                    dst.udim = kUdimMin;
+                    dst.width = ntcTextures[i].width;
+                    dst.height = ntcTextures[i].height;
+                    dst.rgba8 = std::move(ntcTextures[i].rgba8);
+                    dst.sourcePath = ntcTextures[i].ntcPath;
+                    const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
+                        state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
+                    dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
+                    dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
+                    overrideCount++;
+                }
+                printf("NTC runtime: applied %d material overrides\n", overrideCount);
+            }
+            else
+            {
+                fprintf(stderr,
+                        "NTC runtime decode failed (continuing with image textures): %s\n",
+                        ntcError.c_str());
+            }
+        }
+#else
+        if (options.useNtc)
+        {
+            fprintf(stderr,
+                    "NTC runtime requested via --ntc, but harness built without WITH_NTC. "
+                    "Using image textures only.\n");
+        }
+#endif
+        state->memoryStats.hostDecodedTextureBytes = 0u;
+        for (const DecodedMaterialTexture &texture : state->decodedTextures)
+        {
+            state->memoryStats.hostDecodedTextureBytes += static_cast<uint64_t>(texture.rgba8.size());
+        }
+
+        tTextureReady = LogPhase("decode_image_textures", tTess);
         std::string textureUploadError;
         if (!UploadDecodedTextures(
                 device, state->decodedTextures, &state->uploadedMaterialTextures, &textureUploadError))
@@ -1768,7 +1896,8 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
             fprintf(stderr, "Texture upload failed: %s\n", textureUploadError.c_str());
             return false;
         }
-        LogPhase("upload_textures", tDecode);
+        state->memoryStats.deviceUploadedTextureBytes = state->uploadedMaterialTextures.deviceBytes;
+        LogPhase("upload_textures", tTextureReady);
         for (size_t i = 0; i < state->uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = state->uploadedMaterialTextures.refs[i];
@@ -1781,43 +1910,13 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     {
         const size_t refsBytes = launchRefs.size() * sizeof(LaunchParams::MaterialTextureRef);
         state->materialTextureRefsHost = launchRefs;
+        state->memoryStats.hostMaterialTextureRefBytes = refsBytes;
         state->materialTextureRefsBuffer = device->AllocBytes(refsBytes);
+        state->memoryStats.deviceMaterialTextureRefBytes = state->materialTextureRefsBuffer.numBytes();
         device->CopyBytesToDevice(state->materialTextureRefsBuffer, launchRefs.data(), refsBytes);
         state->materialTextureRefCount = static_cast<int>(state->scenePool.materials.size());
     }
-    auto tTexRefs = LogPhase("upload_texture_refs", tDecode);
-
-    if (options.virtualTexture)
-    {
-        if (options.virtualTextureTilesDir.empty())
-        {
-            std::fprintf(stderr,
-                         "virtual-texture: --vt-tiles-dir not set; tile loading disabled\n");
-        }
-        else
-        {
-            std::vector<std::pair<unsigned int, std::string>> texturePaths;
-            texturePaths.reserve(state->scenePool.materials.size());
-            for (size_t materialIndex = 0; materialIndex < state->scenePool.materials.size();
-                 ++materialIndex)
-            {
-                const MaterialTextureInput *input =
-                    FindTextureInputBySemantic(state->scenePool.materials[materialIndex],
-                                               options.textureView);
-                if (!input || input->texturePath.empty())
-                {
-                    continue;
-                }
-                texturePaths.emplace_back(static_cast<unsigned int>(materialIndex),
-                                          input->texturePath);
-            }
-            state->virtualTextureTileFiles = ybi::texture::BuildVirtualTextureTileFileMap(
-                texturePaths, options.virtualTextureTilesDir);
-            std::printf("virtual-texture: mapped %zu material texture ids to tile bins from %s\n",
-                        state->virtualTextureTileFiles.size(),
-                        options.virtualTextureTilesDir.c_str());
-        }
-    }
+    auto tTexRefs = LogPhase("upload_texture_refs", tTextureReady);
 
     CollectScenePoolMeshUploadRefs(&state->flattenedScenePool, &state->meshUploadRefs);
     auto tCollect = LogPhase("collect_mesh_upload_refs", tTexRefs);
@@ -1837,16 +1936,19 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     auto tBvh = LogPhase("build_bvh_phase", tCollect);
 
     state->uploadedRefs = UploadScenePoolMeshRefs(device, state->meshUploadRefs);
+    state->memoryStats.deviceMeshUploadBytes = state->uploadedRefs.deviceBytes;
     auto tUploadRefs = LogPhase("upload_scene_mesh_refs", tBvh);
     if (!state->uploadedRefs.refs.empty())
     {
         const size_t refsBytes =
             state->uploadedRefs.refs.size() * sizeof(LaunchParams::InstanceGeomRef);
         state->instanceGeomRefsBuffer = device->AllocBytes(refsBytes);
+        state->memoryStats.deviceInstanceRefBytes = state->instanceGeomRefsBuffer.numBytes();
         device->CopyBytesToDevice(
             state->instanceGeomRefsBuffer, state->uploadedRefs.refs.data(), refsBytes);
     }
     auto tInstanceRefs = LogPhase("upload_instance_geom_refs", tUploadRefs);
+    state->memoryStats.deviceBvhBytes = device->GetBVHAllocatedBytes();
 
     if (!options.cameraPosition.has_value() && !options.lookAt.has_value())
     {
@@ -1862,6 +1964,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         fflush(stdout);
     }
 
+    PrintSetupMemoryStats(state->memoryStats);
     LogPhase("upload_scene_total", phaseStart);
     return true;
 }
@@ -1911,9 +2014,8 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       state.materialTextureRefSemanticCount,
                       options.textureView,
                       options.virtualTexture,
-                      state.virtualTextureTileFiles,
-                      state.materialTextureRefsHost,
-                      state.decodedTextures,
+                      state.virtualTextureRegistrations,
+                      state.memoryStats,
                       options.virtualTextureCacheBytes,
                       options.virtualTextureTailMaxDim,
                       options.virtualTextureMaxPageUploads,

@@ -52,6 +52,18 @@ struct VirtualTextureUpdateStats
     uint32_t failed = 0u;
 };
 
+struct VirtualTextureMemoryStats
+{
+    uint64_t hostPageTableBytes = 0u;
+    uint64_t hostMetaBytes = 0u;
+    uint64_t hostTailBytes = 0u;
+    uint64_t hostStreamBytes = 0u;
+    uint64_t devicePageTableBytes = 0u;
+    uint64_t deviceMetaBytes = 0u;
+    uint64_t deviceTailBytes = 0u;
+    uint64_t deviceStreamBytes = 0u;
+};
+
 class VirtualTextureManager
 {
 public:
@@ -66,6 +78,7 @@ public:
                          uint32_t keyCount,
                          VirtualTextureUpdateStats *outStats,
                          std::string *outError);
+    VirtualTextureMemoryStats GetMemoryStats() const;
     void Shutdown();
 
 private:

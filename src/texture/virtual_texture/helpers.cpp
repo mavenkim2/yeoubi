@@ -36,7 +36,46 @@ std::string ResolveVirtualTextureTileBinPath(const std::string &tilesDir,
 {
     const std::string baseNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
     const std::string stem = SanitizeTileStem(baseNoUdim);
-    return (std::filesystem::path(tilesDir) / (stem + ".tiles.bin")).string();
+    const std::filesystem::path primary =
+        std::filesystem::path(tilesDir) / (stem + ".tiles.bin");
+    if (std::filesystem::exists(primary))
+    {
+        return primary.string();
+    }
+
+    const std::string suffix =
+        SanitizeTileStem(std::filesystem::path(baseNoUdim).filename().string()) + ".tiles.bin";
+    std::filesystem::path bestMatch = {};
+    std::error_code ec;
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::directory_iterator(std::filesystem::path(tilesDir), ec))
+    {
+        if (ec || !entry.is_regular_file())
+        {
+            continue;
+        }
+        const std::string filename = entry.path().filename().string();
+        if (filename == suffix ||
+            (filename.size() > suffix.size() &&
+             filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) == 0))
+        {
+            if (bestMatch.empty())
+            {
+                bestMatch = entry.path();
+                continue;
+            }
+            const std::string bestName = bestMatch.filename().string();
+            if (filename.size() < bestName.size() || (filename.size() == bestName.size() && filename < bestName))
+            {
+                bestMatch = entry.path();
+            }
+        }
+    }
+    if (!bestMatch.empty())
+    {
+        return bestMatch.string();
+    }
+    return primary.string();
 }
 
 std::unordered_map<unsigned int, std::string>
