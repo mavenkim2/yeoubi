@@ -5,13 +5,17 @@
 #include "texture/udim_utils.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <tbb/parallel_for.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
@@ -231,14 +235,24 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 cli.tileVerifyPass ? "on" : "off",
                 cli.tileVerifyEps);
 
-    int processed = 0;
+    std::vector<const TextureGroup *> workItems;
+    workItems.reserve(groups.size());
     for (const auto &entry : groups)
     {
-        const TextureGroup &group = entry.second;
+        workItems.push_back(&entry.second);
+    }
+
+    std::atomic<int> processed{0};
+    std::atomic<int> failed{0};
+    std::mutex logMutex;
+
+    tbb::parallel_for(size_t(0), workItems.size(), [&](size_t i) {
+        const TextureGroup &group = *workItems[i];
         if (ybi::texture::LowerExt(group.basePathNoUdim) != ".exr")
         {
+            std::lock_guard<std::mutex> lock(logMutex);
             std::printf("Tile prep: skip non-EXR texture %s\n", group.basePathNoUdim.c_str());
-            continue;
+            return;
         }
 
         std::vector<ybi::tilebin::UdimImage> images;
@@ -252,28 +266,31 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             std::string mipReason;
             if (!ybi::tileprep::LoadExrMipChain(udimPath.second, true, &mipResult, &mipReason))
             {
-                if (outError)
-                {
-                    *outError = mipReason;
-                }
-                return false;
+                failed.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
+                return;
             }
 
-            std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d loaded_mips=%zu\n",
-                        udimPath.second.c_str(),
-                        udimPath.first,
-                        mipResult.hasStoredMipLevels ? "yes" : "no",
-                        mipResult.tiled,
-                        mipResult.tileLevelMode,
-                        mipResult.mipLevels.size());
+            {
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d loaded_mips=%zu\n",
+                            udimPath.second.c_str(),
+                            udimPath.first,
+                            mipResult.hasStoredMipLevels ? "yes" : "no",
+                            mipResult.tiled,
+                            mipResult.tileLevelMode,
+                            mipResult.mipLevels.size());
+            }
 
             if (mipResult.mipLevels.empty())
             {
-                if (outError)
-                {
-                    *outError = "empty mip chain for " + udimPath.second;
-                }
-                return false;
+                failed.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf("Tile prep: FAIL %s : empty mip chain for %s\n",
+                            group.basePathNoUdim.c_str(),
+                            udimPath.second.c_str());
+                return;
             }
 
             image.width = mipResult.mipLevels[0].width;
@@ -288,11 +305,10 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         std::string reason;
         if (!ybi::tilebin::WriteTileBinary(binPath, tileSize, images, &reason))
         {
-            if (outError)
-            {
-                *outError = reason;
-            }
-            return false;
+            failed.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(logMutex);
+            std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
+            return;
         }
 
         for (const ybi::tilebin::UdimImage &img : images)
@@ -307,32 +323,36 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                                         cli.tileVerifyCount,
                                         reason))
             {
-                if (outError)
-                {
-                    *outError = reason;
-                }
-                return false;
+                failed.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
+                return;
             }
         }
 
         if (cli.tileVerifyPass && !VerifyRoundTripTileBinary(binPath, images, cli.tileVerifyEps, reason))
         {
-            if (outError)
-            {
-                *outError = reason;
-            }
-            return false;
+            failed.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(logMutex);
+            std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
+            return;
         }
 
-        ++processed;
-        std::printf("Tile prep: [%d/%zu] %s -> %s (udims=%zu)\n",
-                    processed,
-                    groups.size(),
-                    group.basePathNoUdim.c_str(),
-                    binPath.string().c_str(),
-                    images.size());
-    }
+        const int done = processed.fetch_add(1, std::memory_order_relaxed) + 1;
+        {
+            std::lock_guard<std::mutex> lock(logMutex);
+            std::printf("Tile prep: [%d/%zu] %s -> %s (udims=%zu)\n",
+                        done,
+                        groups.size(),
+                        group.basePathNoUdim.c_str(),
+                        binPath.string().c_str(),
+                        images.size());
+        }
+    });
 
-    std::printf("Tile prep: done processed=%d\n", processed);
+    std::printf("Tile prep: done processed=%d failed=%d total=%zu\n",
+                processed.load(std::memory_order_relaxed),
+                failed.load(std::memory_order_relaxed),
+                groups.size());
     return true;
 }
