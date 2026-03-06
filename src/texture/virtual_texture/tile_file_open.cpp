@@ -24,32 +24,6 @@ struct TileFileHeader
     uint64_t udimTableOffset = 0;
 };
 
-struct V2UdimEntry
-{
-    uint32_t udim = 0;
-    uint32_t imageWidth = 0;
-    uint32_t imageHeight = 0;
-    uint32_t tileSize = 0;
-    uint32_t tileCountX = 0;
-    uint32_t tileCountY = 0;
-    uint32_t tileCount = 0;
-    uint64_t tileRecordOffset = 0;
-    uint32_t tileRecordCount = 0;
-    uint32_t reserved0 = 0;
-    uint64_t payloadOffset = 0;
-    uint64_t payloadBytes = 0;
-};
-
-struct V2TileRecord
-{
-    uint32_t tileX = 0;
-    uint32_t tileY = 0;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint64_t byteOffset = 0;
-    uint64_t byteSize = 0;
-};
-
 struct V3UdimEntry
 {
     uint32_t udim = 0;
@@ -143,82 +117,6 @@ bool ValidateBaseEntry(const V3UdimEntry &entry, const std::string &path, std::s
         }
         return false;
     }
-    return true;
-}
-
-bool OpenTileFileV2(const TileFileHeader &header,
-                    VirtualTextureTileFile *outFile,
-                    std::string *outError)
-{
-    std::vector<V2UdimEntry> entries(header.udimCount);
-    outFile->stream.seekg(static_cast<std::streamoff>(header.udimTableOffset), std::ios::beg);
-    if (!ReadBytes(&outFile->stream, entries.data(), entries.size() * sizeof(V2UdimEntry)))
-    {
-        if (outError)
-        {
-            *outError = "failed reading tile file UDIM table: " + outFile->path;
-        }
-        return false;
-    }
-
-    for (const V2UdimEntry &entry : entries)
-    {
-        if (entry.udim < kUdimMin || entry.udim > kUdimMax || entry.tileSize == 0 ||
-            entry.tileCount == 0 || entry.tileRecordCount != entry.tileCount ||
-            entry.tileCount != entry.tileCountX * entry.tileCountY)
-        {
-            if (outError)
-            {
-                *outError = "invalid tile UDIM entry in: " + outFile->path;
-            }
-            return false;
-        }
-
-        std::vector<V2TileRecord> records(entry.tileRecordCount);
-        outFile->stream.seekg(static_cast<std::streamoff>(entry.tileRecordOffset), std::ios::beg);
-        if (!ReadBytes(&outFile->stream, records.data(), records.size() * sizeof(V2TileRecord)))
-        {
-            if (outError)
-            {
-                *outError = "failed reading tile records in: " + outFile->path;
-            }
-            return false;
-        }
-
-        VirtualTextureUdimTable table = {};
-        table.imageWidth = entry.imageWidth;
-        table.imageHeight = entry.imageHeight;
-        table.tileSize = entry.tileSize;
-        table.mips.resize(1);
-
-        VirtualTextureMipTable &mip0 = table.mips[0];
-        mip0.level = 0u;
-        mip0.width = entry.imageWidth;
-        mip0.height = entry.imageHeight;
-        mip0.tileCountX = entry.tileCountX;
-        mip0.tileCountY = entry.tileCountY;
-        mip0.isTail = false;
-        mip0.records.resize(records.size());
-        for (size_t i = 0; i < records.size(); ++i)
-        {
-            const V2TileRecord &src = records[i];
-            VirtualTextureTileRecord &dst = mip0.records[i];
-            dst.mipLevel = 0u;
-            dst.tileX = src.tileX;
-            dst.tileY = src.tileY;
-            dst.width = src.width;
-            dst.height = src.height;
-            dst.byteOffset = src.byteOffset;
-            dst.storedByteSize = src.byteSize;
-            dst.rawByteSize = src.byteSize;
-            dst.compression = kCompressionNone;
-        }
-
-        outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
-                                      static_cast<uint64_t>(entry.imageHeight) * 4u * sizeof(float);
-        outFile->udims.emplace(entry.udim, std::move(table));
-    }
-
     return true;
 }
 
@@ -563,11 +461,6 @@ bool OpenVirtualTextureTileFile(const std::string &path,
     if (std::memcmp(header.magic, "YBITILE3", 8) == 0 && header.version == 3)
     {
         return OpenTileFileV3(header, outFile, outError);
-    }
-
-    if (std::memcmp(header.magic, "YBITILE2", 8) == 0 && header.version == 2)
-    {
-        return OpenTileFileV2(header, outFile, outError);
     }
 
     if (outError)

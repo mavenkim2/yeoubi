@@ -655,11 +655,6 @@ bool ReadTileBinary(const std::filesystem::path &path,
         return false;
     }
 
-    if (std::memcmp(outHeader.magic, "YBITILE2", 8) == 0 && outHeader.version == 2)
-    {
-        return detail::ReadTileBinaryV2(&in, path, outHeader, outEntries, outImages, outError);
-    }
-
     const bool isV3 = (std::memcmp(outHeader.magic, "YBITILE3", 8) == 0 && outHeader.version == 3);
     const bool isV4 = (std::memcmp(outHeader.magic, "YBITILE4", 8) == 0 && outHeader.version == 4);
     if (!isV3 && !isV4)
