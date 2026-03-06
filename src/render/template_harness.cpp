@@ -902,7 +902,7 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                 continue;
             }
 
-            std::unordered_map<uint32_t, std::string> udimPaths;
+            std::vector<std::pair<uint32_t, std::string>> udimPaths;
             std::string udimReason;
             const auto udimStart = Clock::now();
             if (!ybi::usd_ntc::CollectUdimPaths(input.texturePath, udimPaths, udimReason))

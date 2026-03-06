@@ -4,7 +4,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
-#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace ybi
 {
@@ -100,8 +101,12 @@ std::string StripUdimFromPath(const std::string &path)
     return path;
 }
 
-bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std::string> &out, std::string &reason)
+bool CollectUdimPaths(const std::string &path,
+                      std::vector<std::pair<uint32_t, std::string>> &out,
+                      std::string &reason)
 {
+    out.clear();
+
     size_t tokenPos = std::string::npos;
     size_t tokenLen = 0;
     if (FindUdimToken(path, tokenPos, tokenLen))
@@ -112,7 +117,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
             candidate.replace(tokenPos, tokenLen, std::to_string(udim));
             if (std::filesystem::exists(candidate))
             {
-                out.emplace(udim, std::move(candidate));
+                out.emplace_back(udim, std::move(candidate));
             }
         }
         if (out.empty())
@@ -134,7 +139,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
             const std::string candidate = prefix + std::to_string(udim) + suffix;
             if (std::filesystem::exists(candidate))
             {
-                out.emplace(udim, candidate);
+                out.emplace_back(udim, candidate);
             }
         }
         if (!out.empty())
@@ -143,7 +148,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
         }
         if (std::filesystem::exists(path))
         {
-            out.emplace(explicitUdim, path);
+            out.emplace_back(explicitUdim, path);
             return true;
         }
         reason = "missing texture file " + path;
@@ -152,7 +157,7 @@ bool CollectUdimPaths(const std::string &path, std::unordered_map<uint32_t, std:
 
     if (std::filesystem::exists(path))
     {
-        out.emplace(kUdimMin, path);
+        out.emplace_back(kUdimMin, path);
         return true;
     }
 

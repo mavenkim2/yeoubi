@@ -26,7 +26,7 @@ namespace
 struct TextureGroup
 {
     std::string basePathNoUdim;
-    std::unordered_map<uint32_t, std::string> udimPaths;
+    std::string texturePath;
 };
 
 std::string MakeTileOutputStem(const std::string &basePathNoUdim)
@@ -197,26 +197,11 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         {
             const std::string &texturePath = kv.second.texturePath;
             const std::string basePathNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
-            std::unordered_map<uint32_t, std::string> discovered;
-            std::string reason;
-            if (!ybi::usd_ntc::CollectUdimPaths(texturePath, discovered, reason))
-            {
-                if (reason.rfind("missing texture file ", 0) == 0 || reason.rfind("no UDIM files found for ", 0) == 0)
-                {
-                    std::printf("Tile prep: skip missing texture %s\n", texturePath.c_str());
-                    continue;
-                }
-                if (outError)
-                {
-                    *outError = reason;
-                }
-                return false;
-            }
             TextureGroup &group = groups[basePathNoUdim];
             group.basePathNoUdim = basePathNoUdim;
-            for (auto &entry : discovered)
+            if (group.texturePath.empty())
             {
-                group.udimPaths.emplace(entry.first, std::move(entry.second));
+                group.texturePath = texturePath;
             }
         }
     }
@@ -255,9 +240,25 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             return;
         }
 
+        std::vector<std::pair<uint32_t, std::string>> udimPaths;
+        std::string reason;
+        if (!ybi::usd_ntc::CollectUdimPaths(group.texturePath, udimPaths, reason))
+        {
+            if (reason.rfind("missing texture file ", 0) == 0 || reason.rfind("no UDIM files found for ", 0) == 0)
+            {
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf("Tile prep: skip missing texture %s\n", group.texturePath.c_str());
+                return;
+            }
+            failed.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(logMutex);
+            std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
+            return;
+        }
+
         std::vector<ybi::tilebin::UdimImage> images;
-        images.reserve(group.udimPaths.size());
-        for (const auto &udimPath : group.udimPaths)
+        images.reserve(udimPaths.size());
+        for (const auto &udimPath : udimPaths)
         {
             ybi::tilebin::UdimImage image = {};
             image.udim = udimPath.first;
@@ -302,7 +303,6 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
         const std::string baseName = MakeTileOutputStem(group.basePathNoUdim);
         const fs::path binPath = tileOutDir / (baseName + ".tiles.bin");
-        std::string reason;
         if (!ybi::tilebin::WriteTileBinary(binPath, tileSize, images, &reason))
         {
             failed.fetch_add(1, std::memory_order_relaxed);

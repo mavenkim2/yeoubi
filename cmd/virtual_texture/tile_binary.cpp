@@ -377,18 +377,15 @@ bool WriteTileBinary(const std::filesystem::path &path,
         return false;
     }
 
-    std::vector<UdimImage> sorted = images;
-    std::sort(sorted.begin(), sorted.end(), [](const UdimImage &a, const UdimImage &b) { return a.udim < b.udim; });
-
     TileFileHeader header = {};
     std::memcpy(header.magic, "YBITILE4", 8);
     header.version = 4;
     header.channels = 4;
     header.elementType = 1;
-    header.udimCount = static_cast<uint32_t>(sorted.size());
+    header.udimCount = static_cast<uint32_t>(images.size());
     header.udimTableOffset = sizeof(TileFileHeader);
 
-    std::vector<UdimEntry> entries(sorted.size());
+    std::vector<UdimEntry> entries(images.size());
 
     std::fstream out(path, std::ios::binary | std::ios::out | std::ios::trunc);
     if (!out.is_open())
@@ -413,9 +410,9 @@ bool WriteTileBinary(const std::filesystem::path &path,
     }
 
     std::vector<float> tilePixels;
-    for (size_t i = 0; i < sorted.size(); ++i)
+    for (size_t i = 0; i < images.size(); ++i)
     {
-        const UdimImage &img = sorted[i];
+        const UdimImage &img = images[i];
         std::vector<UdimMipImage> mipChain;
         if (!detail::BuildMipChain(img, &mipChain, outError))
         {
