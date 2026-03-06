@@ -1,4 +1,5 @@
 #include "io/usd/load.h"
+#include "io/usd/asset_path_resolve.h"
 #include "io/usd/instance_dag_build.h"
 #include "pxr/base/gf/vec2f.h"
 #include "scene/attributes.h"
@@ -407,11 +408,7 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
         return false;
     }
 
-    outPath = assetPath.GetResolvedPath();
-    if (outPath.empty())
-    {
-        outPath = assetPath.GetAssetPath();
-    }
+    outPath = ResolveUsdAssetPath(fileInput.GetAttr(), assetPath);
     if (outPath.empty())
     {
         printf("Texture gather: empty texture file path at %s\n", sourceShader.GetPath().GetText());
@@ -468,11 +465,7 @@ static void ReadNtcMaterialInfo(const pxr::UsdShadeMaterial &material,
         pxr::SdfAssetPath assetPath;
         if (ntcFileAttr.Get(&assetPath))
         {
-            outInfo->ntcDiffuseFile = assetPath.GetResolvedPath();
-            if (outInfo->ntcDiffuseFile.empty())
-            {
-                outInfo->ntcDiffuseFile = assetPath.GetAssetPath();
-            }
+            outInfo->ntcDiffuseFile = ResolveUsdAssetPath(ntcFileAttr, assetPath);
         }
         else
         {
