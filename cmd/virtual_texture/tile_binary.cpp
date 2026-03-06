@@ -243,7 +243,12 @@ bool ReconstructBaseImageFromRecords(const std::filesystem::path &path,
     outImage->udim = entry.udim;
     outImage->width = entry.imageWidth;
     outImage->height = entry.imageHeight;
-    outImage->rgba.assign(static_cast<size_t>(entry.imageWidth) * static_cast<size_t>(entry.imageHeight) * 4u, 0.0f);
+    outImage->mipLevels.resize(1u);
+    UdimMipImage &baseMipImage = outImage->mipLevels[0];
+    baseMipImage.level = 0u;
+    baseMipImage.width = entry.imageWidth;
+    baseMipImage.height = entry.imageHeight;
+    baseMipImage.rgba.assign(static_cast<size_t>(entry.imageWidth) * static_cast<size_t>(entry.imageHeight) * 4u, 0.0f);
 
     if (baseMip.isTail != 0u)
     {
@@ -271,7 +276,7 @@ bool ReconstructBaseImageFromRecords(const std::filesystem::path &path,
             return false;
         }
 
-        std::memcpy(outImage->rgba.data(), rawPayload.data(), static_cast<size_t>(baseMip.rawByteSize));
+        std::memcpy(baseMipImage.rgba.data(), rawPayload.data(), static_cast<size_t>(baseMip.rawByteSize));
         return true;
     }
 
@@ -336,7 +341,7 @@ bool ReconstructBaseImageFromRecords(const std::filesystem::path &path,
         for (uint32_t y = 0; y < r.height; ++y)
         {
             const float *src = tileF32 + static_cast<size_t>(y) * static_cast<size_t>(r.width) * 4u;
-            float *dst = outImage->rgba.data() +
+            float *dst = baseMipImage.rgba.data() +
                          (static_cast<size_t>(y0 + y) * static_cast<size_t>(entry.imageWidth) + static_cast<size_t>(x0)) *
                              4u;
             std::memcpy(dst, src, static_cast<size_t>(r.width) * 4u * sizeof(float));
@@ -413,11 +418,7 @@ bool WriteTileBinary(const std::filesystem::path &path,
     for (size_t i = 0; i < images.size(); ++i)
     {
         const UdimImage &img = images[i];
-        std::vector<UdimMipImage> mipChain;
-        if (!detail::BuildMipChain(img, &mipChain, outError))
-        {
-            return false;
-        }
+        const std::vector<UdimMipImage> &mipChain = img.mipLevels;
 
         UdimEntry &entry = entries[i];
         entry.udim = img.udim;

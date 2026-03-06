@@ -140,7 +140,7 @@ bool VerifyRoundTripTileBinary(const fs::path &tilePath,
             return false;
         }
         ybi::tilebin::DiffStats diff;
-        if (!ybi::tilebin::DiffImagesExact(source.rgba, decoded.rgba, eps, &diff))
+        if (!ybi::tilebin::DiffImagesExact(source.mipLevels[0].rgba, decoded.mipLevels[0].rgba, eps, &diff))
         {
             outError = "tile verify mismatch udim=" + std::to_string(decoded.udim) +
                        " mismatches=" + std::to_string(diff.mismatchCount) +
@@ -296,7 +296,6 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
             image.width = mipResult.mipLevels[0].width;
             image.height = mipResult.mipLevels[0].height;
-            image.rgba = mipResult.mipLevels[0].rgba;
             image.mipLevels = std::move(mipResult.mipLevels);
             images.push_back(std::move(image));
         }
@@ -319,7 +318,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                                         static_cast<int>(img.width),
                                         static_cast<int>(img.height),
                                         tileSize,
-                                        img.rgba,
+                                        img.mipLevels[0].rgba,
                                         cli.tileVerifyCount,
                                         reason))
             {

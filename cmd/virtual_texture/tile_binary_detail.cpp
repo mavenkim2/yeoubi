@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <unordered_set>
 
 namespace ybi
 {
@@ -44,44 +43,6 @@ void ExtractTileRgbaF32(const std::vector<float> &image,
     }
 }
 
-void Downsample2x2(const std::vector<float> &src,
-                   uint32_t srcW,
-                   uint32_t srcH,
-                   std::vector<float> *dst,
-                   uint32_t *dstW,
-                   uint32_t *dstH)
-{
-    *dstW = std::max(1u, srcW >> 1u);
-    *dstH = std::max(1u, srcH >> 1u);
-    dst->assign(static_cast<size_t>(*dstW) * static_cast<size_t>(*dstH) * 4u, 0.0f);
-
-    for (uint32_t y = 0; y < *dstH; ++y)
-    {
-        for (uint32_t x = 0; x < *dstW; ++x)
-        {
-            const uint32_t sx0 = std::min(srcW - 1u, x * 2u + 0u);
-            const uint32_t sx1 = std::min(srcW - 1u, x * 2u + 1u);
-            const uint32_t sy0 = std::min(srcH - 1u, y * 2u + 0u);
-            const uint32_t sy1 = std::min(srcH - 1u, y * 2u + 1u);
-            const size_t outBase =
-                (static_cast<size_t>(y) * static_cast<size_t>(*dstW) + static_cast<size_t>(x)) * 4u;
-            for (uint32_t c = 0; c < 4u; ++c)
-            {
-                const size_t i00 =
-                    (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) + static_cast<size_t>(sx0)) * 4u + c;
-                const size_t i10 =
-                    (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) + static_cast<size_t>(sx1)) * 4u + c;
-                const size_t i01 =
-                    (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) + static_cast<size_t>(sx0)) * 4u + c;
-                const size_t i11 =
-                    (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) + static_cast<size_t>(sx1)) * 4u + c;
-                (*dst)[outBase + c] =
-                    0.25f * (src[i00] + src[i10] + src[i01] + src[i11]);
-            }
-        }
-    }
-}
-
 bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std::string *outError)
 {
     if (tileSize <= 0)
@@ -101,7 +62,8 @@ bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std
         return false;
     }
 
-    std::unordered_set<uint32_t> seen;
+    uint32_t prevUdim = 0u;
+    bool havePrevUdim = false;
     for (const UdimImage &img : images)
     {
         if (img.udim < kUdimMin || img.udim > kUdimMax)
@@ -112,14 +74,16 @@ bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std
             }
             return false;
         }
-        if (!seen.insert(img.udim).second)
+        if (havePrevUdim && img.udim <= prevUdim)
         {
             if (outError)
             {
-                *outError = "duplicate UDIM id";
+                *outError = "UDIM ids must be strictly ascending";
             }
             return false;
         }
+        prevUdim = img.udim;
+        havePrevUdim = true;
         if (img.width == 0 || img.height == 0)
         {
             if (outError)
@@ -128,59 +92,19 @@ bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std
             }
             return false;
         }
-        const size_t expected = static_cast<size_t>(img.width) * static_cast<size_t>(img.height) * 4u;
-        if (img.rgba.size() != expected)
+        if (img.mipLevels.empty())
         {
             if (outError)
             {
-                *outError = "image pixel count mismatch";
+                *outError = "mip chain is empty";
             }
             return false;
         }
-    }
-    return true;
-}
-
-bool BuildMipChain(const UdimImage &img,
-                   std::vector<UdimMipImage> *outMipChain,
-                   std::string *outError)
-{
-    outMipChain->clear();
-
-    UdimMipImage mip0 = {};
-    mip0.level = 0u;
-    mip0.width = img.width;
-    mip0.height = img.height;
-    mip0.rgba = img.rgba;
-    outMipChain->push_back(std::move(mip0));
-
-    if (!img.mipLevels.empty())
-    {
-        std::vector<UdimMipImage> provided = img.mipLevels;
-        std::sort(provided.begin(), provided.end(),
-                  [](const UdimMipImage &a, const UdimMipImage &b) { return a.level < b.level; });
-
-        size_t next = 0;
-        if (!provided.empty() && provided[0].level == 0u)
+        for (size_t mipIndex = 0; mipIndex < img.mipLevels.size(); ++mipIndex)
         {
-            const UdimMipImage &src0 = provided[0];
-            const size_t expected = static_cast<size_t>(img.width) * static_cast<size_t>(img.height) * 4u;
-            if (src0.width != img.width || src0.height != img.height || src0.rgba.size() != expected)
-            {
-                if (outError)
-                {
-                    *outError = "mip level 0 does not match base image";
-                }
-                return false;
-            }
-            next = 1;
-        }
-
-        uint32_t expectedLevel = 1u;
-        while (next < provided.size())
-        {
-            const UdimMipImage &src = provided[next];
-            if (src.level != expectedLevel)
+            const UdimMipImage &mip = img.mipLevels[mipIndex];
+            const uint32_t expectedLevel = static_cast<uint32_t>(mipIndex);
+            if (mip.level != expectedLevel)
             {
                 if (outError)
                 {
@@ -188,13 +112,16 @@ bool BuildMipChain(const UdimImage &img,
                 }
                 return false;
             }
-
-            const uint32_t expectedW =
-                std::max(1u, outMipChain->back().width >> 1u);
-            const uint32_t expectedH =
-                std::max(1u, outMipChain->back().height >> 1u);
-            const size_t expectedPixels = static_cast<size_t>(src.width) * static_cast<size_t>(src.height) * 4u;
-            if (src.width != expectedW || src.height != expectedH || src.rgba.size() != expectedPixels)
+            uint32_t expectedW = img.width;
+            uint32_t expectedH = img.height;
+            if (mipIndex > 0)
+            {
+                const UdimMipImage &prev = img.mipLevels[mipIndex - 1u];
+                expectedW = std::max(1u, prev.width >> 1u);
+                expectedH = std::max(1u, prev.height >> 1u);
+            }
+            const size_t expectedPixels = static_cast<size_t>(expectedW) * static_cast<size_t>(expectedH) * 4u;
+            if (mip.width != expectedW || mip.height != expectedH || mip.rgba.size() != expectedPixels)
             {
                 if (outError)
                 {
@@ -202,24 +129,16 @@ bool BuildMipChain(const UdimImage &img,
                 }
                 return false;
             }
-
-            outMipChain->push_back(src);
-            ++next;
-            ++expectedLevel;
         }
-    }
-
-    while (outMipChain->back().width > 1u || outMipChain->back().height > 1u)
-    {
-        UdimMipImage next = {};
-        next.level = static_cast<uint32_t>(outMipChain->size());
-        Downsample2x2(outMipChain->back().rgba,
-                      outMipChain->back().width,
-                      outMipChain->back().height,
-                      &next.rgba,
-                      &next.width,
-                      &next.height);
-        outMipChain->push_back(std::move(next));
+        const UdimMipImage &lastMip = img.mipLevels.back();
+        if (lastMip.width != 1u || lastMip.height != 1u)
+        {
+            if (outError)
+            {
+                *outError = "mip chain must terminate at 1x1";
+            }
+            return false;
+        }
     }
 
     return true;
@@ -296,7 +215,12 @@ bool ReadTileBinaryV2(std::ifstream *in,
         image.udim = entry.udim;
         image.width = entry.imageWidth;
         image.height = entry.imageHeight;
-        image.rgba.assign(static_cast<size_t>(entry.imageWidth) * static_cast<size_t>(entry.imageHeight) * 4u, 0.0f);
+        image.mipLevels.resize(1u);
+        image.mipLevels[0].level = 0u;
+        image.mipLevels[0].width = entry.imageWidth;
+        image.mipLevels[0].height = entry.imageHeight;
+        image.mipLevels[0].rgba.assign(static_cast<size_t>(entry.imageWidth) * static_cast<size_t>(entry.imageHeight) * 4u,
+                                       0.0f);
 
         for (const V2TileRecord &r : records)
         {
@@ -346,7 +270,7 @@ bool ReadTileBinaryV2(std::ifstream *in,
             for (uint32_t y = 0; y < r.height; ++y)
             {
                 const float *src = tile.data() + static_cast<size_t>(y) * static_cast<size_t>(r.width) * 4u;
-                float *dst = image.rgba.data() +
+                float *dst = image.mipLevels[0].rgba.data() +
                              (static_cast<size_t>(y0 + y) * static_cast<size_t>(entry.imageWidth) + static_cast<size_t>(x0)) *
                                  4u;
                 std::memcpy(dst, src, static_cast<size_t>(r.width) * 4u * sizeof(float));

@@ -193,7 +193,7 @@ int main(int argc, char **argv)
     }
 
     ybi::tilebin::DiffStats diff = {};
-    const bool ok = ybi::tilebin::DiffImagesExact(exrRgba, decoded->rgba, eps, &diff);
+    const bool ok = ybi::tilebin::DiffImagesExact(exrRgba, decoded->mipLevels[0].rgba, eps, &diff);
     std::printf("verify stats: exr=%s tiles=%s udim=%u\n", exrPath.c_str(), tilesBinPath.c_str(), udim);
     std::printf("verify stats: width=%d height=%d channels=4\n", exrW, exrH);
     std::printf("verify stats: eps=%g maxAbs=%.9g meanAbs=%.9g rmse=%.9g mismatches=%llu/%zu\n",
@@ -215,7 +215,7 @@ int main(int argc, char **argv)
                     y,
                     chan,
                     exrRgba[diff.firstMismatch],
-                    decoded->rgba[diff.firstMismatch]);
+                    decoded->mipLevels[0].rgba[diff.firstMismatch]);
     }
 
     std::printf("verify result: %s\n", ok ? "PASS" : "FAIL");

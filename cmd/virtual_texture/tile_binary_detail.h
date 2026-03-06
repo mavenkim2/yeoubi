@@ -50,18 +50,7 @@ void ExtractTileRgbaF32(const std::vector<float> &image,
                         int &outWidth,
                         int &outHeight);
 
-void Downsample2x2(const std::vector<float> &src,
-                   uint32_t srcW,
-                   uint32_t srcH,
-                   std::vector<float> *dst,
-                   uint32_t *dstW,
-                   uint32_t *dstH);
-
 bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std::string *outError);
-
-bool BuildMipChain(const UdimImage &img,
-                   std::vector<UdimMipImage> *outMipChain,
-                   std::string *outError);
 
 bool ReadBytes(std::ifstream *stream, void *dst, size_t bytes);
 

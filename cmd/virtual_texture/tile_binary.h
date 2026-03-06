@@ -78,7 +78,6 @@ struct UdimImage
     uint32_t udim = 0;
     uint32_t width = 0;
     uint32_t height = 0;
-    std::vector<float> rgba;
     std::vector<UdimMipImage> mipLevels;
 };
 
