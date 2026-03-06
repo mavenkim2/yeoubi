@@ -57,6 +57,172 @@ YBI_INTEGRATOR_HD void UnpackVirtualTexturePageEntry(uint32_t packed,
     }
 }
 
+YBI_INTEGRATOR_HD bool ResolveVirtualTextureTextureMeta(
+    const LaunchParams &params,
+    const LaunchParams::InstanceGeomRef &geomRef,
+    const LaunchParams::VirtualTextureTextureMeta **outMeta)
+{
+    if (params.virtualTextureTextureMeta == 0ull || geomRef.materialIndex < 0 ||
+        geomRef.materialIndex >= params.virtualTextureTextureMetaCount)
+    {
+        return false;
+    }
+    const LaunchParams::VirtualTextureTextureMeta *textures =
+        reinterpret_cast<const LaunchParams::VirtualTextureTextureMeta *>(params.virtualTextureTextureMeta);
+    if (outMeta)
+    {
+        *outMeta = &textures[geomRef.materialIndex];
+    }
+    return true;
+}
+
+YBI_INTEGRATOR_HD bool TryResolveVirtualTextureLocalUdim(
+    const LaunchParams::VirtualTextureTextureMeta &meta,
+    unsigned int udimBits,
+    unsigned int *outLocalUdim)
+{
+    if (udimBits >= 128u)
+    {
+        return false;
+    }
+    const int local = static_cast<int>(meta.udimToLocal[udimBits]);
+    if (local < 0)
+    {
+        return false;
+    }
+    if (outLocalUdim)
+    {
+        *outLocalUdim = static_cast<unsigned int>(local);
+    }
+    return true;
+}
+
+YBI_INTEGRATOR_HD bool ResolveVirtualTextureUdimBits(
+    const LaunchParams &params,
+    const LaunchParams::InstanceGeomRef &geomRef,
+    float u,
+    float v,
+    float wrappedU,
+    float wrappedV,
+    const LaunchParams::VirtualTextureTextureMeta **outMeta,
+    unsigned int *outUdimBits,
+    unsigned int *outLocalUdim)
+{
+    const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
+    if (!ResolveVirtualTextureTextureMeta(params, geomRef, &meta) || !meta)
+    {
+        return false;
+    }
+
+    const unsigned int rawBits =
+        ybi::texture::UdimBitsFromUdim(ybi::texture::UdimFromUV(u, v));
+    unsigned int localUdim = 0u;
+    if (TryResolveVirtualTextureLocalUdim(*meta, rawBits, &localUdim))
+    {
+        if (outMeta)
+        {
+            *outMeta = meta;
+        }
+        if (outUdimBits)
+        {
+            *outUdimBits = rawBits;
+        }
+        if (outLocalUdim)
+        {
+            *outLocalUdim = localUdim;
+        }
+        return true;
+    }
+
+    const unsigned int wrappedBits =
+        ybi::texture::UdimBitsFromUdim(ybi::texture::UdimFromUV(wrappedU, wrappedV));
+    if (TryResolveVirtualTextureLocalUdim(*meta, wrappedBits, &localUdim))
+    {
+        if (outMeta)
+        {
+            *outMeta = meta;
+        }
+        if (outUdimBits)
+        {
+            *outUdimBits = wrappedBits;
+        }
+        if (outLocalUdim)
+        {
+            *outLocalUdim = localUdim;
+        }
+        return true;
+    }
+
+    for (unsigned int bits = 0u; bits < 128u; ++bits)
+    {
+        if (!TryResolveVirtualTextureLocalUdim(*meta, bits, &localUdim))
+        {
+            continue;
+        }
+        if (outMeta)
+        {
+            *outMeta = meta;
+        }
+        if (outUdimBits)
+        {
+            *outUdimBits = bits;
+        }
+        if (outLocalUdim)
+        {
+            *outLocalUdim = localUdim;
+        }
+        return true;
+    }
+    return false;
+}
+
+YBI_INTEGRATOR_HD bool TryResolveVirtualTextureTailSample(
+    const LaunchParams::VirtualTextureTextureMeta *meta,
+    unsigned int localUdim,
+    float wrappedU,
+    float wrappedV,
+    int tileSize,
+    const unsigned char **outSamplePixels,
+    unsigned long long *outSampleOffset)
+{
+    if (!meta || !outSamplePixels || !outSampleOffset || meta->tailPixels == 0ull || meta->tailPageCountX == 0u ||
+        meta->tailPageCountY == 0u)
+    {
+        return false;
+    }
+
+    const unsigned long long pageCapacity = static_cast<unsigned long long>(meta->tailPageCountX) *
+                                            static_cast<unsigned long long>(meta->tailPageCountY);
+    if (static_cast<unsigned long long>(localUdim) >= pageCapacity)
+    {
+        return false;
+    }
+
+    const int safeTileSize = MaxInt(tileSize, 1);
+    const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, safeTileSize);
+    const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, safeTileSize);
+    const unsigned int fallbackPageX = localUdim % meta->tailPageCountX;
+    const unsigned int fallbackPageY = localUdim / meta->tailPageCountX;
+    if (fallbackPageY >= meta->tailPageCountY)
+    {
+        return false;
+    }
+
+    const unsigned long long pageIndex =
+        static_cast<unsigned long long>(fallbackPageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
+        static_cast<unsigned long long>(fallbackPageX);
+    const unsigned long long pageBytes =
+        static_cast<unsigned long long>(safeTileSize) * static_cast<unsigned long long>(safeTileSize) * 4ull;
+    const unsigned long long sampleOffset =
+        pageIndex * pageBytes +
+        (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(safeTileSize) +
+         static_cast<unsigned long long>(tailX)) *
+            4ull;
+    *outSamplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
+    *outSampleOffset = sampleOffset;
+    return true;
+}
+
 YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
                                                  const LaunchParams::InstanceGeomRef &geomRef,
                                                  unsigned int mip,
@@ -218,9 +384,18 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
     const int texelY = ybi::texture::TexelFromUnitUV(vv, mipHeight);
     const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
     const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
-
-    const int udim = ybi::texture::UdimFromUV(u, v);
-    const unsigned int udimBits = ybi::texture::UdimBitsFromUdim(udim);
+    unsigned int udimBits = ybi::texture::UdimBitsFromUdim(ybi::texture::UdimFromUV(u, v));
+    if (params.virtualTextureEnabled != 0)
+    {
+        const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
+        unsigned int localUdim = 0u;
+        unsigned int resolvedBits = udimBits;
+        if (ResolveVirtualTextureUdimBits(
+                params, geomRef, u, v, uu, vv, &meta, &resolvedBits, &localUdim))
+        {
+            udimBits = resolvedBits;
+        }
+    }
 
     const unsigned int textureId =
         static_cast<unsigned int>(ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u)));
@@ -250,7 +425,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
     if (params.virtualTexturePageTableEntries == 0ull || params.virtualTextureStreamPixels == 0ull ||
         params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull)
     {
-        outColor = MakeVec3(1.0f, 0.0f, 1.0f);
+        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
@@ -272,94 +447,100 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
     const int texelY = ybi::texture::TexelFromUnitUV(wrappedV, mipHeight);
     const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
     const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
-    const int udim = ybi::texture::UdimFromUV(u, v);
-    const unsigned int udimBits = ybi::texture::UdimBitsFromUdim(udim);
+    const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
+    unsigned int udimBits = 0u;
+    unsigned int localUdim = 0u;
+    if (!ResolveVirtualTextureUdimBits(
+            params, geomRef, u, v, wrappedU, wrappedV, &meta, &udimBits, &localUdim))
+    {
+        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+        return true;
+    }
     const unsigned int textureId =
         static_cast<unsigned int>(ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u)));
     const unsigned long long key =
         ybi::texture::PackVirtualTextureKey(tileX, tileY, udimBits, textureId, mip);
 
-    const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
     const LaunchParams::VirtualTextureMipInfo *mipInfo = nullptr;
-    unsigned int localUdim = 0u;
     unsigned int vaX = 0u;
     unsigned int vaY = 0u;
+    const unsigned char *samplePixels = nullptr;
+    unsigned long long sampleOffset = 0ull;
     if (!ResolveVirtualTextureInfo(
             params, geomRef, mip, udimBits, tileX, tileY, &meta, &mipInfo, &localUdim, &vaX, &vaY))
     {
-        outColor = MakeVec3(1.0f, 0.0f, 1.0f);
-        return true;
-    }
-
-    uint32_t packedEntry = 0u;
-    if (!ReadVirtualTexturePageEntry(params, mipInfo->level, vaX, vaY, &packedEntry))
-    {
-        outColor = MakeVec3(1.0f, 0.0f, 1.0f);
-        return true;
-    }
-
-    unsigned int pageX = 0u;
-    unsigned int pageY = 0u;
-    unsigned int pageType = 0u;
-    unsigned int flags = 0u;
-    UnpackVirtualTexturePageEntry(packedEntry, &pageX, &pageY, &pageType, &flags);
-
-    const unsigned char *samplePixels = nullptr;
-    unsigned long long sampleOffset = 0ull;
-    const int localX = ClampInt(texelX - int(tileX) * tileSize, 0, tileSize - 1);
-    const int localY = ClampInt(texelY - int(tileY) * tileSize, 0, tileSize - 1);
-    if (pageType == kVirtualTexturePageTypeStream &&
-        pageX < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountX, 0)) &&
-        pageY < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountY, 0)))
-    {
-        const unsigned long long pageIndex =
-            static_cast<unsigned long long>(pageY) *
-                static_cast<unsigned long long>(params.virtualTextureStreamPageCountX) +
-            static_cast<unsigned long long>(pageX);
-        const unsigned long long pageBytes =
-            static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
-        sampleOffset = pageIndex * pageBytes +
-                       (static_cast<unsigned long long>(localY) * static_cast<unsigned long long>(tileSize) +
-                        static_cast<unsigned long long>(localX)) *
-                           4ull;
-        samplePixels = reinterpret_cast<const unsigned char *>(params.virtualTextureStreamPixels);
-    }
-    else if (pageType == kVirtualTexturePageTypeTail && meta->tailPixels != 0ull &&
-             pageX < meta->tailPageCountX && pageY < meta->tailPageCountY)
-    {
-        const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, tileSize);
-        const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, tileSize);
-        const unsigned long long pageIndex =
-            static_cast<unsigned long long>(pageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
-            static_cast<unsigned long long>(pageX);
-        const unsigned long long pageBytes =
-            static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
-        sampleOffset = pageIndex * pageBytes +
-                       (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(tileSize) +
-                        static_cast<unsigned long long>(tailX)) *
-                           4ull;
-        samplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
-    }
-    else if (meta->tailPixels != 0ull && localUdim < meta->activeUdimCount && meta->tailPageCountX > 0u)
-    {
-        const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, tileSize);
-        const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, tileSize);
-        const unsigned int fallbackPageX = localUdim % meta->tailPageCountX;
-        const unsigned int fallbackPageY = localUdim / meta->tailPageCountX;
-        const unsigned long long pageIndex =
-            static_cast<unsigned long long>(fallbackPageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
-            static_cast<unsigned long long>(fallbackPageX);
-        const unsigned long long pageBytes =
-            static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
-        sampleOffset = pageIndex * pageBytes +
-                       (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(tileSize) +
-                        static_cast<unsigned long long>(tailX)) *
-                           4ull;
-        samplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
+        if (!TryResolveVirtualTextureTailSample(
+                meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset))
+        {
+            outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+            return true;
+        }
     }
     else
     {
-        outColor = MakeVec3(1.0f, 0.0f, 1.0f);
+        uint32_t packedEntry = 0u;
+        if (!ReadVirtualTexturePageEntry(params, mipInfo->level, vaX, vaY, &packedEntry))
+        {
+            if (!TryResolveVirtualTextureTailSample(
+                    meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset))
+            {
+                outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+                return true;
+            }
+        }
+        else
+        {
+            unsigned int pageX = 0u;
+            unsigned int pageY = 0u;
+            unsigned int pageType = 0u;
+            unsigned int flags = 0u;
+            UnpackVirtualTexturePageEntry(packedEntry, &pageX, &pageY, &pageType, &flags);
+
+            const int localX = ClampInt(texelX - int(tileX) * tileSize, 0, tileSize - 1);
+            const int localY = ClampInt(texelY - int(tileY) * tileSize, 0, tileSize - 1);
+            if (pageType == kVirtualTexturePageTypeStream &&
+                pageX < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountX, 0)) &&
+                pageY < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountY, 0)))
+            {
+                const unsigned long long pageIndex =
+                    static_cast<unsigned long long>(pageY) *
+                        static_cast<unsigned long long>(params.virtualTextureStreamPageCountX) +
+                    static_cast<unsigned long long>(pageX);
+                const unsigned long long pageBytes =
+                    static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
+                sampleOffset = pageIndex * pageBytes +
+                               (static_cast<unsigned long long>(localY) * static_cast<unsigned long long>(tileSize) +
+                                static_cast<unsigned long long>(localX)) *
+                                   4ull;
+                samplePixels = reinterpret_cast<const unsigned char *>(params.virtualTextureStreamPixels);
+            }
+            else if (pageType == kVirtualTexturePageTypeTail && meta->tailPixels != 0ull &&
+                     pageX < meta->tailPageCountX && pageY < meta->tailPageCountY)
+            {
+                const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, tileSize);
+                const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, tileSize);
+                const unsigned long long pageIndex =
+                    static_cast<unsigned long long>(pageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
+                    static_cast<unsigned long long>(pageX);
+                const unsigned long long pageBytes =
+                    static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
+                sampleOffset = pageIndex * pageBytes +
+                               (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(tileSize) +
+                                static_cast<unsigned long long>(tailX)) *
+                                   4ull;
+                samplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
+            }
+            else
+            {
+                TryResolveVirtualTextureTailSample(
+                    meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset);
+            }
+        }
+    }
+
+    if (!samplePixels)
+    {
+        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
