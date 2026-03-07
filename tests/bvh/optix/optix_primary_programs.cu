@@ -193,6 +193,43 @@ static __forceinline__ __device__ bool TryComputeTriangleNormal(int instanceId,
     return true;
 }
 
+static __forceinline__ __device__ bool TryComputeTriangleWorldPositions(int instanceId,
+                                                                        int primitiveIndex,
+                                                                        HitInfo *outHit)
+{
+    if (!outHit || params.instanceGeomRefs == 0ull || instanceId < 0 ||
+        instanceId >= params.instanceGeomRefCount)
+    {
+        return false;
+    }
+
+    const LaunchParams::InstanceGeomRef *refs =
+        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+    const int indexBase = primitiveIndex * 3;
+    const float3 *positions = reinterpret_cast<const float3 *>(ref.positions);
+    const int *indices = reinterpret_cast<const int *>(ref.indices);
+    if (!positions || !indices || indexBase + 2 >= ref.numIndices)
+    {
+        return false;
+    }
+
+    const int i0 = indices[indexBase + 0];
+    const int i1 = indices[indexBase + 1];
+    const int i2 = indices[indexBase + 2];
+    if (i0 < 0 || i0 >= ref.numPositions || i1 < 0 || i1 >= ref.numPositions || i2 < 0 ||
+        i2 >= ref.numPositions)
+    {
+        return false;
+    }
+
+    outHit->worldTri0 = ToVec3(optixTransformPointFromObjectToWorldSpace(positions[i0]));
+    outHit->worldTri1 = ToVec3(optixTransformPointFromObjectToWorldSpace(positions[i1]));
+    outHit->worldTri2 = ToVec3(optixTransformPointFromObjectToWorldSpace(positions[i2]));
+    outHit->hasWorldTriangle = true;
+    return true;
+}
+
 extern "C" __global__ void __raygen__primary()
 {
     const uint3 launchIndex = optixGetLaunchIndex();
@@ -270,6 +307,7 @@ extern "C" __global__ void __closesthit__primary()
         hit.hasBarycentrics = true;
         hit.instanceId = static_cast<int>(optixGetInstanceId());
         hit.primitiveIndex = static_cast<int>(optixGetPrimitiveIndex());
+        (void)TryComputeTriangleWorldPositions(hit.instanceId, hit.primitiveIndex, &hit);
     }
 
     if (params.integrator == 2)

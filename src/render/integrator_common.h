@@ -77,8 +77,12 @@ struct HitInfo
     Vec3 rayDir = {0.0f, 0.0f, 1.0f};
     float t = 0.0f;
     Vec3 geomNormal = {0.0f, 0.0f, 1.0f};
+    Vec3 worldTri0 = {0.0f, 0.0f, 0.0f};
+    Vec3 worldTri1 = {0.0f, 0.0f, 0.0f};
+    Vec3 worldTri2 = {0.0f, 0.0f, 0.0f};
     bool hasBarycentrics = false;
     bool hasGeomNormal = false;
+    bool hasWorldTriangle = false;
 };
 
 YBI_INTEGRATOR_HD Vec3 MakeVec3(float x, float y, float z)

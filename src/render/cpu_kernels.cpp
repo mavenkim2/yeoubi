@@ -169,6 +169,78 @@ static ybi::render::integrator::Vec3 ComputeDirection(const LaunchParams &params
     return dir;
 }
 
+static ybi::render::integrator::Vec3 TransformPoint3x4RowMajor(
+    const float transform[12], const ybi::render::integrator::Vec3 &p)
+{
+    return ybi::render::integrator::MakeVec3(transform[0] * p.x + transform[1] * p.y +
+                                                 transform[2] * p.z + transform[3],
+                                             transform[4] * p.x + transform[5] * p.y +
+                                                 transform[6] * p.z + transform[7],
+                                             transform[8] * p.x + transform[9] * p.y +
+                                                 transform[10] * p.z + transform[11]);
+}
+
+static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
+                                             const RTCRayHit &rayHit,
+                                             ybi::render::integrator::HitInfo *outHit)
+{
+    if (!outHit || params.instanceGeomRefs == 0ull || outHit->instanceId < 0 ||
+        outHit->instanceId >= params.instanceGeomRefCount || outHit->primitiveIndex < 0)
+    {
+        return false;
+    }
+
+    const LaunchParams::InstanceGeomRef *refs =
+        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+    const LaunchParams::InstanceGeomRef ref = refs[outHit->instanceId];
+    if (ref.positions == 0ull || ref.indices == 0ull)
+    {
+        return false;
+    }
+
+    const int triCornerBase = outHit->primitiveIndex * 3;
+    if (triCornerBase + 2 >= ref.numIndices)
+    {
+        return false;
+    }
+
+    const ybi::float3 *positions = reinterpret_cast<const ybi::float3 *>(ref.positions);
+    const int *indices = reinterpret_cast<const int *>(ref.indices);
+    const int i0 = indices[triCornerBase + 0];
+    const int i1 = indices[triCornerBase + 1];
+    const int i2 = indices[triCornerBase + 2];
+    if (i0 < 0 || i0 >= ref.numPositions || i1 < 0 || i1 >= ref.numPositions || i2 < 0 ||
+        i2 >= ref.numPositions)
+    {
+        return false;
+    }
+
+    unsigned int sceneGeomId = rayHit.hit.geomID;
+    if (rayHit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
+    {
+        sceneGeomId = rayHit.hit.instID[0];
+    }
+
+    float transform[12] = {};
+    rtcGetGeometryTransformFromScene(reinterpret_cast<RTCScene>(params.traversable),
+                                     sceneGeomId,
+                                     0.0f,
+                                     RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
+                                     transform);
+
+    outHit->worldTri0 = TransformPoint3x4RowMajor(
+        transform,
+        ybi::render::integrator::MakeVec3(positions[i0].x, positions[i0].y, positions[i0].z));
+    outHit->worldTri1 = TransformPoint3x4RowMajor(
+        transform,
+        ybi::render::integrator::MakeVec3(positions[i1].x, positions[i1].y, positions[i1].z));
+    outHit->worldTri2 = TransformPoint3x4RowMajor(
+        transform,
+        ybi::render::integrator::MakeVec3(positions[i2].x, positions[i2].y, positions[i2].z));
+    outHit->hasWorldTriangle = true;
+    return true;
+}
+
 static bool TracePrimary(const LaunchParams &params,
                          const ybi::render::integrator::Vec3 &origin,
                          const ybi::render::integrator::Vec3 &direction,
@@ -244,6 +316,7 @@ static bool TracePrimary(const LaunchParams &params,
             const float v = rayHit.hit.v;
             outHit->barycentrics = ybi::render::integrator::MakeVec3(1.0f - u - v, u, v);
             outHit->hasBarycentrics = true;
+            (void)TryComputeTriangleWorldPositions(params, rayHit, outHit);
         }
     }
 

@@ -30,8 +30,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPrimaryDiffuse(State &state, const HitInfo 
 
     const LaunchParams::InstanceGeomRef geomRef = refs[hit.instanceId];
     Vec3 color = MakeVec3(0.7f, 0.7f, 0.7f);
-    const bool sampled =
-        TrySampleMaterialTexture(state, geomRef, hit.primitiveIndex, hit.barycentrics, color);
+    const bool sampled = TrySampleMaterialTexture(state, geomRef, hit, color);
 
     float outR = 0.0f;
     float outG = 0.0f;
@@ -57,8 +56,7 @@ YBI_INTEGRATOR_HD void IntegratorFeedbackOnly(State &state, const HitInfo &hit)
     }
 
     const LaunchParams::InstanceGeomRef geomRef = refs[hit.instanceId];
-    const unsigned int feedbackMip = static_cast<unsigned int>(MaxInt(params.virtualTextureSampleMip, 0));
-    TryWriteFeedbackOnly(state, geomRef, hit.primitiveIndex, hit.barycentrics, feedbackMip);
+    TryWriteFeedbackOnly(state, geomRef, hit);
 }
 
 } // namespace integrator
