@@ -60,6 +60,17 @@ static float3x4 ToFloat3x4(const float4x4 &m)
                     m.m[2][3]);
 }
 
+template <typename T, size_t alignment>
+static Array<T, alignment> CopyArray(const Array<T, alignment> &src)
+{
+    Array<T, alignment> out(src.size());
+    if (src.size() > 0)
+    {
+        std::memcpy(out.data(), src.data(), src.size() * sizeof(T));
+    }
+    return out;
+}
+
 struct PrimitiveKey
 {
     const Scene *scene = nullptr;
@@ -89,6 +100,106 @@ struct FlattenTraversalEntry
     Scene *scene = nullptr;
     float4x4 worldFromScene = float4x4::Identity();
 };
+
+static bool BuildTriangulatedCornerRemap(const SubdivisionMesh &mesh,
+                                         std::vector<int> *outCornerRemap,
+                                         std::string *error)
+{
+    YBI_ASSERT(outCornerRemap);
+    outCornerRemap->clear();
+
+    size_t cornerOffset = 0;
+    for (size_t faceIndex = 0; faceIndex < mesh.vertsPerFace.size(); ++faceIndex)
+    {
+        const int faceCount = mesh.vertsPerFace[faceIndex];
+        if (faceCount < 3)
+        {
+            SetError(error,
+                     "FlattenScenePoolToRootChildren: subdivision face has fewer than 3 vertices");
+            return false;
+        }
+        if (cornerOffset + static_cast<size_t>(faceCount) > mesh.indices.size())
+        {
+            SetError(error,
+                     "FlattenScenePoolToRootChildren: subdivision topology exceeds corner index range");
+            return false;
+        }
+
+        for (int i = 1; i + 1 < faceCount; ++i)
+        {
+            outCornerRemap->push_back(static_cast<int>(cornerOffset + 0));
+            outCornerRemap->push_back(static_cast<int>(cornerOffset + i));
+            outCornerRemap->push_back(static_cast<int>(cornerOffset + i + 1));
+        }
+        cornerOffset += static_cast<size_t>(faceCount);
+    }
+
+    if (cornerOffset != mesh.indices.size())
+    {
+        SetError(error,
+                 "FlattenScenePoolToRootChildren: subdivision topology corner count mismatch");
+        return false;
+    }
+    return true;
+}
+
+static Attribute CopySubdivisionAttributeToMesh(const Attribute &srcAttr,
+                                                size_t cornerCount,
+                                                const std::vector<int> &cornerRemap)
+{
+    Array<uint8_t> data = CopyArray(srcAttr.data);
+    if (srcAttr.interpolation == PrimvarInterpolation::FaceVarying &&
+        srcAttr.indices.size() == cornerCount)
+    {
+        Array<int> indices(cornerRemap.size());
+        for (size_t i = 0; i < cornerRemap.size(); ++i)
+        {
+            indices[i] = srcAttr.indices[static_cast<size_t>(cornerRemap[i])];
+        }
+        return Attribute(
+            std::move(data), std::move(indices), srcAttr.type, srcAttr.interpolation, srcAttr.name);
+    }
+
+    if (srcAttr.indices.size() > 0)
+    {
+        Array<int> indices = CopyArray(srcAttr.indices);
+        return Attribute(
+            std::move(data), std::move(indices), srcAttr.type, srcAttr.interpolation, srcAttr.name);
+    }
+
+    return Attribute(std::move(data), srcAttr.type, srcAttr.interpolation, srcAttr.name);
+}
+
+static bool CopySubdivisionMeshToMesh(const SubdivisionMesh &src, Mesh *out, std::string *error)
+{
+    YBI_ASSERT(out);
+
+    std::vector<int> cornerRemap;
+    if (!BuildTriangulatedCornerRemap(src, &cornerRemap, error))
+    {
+        return false;
+    }
+
+    Array<int> triangulatedIndices(cornerRemap.size());
+    for (size_t i = 0; i < cornerRemap.size(); ++i)
+    {
+        triangulatedIndices[i] = src.indices[static_cast<size_t>(cornerRemap[i])];
+    }
+
+    out->positions = CopyArray(src.vertices);
+    out->indices = std::move(triangulatedIndices);
+    out->attributes.clear();
+    out->attributes.reserve(src.attributes.size());
+    for (const Attribute &attr : src.attributes)
+    {
+        out->attributes.push_back(
+            CopySubdivisionAttributeToMesh(attr, src.indices.size(), cornerRemap));
+    }
+    out->parentFromLocal = src.parentFromLocal;
+    out->materialIndex = src.materialIndex;
+    out->refIndex = UINT32_MAX;
+    return true;
+}
 
 bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string *error)
 {
@@ -166,6 +277,32 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
         return leafIndex;
     };
 
+    auto getOrCreateLeafForSubdivision = [&](Scene *scene,
+                                             size_t subdivIndex,
+                                             uint32_t *outLeafIndex) -> bool {
+        YBI_ASSERT(outLeafIndex);
+        const PrimitiveKey key = {scene, 2u, static_cast<uint32_t>(subdivIndex)};
+        auto found = leafSceneByPrimitive.find(key);
+        if (found != leafSceneByPrimitive.end())
+        {
+            *outLeafIndex = found->second;
+            return true;
+        }
+
+        std::unique_ptr<Scene> leaf = std::make_unique<Scene>();
+        leaf->meshes.emplace_back();
+        if (!CopySubdivisionMeshToMesh(scene->subdivisionMeshes[subdivIndex], &leaf->meshes.back(), error))
+        {
+            return false;
+        }
+        leaf->meshes.back().parentFromLocal = GetIdentityTransform();
+        const uint32_t leafIndex = static_cast<uint32_t>(dst->scenes.size());
+        dst->scenes.push_back(std::move(leaf));
+        leafSceneByPrimitive.emplace(key, leafIndex);
+        *outLeafIndex = leafIndex;
+        return true;
+    };
+
     std::vector<FlattenTraversalEntry> stack;
     stack.push_back({srcRoot, float4x4::Identity()});
 
@@ -223,6 +360,22 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
             const uint32_t rootChildIndex = static_cast<uint32_t>(dstRoot->childScenes.size());
             dstRoot->childScenes.push_back(leafScene);
             dstRoot->instances.emplace_back(ToFloat3x4(worldFromCurve), rootChildIndex);
+        }
+
+        for (size_t subdivIndex = 0; subdivIndex < scene->subdivisionMeshes.size(); ++subdivIndex)
+        {
+            const float4x4 worldFromMesh = mul(
+                entry.worldFromScene, ToFloat4x4(scene->subdivisionMeshes[subdivIndex].parentFromLocal));
+            uint32_t leafIndex = 0u;
+            if (!getOrCreateLeafForSubdivision(scene, subdivIndex, &leafIndex))
+            {
+                return false;
+            }
+            Scene *leafScene = dst->scenes[leafIndex].get();
+            YBI_ASSERT(leafScene);
+            const uint32_t rootChildIndex = static_cast<uint32_t>(dstRoot->childScenes.size());
+            dstRoot->childScenes.push_back(leafScene);
+            dstRoot->instances.emplace_back(ToFloat3x4(worldFromMesh), rootChildIndex);
         }
     }
 
