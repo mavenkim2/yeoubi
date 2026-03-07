@@ -88,6 +88,9 @@ struct CliOptions
     uint64_t virtualTextureCacheBytes = 1ull << 30u;
     int virtualTextureTailMaxDim = 32;
     int virtualTextureMaxPageUploads = 5000;
+    bool singlePixelMode = false;
+    int singlePixelX = 0;
+    int singlePixelY = 0;
     bool writeFeedbackFiles = false;
     std::vector<std::string> purposes = {"default", "render"};
 };
@@ -454,6 +457,7 @@ static void PrintUsage(const char *exeName)
     printf("  --vt-cache-bytes byte budget for stream-page physical cache\n");
     printf("  --vt-tail-max-dim pin mips where max(width,height)<=N into tail cache\n");
     printf("  --vt-max-page-uploads max new stream pages uploaded after each feedback pass\n");
+    printf("  --pixel x y render only image-space pixel (x right, y down)\n");
     printf("  --write-feedback dump feedback text files next to output PNG\n");
     printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
@@ -636,6 +640,18 @@ static CliOptions ParseCli(int argc, char **argv)
                 std::abort();
             }
             options.virtualTextureMaxPageUploads = std::max(1, std::stoi(argv[++i]));
+            continue;
+        }
+        if (arg == "--pixel")
+        {
+            if (i + 2 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.singlePixelMode = true;
+            options.singlePixelX = std::stoi(argv[++i]);
+            options.singlePixelY = std::stoi(argv[++i]);
             continue;
         }
         if (arg == "--write-feedback")
@@ -1326,6 +1342,9 @@ RenderTraversable(Device *device,
                   uint64_t virtualTextureCacheBytes,
                   int virtualTextureTailMaxDim,
                   int virtualTextureMaxPageUploads,
+                  bool singlePixelMode,
+                  int singlePixelX,
+                  int singlePixelY,
                   bool writeFeedbackFiles,
                   const std::optional<RenderCameraOverride> &cameraOverride,
                   const std::optional<ybi::float3> &cameraPositionOverride,
@@ -1336,6 +1355,24 @@ RenderTraversable(Device *device,
     fflush(stdout);
     const int width = cameraOverride.has_value() ? cameraOverride->width : 1280;
     const int height = cameraOverride.has_value() ? cameraOverride->height : 720;
+    if (singlePixelMode)
+    {
+        if (singlePixelX < 0 || singlePixelY < 0 || singlePixelX >= width || singlePixelY >= height)
+        {
+            fprintf(stderr,
+                    "single-pixel render: pixel (%d,%d) out of bounds for %dx%d\n",
+                    singlePixelX,
+                    singlePixelY,
+                    width,
+                    height);
+            std::abort();
+        }
+        std::printf("single-pixel render: (%d,%d) on %dx%d\n",
+                    singlePixelX,
+                    singlePixelY,
+                    width,
+                    height);
+    }
     const size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
     DeviceMemoryView<uint8_t> imageBuffer = device->AllocBytes(imageSize);
     printf("render: image buffer allocated\n");
@@ -1422,6 +1459,9 @@ RenderTraversable(Device *device,
     params.feedbackSamplePercent = 10;
     params.feedbackTileSize = 128;
     params.currentSpp = 0;
+    params.singlePixelEnabled = singlePixelMode ? 1 : 0;
+    params.singlePixelX = singlePixelX;
+    params.singlePixelY = singlePixelY;
     params.virtualTextureEnabled = virtualTexture ? 1 : 0;
     params.virtualTexturePageTableEntries = 0ull;
     params.virtualTexturePageTableMipOffsets = 0ull;
@@ -2035,6 +2075,9 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       options.virtualTextureCacheBytes,
                       options.virtualTextureTailMaxDim,
                       options.virtualTextureMaxPageUploads,
+                      options.singlePixelMode,
+                      options.singlePixelX,
+                      options.singlePixelY,
                       options.writeFeedbackFiles,
                       state.usdCamera,
                       options.cameraPosition,

@@ -41,6 +41,21 @@ struct UInt2
     unsigned int y;
 };
 
+YBI_INTEGRATOR_HD bool
+ShouldRenderLaunchPixel(int singlePixelEnabled, int singlePixelX, int singlePixelY, unsigned int x, unsigned int y)
+{
+    if (singlePixelEnabled == 0)
+    {
+        return true;
+    }
+    if (singlePixelX < 0 || singlePixelY < 0)
+    {
+        return false;
+    }
+    return x == static_cast<unsigned int>(singlePixelX) &&
+           y == static_cast<unsigned int>(singlePixelY);
+}
+
 struct Vec2
 {
     float x;

@@ -103,6 +103,9 @@ struct LaunchParams
     int feedbackSamplePercent;
     int feedbackTileSize;
     int currentSpp;
+    int singlePixelEnabled;
+    int singlePixelX;
+    int singlePixelY;
     int virtualTextureEnabled;
 
     unsigned long long virtualTexturePageTableEntries;

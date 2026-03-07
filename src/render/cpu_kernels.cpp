@@ -370,6 +370,25 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                           {
                               for (uint32_t x = 0; x < width; ++x)
                               {
+                                  const size_t pixelIndex =
+                                      (static_cast<size_t>(y) * static_cast<size_t>(width) +
+                                       static_cast<size_t>(x)) *
+                                      4u;
+                                  uint8_t *dst = dispatchParams.outputRGBA8.data();
+                                  if (!ybi::render::integrator::ShouldRenderLaunchPixel(
+                                          params->singlePixelEnabled,
+                                          params->singlePixelX,
+                                          params->singlePixelY,
+                                          x,
+                                          y))
+                                  {
+                                      dst[pixelIndex + 0] = 0u;
+                                      dst[pixelIndex + 1] = 0u;
+                                      dst[pixelIndex + 2] = 0u;
+                                      dst[pixelIndex + 3] = 255u;
+                                      continue;
+                                  }
+
                                   state.pixelX = x;
                                   state.pixelY = y;
 
@@ -408,11 +427,6 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                                           ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
                                   }
 
-                                  const size_t pixelIndex =
-                                      (static_cast<size_t>(y) * static_cast<size_t>(width) +
-                                       static_cast<size_t>(x)) *
-                                      4u;
-                                  uint8_t *dst = dispatchParams.outputRGBA8.data();
                                   dst[pixelIndex + 0] = static_cast<uint8_t>(packed & 0xffu);
                                   dst[pixelIndex + 1] = static_cast<uint8_t>((packed >> 8) & 0xffu);
                                   dst[pixelIndex + 2] = static_cast<uint8_t>((packed >> 16) & 0xffu);

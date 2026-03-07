@@ -234,14 +234,23 @@ extern "C" __global__ void __raygen__primary()
 {
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDims = optixGetLaunchDimensions();
+    const unsigned int pixelIndex = launchIndex.y * launchDims.x + launchIndex.x;
+    uchar4 *image = reinterpret_cast<uchar4 *>(params.image);
+    if (!ybi::render::integrator::ShouldRenderLaunchPixel(params.singlePixelEnabled,
+                                                          params.singlePixelX,
+                                                          params.singlePixelY,
+                                                          launchIndex.x,
+                                                          launchIndex.y))
+    {
+        image[pixelIndex] = make_uchar4(0u, 0u, 0u, 255u);
+        return;
+    }
     const float2 centerOffset = make_float2(0.5f, 0.5f);
     const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
     const float3 origin = make_float3(params.cameraOrigin.x,
                                       params.cameraOrigin.y,
                                       params.cameraOrigin.z);
     const unsigned int packedColor = TraceColor(origin, centerDirection);
-    uchar4 *image = reinterpret_cast<uchar4 *>(params.image);
-    const unsigned int pixelIndex = launchIndex.y * launchDims.x + launchIndex.x;
     image[pixelIndex] = make_uchar4((unsigned char)(packedColor & 255u),
                                     (unsigned char)((packedColor >> 8) & 255u),
                                     (unsigned char)((packedColor >> 16) & 255u),
@@ -252,6 +261,14 @@ extern "C" __global__ void __raygen__feedback()
 {
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDims = optixGetLaunchDimensions();
+    if (!ybi::render::integrator::ShouldRenderLaunchPixel(params.singlePixelEnabled,
+                                                          params.singlePixelX,
+                                                          params.singlePixelY,
+                                                          launchIndex.x,
+                                                          launchIndex.y))
+    {
+        return;
+    }
     const float2 centerOffset = make_float2(0.5f, 0.5f);
     const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
     const float3 origin = make_float3(params.cameraOrigin.x,
