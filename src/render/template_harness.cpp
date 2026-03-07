@@ -87,7 +87,7 @@ struct CliOptions
     std::string virtualTextureTilesDir;
     uint64_t virtualTextureCacheBytes = 1ull << 30u;
     int virtualTextureTailMaxDim = 32;
-    int virtualTextureMaxPageUploads = 1024;
+    int virtualTextureMaxPageUploads = 5000;
     bool writeFeedbackFiles = false;
     std::vector<std::string> purposes = {"default", "render"};
 };

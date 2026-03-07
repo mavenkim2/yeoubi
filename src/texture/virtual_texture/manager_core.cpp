@@ -106,7 +106,7 @@ bool VirtualTextureManager::Initialize(Device *device,
     }
     if (config_.maxUploadsPerPass == 0u)
     {
-        config_.maxUploadsPerPass = 1024u;
+        config_.maxUploadsPerPass = 5000u;
     }
     finalized_ = false;
     return true;
