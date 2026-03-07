@@ -139,13 +139,34 @@ bool VerifyRoundTripTileBinary(const fs::path &tilePath,
             outError = "tile verify dimension mismatch udim=" + std::to_string(decoded.udim);
             return false;
         }
-        ybi::tilebin::DiffStats diff;
-        if (!ybi::tilebin::DiffImagesExact(source.mipLevels[0].rgba, decoded.mipLevels[0].rgba, eps, &diff))
+
+        if (source.mipLevels.size() != decoded.mipLevels.size())
         {
-            outError = "tile verify mismatch udim=" + std::to_string(decoded.udim) +
-                       " mismatches=" + std::to_string(diff.mismatchCount) +
-                       " maxAbs=" + std::to_string(diff.maxAbs);
+            outError = "tile verify mip count mismatch udim=" + std::to_string(decoded.udim);
             return false;
+        }
+
+        for (size_t mipIndex = 0; mipIndex < source.mipLevels.size(); ++mipIndex)
+        {
+            const ybi::tilebin::UdimMipImage &sourceMip = source.mipLevels[mipIndex];
+            const ybi::tilebin::UdimMipImage &decodedMip = decoded.mipLevels[mipIndex];
+            if (sourceMip.level != decodedMip.level || sourceMip.width != decodedMip.width ||
+                sourceMip.height != decodedMip.height)
+            {
+                outError = "tile verify mip metadata mismatch udim=" + std::to_string(decoded.udim) +
+                           " mip=" + std::to_string(mipIndex);
+                return false;
+            }
+
+            ybi::tilebin::DiffStats diff;
+            if (!ybi::tilebin::DiffImagesExact(sourceMip.rgba, decodedMip.rgba, eps, &diff))
+            {
+                outError = "tile verify mismatch udim=" + std::to_string(decoded.udim) +
+                           " mip=" + std::to_string(mipIndex) +
+                           " mismatches=" + std::to_string(diff.mismatchCount) +
+                           " maxAbs=" + std::to_string(diff.maxAbs);
+                return false;
+            }
         }
     }
     return true;

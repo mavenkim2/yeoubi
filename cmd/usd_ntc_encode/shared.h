@@ -30,7 +30,7 @@ struct Cli
     bool prepareTiles = false;
     int tileSize = 128;
     int tileVerifyCount = 0;
-    bool tileVerifyPass = false;
+    bool tileVerifyPass = true;
     float tileVerifyEps = 0.0f;
 };
 
