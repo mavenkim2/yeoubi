@@ -1,5 +1,5 @@
+#include "exr_mips.h"
 #include "tile_binary.h"
-#include "texture/exr_io.h"
 #include "texture/udim_utils.h"
 
 #include <algorithm>
@@ -41,6 +41,7 @@ void PrintUsage(const char *exe)
     std::printf("  %s --exr <path.exr> --tiles-dir <dir> [--udim <n>] [--eps <float>]\n", exe);
     std::printf("Notes:\n");
     std::printf("  --tiles-dir auto-resolves to <dir>/<sanitize(strip_udim(exr))>.tiles.bin\n");
+    std::printf("  verifies the full mip chain, not just mip 0\n");
 }
 
 } // namespace
@@ -148,11 +149,9 @@ int main(int argc, char **argv)
         tilesBinPath = tilesDir + "/" + Sanitize(ybi::usd_ntc::StripUdimFromPath(exrPath)) + ".tiles.bin";
     }
 
-    int exrW = 0;
-    int exrH = 0;
-    std::vector<float> exrRgba;
     std::string error;
-    if (!ybi::texture::LoadExrRgba(exrPath, &exrW, &exrH, &exrRgba, &error, true))
+    ybi::tileprep::ExrMipChainResult sourceMipChain = {};
+    if (!ybi::tileprep::LoadExrMipChain(exrPath, true, &sourceMipChain, &error))
     {
         std::printf("verify failed: %s\n", error.c_str());
         return 2;
@@ -181,43 +180,76 @@ int main(int argc, char **argv)
         std::printf("verify failed: udim %u not found in %s\n", udim, tilesBinPath.c_str());
         return 2;
     }
-    if (static_cast<int>(decoded->width) != exrW || static_cast<int>(decoded->height) != exrH)
+    if (sourceMipChain.mipLevels.empty())
     {
-        std::printf("verify failed: dimension mismatch exr=%dx%d tile=%ux%u udim=%u\n",
-                    exrW,
-                    exrH,
-                    decoded->width,
-                    decoded->height,
+        std::printf("verify failed: source mip chain is empty for %s\n", exrPath.c_str());
+        return 2;
+    }
+    if (decoded->mipLevels.size() != sourceMipChain.mipLevels.size())
+    {
+        std::printf("verify failed: mip count mismatch exr=%zu tile=%zu udim=%u\n",
+                    sourceMipChain.mipLevels.size(),
+                    decoded->mipLevels.size(),
                     udim);
         return 2;
     }
 
-    ybi::tilebin::DiffStats diff = {};
-    const bool ok = ybi::tilebin::DiffImagesExact(exrRgba, decoded->mipLevels[0].rgba, eps, &diff);
     std::printf("verify stats: exr=%s tiles=%s udim=%u\n", exrPath.c_str(), tilesBinPath.c_str(), udim);
-    std::printf("verify stats: width=%d height=%d channels=4\n", exrW, exrH);
-    std::printf("verify stats: eps=%g maxAbs=%.9g meanAbs=%.9g rmse=%.9g mismatches=%llu/%zu\n",
-                eps,
-                diff.maxAbs,
-                diff.meanAbs,
-                diff.rmse,
-                static_cast<unsigned long long>(diff.mismatchCount),
-                exrRgba.size());
+    std::printf("verify stats: width=%u height=%u mipCount=%zu channels=4 storedMips=%s\n",
+                sourceMipChain.mipLevels[0].width,
+                sourceMipChain.mipLevels[0].height,
+                sourceMipChain.mipLevels.size(),
+                sourceMipChain.hasStoredMipLevels ? "yes" : "no");
 
-    if (!ok && diff.firstMismatch < exrRgba.size())
+    bool allOk = true;
+    for (size_t mipIndex = 0; mipIndex < sourceMipChain.mipLevels.size(); ++mipIndex)
     {
-        const size_t pixel = diff.firstMismatch / 4u;
-        const size_t chan = diff.firstMismatch % 4u;
-        const size_t x = pixel % static_cast<size_t>(exrW);
-        const size_t y = pixel / static_cast<size_t>(exrW);
-        std::printf("first mismatch: x=%zu y=%zu c=%zu exr=%.9g tile=%.9g\n",
-                    x,
-                    y,
-                    chan,
-                    exrRgba[diff.firstMismatch],
-                    decoded->mipLevels[0].rgba[diff.firstMismatch]);
+        const ybi::tilebin::UdimMipImage &srcMip = sourceMipChain.mipLevels[mipIndex];
+        const ybi::tilebin::UdimMipImage &dstMip = decoded->mipLevels[mipIndex];
+        if (srcMip.level != dstMip.level || srcMip.width != dstMip.width ||
+            srcMip.height != dstMip.height)
+        {
+            std::printf("verify mip %zu: dimension mismatch exr=%ux%u tile=%ux%u levels=%u/%u\n",
+                        mipIndex,
+                        srcMip.width,
+                        srcMip.height,
+                        dstMip.width,
+                        dstMip.height,
+                        srcMip.level,
+                        dstMip.level);
+            allOk = false;
+            continue;
+        }
+
+        ybi::tilebin::DiffStats diff = {};
+        const bool mipOk = ybi::tilebin::DiffImagesExact(srcMip.rgba, dstMip.rgba, eps, &diff);
+        std::printf("verify mip %zu: width=%u height=%u maxAbs=%.9g meanAbs=%.9g rmse=%.9g mismatches=%llu/%zu %s\n",
+                    mipIndex,
+                    srcMip.width,
+                    srcMip.height,
+                    diff.maxAbs,
+                    diff.meanAbs,
+                    diff.rmse,
+                    static_cast<unsigned long long>(diff.mismatchCount),
+                    srcMip.rgba.size(),
+                    mipOk ? "PASS" : "FAIL");
+        if (!mipOk && diff.firstMismatch < srcMip.rgba.size())
+        {
+            const size_t pixel = diff.firstMismatch / 4u;
+            const size_t chan = diff.firstMismatch % 4u;
+            const size_t x = pixel % static_cast<size_t>(srcMip.width);
+            const size_t y = pixel / static_cast<size_t>(srcMip.width);
+            std::printf("first mismatch mip %zu: x=%zu y=%zu c=%zu exr=%.9g tile=%.9g\n",
+                        mipIndex,
+                        x,
+                        y,
+                        chan,
+                        srcMip.rgba[diff.firstMismatch],
+                        dstMip.rgba[diff.firstMismatch]);
+        }
+        allOk = allOk && mipOk;
     }
 
-    std::printf("verify result: %s\n", ok ? "PASS" : "FAIL");
-    return ok ? 0 : 2;
+    std::printf("verify result: %s\n", allOk ? "PASS" : "FAIL");
+    return allOk ? 0 : 2;
 }

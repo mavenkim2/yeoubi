@@ -222,20 +222,19 @@ bool ReadDecodedPayload(std::ifstream *in,
     return DecodePayload(stored, rawByteSize, compression, outRaw, path, outError);
 }
 
-bool ReconstructBaseImageFromRecords(const std::filesystem::path &path,
-                                     const UdimEntry &entry,
-                                     const std::vector<ReadMipRecord> &mipRecords,
-                                     const std::vector<ReadTileRecord> &tileRecords,
-                                     std::ifstream *in,
-                                     UdimImage *outImage,
-                                     std::string *outError)
+bool ReconstructImageFromRecords(const std::filesystem::path &path,
+                                 const UdimEntry &entry,
+                                 const std::vector<ReadMipRecord> &mipRecords,
+                                 const std::vector<ReadTileRecord> &tileRecords,
+                                 std::ifstream *in,
+                                 UdimImage *outImage,
+                                 std::string *outError)
 {
-    const ReadMipRecord &baseMip = mipRecords[0];
-    if (baseMip.mipLevel != 0u || baseMip.width != entry.imageWidth || baseMip.height != entry.imageHeight)
+    if (mipRecords.empty())
     {
         if (outError)
         {
-            *outError = "invalid base mip record in: " + path.string();
+            *outError = "tile file has no mip records in: " + path.string();
         }
         return false;
     }
@@ -243,108 +242,153 @@ bool ReconstructBaseImageFromRecords(const std::filesystem::path &path,
     outImage->udim = entry.udim;
     outImage->width = entry.imageWidth;
     outImage->height = entry.imageHeight;
-    outImage->mipLevels.resize(1u);
-    UdimMipImage &baseMipImage = outImage->mipLevels[0];
-    baseMipImage.level = 0u;
-    baseMipImage.width = entry.imageWidth;
-    baseMipImage.height = entry.imageHeight;
-    baseMipImage.rgba.assign(static_cast<size_t>(entry.imageWidth) * static_cast<size_t>(entry.imageHeight) * 4u, 0.0f);
+    outImage->mipLevels.assign(entry.mipCount, UdimMipImage{});
 
-    if (baseMip.isTail != 0u)
+    for (const ReadMipRecord &srcMip : mipRecords)
     {
-        const uint64_t expectedBytes =
-            static_cast<uint64_t>(baseMip.width) * static_cast<uint64_t>(baseMip.height) * 4u * sizeof(float);
-        if (baseMip.rawByteSize != expectedBytes)
+        if (srcMip.mipLevel >= entry.mipCount)
         {
             if (outError)
             {
-                *outError = "base tail mip byte size mismatch in: " + path.string();
+                *outError = "mip level out of range in: " + path.string();
             }
             return false;
         }
 
-        std::vector<unsigned char> rawPayload;
-        if (!ReadDecodedPayload(in,
-                                baseMip.byteOffset,
-                                baseMip.storedByteSize,
-                                baseMip.rawByteSize,
-                                baseMip.compression,
-                                &rawPayload,
-                                path,
-                                outError))
+        UdimMipImage &dstMip = outImage->mipLevels[srcMip.mipLevel];
+        if (!dstMip.rgba.empty())
         {
+            if (outError)
+            {
+                *outError = "duplicate mip level in: " + path.string();
+            }
             return false;
         }
 
-        std::memcpy(baseMipImage.rgba.data(), rawPayload.data(), static_cast<size_t>(baseMip.rawByteSize));
-        return true;
+        dstMip.level = srcMip.mipLevel;
+        dstMip.width = srcMip.width;
+        dstMip.height = srcMip.height;
+        dstMip.rgba.assign(static_cast<size_t>(srcMip.width) * static_cast<size_t>(srcMip.height) * 4u,
+                           0.0f);
+
+        if (srcMip.isTail != 0u)
+        {
+            const uint64_t expectedBytes = static_cast<uint64_t>(srcMip.width) *
+                                           static_cast<uint64_t>(srcMip.height) * 4u *
+                                           sizeof(float);
+            if (srcMip.rawByteSize != expectedBytes)
+            {
+                if (outError)
+                {
+                    *outError = "tail mip byte size mismatch in: " + path.string();
+                }
+                return false;
+            }
+
+            std::vector<unsigned char> rawPayload;
+            if (!ReadDecodedPayload(in,
+                                    srcMip.byteOffset,
+                                    srcMip.storedByteSize,
+                                    srcMip.rawByteSize,
+                                    srcMip.compression,
+                                    &rawPayload,
+                                    path,
+                                    outError))
+            {
+                return false;
+            }
+
+            std::memcpy(dstMip.rgba.data(), rawPayload.data(), static_cast<size_t>(srcMip.rawByteSize));
+            continue;
+        }
+
+        if (srcMip.firstTileRecord + srcMip.tileRecordCount > tileRecords.size())
+        {
+            if (outError)
+            {
+                *outError = "mip tile record range invalid in: " + path.string();
+            }
+            return false;
+        }
+
+        for (uint32_t i = 0u; i < srcMip.tileRecordCount; ++i)
+        {
+            const ReadTileRecord &r = tileRecords[srcMip.firstTileRecord + i];
+            if (r.mipLevel != srcMip.mipLevel || r.width == 0 || r.height == 0 ||
+                r.width > entry.tileSize || r.height > entry.tileSize)
+            {
+                if (outError)
+                {
+                    *outError = "tile record invalid in: " + path.string();
+                }
+                return false;
+            }
+
+            const uint64_t expectedBytes =
+                static_cast<uint64_t>(r.width) * static_cast<uint64_t>(r.height) * 4u * sizeof(float);
+            if (r.rawByteSize != expectedBytes)
+            {
+                if (outError)
+                {
+                    *outError = "tile byte size mismatch in: " + path.string();
+                }
+                return false;
+            }
+
+            std::vector<unsigned char> rawPayload;
+            if (!ReadDecodedPayload(in,
+                                    r.byteOffset,
+                                    r.storedByteSize,
+                                    r.rawByteSize,
+                                    r.compression,
+                                    &rawPayload,
+                                    path,
+                                    outError))
+            {
+                return false;
+            }
+
+            const uint32_t x0 = r.tileX * entry.tileSize;
+            const uint32_t y0 = r.tileY * entry.tileSize;
+            if (x0 + r.width > dstMip.width || y0 + r.height > dstMip.height)
+            {
+                if (outError)
+                {
+                    *outError = "tile bounds overflow in: " + path.string();
+                }
+                return false;
+            }
+
+            const float *tileF32 = reinterpret_cast<const float *>(rawPayload.data());
+            for (uint32_t y = 0; y < r.height; ++y)
+            {
+                const float *src = tileF32 + static_cast<size_t>(y) * static_cast<size_t>(r.width) * 4u;
+                float *dst = dstMip.rgba.data() +
+                             (static_cast<size_t>(y0 + y) * static_cast<size_t>(dstMip.width) +
+                              static_cast<size_t>(x0)) *
+                                 4u;
+                std::memcpy(dst, src, static_cast<size_t>(r.width) * 4u * sizeof(float));
+            }
+        }
     }
 
-    if (baseMip.firstTileRecord + baseMip.tileRecordCount > tileRecords.size())
+    for (size_t mipIndex = 0; mipIndex < outImage->mipLevels.size(); ++mipIndex)
     {
-        if (outError)
-        {
-            *outError = "base mip tile record range invalid in: " + path.string();
-        }
-        return false;
-    }
-
-    for (uint32_t i = 0u; i < baseMip.tileRecordCount; ++i)
-    {
-        const ReadTileRecord &r = tileRecords[baseMip.firstTileRecord + i];
-        if (r.mipLevel != 0u || r.width == 0 || r.height == 0 ||
-            r.width > entry.tileSize || r.height > entry.tileSize)
+        const UdimMipImage &mip = outImage->mipLevels[mipIndex];
+        const uint32_t expectedW =
+            (mipIndex == 0u) ? entry.imageWidth : std::max(1u, outImage->mipLevels[mipIndex - 1u].width >> 1u);
+        const uint32_t expectedH =
+            (mipIndex == 0u) ? entry.imageHeight : std::max(1u, outImage->mipLevels[mipIndex - 1u].height >> 1u);
+        const size_t expectedPixels =
+            static_cast<size_t>(expectedW) * static_cast<size_t>(expectedH) * 4u;
+        if (mip.level != mipIndex || mip.width != expectedW || mip.height != expectedH ||
+            mip.rgba.size() != expectedPixels)
         {
             if (outError)
             {
-                *outError = "base tile record invalid in: " + path.string();
+                *outError = "reconstructed mip chain invalid in: " + path.string();
             }
             return false;
-        }
-
-        const uint64_t expectedBytes =
-            static_cast<uint64_t>(r.width) * static_cast<uint64_t>(r.height) * 4u * sizeof(float);
-        if (r.rawByteSize != expectedBytes)
-        {
-            if (outError)
-            {
-                *outError = "base tile byte size mismatch in: " + path.string();
-            }
-            return false;
-        }
-
-        std::vector<unsigned char> rawPayload;
-        if (!ReadDecodedPayload(in,
-                                r.byteOffset,
-                                r.storedByteSize,
-                                r.rawByteSize,
-                                r.compression,
-                                &rawPayload,
-                                path,
-                                outError))
-        {
-            return false;
-        }
-
-        const uint32_t x0 = r.tileX * entry.tileSize;
-        const uint32_t y0 = r.tileY * entry.tileSize;
-        if (x0 + r.width > entry.imageWidth || y0 + r.height > entry.imageHeight)
-        {
-            if (outError)
-            {
-                *outError = "base tile bounds overflow in: " + path.string();
-            }
-            return false;
-        }
-
-        const float *tileF32 = reinterpret_cast<const float *>(rawPayload.data());
-        for (uint32_t y = 0; y < r.height; ++y)
-        {
-            const float *src = tileF32 + static_cast<size_t>(y) * static_cast<size_t>(r.width) * 4u;
-            float *dst = baseMipImage.rgba.data() +
-                         (static_cast<size_t>(y0 + y) * static_cast<size_t>(entry.imageWidth) + static_cast<size_t>(x0)) *
-                             4u;
-            std::memcpy(dst, src, static_cast<size_t>(r.width) * 4u * sizeof(float));
         }
     }
 
@@ -802,7 +846,7 @@ bool ReadTileBinary(const std::filesystem::path &path,
         }
 
         UdimImage image = {};
-        if (!ReconstructBaseImageFromRecords(path, entry, readMips, readTiles, &in, &image, outError))
+        if (!ReconstructImageFromRecords(path, entry, readMips, readTiles, &in, &image, outError))
         {
             return false;
         }

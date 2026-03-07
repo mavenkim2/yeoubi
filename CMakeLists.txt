@@ -164,6 +164,7 @@ if (WITH_USD)
 
         add_executable(yeoubi_tile_verify
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_verify.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/exr_mips.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary_detail.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
