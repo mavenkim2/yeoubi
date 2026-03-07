@@ -135,6 +135,41 @@ def Xform "World"
 }
 )USDA";
 
+static const char *kVisibilityFixture = R"USDA(#usda 1.0
+def Xform "World"
+{
+    def Mesh "VisibleMesh"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "HiddenMesh"
+    {
+        token visibility = "invisible"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Xform "HiddenGroup"
+    {
+        token visibility = "invisible"
+
+        def Mesh "HiddenChildMesh"
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 2), (1, 0, 2), (0, 1, 2)]
+            uniform token subdivisionScheme = "none"
+        }
+    }
+}
+)USDA";
+
 static pxr::UsdStageRefPtr CreateStageFromUsda(const char *usda, std::string *error)
 {
     pxr::UsdStageRefPtr stage = pxr::UsdStage::CreateInMemory();
@@ -358,6 +393,74 @@ static bool RunNoInstancesTest()
     return true;
 }
 
+static bool RunVisibilityCullTest()
+{
+    std::string error;
+    pxr::UsdStageRefPtr stage = CreateStageFromUsda(kVisibilityFixture, &error);
+    if (!stage)
+    {
+        std::fprintf(stderr, "VisibilityCull: %s\n", error.c_str());
+        return false;
+    }
+
+    ybi::USDBuildSceneDAG dag = {};
+    if (!ybi::BuildInstanceDAGFromUSD(stage, &dag, &error))
+    {
+        std::fprintf(stderr, "VisibilityCull: BuildInstanceDAGFromUSD failed: %s\n", error.c_str());
+        return false;
+    }
+    if (!CheckCommonDAGInvariants(dag, &error))
+    {
+        std::fprintf(stderr, "VisibilityCull: invariant failed: %s\n", error.c_str());
+        return false;
+    }
+
+    const ybi::USDBuildScene &root = dag.scenes[dag.rootSceneIndex];
+    if (root.meshes.size() != 1)
+    {
+        std::fprintf(stderr, "VisibilityCull: expected 1 visible mesh in DAG, got %zu\n",
+                     root.meshes.size());
+        return false;
+    }
+    if (root.meshes[0].path.find("VisibleMesh") == std::string::npos)
+    {
+        std::fprintf(stderr, "VisibilityCull: wrong visible mesh path: %s\n",
+                     root.meshes[0].path.c_str());
+        return false;
+    }
+
+    const std::string fixturePath = "tests/io/_tmp_visibility_fixture.usda";
+    {
+        std::ofstream fixtureFile(fixturePath, std::ios::out | std::ios::binary);
+        if (!fixtureFile.is_open())
+        {
+            std::fprintf(stderr, "VisibilityCull: failed to open fixture file\n");
+            return false;
+        }
+        fixtureFile << kVisibilityFixture;
+    }
+
+    ybi::ScenePool scenePool = {};
+    ybi::LoadUSDScene(&scenePool, fixturePath);
+    std::remove(fixturePath.c_str());
+
+    if (scenePool.scenes.empty() || scenePool.rootSceneIndex >= scenePool.scenes.size())
+    {
+        std::fprintf(stderr, "VisibilityCull: invalid scene pool after LoadUSDScene\n");
+        return false;
+    }
+
+    const ybi::Scene &runtimeRoot = *scenePool.scenes[scenePool.rootSceneIndex];
+    if (runtimeRoot.meshes.size() != 1)
+    {
+        std::fprintf(stderr, "VisibilityCull: expected 1 visible mesh at runtime, got %zu\n",
+                     runtimeRoot.meshes.size());
+        return false;
+    }
+
+    return true;
+}
+
 static bool RunNormalInstancingTest()
 {
     std::string error;
@@ -497,6 +600,10 @@ int main()
     int failed = 0;
 
     if (!RunNoInstancesTest())
+    {
+        failed++;
+    }
+    if (!RunVisibilityCullTest())
     {
         failed++;
     }

@@ -12,6 +12,7 @@
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
+#include <pxr/usd/usdGeom/imageable.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
@@ -108,6 +109,12 @@ TraversePrimToPrimListsImpl(const pxr::UsdPrim &root, USDPrimLists *out, bool sk
         stack.pop_back();
 
         if (skipPrototypePrims && (prim.IsInPrototype() || prim.IsInstanceProxy()))
+        {
+            continue;
+        }
+
+        pxr::UsdGeomImageable imageable(prim);
+        if (imageable && imageable.ComputeVisibility() == pxr::UsdGeomTokens->invisible)
         {
             continue;
         }

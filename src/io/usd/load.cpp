@@ -141,6 +141,16 @@ static bool IsPurposeAllowed(const pxr::UsdPrim &prim, const std::vector<std::st
     return false;
 }
 
+static bool IsVisibilityAllowed(const pxr::UsdPrim &prim)
+{
+    pxr::UsdGeomImageable imageable(prim);
+    if (!imageable)
+    {
+        return true;
+    }
+    return imageable.ComputeVisibility() != pxr::UsdGeomTokens->invisible;
+}
+
 static bool
 CreateRuntimeScenesFromBuildSceneDAG(const USDBuildSceneDAG &dag,
                                      ScenePool *scenePool,
@@ -1365,6 +1375,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                 printf("curve prim missing or invalid: %s\n", curveRef.path.c_str());
                 return;
             }
+            if (!IsVisibilityAllowed(prim))
+            {
+                continue;
+            }
             if (!IsPurposeAllowed(prim, allowedPurposes))
             {
                 continue;
@@ -1380,6 +1394,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             {
                 printf("mesh prim missing or invalid: %s\n", meshRef.path.c_str());
                 return;
+            }
+            if (!IsVisibilityAllowed(prim))
+            {
+                continue;
             }
             if (!IsPurposeAllowed(prim, allowedPurposes))
             {
