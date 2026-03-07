@@ -233,7 +233,10 @@ bool ReadLevelRgba(const EXRHeader &header,
                     {
                         continue;
                     }
-                    const size_t srcIndex = static_cast<size_t>(y) * static_cast<size_t>(tw) + static_cast<size_t>(x);
+                    // TinyEXR stores each tile row at the header tile stride, even
+                    // when edge tiles are clipped smaller at this mip level.
+                    const size_t srcIndex =
+                        static_cast<size_t>(y) * static_cast<size_t>(tileSizeX) + static_cast<size_t>(x);
                     const size_t dstBase =
                         (static_cast<size_t>(dstY) * static_cast<size_t>(width) + static_cast<size_t>(dstX)) * 4u;
                     (*outRgba)[dstBase + 0u] = channels[idxR][srcIndex];
