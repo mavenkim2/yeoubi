@@ -88,6 +88,7 @@ struct CliOptions
     uint64_t virtualTextureCacheBytes = 1ull << 30u;
     int virtualTextureTailMaxDim = 32;
     int virtualTextureMaxPageUploads = 1024;
+    bool writeFeedbackFiles = false;
     std::vector<std::string> purposes = {"default", "render"};
 };
 
@@ -443,7 +444,7 @@ static void PrintUsage(const char *exeName)
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
     printf("  --integrator primary|ao\n");
-    printf("  --spp spp passes; feedback dumped after each pass\n");
+    printf("  --spp spp passes\n");
     printf("  --device gpu|cpu (cpu requires Embree)\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
@@ -453,6 +454,7 @@ static void PrintUsage(const char *exeName)
     printf("  --vt-cache-bytes byte budget for stream-page physical cache\n");
     printf("  --vt-tail-max-dim pin mips where max(width,height)<=N into tail cache\n");
     printf("  --vt-max-page-uploads max new stream pages uploaded after each feedback pass\n");
+    printf("  --write-feedback dump feedback text files next to output PNG\n");
     printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
     printf("  --purpose single purpose token, repeatable; overrides defaults\n");
@@ -634,6 +636,11 @@ static CliOptions ParseCli(int argc, char **argv)
                 std::abort();
             }
             options.virtualTextureMaxPageUploads = std::max(1, std::stoi(argv[++i]));
+            continue;
+        }
+        if (arg == "--write-feedback")
+        {
+            options.writeFeedbackFiles = true;
             continue;
         }
         if (arg == "--purposes")
@@ -1319,6 +1326,7 @@ RenderTraversable(Device *device,
                   uint64_t virtualTextureCacheBytes,
                   int virtualTextureTailMaxDim,
                   int virtualTextureMaxPageUploads,
+                  bool writeFeedbackFiles,
                   const std::optional<RenderCameraOverride> &cameraOverride,
                   const std::optional<ybi::float3> &cameraPositionOverride,
                   const std::optional<ybi::float3> &lookAtOverride)
@@ -1341,14 +1349,18 @@ RenderTraversable(Device *device,
     DeviceMemoryView<uint8_t> feedbackKeysBuffer = device->AllocBytes(feedbackKeysBytes);
     DeviceMemoryView<uint8_t> feedbackStatsBuffer = device->AllocBytes(feedbackStatsBytes);
 
-    std::filesystem::path feedbackDir = std::filesystem::path(outputFile);
-    feedbackDir += ".feedback";
-    std::error_code feedbackEc;
-    std::filesystem::create_directories(feedbackDir, feedbackEc);
-    if (feedbackEc)
+    std::filesystem::path feedbackDir;
+    if (writeFeedbackFiles)
     {
-        fprintf(stderr, "Failed to create feedback dir: %s\n", feedbackDir.string().c_str());
-        std::abort();
+        feedbackDir = std::filesystem::path(outputFile);
+        feedbackDir += ".feedback";
+        std::error_code feedbackEc;
+        std::filesystem::create_directories(feedbackDir, feedbackEc);
+        if (feedbackEc)
+        {
+            fprintf(stderr, "Failed to create feedback dir: %s\n", feedbackDir.string().c_str());
+            std::abort();
+        }
     }
 
     const ybi::float3 center = (boundsMin + boundsMax) * 0.5f;
@@ -1452,6 +1464,10 @@ RenderTraversable(Device *device,
                                  unsigned int copyCount,
                                  unsigned int overflowCount) {
         std::vector<ybi::texture::VirtualTextureFeedbackEntry> histogram;
+        if (!writeFeedbackFiles)
+        {
+            return histogram;
+        }
         const std::filesystem::path feedbackPath = feedbackDir / name;
         std::string feedbackError;
         if (!ybi::texture::WriteFeedbackFile(feedbackPath,
@@ -2019,6 +2035,7 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       options.virtualTextureCacheBytes,
                       options.virtualTextureTailMaxDim,
                       options.virtualTextureMaxPageUploads,
+                      options.writeFeedbackFiles,
                       state.usdCamera,
                       options.cameraPosition,
                       options.lookAt);
