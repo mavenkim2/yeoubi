@@ -59,6 +59,7 @@ struct PackedLight
     float radius = 0.0f;
     float length = 0.0f;
     float areaScale = 0.0f;
+    float selectionWeight = 1.0f;
     uint32_t shadowExcludeOffset = 0u;
     uint32_t shadowExcludeCount = 0u;
 };

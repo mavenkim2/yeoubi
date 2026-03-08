@@ -593,6 +593,32 @@ static float ComputeAreaEmissionScale(float intensityScale, float area, bool nor
     return intensityScale;
 }
 
+static float ComputeLightLuminance(const ybi::float3 &rgb)
+{
+    return std::max(0.0f, rgb.x * 0.2126f + rgb.y * 0.7152f + rgb.z * 0.0722f);
+}
+
+static float ComputeLightSelectionWeight(const PackedLight &light)
+{
+    const float luminance = ComputeLightLuminance(light.color) * std::max(light.emissionScale, 0.0f);
+    float weight = luminance;
+    switch (static_cast<LightType>(light.type))
+    {
+        case LightType::Rect:
+        case LightType::Disk:
+        case LightType::Sphere:
+        case LightType::Cylinder:
+            weight *= std::max(light.areaScale, 1.0f);
+            break;
+        case LightType::Distant:
+            weight *= 1024.0f;
+            break;
+        default:
+            break;
+    }
+    return std::max(weight, 1.0e-4f);
+}
+
 static void ReadShadowLinkExcludes(const pxr::UsdPrim &prim, LightInfo *outInfo)
 {
     YBI_ASSERT(outInfo);
@@ -816,6 +842,7 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
         info.packed.radius = std::max(info.packed.radius, 0.0f);
         info.packed.length = std::max(info.packed.length, 0.0f);
         info.packed.areaScale = std::max(info.packed.areaScale, 0.0f);
+        info.packed.selectionWeight = ComputeLightSelectionWeight(info.packed);
         if (info.packed.emissionScale <= 0.0f ||
             (info.packed.color.x <= 0.0f && info.packed.color.y <= 0.0f &&
              info.packed.color.z <= 0.0f))

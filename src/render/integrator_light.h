@@ -59,6 +59,11 @@ YBI_INTEGRATOR_HD Vec3 LightEmission(const PackedLight &light)
     return Mul(ToVec3(light.color), light.emissionScale);
 }
 
+YBI_INTEGRATOR_HD float LightSelectionWeight(const PackedLight &light)
+{
+    return light.selectionWeight > 0.0f ? light.selectionWeight : 0.0f;
+}
+
 YBI_INTEGRATOR_HD bool IsFiniteAreaLight(const PackedLight &light)
 {
     return light.type == static_cast<unsigned int>(LightType::Rect) ||
@@ -145,6 +150,43 @@ YBI_INTEGRATOR_HD float DirectLightPickPdf(const LaunchParams &params)
     return count > 0 ? 1.0f / float(count) : 0.0f;
 }
 
+YBI_INTEGRATOR_HD float TotalDirectLightSelectionWeight(const LaunchParams &params)
+{
+    const PackedLight *lights = GetPackedLights(params);
+    if (!lights)
+    {
+        return 0.0f;
+    }
+
+    float total = 0.0f;
+    for (int i = 0; i < params.lightCount; ++i)
+    {
+        if (lights[i].type == static_cast<unsigned int>(LightType::Dome))
+        {
+            continue;
+        }
+        total += LightSelectionWeight(lights[i]);
+    }
+    return total;
+}
+
+YBI_INTEGRATOR_HD float DirectLightPickPdf(const LaunchParams &params, int lightIndex)
+{
+    const PackedLight *lights = GetPackedLights(params);
+    if (!lights || lightIndex < 0 || lightIndex >= params.lightCount ||
+        lights[lightIndex].type == static_cast<unsigned int>(LightType::Dome))
+    {
+        return 0.0f;
+    }
+
+    const float totalWeight = TotalDirectLightSelectionWeight(params);
+    if (totalWeight > 0.0f)
+    {
+        return LightSelectionWeight(lights[lightIndex]) / totalWeight;
+    }
+    return DirectLightPickPdf(params);
+}
+
 YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params)
 {
     if (params.lights == 0ull || params.lightCount <= 0)
@@ -204,38 +246,83 @@ YBI_INTEGRATOR_HD bool LightHasShadowExcludes(const LaunchParams &params, int li
            lights[lightIndex].shadowExcludeCount > 0u;
 }
 
-YBI_INTEGRATOR_HD bool PickDirectLightUniform(const LaunchParams &params,
-                                              unsigned int &rngState,
-                                              int *outLightIndex,
-                                              float *outLightPickPdf)
+YBI_INTEGRATOR_HD bool PickDirectLightWeighted(const LaunchParams &params,
+                                               unsigned int &rngState,
+                                               int *outLightIndex,
+                                               float *outLightPickPdf)
 {
     if (!outLightIndex || !outLightPickPdf || params.lights == 0ull || params.lightCount <= 0)
     {
         return false;
     }
 
-    const int directCount = CountDirectLights(params);
-    if (directCount <= 0)
+    const PackedLight *lights = GetPackedLights(params);
+    if (!lights)
     {
         return false;
     }
 
-    const int target = ClampInt(int(Random01(rngState) * float(directCount)), 0, directCount - 1);
-    const PackedLight *lights = GetPackedLights(params);
-    int directIndex = 0;
+    const float totalWeight = TotalDirectLightSelectionWeight(params);
+    if (totalWeight <= 0.0f)
+    {
+        const int directCount = CountDirectLights(params);
+        if (directCount <= 0)
+        {
+            return false;
+        }
+        const int target =
+            ClampInt(int(Random01(rngState) * float(directCount)), 0, directCount - 1);
+        int directIndex = 0;
+        for (int i = 0; i < params.lightCount; ++i)
+        {
+            if (lights[i].type == static_cast<unsigned int>(LightType::Dome))
+            {
+                continue;
+            }
+            if (directIndex == target)
+            {
+                *outLightIndex = i;
+                *outLightPickPdf = 1.0f / float(directCount);
+                return true;
+            }
+            directIndex++;
+        }
+        return false;
+    }
+
+    float targetWeight = Random01(rngState) * totalWeight;
     for (int i = 0; i < params.lightCount; ++i)
     {
         if (lights[i].type == static_cast<unsigned int>(LightType::Dome))
         {
             continue;
         }
-        if (directIndex == target)
+        const float weight = LightSelectionWeight(lights[i]);
+        if (weight <= 0.0f)
+        {
+            continue;
+        }
+        if (targetWeight <= weight)
         {
             *outLightIndex = i;
-            *outLightPickPdf = 1.0f / float(directCount);
+            *outLightPickPdf = weight / totalWeight;
             return true;
         }
-        directIndex++;
+        targetWeight -= weight;
+    }
+    for (int i = params.lightCount - 1; i >= 0; --i)
+    {
+        if (lights[i].type == static_cast<unsigned int>(LightType::Dome))
+        {
+            continue;
+        }
+        const float weight = LightSelectionWeight(lights[i]);
+        if (weight > 0.0f)
+        {
+            *outLightIndex = i;
+            *outLightPickPdf = weight / totalWeight;
+            return true;
+        }
     }
     return false;
 }
@@ -381,7 +468,7 @@ YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
 
     int lightIndex = -1;
     float lightPickPdf = 0.0f;
-    if (!PickDirectLightUniform(params, rngState, &lightIndex, &lightPickPdf))
+    if (!PickDirectLightWeighted(params, rngState, &lightIndex, &lightPickPdf))
     {
         return false;
     }

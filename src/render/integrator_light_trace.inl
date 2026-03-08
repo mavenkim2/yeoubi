@@ -221,7 +221,6 @@ YBI_INTEGRATOR_HD bool TraceAnalyticLight(const LaunchParams &params,
     }
 
     const PackedLight *lights = reinterpret_cast<const PackedLight *>(params.lights);
-    const float pickPdf = DirectLightPickPdf(params);
     bool found = false;
     float bestDistance = tMax;
 
@@ -229,6 +228,11 @@ YBI_INTEGRATOR_HD bool TraceAnalyticLight(const LaunchParams &params,
     {
         const PackedLight &light = lights[i];
         if (light.type == static_cast<unsigned int>(LightType::Dome))
+        {
+            continue;
+        }
+        const float pickPdf = DirectLightPickPdf(params, i);
+        if (pickPdf <= 0.0f)
         {
             continue;
         }
