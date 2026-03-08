@@ -125,6 +125,29 @@ YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec
     return env;
 }
 
+YBI_INTEGRATOR_HD int FindDomeLightIndex(const LaunchParams &params)
+{
+    const PackedLight *lights = GetPackedLights(params);
+    if (!lights)
+    {
+        return -1;
+    }
+
+    for (int i = 0; i < params.lightCount; ++i)
+    {
+        if (lights[i].type == static_cast<unsigned int>(LightType::Dome))
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+YBI_INTEGRATOR_HD float DomeDirectionPdf()
+{
+    return 0.25f * 0.31830988618f;
+}
+
 YBI_INTEGRATOR_HD int CountDirectLights(const LaunchParams &params)
 {
     const PackedLight *lights = GetPackedLights(params);
@@ -496,6 +519,32 @@ YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
         default:
             return false;
     }
+}
+
+YBI_INTEGRATOR_HD bool SampleDomeLight(const LaunchParams &params,
+                                       unsigned int &rngState,
+                                       DirectLightSample *outSample)
+{
+    if (!outSample)
+    {
+        return false;
+    }
+
+    const int domeLightIndex = FindDomeLightIndex(params);
+    if (domeLightIndex < 0)
+    {
+        return false;
+    }
+
+    outSample->lightIndex = domeLightIndex;
+    outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
+    outSample->radiance = EnvironmentRadiance(params, outSample->wi);
+    outSample->lightPoint = MakeVec3(0.0f, 0.0f, 0.0f);
+    outSample->lightNormal = Mul(outSample->wi, -1.0f);
+    outSample->distance = 1.0e20f;
+    outSample->pdf = DomeDirectionPdf();
+    outSample->isDeltaLight = false;
+    return MaxComponent(outSample->radiance) > 0.0f;
 }
 
 #include "render/integrator_light_trace.inl"

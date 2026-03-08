@@ -170,7 +170,15 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
 
         if (!hasSceneHit)
         {
-            radiance = Add3(radiance, MulComponents(throughput, EnvironmentRadiance(params, rayDir)));
+            float misWeight = 1.0f;
+            if (currentRayHasBsdfContext && !currentRaySkipNeeMis && FindDomeLightIndex(params) >= 0)
+            {
+                const float domePdf = DomeDirectionPdf();
+                misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
+            }
+            radiance = Add3(
+                radiance,
+                MulComponents(throughput, Mul(EnvironmentRadiance(params, rayDir), misWeight)));
             break;
         }
 
@@ -222,6 +230,29 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                         radiance = Add3(
                             radiance,
                             Mul(direct, (nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f)));
+                    }
+                }
+            }
+
+            DirectLightSample domeSample = {};
+            if (SampleDomeLight(params, rngState, &domeSample))
+            {
+                const float nDotL = MaxFloat(Dot(normal, domeSample.wi), 0.0f);
+                if (nDotL > 0.0f)
+                {
+                    const Vec3 shadowOrigin = Add(hitPoint, Mul(normal, rayBias));
+                    if (!state.TraceLightOcclusion(
+                            shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex))
+                    {
+                        float bsdfPdf = 0.0f;
+                        const Vec3 f = EvaluateBsdf(material, normal, wo, domeSample.wi, &bsdfPdf);
+                        const float misWeight =
+                            domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
+                        const Vec3 direct =
+                            MulComponents(MulComponents(throughput, f), domeSample.radiance);
+                        radiance = Add3(
+                            radiance,
+                            Mul(direct, (nDotL * misWeight) / MaxFloat(domeSample.pdf, 1.0e-6f)));
                     }
                 }
             }
