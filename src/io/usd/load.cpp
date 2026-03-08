@@ -593,6 +593,70 @@ static float ComputeAreaEmissionScale(float intensityScale, float area, bool nor
     return intensityScale;
 }
 
+static void ReadShadowLinkExcludes(const pxr::UsdPrim &prim, LightInfo *outInfo)
+{
+    YBI_ASSERT(outInfo);
+    outInfo->shadowExcludePaths.clear();
+
+    const pxr::UsdStagePtr stage = prim.GetStage();
+    const pxr::UsdRelationship excludesRel =
+        prim.GetRelationship(pxr::TfToken("collection:shadowLink:excludes"));
+    if (!excludesRel)
+    {
+        return;
+    }
+
+    pxr::SdfPathVector targets;
+    excludesRel.GetTargets(&targets);
+    outInfo->shadowExcludePaths.reserve(targets.size());
+    auto appendPath = [&](const std::string &path) {
+        if (path.empty())
+        {
+            return;
+        }
+        if (std::find(outInfo->shadowExcludePaths.begin(),
+                      outInfo->shadowExcludePaths.end(),
+                      path) == outInfo->shadowExcludePaths.end())
+        {
+            outInfo->shadowExcludePaths.push_back(path);
+        }
+    };
+    for (const pxr::SdfPath &target : targets)
+    {
+        if (!target.IsPrimPath())
+        {
+            continue;
+        }
+        appendPath(target.GetString());
+        if (!stage)
+        {
+            continue;
+        }
+
+        const pxr::UsdPrim targetPrim = stage->GetPrimAtPath(target);
+        if (!targetPrim)
+        {
+            continue;
+        }
+        if (targetPrim.IsInstance())
+        {
+            const pxr::UsdPrim prototype = targetPrim.GetPrototype();
+            if (prototype)
+            {
+                appendPath(prototype.GetPath().GetString());
+            }
+        }
+        else if (targetPrim.IsInstanceProxy())
+        {
+            const pxr::UsdPrim primInPrototype = targetPrim.GetPrimInPrototype();
+            if (primInPrototype)
+            {
+                appendPath(primInPrototype.GetPath().GetString());
+            }
+        }
+    }
+}
+
 static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
                              const pxr::UsdTimeCode &timeCode,
                              std::vector<LightInfo> *outLights)
@@ -745,6 +809,7 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             continue;
         }
 
+        ReadShadowLinkExcludes(prim, &info);
         FinalizeLightBasis(&info.packed);
         info.packed.width = std::max(info.packed.width, 0.0f);
         info.packed.height = std::max(info.packed.height, 0.0f);
@@ -1887,6 +1952,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                     light.packed.color.y,
                     light.packed.color.z,
                     light.packed.emissionScale);
+        if (!light.shadowExcludePaths.empty())
+        {
+            std::printf("  shadowLink excludes: %zu\n", light.shadowExcludePaths.size());
+        }
     }
 
     int total = 0;
@@ -2020,6 +2089,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             outScene->meshes.emplace_back(
                 std::move(finalPositions), std::move(finalIndices), meshRef.parentFromLocal);
             Mesh &outMesh = outScene->meshes.back();
+            outMesh.primPath = meshRef.path;
             outMesh.materialIndex = materialIndex;
             if (hasSt)
             {

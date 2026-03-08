@@ -196,6 +196,7 @@ static bool CopySubdivisionMeshToMesh(const SubdivisionMesh &src, Mesh *out, std
             CopySubdivisionAttributeToMesh(attr, src.indices.size(), cornerRemap));
     }
     out->parentFromLocal = src.parentFromLocal;
+    out->primPath = src.primPath;
     out->materialIndex = src.materialIndex;
     out->refIndex = UINT32_MAX;
     return true;

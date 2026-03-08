@@ -126,6 +126,15 @@ struct OptixState
         return hit != 0u;
     }
 
+    __device__ bool TraceLightOcclusion(const Vec3 &origin,
+                                        const Vec3 &direction,
+                                        float tMin,
+                                        float tMax,
+                                        int /*lightIndex*/) const
+    {
+        return TraceOcclusion(origin, direction, tMin, tMax);
+    }
+
     __device__ bool TraceClosest(const Vec3 &origin,
                                  const Vec3 &direction,
                                  float tMin,

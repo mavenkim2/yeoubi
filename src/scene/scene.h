@@ -56,6 +56,7 @@ struct Mesh
     Array<float3> positions;
     Array<int> indices;
     std::vector<Attribute> attributes;
+    std::string primPath;
     float3x4 parentFromLocal;
     uint32_t refIndex = UINT32_MAX;
     int materialIndex = -1;

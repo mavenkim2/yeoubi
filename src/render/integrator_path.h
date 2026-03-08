@@ -208,7 +208,8 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                     const float shadowMax = lightSample.distance >= 1.0e19f
                                                 ? 1.0e20f
                                                 : MaxFloat(lightSample.distance - rayBias, rayBias);
-                    if (!state.TraceOcclusion(shadowOrigin, lightSample.wi, rayBias, shadowMax))
+                    if (!state.TraceLightOcclusion(
+                            shadowOrigin, lightSample.wi, rayBias, shadowMax, lightSample.lightIndex))
                     {
                         float bsdfPdf = 0.0f;
                         const Vec3 f = EvaluateBsdf(material, normal, wo, lightSample.wi, &bsdfPdf);

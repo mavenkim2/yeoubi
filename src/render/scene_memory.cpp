@@ -41,7 +41,13 @@ uint64_t MaterialInfoBytes(const MaterialInfo &material)
 
 uint64_t LightInfoBytes(const LightInfo &light)
 {
-    return StringBytes(light.lightPath) + StringBytes(light.texturePath) + sizeof(light.packed);
+    uint64_t bytes = StringBytes(light.lightPath) + StringBytes(light.texturePath) +
+                     sizeof(light.packed);
+    for (const std::string &path : light.shadowExcludePaths)
+    {
+        bytes += StringBytes(path);
+    }
+    return bytes;
 }
 
 uint64_t CurvesHostBytes(const Curves &curves)
@@ -73,7 +79,7 @@ uint64_t SubdivisionMeshBytes(const SubdivisionMesh &mesh)
 
 uint64_t ComputeMeshHostBytes(const Mesh &mesh)
 {
-    uint64_t bytes = ArrayBytes(mesh.positions) + ArrayBytes(mesh.indices);
+    uint64_t bytes = StringBytes(mesh.primPath) + ArrayBytes(mesh.positions) + ArrayBytes(mesh.indices);
     for (const Attribute &attribute : mesh.attributes)
     {
         bytes += AttributeBytes(attribute);

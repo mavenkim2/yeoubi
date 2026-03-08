@@ -141,6 +141,12 @@ struct CPUIntegratorState
         return shadowRay.tfar < 0.0f;
     }
 
+    bool TraceLightOcclusion(const ybi::render::integrator::Vec3 &origin,
+                             const ybi::render::integrator::Vec3 &direction,
+                             float tMin,
+                             float tMax,
+                             int lightIndex) const;
+
     bool TraceClosest(const ybi::render::integrator::Vec3 &origin,
                       const ybi::render::integrator::Vec3 &direction,
                       float tMin,
@@ -339,6 +345,46 @@ bool CPUIntegratorState::TraceClosest(const ybi::render::integrator::Vec3 &origi
                                       ybi::render::integrator::HitInfo *outHit) const
 {
     return TracePrimary(*params, origin, direction, tMin, tMax, outHit);
+}
+
+bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3 &origin,
+                                             const ybi::render::integrator::Vec3 &direction,
+                                             float tMin,
+                                             float tMax,
+                                             int lightIndex) const
+{
+    if (!ybi::render::integrator::LightHasShadowExcludes(*params, lightIndex))
+    {
+        return TraceOcclusion(origin, direction, tMin, tMax);
+    }
+
+    ybi::render::integrator::Vec3 currentOrigin = origin;
+    float currentMax = tMax;
+    constexpr int kMaxShadowSkips = 32;
+    for (int skip = 0; skip < kMaxShadowSkips; ++skip)
+    {
+        ybi::render::integrator::HitInfo hit = {};
+        if (!TracePrimary(*params, currentOrigin, direction, tMin, currentMax, &hit))
+        {
+            return false;
+        }
+        if (!ybi::render::integrator::IsRefExcludedFromLightShadow(
+                *params, lightIndex, hit.instanceId))
+        {
+            return true;
+        }
+
+        const float advance = hit.t + std::max(tMin, 1.0e-4f);
+        if (advance >= currentMax)
+        {
+            return false;
+        }
+        currentOrigin = ybi::render::integrator::Add(
+            currentOrigin, ybi::render::integrator::Mul(direction, advance));
+        currentMax -= advance;
+    }
+
+    return true;
 }
 } // namespace
 

@@ -27,6 +27,7 @@ struct LaunchParams
         int numTexcoords;
         int numTexcoordIndices;
         int materialIndex;
+        int _padding0;
     };
 
     struct WireframeConfig
@@ -102,6 +103,8 @@ struct LaunchParams
     int materialCount;
     unsigned long long lights;
     int lightCount;
+    unsigned long long lightShadowExcludeRefs;
+    int lightShadowExcludeRefCount;
     int textureViewSemantic;
     unsigned long long feedbackKeys;
     unsigned long long feedbackStats;

@@ -59,13 +59,15 @@ struct PackedLight
     float radius = 0.0f;
     float length = 0.0f;
     float areaScale = 0.0f;
-    float _padding3 = 0.0f;
+    uint32_t shadowExcludeOffset = 0u;
+    uint32_t shadowExcludeCount = 0u;
 };
 
 struct LightInfo
 {
     std::string lightPath;
     std::string texturePath;
+    std::vector<std::string> shadowExcludePaths;
     PackedLight packed = {};
 };
 

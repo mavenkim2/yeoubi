@@ -1178,6 +1178,61 @@ struct UploadedMeshRefs
     uint64_t deviceBytes = 0u;
 };
 
+static bool PathMatchesOrContainsChild(const std::string &primPath, const std::string &targetPath)
+{
+    if (primPath.empty() || targetPath.empty())
+    {
+        return false;
+    }
+    if (primPath == targetPath)
+    {
+        return true;
+    }
+    return primPath.size() > targetPath.size() &&
+           primPath.compare(0, targetPath.size(), targetPath) == 0 &&
+           primPath[targetPath.size()] == '/';
+}
+
+static void ResolveLightShadowExcludes(const std::vector<SceneMeshUploadRef> &meshUploadRefs,
+                                       const std::vector<LightInfo> &lights,
+                                       std::vector<PackedLight> *outPackedLights,
+                                       std::vector<int> *outExcludeRefs)
+{
+    YBI_ASSERT(outPackedLights);
+    YBI_ASSERT(outExcludeRefs);
+    outPackedLights->clear();
+    outExcludeRefs->clear();
+    outPackedLights->reserve(lights.size());
+
+    for (const LightInfo &light : lights)
+    {
+        PackedLight packed = light.packed;
+        packed.shadowExcludeOffset = static_cast<uint32_t>(outExcludeRefs->size());
+        packed.shadowExcludeCount = 0u;
+
+        std::unordered_set<uint32_t> seenRefs;
+        for (const std::string &targetPath : light.shadowExcludePaths)
+        {
+            for (const SceneMeshUploadRef &job : meshUploadRefs)
+            {
+                if (!job.mesh || job.mesh->primPath.empty() ||
+                    !PathMatchesOrContainsChild(job.mesh->primPath, targetPath))
+                {
+                    continue;
+                }
+                if (seenRefs.insert(job.refIndex).second)
+                {
+                    outExcludeRefs->push_back(static_cast<int>(job.refIndex));
+                }
+            }
+        }
+
+        packed.shadowExcludeCount =
+            static_cast<uint32_t>(outExcludeRefs->size()) - packed.shadowExcludeOffset;
+        outPackedLights->push_back(packed);
+    }
+}
+
 struct HarnessMemoryStats
 {
     uint64_t hostSourceSceneBytes = 0u;
@@ -1359,6 +1414,8 @@ RenderTraversable(Device *device,
                   int materialCount,
                   DevicePtr lightsBuffer,
                   int lightCount,
+                  DevicePtr lightShadowExcludeRefsBuffer,
+                  int lightShadowExcludeRefCount,
                   DevicePtr materialTextureRefsBuffer,
                   int materialTextureRefCount,
                   int materialTextureRefStride,
@@ -1483,6 +1540,8 @@ RenderTraversable(Device *device,
     params.materialCount = materialCount;
     params.lights = (unsigned long long)lightsBuffer;
     params.lightCount = lightCount;
+    params.lightShadowExcludeRefs = (unsigned long long)lightShadowExcludeRefsBuffer;
+    params.lightShadowExcludeRefCount = lightShadowExcludeRefCount;
     params.materialTextureRefs = (unsigned long long)materialTextureRefsBuffer;
     params.materialTextureRefCount = materialTextureRefCount;
     params.materialTextureRefStride = materialTextureRefStride;
@@ -1778,9 +1837,11 @@ struct HarnessState
 
     DeviceMemoryView<uint8_t> materialsBuffer = {};
     DeviceMemoryView<uint8_t> lightsBuffer = {};
+    DeviceMemoryView<uint8_t> lightShadowExcludeRefsBuffer = {};
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
     std::vector<PackedMaterial> packedMaterials;
     std::vector<PackedLight> packedLights;
+    std::vector<int> lightShadowExcludeRefs;
     int materialTextureRefCount = 0;
     int materialTextureRefStride = kUdimSlotCount;
     int materialTextureRefSemanticCount = kMaterialSemanticCount;
@@ -1859,6 +1920,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     state->decodedTextures.clear();
     state->packedMaterials.clear();
     state->packedLights.clear();
+    state->lightShadowExcludeRefs.clear();
     state->materialTextureRefsHost.clear();
     state->virtualTextureRegistrations.clear();
 
@@ -1873,19 +1935,6 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         state->materialsBuffer = device->AllocBytes(bytes);
         state->memoryStats.deviceMaterialBytes = state->materialsBuffer.numBytes();
         device->CopyBytesToDevice(state->materialsBuffer, state->packedMaterials.data(), bytes);
-    }
-
-    state->packedLights.reserve(state->scenePool.lights.size());
-    for (const LightInfo &light : state->scenePool.lights)
-    {
-        state->packedLights.push_back(light.packed);
-    }
-    if (!state->packedLights.empty())
-    {
-        const size_t bytes = state->packedLights.size() * sizeof(PackedLight);
-        state->lightsBuffer = device->AllocBytes(bytes);
-        state->memoryStats.deviceLightBytes = state->lightsBuffer.numBytes();
-        device->CopyBytesToDevice(state->lightsBuffer, state->packedLights.data(), bytes);
     }
 
     std::vector<LaunchParams::MaterialTextureRef> launchRefs(
@@ -2048,6 +2097,33 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
 
     CollectScenePoolMeshUploadRefs(&state->flattenedScenePool, &state->meshUploadRefs);
     auto tCollect = LogPhase("collect_mesh_upload_refs", tTexRefs);
+    ResolveLightShadowExcludes(
+        state->meshUploadRefs, state->scenePool.lights, &state->packedLights, &state->lightShadowExcludeRefs);
+    for (size_t i = 0; i < state->scenePool.lights.size() && i < state->packedLights.size(); ++i)
+    {
+        if (state->packedLights[i].shadowExcludeCount == 0u)
+        {
+            continue;
+        }
+        std::printf("light shadow excludes: %s -> %u mesh refs\n",
+                    state->scenePool.lights[i].lightPath.c_str(),
+                    state->packedLights[i].shadowExcludeCount);
+    }
+    if (!state->packedLights.empty())
+    {
+        const size_t bytes = state->packedLights.size() * sizeof(PackedLight);
+        state->lightsBuffer = device->AllocBytes(bytes);
+        state->memoryStats.deviceLightBytes = state->lightsBuffer.numBytes();
+        device->CopyBytesToDevice(state->lightsBuffer, state->packedLights.data(), bytes);
+    }
+    if (!state->lightShadowExcludeRefs.empty())
+    {
+        const size_t bytes = state->lightShadowExcludeRefs.size() * sizeof(int);
+        state->lightShadowExcludeRefsBuffer = device->AllocBytes(bytes);
+        state->memoryStats.deviceLightBytes += state->lightShadowExcludeRefsBuffer.numBytes();
+        device->CopyBytesToDevice(
+            state->lightShadowExcludeRefsBuffer, state->lightShadowExcludeRefs.data(), bytes);
+    }
     auto bvhStart = Clock::now();
     for (const std::unique_ptr<Scene> &scenePtr : state->flattenedScenePool.scenes)
     {
@@ -2141,6 +2217,8 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       static_cast<int>(state.packedMaterials.size()),
                       reinterpret_cast<DevicePtr>(state.lightsBuffer.data()),
                       static_cast<int>(state.packedLights.size()),
+                      reinterpret_cast<DevicePtr>(state.lightShadowExcludeRefsBuffer.data()),
+                      static_cast<int>(state.lightShadowExcludeRefs.size()),
                       reinterpret_cast<DevicePtr>(state.materialTextureRefsBuffer.data()),
                       state.materialTextureRefCount,
                       state.materialTextureRefStride,
@@ -2180,6 +2258,10 @@ static void DeinitPhase(Device *device, HostMemoryArena *hostArena, HarnessState
     if (state->lightsBuffer.data())
     {
         device->FreeBytes(state->lightsBuffer);
+    }
+    if (state->lightShadowExcludeRefsBuffer.data())
+    {
+        device->FreeBytes(state->lightShadowExcludeRefsBuffer);
     }
     if (state->materialTextureRefsBuffer.data())
     {

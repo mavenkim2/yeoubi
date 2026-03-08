@@ -47,6 +47,13 @@ YBI_INTEGRATOR_HD Vec3 ToVec3(const ybi::float3 &value)
     return MakeVec3(value.x, value.y, value.z);
 }
 
+YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params);
+YBI_INTEGRATOR_HD const int *GetLightShadowExcludeRefs(const LaunchParams &params);
+YBI_INTEGRATOR_HD bool IsRefExcludedFromLightShadow(const LaunchParams &params,
+                                                    int lightIndex,
+                                                    int refIndex);
+YBI_INTEGRATOR_HD bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex);
+
 YBI_INTEGRATOR_HD Vec3 LightEmission(const PackedLight &light)
 {
     return Mul(ToVec3(light.color), light.emissionScale);
@@ -92,9 +99,9 @@ YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec
 {
     Vec3 env = MakeVec3(0.0f, 0.0f, 0.0f);
     bool hasDome = false;
-    if (params.lights != 0ull && params.lightCount > 0)
+    const PackedLight *lights = GetPackedLights(params);
+    if (lights)
     {
-        const PackedLight *lights = reinterpret_cast<const PackedLight *>(params.lights);
         for (int i = 0; i < params.lightCount; ++i)
         {
             const PackedLight &light = lights[i];
@@ -115,13 +122,13 @@ YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec
 
 YBI_INTEGRATOR_HD int CountDirectLights(const LaunchParams &params)
 {
-    if (params.lights == 0ull || params.lightCount <= 0)
+    const PackedLight *lights = GetPackedLights(params);
+    if (!lights)
     {
         return 0;
     }
 
     int count = 0;
-    const PackedLight *lights = reinterpret_cast<const PackedLight *>(params.lights);
     for (int i = 0; i < params.lightCount; ++i)
     {
         if (lights[i].type != static_cast<unsigned int>(LightType::Dome))
@@ -136,6 +143,65 @@ YBI_INTEGRATOR_HD float DirectLightPickPdf(const LaunchParams &params)
 {
     const int count = CountDirectLights(params);
     return count > 0 ? 1.0f / float(count) : 0.0f;
+}
+
+YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params)
+{
+    if (params.lights == 0ull || params.lightCount <= 0)
+    {
+        return nullptr;
+    }
+    return reinterpret_cast<const PackedLight *>(params.lights);
+}
+
+YBI_INTEGRATOR_HD const int *GetLightShadowExcludeRefs(const LaunchParams &params)
+{
+    if (params.lightShadowExcludeRefs == 0ull || params.lightShadowExcludeRefCount <= 0)
+    {
+        return nullptr;
+    }
+    return reinterpret_cast<const int *>(params.lightShadowExcludeRefs);
+}
+
+YBI_INTEGRATOR_HD bool IsRefExcludedFromLightShadow(const LaunchParams &params,
+                                                    int lightIndex,
+                                                    int refIndex)
+{
+    const PackedLight *lights = GetPackedLights(params);
+    const int *excludeRefs = GetLightShadowExcludeRefs(params);
+    if (!lights || !excludeRefs || lightIndex < 0 || lightIndex >= params.lightCount || refIndex < 0)
+    {
+        return false;
+    }
+
+    const PackedLight &light = lights[lightIndex];
+    if (light.shadowExcludeCount == 0u)
+    {
+        return false;
+    }
+
+    const uint32_t begin = light.shadowExcludeOffset;
+    const uint32_t end = begin + light.shadowExcludeCount;
+    if (end > static_cast<uint32_t>(params.lightShadowExcludeRefCount))
+    {
+        return false;
+    }
+
+    for (uint32_t i = begin; i < end; ++i)
+    {
+        if (excludeRefs[i] == refIndex)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+YBI_INTEGRATOR_HD bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex)
+{
+    const PackedLight *lights = GetPackedLights(params);
+    return lights && lightIndex >= 0 && lightIndex < params.lightCount &&
+           lights[lightIndex].shadowExcludeCount > 0u;
 }
 
 YBI_INTEGRATOR_HD bool PickDirectLightUniform(const LaunchParams &params,
@@ -155,7 +221,7 @@ YBI_INTEGRATOR_HD bool PickDirectLightUniform(const LaunchParams &params,
     }
 
     const int target = ClampInt(int(Random01(rngState) * float(directCount)), 0, directCount - 1);
-    const PackedLight *lights = reinterpret_cast<const PackedLight *>(params.lights);
+    const PackedLight *lights = GetPackedLights(params);
     int directIndex = 0;
     for (int i = 0; i < params.lightCount; ++i)
     {
@@ -320,7 +386,7 @@ YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
         return false;
     }
 
-    const PackedLight *lights = reinterpret_cast<const PackedLight *>(params.lights);
+    const PackedLight *lights = GetPackedLights(params);
     const PackedLight &light = lights[lightIndex];
     switch (light.type)
     {
