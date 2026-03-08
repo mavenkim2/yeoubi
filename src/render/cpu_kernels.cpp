@@ -4,6 +4,7 @@
 
 #include "device/cpu_device.h"
 #include "render/integrator_ao.h"
+#include "render/integrator_path.h"
 #include "render/integrator_primary.h"
 #include "render/launch_params.h"
 #include "render/shading_core.h"
@@ -140,6 +141,12 @@ struct CPUIntegratorState
         return shadowRay.tfar < 0.0f;
     }
 
+    bool TraceClosest(const ybi::render::integrator::Vec3 &origin,
+                      const ybi::render::integrator::Vec3 &direction,
+                      float tMin,
+                      float tMax,
+                      ybi::render::integrator::HitInfo *outHit) const;
+
     void MaybeLogSampleSuccess() const
     {
         static std::atomic<unsigned int> logged{0};
@@ -244,6 +251,8 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
 static bool TracePrimary(const LaunchParams &params,
                          const ybi::render::integrator::Vec3 &origin,
                          const ybi::render::integrator::Vec3 &direction,
+                         float tMin,
+                         float tMax,
                          ybi::render::integrator::HitInfo *outHit)
 {
     RTCRayHit rayHit = {};
@@ -253,8 +262,8 @@ static bool TracePrimary(const LaunchParams &params,
     rayHit.ray.dir_x = direction.x;
     rayHit.ray.dir_y = direction.y;
     rayHit.ray.dir_z = direction.z;
-    rayHit.ray.tnear = 0.001f;
-    rayHit.ray.tfar = std::numeric_limits<float>::infinity();
+    rayHit.ray.tnear = tMin;
+    rayHit.ray.tfar = tMax;
     rayHit.ray.mask = ~0u;
     rayHit.ray.flags = 0u;
     rayHit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
@@ -321,6 +330,15 @@ static bool TracePrimary(const LaunchParams &params,
     }
 
     return true;
+}
+
+bool CPUIntegratorState::TraceClosest(const ybi::render::integrator::Vec3 &origin,
+                                      const ybi::render::integrator::Vec3 &direction,
+                                      float tMin,
+                                      float tMax,
+                                      ybi::render::integrator::HitInfo *outHit) const
+{
+    return TracePrimary(*params, origin, direction, tMin, tMax, outHit);
 }
 } // namespace
 
@@ -400,7 +418,13 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                                       ComputeDirection(*params, x, y, width, height);
 
                                   ybi::render::integrator::HitInfo hit = {};
-                                  const bool hitFound = TracePrimary(*params, origin, direction, &hit);
+                                  const bool hitFound = TracePrimary(
+                                      *params,
+                                      origin,
+                                      direction,
+                                      0.001f,
+                                      std::numeric_limits<float>::infinity(),
+                                      &hit);
 
                                   unsigned int packed = 0u;
                                   if (!hitFound)
@@ -420,6 +444,11 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                                   else if (kernelId == RenderKernelId::AO)
                                   {
                                       packed = ybi::render::integrator::IntegratorAO(state, hit);
+                                  }
+                                  else if (kernelId == RenderKernelId::PathTrace)
+                                  {
+                                      packed = ybi::render::integrator::IntegratorPathTrace(
+                                          state, origin, direction);
                                   }
                                   else
                                   {

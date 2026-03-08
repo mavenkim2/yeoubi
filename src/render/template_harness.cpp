@@ -56,7 +56,8 @@ namespace
 enum class IntegratorType
 {
     Primary,
-    AO
+    AO,
+    Path
 };
 
 enum class MaterialTextureSemantic : int
@@ -82,6 +83,7 @@ struct CliOptions
     std::optional<ybi::float3> cameraPosition;
     std::optional<ybi::float3> lookAt;
     int spp = 1;
+    int maxDepth = 4;
     bool useNtc = false;
     bool virtualTexture = false;
     std::string virtualTextureTilesDir;
@@ -440,14 +442,15 @@ static bool TryMapInputNameToSemantic(const std::string &inputName,
 static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
-           "[--integrator primary|ao] [--spp N] "
+           "[--integrator primary|ao|path] [--spp N] [--max-depth N] "
            "[--device gpu|cpu] [--cam-pos x y z] [--look-at x y z] [--ntc] [--view name] "
            "[--purposes csv] [--purpose name]\n",
            exeName);
     printf("  --file USDA/USD path\n");
     printf("  --out PNG output path\n");
-    printf("  --integrator primary|ao\n");
+    printf("  --integrator primary|ao|path\n");
     printf("  --spp spp passes\n");
+    printf("  --max-depth max path depth for --integrator path\n");
     printf("  --device gpu|cpu (cpu requires Embree)\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
@@ -497,11 +500,25 @@ static CliOptions ParseCli(int argc, char **argv)
             {
                 options.integrator = IntegratorType::AO;
             }
+            else if (value == "path")
+            {
+                options.integrator = IntegratorType::Path;
+            }
             else
             {
                 PrintUsage(argv[0]);
                 std::abort();
             }
+            continue;
+        }
+        if (arg == "--max-depth")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.maxDepth = std::max(0, std::stoi(argv[++i]));
             continue;
         }
         if (arg == "--spp")
@@ -1169,6 +1186,8 @@ struct HarnessMemoryStats
     uint64_t hostDecodedTextureBytes = 0u;
     uint64_t hostMaterialTextureRefBytes = 0u;
     uint64_t virtualTextureVirtualBytes = 0u;
+    uint64_t deviceMaterialBytes = 0u;
+    uint64_t deviceLightBytes = 0u;
     uint64_t deviceMaterialTextureRefBytes = 0u;
     uint64_t deviceUploadedTextureBytes = 0u;
     uint64_t deviceMeshUploadBytes = 0u;
@@ -1193,7 +1212,8 @@ static void PrintSetupMemoryStats(const HarnessMemoryStats &stats)
 {
     const uint64_t totalHost = stats.hostSourceSceneBytes + stats.hostFlattenedSceneBytes +
                                stats.hostDecodedTextureBytes + stats.hostMaterialTextureRefBytes;
-    const uint64_t totalDevice = stats.deviceMaterialTextureRefBytes + stats.deviceUploadedTextureBytes +
+    const uint64_t totalDevice = stats.deviceMaterialBytes + stats.deviceLightBytes +
+                                 stats.deviceMaterialTextureRefBytes + stats.deviceUploadedTextureBytes +
                                  stats.deviceMeshUploadBytes + stats.deviceInstanceRefBytes +
                                  stats.deviceBvhBytes;
     std::printf("memory: setup\n");
@@ -1206,6 +1226,8 @@ static void PrintSetupMemoryStats(const HarnessMemoryStats &stats)
     {
         PrintByteStat("vt.virtual_source", stats.virtualTextureVirtualBytes);
     }
+    PrintByteStat("device.materials", stats.deviceMaterialBytes);
+    PrintByteStat("device.lights", stats.deviceLightBytes);
     PrintByteStat("device.texture_refs", stats.deviceMaterialTextureRefBytes);
     PrintByteStat("device.textures.classic", stats.deviceUploadedTextureBytes);
     PrintByteStat("device.mesh_uploads", stats.deviceMeshUploadBytes);
@@ -1225,6 +1247,7 @@ static void PrintVirtualTextureMemoryStats(const HarnessMemoryStats &setupStats,
                                vtStats.hostMetaBytes + vtStats.hostTailBytes + vtStats.hostStreamBytes +
                                renderHostBytes;
     const uint64_t totalDevice = setupStats.deviceMaterialTextureRefBytes +
+                                 setupStats.deviceMaterialBytes + setupStats.deviceLightBytes +
                                  setupStats.deviceMeshUploadBytes + setupStats.deviceInstanceRefBytes +
                                  setupStats.deviceBvhBytes + vtStats.devicePageTableBytes +
                                  vtStats.deviceMetaBytes + vtStats.deviceTailBytes +
@@ -1329,8 +1352,13 @@ RenderTraversable(Device *device,
                   const char *outputFile,
                   IntegratorType integrator,
                   int spp,
+                  int maxDepth,
                   DevicePtr instanceGeomRefsBuffer,
                   int instanceGeomRefCount,
+                  DevicePtr materialsBuffer,
+                  int materialCount,
+                  DevicePtr lightsBuffer,
+                  int lightCount,
                   DevicePtr materialTextureRefsBuffer,
                   int materialTextureRefCount,
                   int materialTextureRefStride,
@@ -1442,12 +1470,19 @@ RenderTraversable(Device *device,
     params.wireframe.lineFeather = 0.006f;
     params.wireframe.edgeDarkness = 0.10f;
     params.wireframe.padding = 0.0f;
-    params.integrator = integrator == IntegratorType::AO ? 1 : 0;
+    params.integrator = integrator == IntegratorType::AO
+                            ? 1
+                            : (integrator == IntegratorType::Path ? 3 : 0);
     params.spp = std::max(1, spp);
+    params.maxDepth = std::max(0, maxDepth);
     params.aoBias = 0.002f * diagonal;
     params.aoMaxDistance = 0.25f * diagonal;
     params.instanceGeomRefs = (unsigned long long)instanceGeomRefsBuffer;
     params.instanceGeomRefCount = instanceGeomRefCount;
+    params.materials = (unsigned long long)materialsBuffer;
+    params.materialCount = materialCount;
+    params.lights = (unsigned long long)lightsBuffer;
+    params.lightCount = lightCount;
     params.materialTextureRefs = (unsigned long long)materialTextureRefsBuffer;
     params.materialTextureRefCount = materialTextureRefCount;
     params.materialTextureRefStride = materialTextureRefStride;
@@ -1615,7 +1650,9 @@ RenderTraversable(Device *device,
             setupMemoryStats, virtualTextureManager.GetMemoryStats(), renderDeviceBytes, renderHostBytes);
         virtualTextureManager.BindLaunchParams(&params);
 
-        params.integrator = integrator == IntegratorType::AO ? 1 : 0;
+        params.integrator = integrator == IntegratorType::AO
+                                ? 1
+                                : (integrator == IntegratorType::Path ? 3 : 0);
         params.feedbackSamplePercent = 10;
     }
     else
@@ -1641,7 +1678,10 @@ RenderTraversable(Device *device,
         dispatchParams.outputRGBA8 = imageBuffer;
 
         const RenderKernelId kernelId =
-            integrator == IntegratorType::AO ? RenderKernelId::AO : RenderKernelId::PrimaryDiffuse;
+            integrator == IntegratorType::AO
+                ? RenderKernelId::AO
+                : (integrator == IntegratorType::Path ? RenderKernelId::PathTrace
+                                                      : RenderKernelId::PrimaryDiffuse);
         if (!device->DispatchKernel(kernelId, dispatchParams))
         {
             fprintf(stderr, "DispatchKernel failed.\n");
@@ -1736,7 +1776,11 @@ struct HarnessState
     ScenePool flattenedScenePool = {};
     Scene *rootScene = nullptr;
 
+    DeviceMemoryView<uint8_t> materialsBuffer = {};
+    DeviceMemoryView<uint8_t> lightsBuffer = {};
     DeviceMemoryView<uint8_t> materialTextureRefsBuffer = {};
+    std::vector<PackedMaterial> packedMaterials;
+    std::vector<PackedLight> packedLights;
     int materialTextureRefCount = 0;
     int materialTextureRefStride = kUdimSlotCount;
     int materialTextureRefSemanticCount = kMaterialSemanticCount;
@@ -1813,8 +1857,36 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     state->memoryStats.hostTessellatedMeshBytes = ComputeMeshVectorHostBytes(state->rootScene->meshes);
 
     state->decodedTextures.clear();
+    state->packedMaterials.clear();
+    state->packedLights.clear();
     state->materialTextureRefsHost.clear();
     state->virtualTextureRegistrations.clear();
+
+    state->packedMaterials.reserve(state->scenePool.materials.size());
+    for (const MaterialInfo &material : state->scenePool.materials)
+    {
+        state->packedMaterials.push_back(material.packed);
+    }
+    if (!state->packedMaterials.empty())
+    {
+        const size_t bytes = state->packedMaterials.size() * sizeof(PackedMaterial);
+        state->materialsBuffer = device->AllocBytes(bytes);
+        state->memoryStats.deviceMaterialBytes = state->materialsBuffer.numBytes();
+        device->CopyBytesToDevice(state->materialsBuffer, state->packedMaterials.data(), bytes);
+    }
+
+    state->packedLights.reserve(state->scenePool.lights.size());
+    for (const LightInfo &light : state->scenePool.lights)
+    {
+        state->packedLights.push_back(light.packed);
+    }
+    if (!state->packedLights.empty())
+    {
+        const size_t bytes = state->packedLights.size() * sizeof(PackedLight);
+        state->lightsBuffer = device->AllocBytes(bytes);
+        state->memoryStats.deviceLightBytes = state->lightsBuffer.numBytes();
+        device->CopyBytesToDevice(state->lightsBuffer, state->packedLights.data(), bytes);
+    }
 
     std::vector<LaunchParams::MaterialTextureRef> launchRefs(
         state->scenePool.materials.size() * static_cast<size_t>(kMaterialSemanticCount) *
@@ -2062,8 +2134,13 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       options.outputPath.c_str(),
                       options.integrator,
                       options.spp,
+                      options.maxDepth,
                       reinterpret_cast<DevicePtr>(state.instanceGeomRefsBuffer.data()),
                       (int)state.uploadedRefs.refs.size(),
+                      reinterpret_cast<DevicePtr>(state.materialsBuffer.data()),
+                      static_cast<int>(state.packedMaterials.size()),
+                      reinterpret_cast<DevicePtr>(state.lightsBuffer.data()),
+                      static_cast<int>(state.packedLights.size()),
                       reinterpret_cast<DevicePtr>(state.materialTextureRefsBuffer.data()),
                       state.materialTextureRefCount,
                       state.materialTextureRefStride,
@@ -2095,6 +2172,14 @@ static void DeinitPhase(Device *device, HostMemoryArena *hostArena, HarnessState
     if (state->instanceGeomRefsBuffer.data())
     {
         device->FreeBytes(state->instanceGeomRefsBuffer);
+    }
+    if (state->materialsBuffer.data())
+    {
+        device->FreeBytes(state->materialsBuffer);
+    }
+    if (state->lightsBuffer.data())
+    {
+        device->FreeBytes(state->lightsBuffer);
     }
     if (state->materialTextureRefsBuffer.data())
     {

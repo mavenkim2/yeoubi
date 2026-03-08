@@ -535,6 +535,7 @@ bool CUDADevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &par
     {
         case RenderKernelId::PrimaryDiffuse:
         case RenderKernelId::AO:
+        case RenderKernelId::PathTrace:
             optixPipeline = optixPrimaryPipeline.pipeline;
             sbt.raygenRecord = optixPrimaryPipeline.raygenRecordBuffer;
             break;

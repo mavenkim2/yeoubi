@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene/attributes.h"
+#include "scene/material_light.h"
 #include "scene/micropolygon_mesh.h"
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
@@ -216,6 +217,7 @@ struct MaterialInfo
     std::vector<MaterialTextureInput> textureInputs;
     std::string ntcDiffuseFile;
     std::string ntcDiffuseTextureName;
+    PackedMaterial packed = {};
 };
 
 struct ScenePool
@@ -224,6 +226,7 @@ struct ScenePool
     uint32_t rootSceneIndex = 0;
     Camera camera;
     std::vector<MaterialInfo> materials;
+    std::vector<LightInfo> lights;
 };
 
 struct SceneMeshUploadRef

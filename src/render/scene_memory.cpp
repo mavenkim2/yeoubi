@@ -31,12 +31,17 @@ uint64_t MaterialTextureInputBytes(const MaterialTextureInput &input)
 uint64_t MaterialInfoBytes(const MaterialInfo &material)
 {
     uint64_t bytes = StringBytes(material.materialPath) + StringBytes(material.ntcDiffuseFile) +
-                     StringBytes(material.ntcDiffuseTextureName);
+                     StringBytes(material.ntcDiffuseTextureName) + sizeof(material.packed);
     for (const MaterialTextureInput &input : material.textureInputs)
     {
         bytes += MaterialTextureInputBytes(input);
     }
     return bytes;
+}
+
+uint64_t LightInfoBytes(const LightInfo &light)
+{
+    return StringBytes(light.lightPath) + StringBytes(light.texturePath) + sizeof(light.packed);
 }
 
 uint64_t CurvesHostBytes(const Curves &curves)
@@ -128,6 +133,10 @@ uint64_t ComputeScenePoolHostBytes(const ScenePool &scenePool)
     for (const MaterialInfo &material : scenePool.materials)
     {
         bytes += MaterialInfoBytes(material);
+    }
+    for (const LightInfo &light : scenePool.lights)
+    {
+        bytes += LightInfoBytes(light);
     }
     return bytes;
 }

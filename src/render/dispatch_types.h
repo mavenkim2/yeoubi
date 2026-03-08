@@ -14,6 +14,7 @@ enum class RenderKernelId : uint8_t
 {
     PrimaryDiffuse = 0,
     AO = 1,
+    PathTrace = 2,
 };
 
 struct DispatchParams

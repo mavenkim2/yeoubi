@@ -12,17 +12,19 @@ namespace render
 namespace integrator
 {
 
-YBI_INTEGRATOR_HD Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4 &sample)
+YBI_INTEGRATOR_HD Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sample)
 {
-    if (params.textureViewSemantic == kSemanticRoughness ||
-        params.textureViewSemantic == kSemanticMetallic ||
-        params.textureViewSemantic == kSemanticOcclusion ||
-        params.textureViewSemantic == kSemanticIor ||
-        params.textureViewSemantic == kSemanticOpacity)
+    if (semantic == kSemanticRoughness || semantic == kSemanticMetallic ||
+        semantic == kSemanticOcclusion || semantic == kSemanticIor || semantic == kSemanticOpacity)
     {
         return MakeVec3(sample.x, sample.x, sample.x);
     }
     return MakeVec3(sample.x, sample.y, sample.z);
+}
+
+YBI_INTEGRATOR_HD Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4 &sample)
+{
+    return MaterialSampleToColorForSemantic(params.textureViewSemantic, sample);
 }
 
 YBI_INTEGRATOR_HD uint32_t PackVirtualTexturePageEntry(unsigned int pageX,
@@ -79,27 +81,37 @@ YBI_INTEGRATOR_HD bool IsUsableMaterialTextureRef(const LaunchParams::MaterialTe
 YBI_INTEGRATOR_HD bool ResolveMaterialTextureRefBase(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
+    int semantic,
     const LaunchParams::MaterialTextureRef **outMaterialRefs,
     int *outBase,
     int *outMaxSlots)
 {
     if (!outMaterialRefs || !outBase || !outMaxSlots || params.materialTextureRefs == 0ull ||
         params.materialTextureRefCount <= 0 || params.materialTextureRefStride <= 0 ||
-        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount ||
-        params.textureViewSemantic < 0 ||
-        params.textureViewSemantic >= params.materialTextureRefSemanticCount)
+        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount || semantic < 0 ||
+        semantic >= params.materialTextureRefSemanticCount)
     {
         return false;
     }
 
     *outMaterialRefs =
         reinterpret_cast<const LaunchParams::MaterialTextureRef *>(params.materialTextureRefs);
-    *outBase = (geomRef.materialIndex * params.materialTextureRefSemanticCount +
-                params.textureViewSemantic) *
+    *outBase = (geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic) *
                params.materialTextureRefStride;
     *outMaxSlots = params.materialTextureRefCount * params.materialTextureRefSemanticCount *
                    params.materialTextureRefStride;
     return true;
+}
+
+YBI_INTEGRATOR_HD bool ResolveMaterialTextureRefBase(
+    const LaunchParams &params,
+    const LaunchParams::InstanceGeomRef &geomRef,
+    const LaunchParams::MaterialTextureRef **outMaterialRefs,
+    int *outBase,
+    int *outMaxSlots)
+{
+    return ResolveMaterialTextureRefBase(
+        params, geomRef, params.textureViewSemantic, outMaterialRefs, outBase, outMaxSlots);
 }
 
 YBI_INTEGRATOR_HD bool FetchMaterialTextureRefForUdimSlot(
@@ -882,6 +894,143 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
                                 feedbackMip);
     }
     state.MaybeLogSampleSuccess();
+    return true;
+}
+
+template <typename State>
+YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
+                                                        const LaunchParams::InstanceGeomRef &geomRef,
+                                                        const HitInfo &hit,
+                                                        int semantic,
+                                                        Vec4 &outSample)
+{
+    const LaunchParams &params = state.Params();
+    if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
+        params.materialTextureRefStride <= 0 || !hit.hasBarycentrics)
+    {
+        return false;
+    }
+
+    MaterialTextureSampleInputs inputs = {};
+    if (!TryComputeMaterialTextureSampleInputs(
+            geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &inputs))
+    {
+        return false;
+    }
+
+    const LaunchParams::MaterialTextureRef *materialRefs = nullptr;
+    int base = 0;
+    int maxSlots = 0;
+    if (!ResolveMaterialTextureRefBase(params, geomRef, semantic, &materialRefs, &base, &maxSlots))
+    {
+        return false;
+    }
+
+    const int rawUdimSlot =
+        ybi::texture::UdimSlotFromUdim(inputs.rawUdim, params.materialTextureRefStride);
+    LaunchParams::MaterialTextureRef rawRef = {};
+    const bool hasRawRef =
+        FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, rawUdimSlot, &rawRef);
+    LaunchParams::MaterialTextureRef wrapRef = rawRef;
+    if (!hasRawRef || !IsUsableMaterialTextureRef(wrapRef))
+    {
+        if (!FindFallbackMaterialTextureRef(params, materialRefs, base, maxSlots, &wrapRef))
+        {
+            return false;
+        }
+    }
+
+    bool blackS = false;
+    bool blackT = false;
+    const float wrappedU = ApplyWrapMode(inputs.unitU, wrapRef.wrapS, blackS);
+    const float wrappedV = ApplyWrapMode(inputs.unitV, wrapRef.wrapT, blackT);
+    if (blackS || blackT)
+    {
+        outSample = MakeVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        return true;
+    }
+
+    if (params.virtualTextureEnabled != 0)
+    {
+        Vec3 vtColor = {};
+        unsigned int resolvedUdimBits = 0u;
+        if (ResolveVirtualTextureUdimBits(params,
+                                          geomRef,
+                                          inputs.u,
+                                          inputs.v,
+                                          wrappedU,
+                                          wrappedV,
+                                          nullptr,
+                                          &resolvedUdimBits,
+                                          nullptr))
+        {
+            LaunchParams::MaterialTextureRef vtRef = {};
+            const int resolvedUdimSlot = ybi::texture::UdimSlotFromUdim(
+                1001 + int(resolvedUdimBits), params.materialTextureRefStride);
+            if (FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, resolvedUdimSlot, &vtRef) &&
+                IsUsableMaterialTextureRef(vtRef))
+            {
+                unsigned int sampleMip = 0u;
+                const bool haveMip = TryComputeTextureMipLevel(
+                    params, hit, inputs.uv0, inputs.uv1, inputs.uv2, vtRef.width, vtRef.height, &sampleMip);
+                if (!haveMip)
+                {
+                    sampleMip = static_cast<unsigned int>(
+                        ClampInt(MaxInt(params.virtualTextureSampleMip, 0),
+                                 0,
+                                 ComputeTextureMipCount(vtRef.width, vtRef.height) - 1));
+                }
+
+                if (TrySampleVirtualTexture(
+                        state, geomRef, vtRef, wrappedU, wrappedV, resolvedUdimBits, sampleMip, vtColor))
+                {
+                    outSample = MakeVec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
+                    if (haveMip)
+                    {
+                        TryWriteTextureFeedback(state,
+                                                geomRef,
+                                                static_cast<unsigned int>(hit.primitiveIndex),
+                                                wrappedU,
+                                                wrappedV,
+                                                vtRef.width,
+                                                vtRef.height,
+                                                resolvedUdimBits,
+                                                sampleMip);
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (!hasRawRef || !IsUsableMaterialTextureRef(rawRef))
+    {
+        return false;
+    }
+
+    if (rawRef.textureObject == 0ull || rawRef.valid == 0)
+    {
+        return false;
+    }
+
+    if (!state.SampleTexture2D(rawRef, inputs.unitU, inputs.unitV, outSample))
+    {
+        return false;
+    }
+    unsigned int feedbackMip = 0u;
+    if (TryComputeTextureMipLevel(
+            params, hit, inputs.uv0, inputs.uv1, inputs.uv2, rawRef.width, rawRef.height, &feedbackMip))
+    {
+        TryWriteTextureFeedback(state,
+                                geomRef,
+                                static_cast<unsigned int>(hit.primitiveIndex),
+                                inputs.unitU,
+                                inputs.unitV,
+                                rawRef.width,
+                                rawRef.height,
+                                inputs.rawUdimBits,
+                                feedbackMip);
+    }
     return true;
 }
 

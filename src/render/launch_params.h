@@ -9,6 +9,7 @@
 #endif
 
 #include "device/device.h"
+#include "scene/material_light.h"
 #include "util/float3.h"
 
 YBI_NAMESPACE_BEGIN
@@ -88,6 +89,7 @@ struct LaunchParams
     WireframeConfig wireframe;
     int integrator;
     int spp;
+    int maxDepth;
     float aoBias;
     float aoMaxDistance;
     unsigned long long instanceGeomRefs;
@@ -96,6 +98,10 @@ struct LaunchParams
     int materialTextureRefCount;
     int materialTextureRefStride;
     int materialTextureRefSemanticCount;
+    unsigned long long materials;
+    int materialCount;
+    unsigned long long lights;
+    int lightCount;
     int textureViewSemantic;
     unsigned long long feedbackKeys;
     unsigned long long feedbackStats;

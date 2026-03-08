@@ -44,6 +44,12 @@
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/xform.h>
 #include <pxr/usd/usdGeom/xformable.h>
+#include <pxr/usd/usdLux/cylinderLight.h>
+#include <pxr/usd/usdLux/diskLight.h>
+#include <pxr/usd/usdLux/distantLight.h>
+#include <pxr/usd/usdLux/domeLight.h>
+#include <pxr/usd/usdLux/rectLight.h>
+#include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdRender/settings.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -360,6 +366,343 @@ static const char *TextureWrapModeToString(TextureWrapMode mode)
             return "useMetadata";
         default:
             return "unknown";
+    }
+}
+
+static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
+                                   std::string &outPath,
+                                   std::string *outSwizzle,
+                                   TextureWrapMode *outWrapS,
+                                   TextureWrapMode *outWrapT);
+
+static ybi::float3 ToFloat3(const pxr::GfVec3f &v)
+{
+    return ybi::make_float3(v[0], v[1], v[2]);
+}
+
+static ybi::float3 ToFloat3(const pxr::GfVec3d &v)
+{
+    return ybi::make_float3(static_cast<float>(v[0]),
+                            static_cast<float>(v[1]),
+                            static_cast<float>(v[2]));
+}
+
+static float ClampFinite(float value, float lo, float hi, float fallback)
+{
+    if (!std::isfinite(value))
+    {
+        return fallback;
+    }
+    if (value < lo)
+    {
+        return lo;
+    }
+    if (value > hi)
+    {
+        return hi;
+    }
+    return value;
+}
+
+static ybi::float3 ClampFiniteColor(const ybi::float3 &value, float lo, float hi)
+{
+    return ybi::make_float3(ClampFinite(value.x, lo, hi, lo),
+                            ClampFinite(value.y, lo, hi, lo),
+                            ClampFinite(value.z, lo, hi, lo));
+}
+
+static ybi::float3 ReadInputColor3f(const pxr::UsdShadeInput &input, const ybi::float3 &fallback)
+{
+    if (!input)
+    {
+        return fallback;
+    }
+
+    pxr::GfVec3f vec3fValue;
+    if (input.Get(&vec3fValue))
+    {
+        return ToFloat3(vec3fValue);
+    }
+
+    pxr::GfVec3d vec3dValue;
+    if (input.Get(&vec3dValue))
+    {
+        return ToFloat3(vec3dValue);
+    }
+
+    return fallback;
+}
+
+static float ReadInputFloat(const pxr::UsdShadeInput &input, float fallback)
+{
+    if (!input)
+    {
+        return fallback;
+    }
+
+    float floatValue = fallback;
+    if (input.Get(&floatValue))
+    {
+        return floatValue;
+    }
+
+    double doubleValue = static_cast<double>(fallback);
+    if (input.Get(&doubleValue))
+    {
+        return static_cast<float>(doubleValue);
+    }
+
+    return fallback;
+}
+
+static void FinalizePackedMaterial(PackedMaterial *packed)
+{
+    YBI_ASSERT(packed);
+    packed->baseColor = ClampFiniteColor(packed->baseColor, 0.0f, 1.0f);
+    packed->emissiveColor = ClampFiniteColor(packed->emissiveColor, 0.0f, 65504.0f);
+    packed->roughness = ClampFinite(packed->roughness, 0.02f, 1.0f, 1.0f);
+    packed->metallic = ClampFinite(packed->metallic, 0.0f, 1.0f, 0.0f);
+    packed->ior = ClampFinite(packed->ior, 1.0f, 4.0f, 1.5f);
+    packed->opacity = ClampFinite(packed->opacity, 0.0f, 1.0f, 1.0f);
+
+    packed->flags = 0u;
+    if (packed->emissiveColor.x > 0.0f || packed->emissiveColor.y > 0.0f ||
+        packed->emissiveColor.z > 0.0f)
+    {
+        packed->flags |= MATERIAL_FLAG_HAS_EMISSION;
+    }
+}
+
+static void ReadPreviewSurfaceMaterial(const pxr::UsdShadeShader &shader, MaterialInfo *outInfo)
+{
+    YBI_ASSERT(outInfo);
+    outInfo->packed = {};
+    outInfo->packed.baseColor = ReadInputColor3f(
+        shader.GetInput(pxr::TfToken("diffuseColor")),
+        ybi::make_float3(0.18f, 0.18f, 0.18f));
+    outInfo->packed.emissiveColor = ReadInputColor3f(
+        shader.GetInput(pxr::TfToken("emissiveColor")),
+        ybi::make_float3(0.0f, 0.0f, 0.0f));
+    outInfo->packed.roughness =
+        ReadInputFloat(shader.GetInput(pxr::TfToken("roughness")), 0.5f);
+    outInfo->packed.metallic =
+        ReadInputFloat(shader.GetInput(pxr::TfToken("metallic")), 0.0f);
+    outInfo->packed.ior = ReadInputFloat(shader.GetInput(pxr::TfToken("ior")), 1.5f);
+    outInfo->packed.opacity =
+        ReadInputFloat(shader.GetInput(pxr::TfToken("opacity")), 1.0f);
+
+    for (const pxr::UsdShadeInput &input : shader.GetInputs())
+    {
+        std::string texturePath;
+        std::string swizzle;
+        TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
+        TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
+        if (!TryGetImageTexturePath(input, texturePath, &swizzle, &wrapS, &wrapT))
+        {
+            continue;
+        }
+
+        MaterialTextureInput textureInput = {};
+        textureInput.inputName = input.GetBaseName().GetString();
+        textureInput.texturePath = texturePath;
+        textureInput.swizzle = swizzle;
+        textureInput.wrapS = wrapS;
+        textureInput.wrapT = wrapT;
+        outInfo->textureInputs.push_back(std::move(textureInput));
+    }
+
+    FinalizePackedMaterial(&outInfo->packed);
+}
+
+template <typename LightSchemaT>
+static void ReadCommonLightParams(const LightSchemaT &light, PackedLight *outLight)
+{
+    YBI_ASSERT(outLight);
+
+    float intensity = 1.0f;
+    light.GetIntensityAttr().Get(&intensity);
+    float exposure = 0.0f;
+    light.GetExposureAttr().Get(&exposure);
+
+    pxr::GfVec3f color(1.0f, 1.0f, 1.0f);
+    light.GetColorAttr().Get(&color);
+
+    bool normalize = false;
+    light.GetNormalizeAttr().Get(&normalize);
+
+    outLight->color = ClampFiniteColor(ToFloat3(color), 0.0f, 65504.0f);
+    outLight->intensityScale =
+        std::max(0.0f, intensity) * std::pow(2.0f, std::max(-24.0f, std::min(exposure, 24.0f)));
+    const uint32_t preserveFlags = outLight->flags & LIGHT_FLAG_ONE_SIDED;
+    outLight->flags = preserveFlags | (normalize ? LIGHT_FLAG_NORMALIZED : 0u);
+}
+
+static ybi::float3 TransformPoint(const pxr::GfMatrix4d &m, const pxr::GfVec3d &p)
+{
+    return ToFloat3(m.Transform(p));
+}
+
+static ybi::float3 TransformDirection(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
+{
+    return ybi::normalize(ToFloat3(m.TransformDir(v)));
+}
+
+static float GetAreaLightScale(float area, bool normalized)
+{
+    if (normalized)
+    {
+        return 1.0f;
+    }
+    return std::max(area, 1.0e-4f);
+}
+
+static float ComputeSelectionWeight(const PackedLight &light)
+{
+    const float luminance =
+        std::max(0.0f, 0.2126f * light.color.x + 0.7152f * light.color.y + 0.0722f * light.color.z);
+    if (luminance <= 0.0f || light.intensityScale <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    float sizeWeight = 1.0f;
+    switch (static_cast<LightType>(light.type))
+    {
+        case LightType::Rect:
+        case LightType::Disk:
+        case LightType::Sphere:
+        case LightType::Cylinder:
+            sizeWeight = std::max(light.areaScale, 1.0e-4f);
+            break;
+        default:
+            break;
+    }
+    return luminance * light.intensityScale * sizeWeight;
+}
+
+static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
+                             const pxr::UsdTimeCode &timeCode,
+                             std::vector<LightInfo> *outLights)
+{
+    YBI_ASSERT(outLights);
+    outLights->clear();
+
+    const pxr::Usd_PrimFlagsPredicate filterPredicate =
+        pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
+    pxr::UsdGeomXformCache xformCache(timeCode);
+    constexpr float kPi = 3.14159265358979323846f;
+
+    for (const pxr::UsdPrim &prim : pxr::UsdPrimRange(stage->GetPseudoRoot(), filterPredicate))
+    {
+        if (!prim || !IsVisibilityAllowed(prim))
+        {
+            continue;
+        }
+
+        LightInfo info = {};
+        const pxr::GfMatrix4d localToWorld = xformCache.GetLocalToWorldTransform(prim);
+        info.lightPath = prim.GetPath().GetString();
+
+        if (prim.IsA<pxr::UsdLuxDomeLight>())
+        {
+            pxr::UsdLuxDomeLight light(prim);
+            info.packed.type = static_cast<uint32_t>(LightType::Dome);
+            info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
+            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
+            ReadCommonLightParams(light, &info.packed);
+
+            pxr::SdfAssetPath textureAsset;
+            const pxr::UsdAttribute textureAttr = light.GetTextureFileAttr();
+            if (textureAttr && textureAttr.Get(&textureAsset))
+            {
+                info.texturePath = ResolveUsdAssetPath(textureAttr, textureAsset);
+            }
+        }
+        else if (prim.IsA<pxr::UsdLuxDistantLight>())
+        {
+            pxr::UsdLuxDistantLight light(prim);
+            info.packed.type = static_cast<uint32_t>(LightType::Distant);
+            info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
+            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            ReadCommonLightParams(light, &info.packed);
+        }
+        else if (prim.IsA<pxr::UsdLuxRectLight>())
+        {
+            pxr::UsdLuxRectLight light(prim);
+            info.packed.type = static_cast<uint32_t>(LightType::Rect);
+            info.packed.flags |= LIGHT_FLAG_ONE_SIDED;
+            info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
+            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            ReadCommonLightParams(light, &info.packed);
+            light.GetWidthAttr().Get(&info.packed.width);
+            light.GetHeightAttr().Get(&info.packed.height);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.areaScale =
+                GetAreaLightScale(std::max(info.packed.width, 0.0f) * std::max(info.packed.height, 0.0f),
+                                  normalized);
+        }
+        else if (prim.IsA<pxr::UsdLuxDiskLight>())
+        {
+            pxr::UsdLuxDiskLight light(prim);
+            info.packed.type = static_cast<uint32_t>(LightType::Disk);
+            info.packed.flags |= LIGHT_FLAG_ONE_SIDED;
+            info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
+            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            ReadCommonLightParams(light, &info.packed);
+            light.GetRadiusAttr().Get(&info.packed.radius);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.areaScale =
+                GetAreaLightScale(kPi * std::max(info.packed.radius, 0.0f) *
+                                      std::max(info.packed.radius, 0.0f),
+                                  normalized);
+        }
+        else if (prim.IsA<pxr::UsdLuxSphereLight>())
+        {
+            pxr::UsdLuxSphereLight light(prim);
+            info.packed.type = static_cast<uint32_t>(LightType::Sphere);
+            info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
+            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            ReadCommonLightParams(light, &info.packed);
+            light.GetRadiusAttr().Get(&info.packed.radius);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.areaScale =
+                GetAreaLightScale(4.0f * kPi * std::max(info.packed.radius, 0.0f) *
+                                      std::max(info.packed.radius, 0.0f),
+                                  normalized);
+        }
+        else if (prim.IsA<pxr::UsdLuxCylinderLight>())
+        {
+            pxr::UsdLuxCylinderLight light(prim);
+            info.packed.type = static_cast<uint32_t>(LightType::Cylinder);
+            info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
+            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
+            ReadCommonLightParams(light, &info.packed);
+            light.GetRadiusAttr().Get(&info.packed.radius);
+            light.GetLengthAttr().Get(&info.packed.length);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.areaScale =
+                GetAreaLightScale(2.0f * kPi * std::max(info.packed.radius, 0.0f) *
+                                      std::max(info.packed.length, 0.0f),
+                                  normalized);
+        }
+        else
+        {
+            continue;
+        }
+
+        info.packed.width = std::max(info.packed.width, 0.0f);
+        info.packed.height = std::max(info.packed.height, 0.0f);
+        info.packed.radius = std::max(info.packed.radius, 0.0f);
+        info.packed.length = std::max(info.packed.length, 0.0f);
+        info.packed.areaScale = std::max(info.packed.areaScale, 1.0e-4f);
+        info.packed.selectionWeight = ComputeSelectionWeight(info.packed);
+        if (info.packed.intensityScale <= 0.0f ||
+            (info.packed.color.x <= 0.0f && info.packed.color.y <= 0.0f &&
+             info.packed.color.z <= 0.0f))
+        {
+            continue;
+        }
+        outLights->push_back(std::move(info));
     }
 }
 
@@ -1429,31 +1772,14 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         MaterialInfo info = {};
         info.materialPath = material.GetPath().GetString();
         ReadNtcMaterialInfo(material, &info);
-        std::vector<std::string> uniqueTexturePaths;
+        info.packed = {};
 
         if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
         {
             pxr::TfToken token;
             if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
             {
-                for (const pxr::UsdShadeInput &input : shader.GetInputs())
-                {
-                    std::string texturePath;
-                    std::string swizzle;
-                    TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
-                    TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
-                    if (TryGetImageTexturePath(input, texturePath, &swizzle, &wrapS, &wrapT))
-                    {
-                        AppendUniqueTexturePath(uniqueTexturePaths, texturePath);
-                        MaterialTextureInput textureInput = {};
-                        textureInput.inputName = input.GetBaseName().GetString();
-                        textureInput.texturePath = texturePath;
-                        textureInput.swizzle = swizzle;
-                        textureInput.wrapS = wrapS;
-                        textureInput.wrapT = wrapT;
-                        info.textureInputs.push_back(std::move(textureInput));
-                    }
-                }
+                ReadPreviewSurfaceMaterial(shader, &info);
             }
             else
             {
@@ -1461,11 +1787,13 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                 printf("Texture gather: material %s uses unsupported surface shader %s\n",
                        material.GetPath().GetText(),
                        token.GetText());
+                FinalizePackedMaterial(&info.packed);
             }
         }
         else
         {
             printf("Texture gather: material %s has no surface source\n", material.GetPath().GetText());
+            FinalizePackedMaterial(&info.packed);
         }
         materialTextures.push_back(std::move(info));
     }
@@ -1491,6 +1819,20 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         }
     }
     scenePool->materials = std::move(materialTextures);
+
+    const pxr::UsdTimeCode lightTimeCode(0.0);
+    CollectUsdLights(stage, lightTimeCode, &scenePool->lights);
+    std::printf("num lights: %zu\n", scenePool->lights.size());
+    for (const LightInfo &light : scenePool->lights)
+    {
+        std::printf("light %s type=%u color=(%.3f %.3f %.3f) scale=%.3f\n",
+                    light.lightPath.c_str(),
+                    light.packed.type,
+                    light.packed.color.x,
+                    light.packed.color.y,
+                    light.packed.color.z,
+                    light.packed.intensityScale);
+    }
 
     int total = 0;
     for (size_t sceneIndex = 0; sceneIndex < buildSceneDAG.scenes.size(); sceneIndex++)

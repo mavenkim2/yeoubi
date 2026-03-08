@@ -3,6 +3,7 @@
 #include <assert.h>
 #include "render/launch_params.h"
 #include "render/integrator_common.h"
+#include "render/integrator_path.h"
 #include "render/integrator_texture.h"
 #include "render/integrator_primary.h"
 #include "render/integrator_ao.h"
@@ -41,6 +42,24 @@ static __forceinline__ __device__ Vec3 ToVec3(const float3 &v)
 static __forceinline__ __device__ float3 ToFloat3(const Vec3 &v)
 {
     return make_float3(v.x, v.y, v.z);
+}
+
+static __forceinline__ __device__ void PackPointer(const void *ptr,
+                                                   unsigned int &payload0,
+                                                   unsigned int &payload1)
+{
+    const unsigned long long value = reinterpret_cast<unsigned long long>(ptr);
+    payload0 = static_cast<unsigned int>(value & 0xffffffffu);
+    payload1 = static_cast<unsigned int>((value >> 32u) & 0xffffffffu);
+}
+
+template <typename T>
+static __forceinline__ __device__ T *UnpackPointer(unsigned int payload0, unsigned int payload1)
+{
+    const unsigned long long value =
+        static_cast<unsigned long long>(payload0) |
+        (static_cast<unsigned long long>(payload1) << 32u);
+    return reinterpret_cast<T *>(value);
 }
 
 struct OptixState
@@ -105,6 +124,42 @@ struct OptixState
                    0,
                    hit);
         return hit != 0u;
+    }
+
+    __device__ bool TraceClosest(const Vec3 &origin,
+                                 const Vec3 &direction,
+                                 float tMin,
+                                 float tMax,
+                                 HitInfo *outHit) const
+    {
+        if (!outHit)
+        {
+            return false;
+        }
+        *outHit = {};
+        outHit->instanceId = -1;
+        outHit->primitiveIndex = -1;
+
+        unsigned int payload0 = 0u;
+        unsigned int payload1 = 0u;
+        PackPointer(outHit, payload0, payload1);
+
+        const OptixTraversableHandle handle =
+            static_cast<OptixTraversableHandle>(params.traversable);
+        optixTrace(handle,
+                   ToFloat3(origin),
+                   ToFloat3(direction),
+                   tMin,
+                   tMax,
+                   0.0f,
+                   OptixVisibilityMask(255),
+                   OPTIX_RAY_FLAG_NONE,
+                   0,
+                   1,
+                   0,
+                   payload0,
+                   payload1);
+        return outHit->instanceId >= 0;
     }
 
     __device__ void MaybeLogSampleSuccess() const
@@ -250,6 +305,17 @@ extern "C" __global__ void __raygen__primary()
     const float3 origin = make_float3(params.cameraOrigin.x,
                                       params.cameraOrigin.y,
                                       params.cameraOrigin.z);
+    if (params.integrator == 3)
+    {
+        OptixState state = {};
+        const unsigned int packedColor =
+            ybi::render::integrator::IntegratorPathTrace(state, ToVec3(origin), ToVec3(centerDirection));
+        image[pixelIndex] = make_uchar4((unsigned char)(packedColor & 255u),
+                                        (unsigned char)((packedColor >> 8) & 255u),
+                                        (unsigned char)((packedColor >> 16) & 255u),
+                                        255u);
+        return;
+    }
     const unsigned int packedColor = TraceColor(origin, centerDirection);
     image[pixelIndex] = make_uchar4((unsigned char)(packedColor & 255u),
                                     (unsigned char)((packedColor >> 8) & 255u),
@@ -283,6 +349,11 @@ extern "C" __global__ void __miss__primary()
     if (payload == 0x80000000u)
     {
         optixSetPayload_0(0u);
+        return;
+    }
+
+    if (params.integrator == 3)
+    {
         return;
     }
 
@@ -325,6 +396,24 @@ extern "C" __global__ void __closesthit__primary()
         hit.instanceId = static_cast<int>(optixGetInstanceId());
         hit.primitiveIndex = static_cast<int>(optixGetPrimitiveIndex());
         (void)TryComputeTriangleWorldPositions(hit.instanceId, hit.primitiveIndex, &hit);
+    }
+
+    if (params.integrator == 3)
+    {
+        HitInfo *outHit = UnpackPointer<HitInfo>(optixGetPayload_0(), optixGetPayload_1());
+        if (outHit)
+        {
+            *outHit = hit;
+            if (isTriangle && hit.hasBarycentrics)
+            {
+                Vec3 geomNormal = MakeVec3(-rayDirection.x, -rayDirection.y, -rayDirection.z);
+                bool hasGeom = false;
+                hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
+                outHit->geomNormal = geomNormal;
+                outHit->hasGeomNormal = hasGeom;
+            }
+        }
+        return;
     }
 
     if (params.integrator == 2)

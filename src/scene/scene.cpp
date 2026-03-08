@@ -234,6 +234,8 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
     dst->scenes.clear();
     dst->rootSceneIndex = 0;
     dst->camera = src->camera;
+    dst->materials = src->materials;
+    dst->lights = src->lights;
 
     std::unique_ptr<Scene> dstRoot = std::make_unique<Scene>();
     dstRoot->meshes = std::move(srcRoot->meshes);
