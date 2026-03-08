@@ -460,7 +460,7 @@ static void FinalizePackedMaterial(PackedMaterial *packed)
     YBI_ASSERT(packed);
     packed->baseColor = ClampFiniteColor(packed->baseColor, 0.0f, 1.0f);
     packed->emissiveColor = ClampFiniteColor(packed->emissiveColor, 0.0f, 65504.0f);
-    packed->roughness = ClampFinite(packed->roughness, 0.02f, 1.0f, 1.0f);
+    packed->roughness = ClampFinite(packed->roughness, 0.0f, 1.0f, 1.0f);
     packed->metallic = ClampFinite(packed->metallic, 0.0f, 1.0f, 0.0f);
     packed->ior = ClampFinite(packed->ior, 1.0f, 4.0f, 1.5f);
     packed->opacity = ClampFinite(packed->opacity, 0.0f, 1.0f, 1.0f);
@@ -531,7 +531,7 @@ static void ReadCommonLightParams(const LightSchemaT &light, PackedLight *outLig
     light.GetNormalizeAttr().Get(&normalize);
 
     outLight->color = ClampFiniteColor(ToFloat3(color), 0.0f, 65504.0f);
-    outLight->intensityScale =
+    outLight->emissionScale =
         std::max(0.0f, intensity) * std::pow(2.0f, std::max(-24.0f, std::min(exposure, 24.0f)));
     const uint32_t preserveFlags = outLight->flags & LIGHT_FLAG_ONE_SIDED;
     outLight->flags = preserveFlags | (normalize ? LIGHT_FLAG_NORMALIZED : 0u);
@@ -547,37 +547,50 @@ static ybi::float3 TransformDirection(const pxr::GfMatrix4d &m, const pxr::GfVec
     return ybi::normalize(ToFloat3(m.TransformDir(v)));
 }
 
-static float GetAreaLightScale(float area, bool normalized)
+static ybi::float3 TransformVector(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
+{
+    return ToFloat3(m.TransformDir(v));
+}
+
+static ybi::float3 SafeNormalizeOrDefault(const ybi::float3 &value, const ybi::float3 &fallback)
+{
+    const float len = ybi::length(value);
+    if (len <= 1.0e-8f)
+    {
+        return fallback;
+    }
+    return value / len;
+}
+
+static void FinalizeLightBasis(PackedLight *light)
+{
+    YBI_ASSERT(light);
+
+    light->direction =
+        SafeNormalizeOrDefault(light->direction, ybi::make_float3(0.0f, 0.0f, -1.0f));
+    light->tangent =
+        SafeNormalizeOrDefault(light->tangent, ybi::make_float3(1.0f, 0.0f, 0.0f));
+    light->bitangent =
+        SafeNormalizeOrDefault(light->bitangent, ybi::cross(light->direction, light->tangent));
+
+    if (std::fabs(ybi::dot(light->direction, light->tangent)) > 0.999f)
+    {
+        const ybi::float3 up = std::fabs(light->direction.z) < 0.999f
+                                   ? ybi::make_float3(0.0f, 0.0f, 1.0f)
+                                   : ybi::make_float3(0.0f, 1.0f, 0.0f);
+        light->tangent = ybi::normalize(ybi::cross(up, light->direction));
+    }
+    light->bitangent = ybi::normalize(ybi::cross(light->direction, light->tangent));
+    light->tangent = ybi::normalize(ybi::cross(light->bitangent, light->direction));
+}
+
+static float ComputeAreaEmissionScale(float intensityScale, float area, bool normalized)
 {
     if (normalized)
     {
-        return 1.0f;
+        return intensityScale / std::max(area, 1.0e-4f);
     }
-    return std::max(area, 1.0e-4f);
-}
-
-static float ComputeSelectionWeight(const PackedLight &light)
-{
-    const float luminance =
-        std::max(0.0f, 0.2126f * light.color.x + 0.7152f * light.color.y + 0.0722f * light.color.z);
-    if (luminance <= 0.0f || light.intensityScale <= 0.0f)
-    {
-        return 0.0f;
-    }
-
-    float sizeWeight = 1.0f;
-    switch (static_cast<LightType>(light.type))
-    {
-        case LightType::Rect:
-        case LightType::Disk:
-        case LightType::Sphere:
-        case LightType::Cylinder:
-            sizeWeight = std::max(light.areaScale, 1.0e-4f);
-            break;
-        default:
-            break;
-    }
-    return luminance * light.intensityScale * sizeWeight;
+    return intensityScale;
 }
 
 static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
@@ -632,14 +645,24 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.type = static_cast<uint32_t>(LightType::Rect);
             info.packed.flags |= LIGHT_FLAG_ONE_SIDED;
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
-            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
+            const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::make_float3(0.0f, 0.0f, -1.0f));
+            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::make_float3(1.0f, 0.0f, 0.0f));
+            info.packed.bitangent =
+                SafeNormalizeOrDefault(axisY, ybi::make_float3(0.0f, 1.0f, 0.0f));
             ReadCommonLightParams(light, &info.packed);
-            light.GetWidthAttr().Get(&info.packed.width);
-            light.GetHeightAttr().Get(&info.packed.height);
+            float localWidth = 0.0f;
+            float localHeight = 0.0f;
+            light.GetWidthAttr().Get(&localWidth);
+            light.GetHeightAttr().Get(&localHeight);
+            info.packed.width = std::max(localWidth, 0.0f) * ybi::length(axisX);
+            info.packed.height = std::max(localHeight, 0.0f) * ybi::length(axisY);
+            info.packed.areaScale = std::max(info.packed.width * info.packed.height, 1.0e-4f);
             const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
-            info.packed.areaScale =
-                GetAreaLightScale(std::max(info.packed.width, 0.0f) * std::max(info.packed.height, 0.0f),
-                                  normalized);
+            info.packed.emissionScale =
+                ComputeAreaEmissionScale(info.packed.emissionScale, info.packed.areaScale, normalized);
         }
         else if (prim.IsA<pxr::UsdLuxDiskLight>())
         {
@@ -647,14 +670,26 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.type = static_cast<uint32_t>(LightType::Disk);
             info.packed.flags |= LIGHT_FLAG_ONE_SIDED;
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
-            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
+            const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::make_float3(0.0f, 0.0f, -1.0f));
+            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::make_float3(1.0f, 0.0f, 0.0f));
+            info.packed.bitangent =
+                SafeNormalizeOrDefault(axisY, ybi::make_float3(0.0f, 1.0f, 0.0f));
             ReadCommonLightParams(light, &info.packed);
-            light.GetRadiusAttr().Get(&info.packed.radius);
-            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            float localRadius = 0.0f;
+            light.GetRadiusAttr().Get(&localRadius);
+            const float worldScaleX = ybi::length(axisX);
+            const float worldScaleY = ybi::length(axisY);
+            info.packed.radius = std::max(localRadius, 0.0f) * 0.5f * (worldScaleX + worldScaleY);
             info.packed.areaScale =
-                GetAreaLightScale(kPi * std::max(info.packed.radius, 0.0f) *
-                                      std::max(info.packed.radius, 0.0f),
-                                  normalized);
+                std::max(kPi * std::max(localRadius, 0.0f) * worldScaleX * std::max(localRadius, 0.0f) *
+                             worldScaleY,
+                         1.0e-4f);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.emissionScale =
+                ComputeAreaEmissionScale(info.packed.emissionScale, info.packed.areaScale, normalized);
         }
         else if (prim.IsA<pxr::UsdLuxSphereLight>())
         {
@@ -662,41 +697,61 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.type = static_cast<uint32_t>(LightType::Sphere);
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
             info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            info.packed.tangent = TransformDirection(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            info.packed.bitangent = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
             ReadCommonLightParams(light, &info.packed);
-            light.GetRadiusAttr().Get(&info.packed.radius);
-            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            float localRadius = 0.0f;
+            light.GetRadiusAttr().Get(&localRadius);
+            const float worldScaleX = ybi::length(TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0)));
+            const float worldScaleY = ybi::length(TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0)));
+            const float worldScaleZ = ybi::length(TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0)));
+            const float worldScale = (worldScaleX + worldScaleY + worldScaleZ) / 3.0f;
+            info.packed.radius = std::max(localRadius, 0.0f) * worldScale;
             info.packed.areaScale =
-                GetAreaLightScale(4.0f * kPi * std::max(info.packed.radius, 0.0f) *
-                                      std::max(info.packed.radius, 0.0f),
-                                  normalized);
+                std::max(4.0f * kPi * info.packed.radius * info.packed.radius, 1.0e-4f);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.emissionScale =
+                ComputeAreaEmissionScale(info.packed.emissionScale, info.packed.areaScale, normalized);
         }
         else if (prim.IsA<pxr::UsdLuxCylinderLight>())
         {
             pxr::UsdLuxCylinderLight light(prim);
             info.packed.type = static_cast<uint32_t>(LightType::Cylinder);
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
-            info.packed.direction = TransformDirection(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
+            const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
+            const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
+            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::make_float3(0.0f, 0.0f, 1.0f));
+            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::make_float3(1.0f, 0.0f, 0.0f));
+            info.packed.bitangent =
+                SafeNormalizeOrDefault(axisY, ybi::make_float3(0.0f, 1.0f, 0.0f));
             ReadCommonLightParams(light, &info.packed);
-            light.GetRadiusAttr().Get(&info.packed.radius);
-            light.GetLengthAttr().Get(&info.packed.length);
-            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            float localRadius = 0.0f;
+            float localLength = 0.0f;
+            light.GetRadiusAttr().Get(&localRadius);
+            light.GetLengthAttr().Get(&localLength);
+            const float worldRadiusScale =
+                0.5f * (ybi::length(axisX) + ybi::length(axisY));
+            info.packed.radius = std::max(localRadius, 0.0f) * worldRadiusScale;
+            info.packed.length = std::max(localLength, 0.0f) * ybi::length(axisZ);
             info.packed.areaScale =
-                GetAreaLightScale(2.0f * kPi * std::max(info.packed.radius, 0.0f) *
-                                      std::max(info.packed.length, 0.0f),
-                                  normalized);
+                std::max(2.0f * kPi * info.packed.radius * info.packed.length, 1.0e-4f);
+            const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
+            info.packed.emissionScale =
+                ComputeAreaEmissionScale(info.packed.emissionScale, info.packed.areaScale, normalized);
         }
         else
         {
             continue;
         }
 
+        FinalizeLightBasis(&info.packed);
         info.packed.width = std::max(info.packed.width, 0.0f);
         info.packed.height = std::max(info.packed.height, 0.0f);
         info.packed.radius = std::max(info.packed.radius, 0.0f);
         info.packed.length = std::max(info.packed.length, 0.0f);
-        info.packed.areaScale = std::max(info.packed.areaScale, 1.0e-4f);
-        info.packed.selectionWeight = ComputeSelectionWeight(info.packed);
-        if (info.packed.intensityScale <= 0.0f ||
+        info.packed.areaScale = std::max(info.packed.areaScale, 0.0f);
+        if (info.packed.emissionScale <= 0.0f ||
             (info.packed.color.x <= 0.0f && info.packed.color.y <= 0.0f &&
              info.packed.color.z <= 0.0f))
         {
@@ -1831,7 +1886,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                     light.packed.color.x,
                     light.packed.color.y,
                     light.packed.color.z,
-                    light.packed.intensityScale);
+                    light.packed.emissionScale);
     }
 
     int total = 0;

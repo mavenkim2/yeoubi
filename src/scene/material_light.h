@@ -49,14 +49,16 @@ struct PackedLight
     float _padding0 = 0.0f;
     float3 direction = make_float3(0.0f, 0.0f, -1.0f);
     float _padding1 = 0.0f;
+    float3 tangent = make_float3(1.0f, 0.0f, 0.0f);
+    float _padding2 = 0.0f;
+    float3 bitangent = make_float3(0.0f, 1.0f, 0.0f);
+    float emissionScale = 0.0f;
     float3 color = make_float3(0.0f, 0.0f, 0.0f);
-    float intensityScale = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
     float radius = 0.0f;
     float length = 0.0f;
-    float areaScale = 1.0f;
-    float selectionWeight = 0.0f;
+    float areaScale = 0.0f;
     float _padding3 = 0.0f;
 };
 

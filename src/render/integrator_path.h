@@ -50,7 +50,7 @@ YBI_INTEGRATOR_HD float LinearToSrgb(float value)
 
 YBI_INTEGRATOR_HD Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
 {
-    constexpr float kDisplayExposure = 8.0f;
+    constexpr float kDisplayExposure = 16.0f;
     const Vec3 exposed = Mul(radiance, kDisplayExposure);
     const Vec3 mapped = MakeVec3(1.0f - expf(-exposed.x),
                                  1.0f - expf(-exposed.y),
@@ -114,7 +114,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
 
     material.baseColor = ClampVec3(material.baseColor, 0.0f, 1.0f);
     material.emissiveColor = ClampVec3(material.emissiveColor, 0.0f, 65504.0f);
-    material.roughness = MaxFloat(MinFloat(material.roughness, 1.0f), 0.02f);
+    material.roughness = MaxFloat(MinFloat(material.roughness, 1.0f), 0.0f);
     material.metallic = Clamp01(material.metallic);
     material.ior = MaxFloat(material.ior, 1.0f);
     material.opacity = Clamp01(material.opacity);
@@ -139,6 +139,9 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
     Vec3 rayOrigin = origin;
     Vec3 rayDir = direction;
     const float rayBias = params.aoBias > 0.0f ? params.aoBias : 0.001f;
+    bool currentRayHasBsdfContext = false;
+    bool currentRaySkipNeeMis = false;
+    float currentRayBsdfPdf = 0.0f;
 
     const UInt2 launchIndex = state.LaunchIndex();
     unsigned int rngState = Hash32((launchIndex.x + 1u) * 73856093u ^
@@ -148,7 +151,24 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
     for (int depth = 0; depth <= MaxInt(params.maxDepth, 0); ++depth)
     {
         HitInfo hit = {};
-        if (!state.TraceClosest(rayOrigin, rayDir, rayBias, 1.0e20f, &hit))
+        const bool hasSceneHit = state.TraceClosest(rayOrigin, rayDir, rayBias, 1.0e20f, &hit);
+        const float sceneDistance = hasSceneHit ? hit.t : 1.0e20f;
+
+        LightRayHit lightHit = {};
+        if (TraceAnalyticLight(params, rayOrigin, rayDir, sceneDistance, &lightHit))
+        {
+            float misWeight = 1.0f;
+            if (currentRayHasBsdfContext && !currentRaySkipNeeMis && !lightHit.isDeltaLight)
+            {
+                misWeight =
+                    currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + lightHit.pdf, 1.0e-6f);
+            }
+            radiance =
+                Add3(radiance, MulComponents(throughput, Mul(lightHit.radiance, misWeight)));
+            break;
+        }
+
+        if (!hasSceneHit)
         {
             radiance = Add3(radiance, MulComponents(throughput, EnvironmentRadiance(params, rayDir)));
             break;
@@ -174,32 +194,41 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
             radiance = Add3(radiance, MulComponents(throughput, material.emissiveColor));
         }
 
-        if (depth >= MaxInt(params.maxDepth, 0))
-        {
-            // Temporary indoor fill: leak environment on forced terminal bounces
-            // until transparent occlusion / fuller lighting arrives.
-            radiance = Add3(radiance, MulComponents(throughput, EnvironmentRadiance(params, normal)));
-            break;
-        }
-
         const Vec3 wo = Mul(rayDir, -1.0f);
-        DirectLightSample lightSample = {};
-        if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
+        const bool skipNeeMis = ShouldSkipNeeMis(material);
+        if (!skipNeeMis)
         {
-            const float nDotL = MaxFloat(Dot(normal, lightSample.wi), 0.0f);
-            if (nDotL > 0.0f)
+            DirectLightSample lightSample = {};
+            if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
             {
-                const Vec3 shadowOrigin = Add(hitPoint, Mul(normal, rayBias));
-                const float shadowMax = lightSample.distance >= 1.0e19f ? 1.0e20f
-                                                                        : MaxFloat(lightSample.distance - rayBias,
-                                                                                    rayBias);
-                if (!state.TraceOcclusion(shadowOrigin, lightSample.wi, rayBias, shadowMax))
+                const float nDotL = MaxFloat(Dot(normal, lightSample.wi), 0.0f);
+                if (nDotL > 0.0f)
                 {
-                    const Vec3 f = EvaluateBsdf(material, normal, wo, lightSample.wi, nullptr);
-                    const Vec3 direct = MulComponents(MulComponents(throughput, f), lightSample.radiance);
-                    radiance = Add3(radiance, Mul(direct, nDotL / MaxFloat(lightSample.pdf, 1.0e-6f)));
+                    const Vec3 shadowOrigin = Add(hitPoint, Mul(normal, rayBias));
+                    const float shadowMax = lightSample.distance >= 1.0e19f
+                                                ? 1.0e20f
+                                                : MaxFloat(lightSample.distance - rayBias, rayBias);
+                    if (!state.TraceOcclusion(shadowOrigin, lightSample.wi, rayBias, shadowMax))
+                    {
+                        float bsdfPdf = 0.0f;
+                        const Vec3 f = EvaluateBsdf(material, normal, wo, lightSample.wi, &bsdfPdf);
+                        const float misWeight = lightSample.isDeltaLight
+                                                    ? 1.0f
+                                                    : lightSample.pdf /
+                                                          MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
+                        const Vec3 direct =
+                            MulComponents(MulComponents(throughput, f), lightSample.radiance);
+                        radiance = Add3(
+                            radiance,
+                            Mul(direct, (nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f)));
+                    }
                 }
             }
+        }
+
+        if (depth >= MaxInt(params.maxDepth, 0))
+        {
+            break;
         }
 
         BsdfSample bsdf = {};
@@ -223,6 +252,9 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         const float normalSign = Dot(normal, bsdf.wi) >= 0.0f ? 1.0f : -1.0f;
         rayOrigin = Add(hitPoint, Mul(normal, rayBias * normalSign));
         rayDir = bsdf.wi;
+        currentRayHasBsdfContext = true;
+        currentRaySkipNeeMis = bsdf.skipNeeMis;
+        currentRayBsdfPdf = bsdf.pdf;
     }
 
     const Vec3 display = DisplayMapPathRadiance(radiance);
