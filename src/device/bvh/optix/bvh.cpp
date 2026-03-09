@@ -548,10 +548,10 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     const uint32_t numIndices = mesh.indices.size();
 
     MemoryView<CUdeviceptr> vertexBuffers = hostArena.PushArray<CUdeviceptr>(numMotionKeys);
-    MemoryView<float3> hostVertices = hostArena.PushArray<float3>(numVertices * numMotionKeys);
+    MemoryView<Vec3> hostVertices = hostArena.PushArray<Vec3>(numVertices * numMotionKeys);
 
-    DeviceMemoryView<float3> deviceVertices =
-        deviceArena.PushArray<float3>(numVertices * numMotionKeys);
+    DeviceMemoryView<Vec3> deviceVertices =
+        deviceArena.PushArray<Vec3>(numVertices * numMotionKeys);
     DeviceMemoryView<int> deviceIndices = deviceArena.PushArray<int>(numIndices);
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
@@ -561,7 +561,7 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
 
         memcpy(hostVertices.data() + step * numVertices,
                mesh.positions.data() + step * numVertices,
-               sizeof(float3) * numVertices);
+               sizeof(Vec3) * numVertices);
     }
 
     CUDA_ASSERT(cuMemcpyHtoD(
@@ -579,7 +579,7 @@ static OptixBuildInput GetOptiXTriangleBuildInput(CUDADevice *cudaDevice,
     triangleArray.vertexBuffers = vertexBuffers.data();
     triangleArray.numVertices = numVertices;
     triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    triangleArray.vertexStrideInBytes = sizeof(float3);
+    triangleArray.vertexStrideInBytes = sizeof(Vec3);
     triangleArray.indexBuffer = CUdeviceptr(deviceIndices.data());
     triangleArray.numIndexTriplets = numIndices / 3;
     triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
@@ -610,10 +610,10 @@ static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
     MemoryView<CUdeviceptr> vertexBuffers = hostArena.PushArray<CUdeviceptr>(numMotionKeys);
     MemoryView<CUdeviceptr> widthBuffers = hostArena.PushArray<CUdeviceptr>(numMotionKeys);
     MemoryView<uint32_t> indexBuffer = hostArena.PushArray<uint32_t>(totalNumSegments);
-    MemoryView<float3> hostVertices = hostArena.PushArray<float3>(totalNumVertices);
+    MemoryView<Vec3> hostVertices = hostArena.PushArray<Vec3>(totalNumVertices);
     MemoryView<float> hostWidths = hostArena.PushArray<float>(totalNumVertices);
 
-    DeviceMemoryView<float3> deviceVertices = deviceArena.PushArray<float3>(totalNumVertices);
+    DeviceMemoryView<Vec3> deviceVertices = deviceArena.PushArray<Vec3>(totalNumVertices);
     DeviceMemoryView<int> deviceIndices = deviceArena.PushArray<int>(totalNumSegments);
     DeviceMemoryView<float> deviceWidths = deviceArena.PushArray<float>(totalNumVertices);
 
@@ -637,11 +637,11 @@ static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
         dst = (CUdeviceptr)(deviceWidths.data() + step * numVertices);
         widthBuffers[step] = dst;
 
-        const Array<float3> &positions = curves.GetVertices();
+        const Array<Vec3> &positions = curves.GetVertices();
         const Array<float> &widths = curves.GetWidths();
         memcpy(hostVertices.data() + step * numVertices,
                positions.data(),
-               sizeof(float3) * numVertices);
+               sizeof(Vec3) * numVertices);
         memcpy(hostWidths.data() + step * numVertices, widths.data(), sizeof(float) * numVertices);
     }
 
@@ -666,7 +666,7 @@ static OptixBuildInput GetOptiXCurveBuildInput(CUDADevice *cudaDevice,
     curveArray.numPrimitives = totalNumSegments;
     curveArray.vertexBuffers = vertexBuffers.data();
     curveArray.numVertices = numVertices;
-    curveArray.vertexStrideInBytes = sizeof(float3);
+    curveArray.vertexStrideInBytes = sizeof(Vec3);
     curveArray.widthBuffers = widthBuffers.data();
     curveArray.widthStrideInBytes = sizeof(float);
     curveArray.normalBuffers = nullptr;

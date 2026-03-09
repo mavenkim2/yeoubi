@@ -42,7 +42,7 @@ YBI_INTEGRATOR_HD float MinF(float a, float b)
     return a < b ? a : b;
 }
 
-YBI_INTEGRATOR_HD Vec3 ToVec3(const ybi::float3 &value)
+YBI_INTEGRATOR_HD Vec3 ToVec3(const ybi::Vec3 &value)
 {
     return Vec3(value.x, value.y, value.z);
 }
@@ -56,7 +56,7 @@ YBI_INTEGRATOR_HD bool LightHasShadowExcludes(const LaunchParams &params, int li
 
 YBI_INTEGRATOR_HD Vec3 LightEmission(const PackedLight &light)
 {
-    return Mul(ToVec3(light.color), light.emissionScale);
+    return ToVec3(light.color) * light.emissionScale;
 }
 
 YBI_INTEGRATOR_HD float LightSelectionWeight(const PackedLight &light)
@@ -114,7 +114,7 @@ YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec
             {
                 continue;
             }
-            env = Add(env, LightEmission(light));
+            env = env + LightEmission(light);
             hasDome = true;
         }
     }
@@ -414,7 +414,7 @@ YBI_INTEGRATOR_HD bool FinalizeAreaLightSample(int lightIndex,
         return false;
     }
 
-    const Vec3 toLight = Sub(lightPoint, surfacePoint);
+    const Vec3 toLight = lightPoint - surfacePoint;
     const float distanceSquared = Dot(toLight, toLight);
     if (distanceSquared <= 1.0e-8f)
     {
@@ -422,8 +422,8 @@ YBI_INTEGRATOR_HD bool FinalizeAreaLightSample(int lightIndex,
     }
 
     const float distance = sqrtf(distanceSquared);
-    const Vec3 wi = Mul(toLight, 1.0f / distance);
-    const float cosLight = Dot(lightNormal, Mul(wi, -1.0f));
+    const Vec3 wi = toLight * (1.0f / distance);
+    const float cosLight = Dot(lightNormal, -wi);
     if (cosLight <= 1.0e-8f)
     {
         return false;
@@ -455,7 +455,7 @@ YBI_INTEGRATOR_HD bool SampleRectLight(int lightIndex,
     const float x = (Random01(rngState) - 0.5f) * light.width;
     const float y = (Random01(rngState) - 0.5f) * light.height;
     const Vec3 center = ToVec3(light.position);
-    const Vec3 lightPoint = Add(Add(center, Mul(tangent, x)), Mul(bitangent, y));
+    const Vec3 lightPoint = center + tangent * x + bitangent * y;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
@@ -473,8 +473,8 @@ YBI_INTEGRATOR_HD bool SampleDiskLight(int lightIndex,
 
     const float r = light.radius * SafeSqrt(Random01(rngState));
     const float phi = 6.28318530718f * Random01(rngState);
-    const Vec3 localPoint = Add(Mul(tangent, r * cosf(phi)), Mul(bitangent, r * sinf(phi)));
-    const Vec3 lightPoint = Add(ToVec3(light.position), localPoint);
+    const Vec3 localPoint = tangent * (r * cosf(phi)) + bitangent * (r * sinf(phi));
+    const Vec3 lightPoint = ToVec3(light.position) + localPoint;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
@@ -494,7 +494,7 @@ YBI_INTEGRATOR_HD bool SampleSphereLight(int lightIndex,
                                          DirectLightSample *outSample)
 {
     const Vec3 normal = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
-    const Vec3 lightPoint = Add(ToVec3(light.position), Mul(normal, light.radius));
+    const Vec3 lightPoint = ToVec3(light.position) + normal * light.radius;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
@@ -512,9 +512,9 @@ YBI_INTEGRATOR_HD bool SampleCylinderLight(int lightIndex,
 
     const float phi = 6.28318530718f * Random01(rngState);
     const float z = (Random01(rngState) - 0.5f) * light.length;
-    const Vec3 radial = Add(Mul(tangent, cosf(phi)), Mul(bitangent, sinf(phi)));
+    const Vec3 radial = tangent * cosf(phi) + bitangent * sinf(phi);
     const Vec3 center = ToVec3(light.position);
-    const Vec3 lightPoint = Add(Add(center, Mul(radial, light.radius)), Mul(axis, z));
+    const Vec3 lightPoint = center + radial * light.radius + axis * z;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, radial, outSample);
 }
 
@@ -541,7 +541,7 @@ YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
     {
         case static_cast<unsigned int>(LightType::Distant):
             outSample->lightIndex = lightIndex;
-            outSample->wi = Normalize(Mul(ToVec3(light.direction), -1.0f));
+            outSample->wi = Normalize(-ToVec3(light.direction));
             outSample->radiance = LightEmission(light);
             outSample->distance = 1.0e20f;
             outSample->pdf = lightPickPdf;
@@ -581,7 +581,7 @@ YBI_INTEGRATOR_HD bool SampleDomeLight(State &state,
     outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
     outSample->radiance = EvaluateEnvironmentRadiance(state, outSample->wi);
     outSample->lightPoint = Vec3(0.0f, 0.0f, 0.0f);
-    outSample->lightNormal = Mul(outSample->wi, -1.0f);
+    outSample->lightNormal = -outSample->wi;
     outSample->distance = 1.0e20f;
     outSample->pdf = DomeDirectionPdf();
     outSample->isDeltaLight = false;

@@ -1,7 +1,7 @@
 #include "io/usd_subdiv_json_io.h"
 #include "tessellation/subdivision.h"
 #include "tessellation_adaptive_cli_usd.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -10,15 +10,15 @@
 #include <string>
 #include <vector>
 
-static ybi::float3 ComputeMeshCenter(const ybi::SubdivisionMesh &mesh)
+static ybi::Vec3 ComputeMeshCenter(const ybi::SubdivisionMesh &mesh)
 {
     if (mesh.vertices.size() == 0)
     {
         return ybi::Vec3(0.0f);
     }
 
-    ybi::float3 sum = ybi::Vec3(0.0f);
-    for (const ybi::float3 &p : mesh.vertices)
+    ybi::Vec3 sum = ybi::Vec3(0.0f);
+    for (const ybi::Vec3 &p : mesh.vertices)
     {
         sum += p;
     }
@@ -39,7 +39,7 @@ static bool WriteMeshObjWithTriMetadata(const ybi::Mesh &mesh,
         return false;
     }
 
-    for (const ybi::float3 &p : mesh.positions)
+    for (const ybi::Vec3 &p : mesh.positions)
     {
         std::fprintf(f, "v %.9g %.9g %.9g\n", double(p.x), double(p.y), double(p.z));
     }
@@ -225,7 +225,7 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        const ybi::float3 meshCenter = ComputeMeshCenter(mesh);
+        const ybi::Vec3 meshCenter = ComputeMeshCenter(mesh);
 
         ybi::SubdivisionRunOptions options = {};
         options.level = cli.level;

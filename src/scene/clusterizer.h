@@ -37,7 +37,7 @@ inline MeshletClustersResult ClusterizeTest(const Mesh &mesh)
     result.meshletTriangles.resize(indexCount);
 
     const float *vertexPositions = reinterpret_cast<const float *>(mesh.positions.data());
-    const size_t vertexPositionsStride = sizeof(float3);
+    const size_t vertexPositionsStride = sizeof(Vec3);
 
     result.meshletCount = meshopt_buildMeshletsSpatial(result.meshlets.data(),
                                                        result.meshletVertices.data(),

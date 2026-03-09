@@ -37,7 +37,7 @@ YBI_INTEGRATOR_HD bool ProjectWorldToRaster(const LaunchParams &params,
     const Vec3 cameraU = Vec3(params.cameraU.x, params.cameraU.y, params.cameraU.z);
     const Vec3 cameraV = Vec3(params.cameraV.x, params.cameraV.y, params.cameraV.z);
     const Vec3 cameraW = Vec3(params.cameraW.x, params.cameraW.y, params.cameraW.z);
-    const Vec3 rel = Sub(worldPoint, cameraOrigin);
+    const Vec3 rel = worldPoint - cameraOrigin;
 
     const float det = Dot(cameraU, Cross(cameraV, cameraW));
     if (fabsf(det) <= 1e-8f)

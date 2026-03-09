@@ -18,9 +18,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
 #include "util/array.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 #include "util/float3x4.h"
-#include "util/float4.h"
+#include "util/vec4.h"
 #include "util/float4x4.h"
 #include <algorithm>
 #include <cctype>
@@ -80,8 +80,8 @@ struct CliOptions
     DeviceKind deviceKind = DeviceKind::GPU;
     std::string inputPath;
     std::string outputPath = "optix_usd_scene.png";
-    std::optional<ybi::float3> cameraPosition;
-    std::optional<ybi::float3> lookAt;
+    std::optional<ybi::Vec3> cameraPosition;
+    std::optional<ybi::Vec3> lookAt;
     int spp = 1;
     int maxDepth = 4;
     bool useNtc = false;
@@ -101,10 +101,10 @@ struct RenderCameraOverride
 {
     int width = 1280;
     int height = 720;
-    ybi::float3 origin = ybi::Vec3(0.0f, 0.0f, 0.0f);
-    ybi::float3 U = ybi::Vec3(1.0f, 0.0f, 0.0f);
-    ybi::float3 V = ybi::Vec3(0.0f, 1.0f, 0.0f);
-    ybi::float3 W = ybi::Vec3(0.0f, 0.0f, 1.0f);
+    ybi::Vec3 origin = ybi::Vec3(0.0f, 0.0f, 0.0f);
+    ybi::Vec3 U = ybi::Vec3(1.0f, 0.0f, 0.0f);
+    ybi::Vec3 V = ybi::Vec3(0.0f, 1.0f, 0.0f);
+    ybi::Vec3 W = ybi::Vec3(0.0f, 0.0f, 1.0f);
 };
 
 static std::string ReadTextFile(const std::string &path)
@@ -170,11 +170,11 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
         return std::nullopt;
     }
 
-    ybi::float3 right = ybi::Normalize(ybi::Vec3(
+    ybi::Vec3 right = ybi::Normalize(ybi::Vec3(
         worldFromCamera.m[0][0], worldFromCamera.m[1][0], worldFromCamera.m[2][0]));
-    ybi::float3 up = ybi::Normalize(ybi::Vec3(
+    ybi::Vec3 up = ybi::Normalize(ybi::Vec3(
         worldFromCamera.m[0][1], worldFromCamera.m[1][1], worldFromCamera.m[2][1]));
-    ybi::float3 forward = ybi::Normalize(ybi::Vec3(
+    ybi::Vec3 forward = ybi::Normalize(ybi::Vec3(
         -worldFromCamera.m[0][2], -worldFromCamera.m[1][2], -worldFromCamera.m[2][2]));
     if (std::abs(ybi::Dot(forward, forward)) < 1e-6f)
     {
@@ -252,7 +252,7 @@ static bool TessellateRootSubdivisionMeshes(Scene *rootScene, const Camera &came
     return true;
 }
 
-static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::float3 &valueOut)
+static bool ParseFloat3(int argc, char **argv, int startIndex, ybi::Vec3 &valueOut)
 {
     if (startIndex + 2 >= argc)
     {
@@ -550,7 +550,7 @@ static CliOptions ParseCli(int argc, char **argv)
         }
         if (arg == "--cam-pos")
         {
-            ybi::float3 value = {};
+            ybi::Vec3 value = {};
             if (!ParseFloat3(argc, argv, i + 1, value))
             {
                 PrintUsage(argv[0]);
@@ -562,7 +562,7 @@ static CliOptions ParseCli(int argc, char **argv)
         }
         if (arg == "--look-at")
         {
-            ybi::float3 value = {};
+            ybi::Vec3 value = {};
             if (!ParseFloat3(argc, argv, i + 1, value))
             {
                 PrintUsage(argv[0]);
@@ -1399,7 +1399,7 @@ static const Attribute *FindMeshSTAttribute(const Mesh &mesh)
         if (attr.name == "st" && attr.type == AttributeType::Float2 &&
             attr.interpolation == PrimvarInterpolation::FaceVarying && attr.indices.size() > 0)
         {
-            if ((attr.data.size() % sizeof(ybi::float2)) == 0)
+            if ((attr.data.size() % sizeof(ybi::Vec2)) == 0)
             {
                 return &attr;
             }
@@ -1425,7 +1425,7 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
             continue;
         }
 
-        const size_t positionsBytes = sizeof(ybi::float3) * mesh.positions.size();
+        const size_t positionsBytes = sizeof(ybi::Vec3) * mesh.positions.size();
         const size_t indicesBytes = sizeof(int) * mesh.indices.size();
         DeviceMemoryView<uint8_t> positionsBuffer = device->AllocBytes(positionsBytes);
         DeviceMemoryView<uint8_t> indicesBuffer = device->AllocBytes(indicesBytes);
@@ -1450,7 +1450,7 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
                 texcoordIndicesBuffer, stAttr->indices.data(), texcoordIndicesBytes);
             out.ownedBuffers.push_back(texcoordsBuffer);
             out.ownedBuffers.push_back(texcoordIndicesBuffer);
-            texcoordCount = int(stAttr->data.size() / sizeof(ybi::float2));
+            texcoordCount = int(stAttr->data.size() / sizeof(ybi::Vec2));
             texcoordIndexCount = int(stAttr->indices.size());
         }
 
@@ -1472,8 +1472,8 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
 static void
 RenderTraversable(Device *device,
                   BVHHandle traversable,
-                  const ybi::float3 &boundsMin,
-                  const ybi::float3 &boundsMax,
+                  const ybi::Vec3 &boundsMin,
+                  const ybi::Vec3 &boundsMax,
                   const char *outputFile,
                   IntegratorType integrator,
                   int spp,
@@ -1503,8 +1503,8 @@ RenderTraversable(Device *device,
                   int singlePixelY,
                   bool writeFeedbackFiles,
                   const std::optional<RenderCameraOverride> &cameraOverride,
-                  const std::optional<ybi::float3> &cameraPositionOverride,
-                  const std::optional<ybi::float3> &lookAtOverride)
+                  const std::optional<ybi::Vec3> &cameraPositionOverride,
+                  const std::optional<ybi::Vec3> &lookAtOverride)
 {
     YBI_ASSERT(device);
     printf("render: begin\n");
@@ -1556,8 +1556,8 @@ RenderTraversable(Device *device,
         }
     }
 
-    const ybi::float3 center = (boundsMin + boundsMax) * 0.5f;
-    const ybi::float3 extent = boundsMax - boundsMin;
+    const ybi::Vec3 center = (boundsMin + boundsMax) * 0.5f;
+    const ybi::Vec3 extent = boundsMax - boundsMin;
     const float diagonal = std::max(0.001f, ybi::Length(extent));
 
     LaunchParams params = {};
@@ -1574,18 +1574,18 @@ RenderTraversable(Device *device,
     }
     else
     {
-        const ybi::float3 eye = cameraPositionOverride.has_value()
+        const ybi::Vec3 eye = cameraPositionOverride.has_value()
                                     ? cameraPositionOverride.value()
                                     : center + ybi::Vec3(0.0f, 0.0f, 1.25f * diagonal);
-        const ybi::float3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
-        const ybi::float3 forward = ybi::Normalize(lookAt - eye);
-        ybi::float3 worldUp = ybi::Vec3(0.0f, 0.0f, 1.0f);
+        const ybi::Vec3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
+        const ybi::Vec3 forward = ybi::Normalize(lookAt - eye);
+        ybi::Vec3 worldUp = ybi::Vec3(0.0f, 0.0f, 1.0f);
         if (std::abs(ybi::Dot(forward, worldUp)) > 0.999f)
         {
             worldUp = ybi::Vec3(0.0f, 1.0f, 0.0f);
         }
-        const ybi::float3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
-        const ybi::float3 up = ybi::Normalize(ybi::Cross(right, forward));
+        const ybi::Vec3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
+        const ybi::Vec3 up = ybi::Normalize(ybi::Cross(right, forward));
         const float aspect = static_cast<float>(width) / static_cast<float>(height);
         const float fovY = 45.0f * 3.14159265358979323846f / 180.0f;
         const float tanHalfFov = std::tan(fovY * 0.5f);
@@ -2308,8 +2308,8 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
         }
     }
 
-    const ybi::float3 dummyBoundsMin = ybi::Vec3(-1.0f, -1.0f, -1.0f);
-    const ybi::float3 dummyBoundsMax = ybi::Vec3(1.0f, 1.0f, 1.0f);
+    const ybi::Vec3 dummyBoundsMin = ybi::Vec3(-1.0f, -1.0f, -1.0f);
+    const ybi::Vec3 dummyBoundsMax = ybi::Vec3(1.0f, 1.0f, 1.0f);
     RenderTraversable(device,
                       state.rootScene->bvhHandle,
                       dummyBoundsMin,

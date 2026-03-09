@@ -2,7 +2,7 @@
 
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/stage.h>
-#include "util/float3.h"
+#include "util/vec3.h"
 #include "util/float3x4.h"
 #include <string>
 #include <unordered_map>

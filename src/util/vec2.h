@@ -18,9 +18,6 @@ struct Vec2
     YBI_INTEGRATOR_HD float &operator[](int i) { return *(&x + i); }
 };
 
-using float2 = Vec2;
-
-static_assert(sizeof(float2) == sizeof(Vec2));
 static_assert(sizeof(Vec2) == sizeof(float) * 2);
 
 YBI_INTEGRATOR_HD Vec2 operator+(const Vec2 &a, const Vec2 &b)

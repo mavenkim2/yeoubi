@@ -1,8 +1,8 @@
 #pragma once
 
-#include "util/float2.h"
-#include "util/float3.h"
-#include "util/float4.h"
+#include "util/vec2.h"
+#include "util/vec3.h"
+#include "util/vec4.h"
 #include <cmath>
 #include <cstdint>
 
@@ -18,22 +18,16 @@ using ybi::Clamp;
 using ybi::Cross;
 using ybi::Dot;
 using ybi::FaceForward;
-using ybi::float2;
-using ybi::float3;
-using ybi::float4;
+using ybi::Vec2;
+using ybi::Vec3;
+using ybi::Vec4;
 using ybi::Length;
 using ybi::LengthSquared;
 using ybi::Lerp;
 using ybi::Luminance;
 using ybi::MaxComponent;
-using ybi::Mul;
 using ybi::Normalize;
 using ybi::Reflect;
-using ybi::Add;
-using ybi::Sub;
-using ybi::Vec2;
-using ybi::Vec3;
-using ybi::Vec4;
 
 static constexpr int kSemanticDiffuse = 0;
 static constexpr int kSemanticRoughness = 1;

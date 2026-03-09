@@ -1,6 +1,6 @@
 #include "io/usd_subdiv_json_io.h"
 
-#include "util/float3.h"
+#include "util/vec3.h"
 
 #include <cstdio>
 #include <cctype>
@@ -256,11 +256,11 @@ bool LoadSelectedSubdivFromJson(const std::filesystem::path &jsonPath,
         fprintf(stderr, "Invalid points array in JSON (not xyz triplets): %s\n", jsonPath.string().c_str());
         return false;
     }
-    std::vector<ybi::float3> points;
+    std::vector<ybi::Vec3> points;
     points.resize(pointScalars.size() / 3);
     for (size_t i = 0; i + 2 < pointScalars.size(); i += 3)
     {
-        ybi::float3 p = {};
+        ybi::Vec3 p = {};
         p.x = pointScalars[i];
         p.y = pointScalars[i + 1];
         p.z = pointScalars[i + 2];

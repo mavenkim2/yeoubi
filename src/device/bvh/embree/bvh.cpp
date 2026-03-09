@@ -4,7 +4,7 @@
 
 #include "scene/scene.h"
 #include "util/assert.h"
-#include "util/float4.h"
+#include "util/vec4.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -38,7 +38,7 @@ static RTCScene BuildTriangleLeafScene(RTCDevice embreeDevice, const Mesh &mesh)
                                RTC_FORMAT_FLOAT3,
                                mesh.positions.data(),
                                0,
-                               sizeof(float3),
+                               sizeof(Vec3),
                                mesh.positions.size());
     rtcSetSharedGeometryBuffer(triangles,
                                RTC_BUFFER_TYPE_INDEX,
@@ -82,7 +82,7 @@ static RTCScene BuildCurveLeafScene(RTCDevice embreeDevice, const Curves &curves
     YBI_ASSERT(curves.GetNumVertices() > 0);
     YBI_ASSERT(curves.GetNumCurves() > 0);
 
-    const Array<float3> &positions = curves.GetVertices();
+    const Array<Vec3> &positions = curves.GetVertices();
     const Array<float> &widths = curves.GetWidths();
     const uint32_t numVertices = static_cast<uint32_t>(curves.GetNumVertices());
 
@@ -109,11 +109,11 @@ static RTCScene BuildCurveLeafScene(RTCDevice embreeDevice, const Curves &curves
     RTCGeometry curveGeometry = rtcNewGeometry(embreeDevice, RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE);
     YBI_ASSERT(curveGeometry);
 
-    float4 *vertexBuffer = static_cast<float4 *>(rtcSetNewGeometryBuffer(curveGeometry,
+    Vec4 *vertexBuffer = static_cast<Vec4 *>(rtcSetNewGeometryBuffer(curveGeometry,
                                                                           RTC_BUFFER_TYPE_VERTEX,
                                                                           0,
                                                                           RTC_FORMAT_FLOAT4,
-                                                                          sizeof(float4),
+                                                                          sizeof(Vec4),
                                                                           numVertices));
     uint32_t *indexBuffer = static_cast<uint32_t *>(rtcSetNewGeometryBuffer(curveGeometry,
                                                                              RTC_BUFFER_TYPE_INDEX,
@@ -132,7 +132,7 @@ static RTCScene BuildCurveLeafScene(RTCDevice embreeDevice, const Curves &curves
         for (uint32_t localVertex = 0; localVertex < count; localVertex++)
         {
             const uint32_t vertexIndex = start + localVertex;
-            const float3 p = positions[vertexIndex];
+            const Vec3 p = positions[vertexIndex];
             const float width = std::max(0.0f, ResolveCurveWidth(curves, widths, curveIndex, vertexIndex));
             vertexBuffer[vertexIndex] = Vec4(p.x, p.y, p.z, width * 0.5f);
         }

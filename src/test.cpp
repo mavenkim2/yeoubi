@@ -1,7 +1,7 @@
 #include "device/device.h"
 #include "io/usd/load.h"
 #include "scene/scene.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -122,11 +122,11 @@ int main(int argc, char **argv)
             continue;
         }
 
-        const size_t positionsBytes = sizeof(ybi::float3) * mesh.positions.size();
+        const size_t positionsBytes = sizeof(ybi::Vec3) * mesh.positions.size();
         const size_t indicesBytes = sizeof(int) * mesh.indices.size();
 
-        DeviceMemoryView<ybi::float3> positionsBuffer =
-            device->Alloc<ybi::float3>(mesh.positions.size());
+        DeviceMemoryView<ybi::Vec3> positionsBuffer =
+            device->Alloc<ybi::Vec3>(mesh.positions.size());
         DeviceMemoryView<int> indicesBuffer = device->Alloc<int>(mesh.indices.size());
         device->CopyBytesToDevice(Device::ByteView(positionsBuffer),
                                   mesh.positions.data(),

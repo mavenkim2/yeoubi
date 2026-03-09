@@ -36,25 +36,25 @@ template <> struct LimitEvalValueTraits<float>
     }
 };
 
-template <> struct LimitEvalValueTraits<float2>
+template <> struct LimitEvalValueTraits<Vec2>
 {
-    static float2 Zero()
+    static Vec2 Zero()
     {
         return Vec2(0.0f);
     }
 };
 
-template <> struct LimitEvalValueTraits<float3>
+template <> struct LimitEvalValueTraits<Vec3>
 {
-    static float3 Zero()
+    static Vec3 Zero()
     {
         return Vec3(0.0f);
     }
 };
 
-template <> struct LimitEvalValueTraits<float4>
+template <> struct LimitEvalValueTraits<Vec4>
 {
-    static float4 Zero()
+    static Vec4 Zero()
     {
         return Vec4(0.0f, 0.0f, 0.0f, 0.0f);
     }
@@ -76,9 +76,9 @@ template <typename T> struct LimitEvalValue
 };
 
 using LimitEvalFloat = LimitEvalValue<float>;
-using LimitEvalFloat2 = LimitEvalValue<float2>;
-using LimitEvalFloat3 = LimitEvalValue<float3>;
-using LimitEvalFloat4 = LimitEvalValue<float4>;
+using LimitEvalFloat2 = LimitEvalValue<Vec2>;
+using LimitEvalFloat3 = LimitEvalValue<Vec3>;
+using LimitEvalFloat4 = LimitEvalValue<Vec4>;
 using LimitEvalVertex = LimitEvalFloat3;
 using LimitEvalFVar2 = LimitEvalFloat2;
 
@@ -327,22 +327,22 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         }
         else if (attr->type == AttributeType::Float2)
         {
-            Array<float2> coarse = BytesToArray<float2>(attr->data);
-            outAttr.valuesFloat2 = BuildLimitEvalValues<LimitEvalFloat2, float2>(
+            Array<Vec2> coarse = BytesToArray<Vec2>(attr->data);
+            outAttr.valuesFloat2 = BuildLimitEvalValues<LimitEvalFloat2, Vec2>(
                 *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
             ok = !outAttr.valuesFloat2.empty();
         }
         else if (attr->type == AttributeType::Float3)
         {
-            Array<float3> coarse = BytesToArray<float3>(attr->data);
-            outAttr.valuesFloat3 = BuildLimitEvalValues<LimitEvalFloat3, float3>(
+            Array<Vec3> coarse = BytesToArray<Vec3>(attr->data);
+            outAttr.valuesFloat3 = BuildLimitEvalValues<LimitEvalFloat3, Vec3>(
                 *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
             ok = !outAttr.valuesFloat3.empty();
         }
         else if (attr->type == AttributeType::Float4)
         {
-            Array<float4> coarse = BytesToArray<float4>(attr->data);
-            outAttr.valuesFloat4 = BuildLimitEvalValues<LimitEvalFloat4, float4>(
+            Array<Vec4> coarse = BytesToArray<Vec4>(attr->data);
+            outAttr.valuesFloat4 = BuildLimitEvalValues<LimitEvalFloat4, Vec4>(
                 *refiner, *patchTable, coarse, attr->interpolation, outAttr.fvarChannel);
             ok = !outAttr.valuesFloat4.empty();
         }
@@ -352,8 +352,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         }
     }
 
-    const float3 eye = options.eye;
-    const float3 lookAt = options.lookAt;
+    const Vec3 eye = options.eye;
+    const Vec3 lookAt = options.lookAt;
 
     int tmaxComputedEdges = 0;
     const std::vector<SubdivisionPatch> splitPatches =

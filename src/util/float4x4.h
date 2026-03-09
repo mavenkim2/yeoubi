@@ -88,7 +88,7 @@ struct Float4x4
 
 using float4x4 = Float4x4;
 
-YBI_INTEGRATOR_HD Float4x4 Mul(const Float4x4 &a, const Float4x4 &b)
+YBI_INTEGRATOR_HD Float4x4 operator*(const Float4x4 &a, const Float4x4 &b)
 {
     Float4x4 c;
     for (int i = 0; i < 4; ++i)
@@ -102,7 +102,7 @@ YBI_INTEGRATOR_HD Float4x4 Mul(const Float4x4 &a, const Float4x4 &b)
     return c;
 }
 
-YBI_INTEGRATOR_HD Vec4 Mul(const Float4x4 &mat, const Vec4 &p)
+YBI_INTEGRATOR_HD Vec4 operator*(const Float4x4 &mat, const Vec4 &p)
 {
     return Vec4(Dot(Vec4(mat.m[0][0], mat.m[0][1], mat.m[0][2], mat.m[0][3]), p),
                 Dot(Vec4(mat.m[1][0], mat.m[1][1], mat.m[1][2], mat.m[1][3]), p),

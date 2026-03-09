@@ -5,8 +5,8 @@
 #include "scene/micropolygon_mesh.h"
 #include "scene/subdivision_mesh.h"
 #include "util/array.h"
-#include "util/float2.h"
-#include "util/float3.h"
+#include "util/vec2.h"
+#include "util/vec3.h"
 #include "util/float3x4.h"
 #include "util/float4x4.h"
 #include "util/host_memory_arena.h"
@@ -52,7 +52,7 @@ struct BVH
 
 struct Mesh
 {
-    Array<float3> positions;
+    Array<Vec3> positions;
     Array<int> indices;
     std::vector<Attribute> attributes;
     std::string primPath;
@@ -64,14 +64,14 @@ struct Mesh
     ~Mesh() = default;
     Mesh(Mesh &&other) = default;
 
-    Mesh(Array<float3> &&pos, Array<int> &&idx);
-    Mesh(Array<float3> &&pos, Array<int> &&idx, const Float3x4 &parentFromLocal);
+    Mesh(Array<Vec3> &&pos, Array<int> &&idx);
+    Mesh(Array<Vec3> &&pos, Array<int> &&idx, const Float3x4 &parentFromLocal);
 };
 
 struct Curves
 {
 private:
-    Array<float3> positions;
+    Array<Vec3> positions;
     Array<float> widths;
     // num_offsets = num_curves + 1
     Array<int> curveVertexOffsets;
@@ -84,8 +84,8 @@ public:
     ~Curves() = default;
     Curves(Curves &&other) = default;
 
-    Curves(Array<float3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets);
-    Curves(Array<float3> &&positions,
+    Curves(Array<Vec3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets);
+    Curves(Array<Vec3> &&positions,
            Array<float> &&widths,
            Array<int> &&curveVertexOffsets,
            const Float3x4 &parentFromLocal);
@@ -96,7 +96,7 @@ public:
     int GetCurveNumSegments(size_t curveIndex) const;
     void GetCurveRange(uint32_t index, uint32_t &start, uint32_t &count) const;
 
-    const Array<float3> &GetVertices() const;
+    const Array<Vec3> &GetVertices() const;
     const Array<float> &GetWidths() const;
 };
 
@@ -154,8 +154,8 @@ struct Camera
     int viewportHeight = 1080;
     Float4x4 cameraFromWorld = Float4x4::Identity();
     Float4x4 clipFromCamera = Float4x4::Identity();
-    float3 worldPosition = Vec3(0.0f, 0.0f, 0.0f);
-    float3 forward = Vec3(0.0f, 0.0f, -1.0f);
+    Vec3 worldPosition = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 forward = Vec3(0.0f, 0.0f, -1.0f);
     float verticalFovDegrees = 45.0f;
     float nearPlane = 1.0f;
     bool hasValidCamera = false;

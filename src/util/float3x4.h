@@ -1,6 +1,6 @@
 #pragma once
 
-#include "util/float4.h"
+#include "util/vec4.h"
 
 YBI_NAMESPACE_BEGIN
 
@@ -55,7 +55,7 @@ struct Float3x4
 
 using float3x4 = Float3x4;
 
-YBI_INTEGRATOR_HD Vec3 Mul(const Float3x4 &m, const Vec4 &p)
+YBI_INTEGRATOR_HD Vec3 operator*(const Float3x4 &m, const Vec4 &p)
 {
     return Vec3(Dot(Vec4(m.m[0][0], m.m[0][1], m.m[0][2], m.m[0][3]), p),
                 Dot(Vec4(m.m[1][0], m.m[1][1], m.m[1][2], m.m[1][3]), p),

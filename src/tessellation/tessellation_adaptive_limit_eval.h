@@ -191,20 +191,20 @@ static bool EvaluateLimitValue(const Far::PatchMap &patchMap,
 
 static std::vector<LimitEvalVertex> BuildLimitEvalVertices(const Far::TopologyRefiner &refiner,
                                                            const Far::PatchTable &patchTable,
-                                                           const Array<float3> &coarsePoints)
+                                                           const Array<Vec3> &coarsePoints)
 {
-    return BuildLimitEvalValues<LimitEvalVertex, float3>(
+    return BuildLimitEvalValues<LimitEvalVertex, Vec3>(
         refiner, patchTable, coarsePoints, PrimvarInterpolation::Vertex);
 }
 
 static std::vector<LimitEvalFVar2> BuildLimitEvalFVarValues(
     const Far::TopologyRefiner &refiner,
     const Far::PatchTable &patchTable,
-    const Array<float2> &coarseValues,
+    const Array<Vec2> &coarseValues,
     PrimvarInterpolation interpolation = PrimvarInterpolation::FaceVarying,
     int channel = 0)
 {
-    return BuildLimitEvalValues<LimitEvalFVar2, float2>(
+    return BuildLimitEvalValues<LimitEvalFVar2, Vec2>(
         refiner, patchTable, coarseValues, interpolation, channel);
 }
 
@@ -213,9 +213,9 @@ static bool EvaluateLimitPosition(const Far::PatchMap &patchMap,
                                   const std::vector<LimitEvalVertex> &limitValues,
                                   int ptexFaceId,
                                   const pxr::GfVec2f &uv,
-                                  float3 *outP)
+                                  Vec3 *outP)
 {
-    return EvaluateLimitValue<LimitEvalVertex, float3>(patchMap,
+    return EvaluateLimitValue<LimitEvalVertex, Vec3>(patchMap,
                                                        patchTable,
                                                        limitValues,
                                                        ptexFaceId,
@@ -229,28 +229,28 @@ static bool EvaluateLimitFVar2(const Far::PatchMap &patchMap,
                                const std::vector<LimitEvalFVar2> &limitValues,
                                int ptexFaceId,
                                const pxr::GfVec2f &uv,
-                               float2 *outUV,
+                               Vec2 *outUV,
                                PrimvarInterpolation interpolation = PrimvarInterpolation::FaceVarying,
                                int channel = 0)
 {
-    return EvaluateLimitValue<LimitEvalFVar2, float2>(
+    return EvaluateLimitValue<LimitEvalFVar2, Vec2>(
         patchMap, patchTable, limitValues, ptexFaceId, uv, interpolation, outUV, channel);
 }
 
-static Float4x4 BuildFallbackCameraFromWorld(const float3 &eye, const float3 &lookAt)
+static Float4x4 BuildFallbackCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
 {
-    float3 forward = Normalize(lookAt - eye);
+    Vec3 forward = Normalize(lookAt - eye);
     if (Length(forward) <= 1e-8f)
     {
         forward = Vec3(0.0f, 0.0f, 1.0f);
     }
-    float3 worldUp = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 worldUp = Vec3(0.0f, 0.0f, 1.0f);
     if (std::abs(Dot(forward, worldUp)) > 0.999f)
     {
         worldUp = Vec3(0.0f, 1.0f, 0.0f);
     }
-    const float3 right = Normalize(Cross(forward, worldUp));
-    const float3 up = Normalize(Cross(right, forward));
+    const Vec3 right = Normalize(Cross(forward, worldUp));
+    const Vec3 up = Normalize(Cross(right, forward));
     return Float4x4(right.x,
                     right.y,
                     right.z,
@@ -298,7 +298,7 @@ static Float4x4 BuildFallbackClipFromCamera(float verticalFovDegrees, int viewpo
                     0.0f);
 }
 
-static float EvaluateFrustumPlane(const float4 &p, int planeIndex)
+static float EvaluateFrustumPlane(const Vec4 &p, int planeIndex)
 {
     switch (planeIndex)
     {
@@ -317,13 +317,13 @@ static float EvaluateFrustumPlane(const float4 &p, int planeIndex)
     }
 }
 
-static bool ClipSegmentToFrustum(float4 *a, float4 *b)
+static bool ClipSegmentToFrustum(Vec4 *a, Vec4 *b)
 {
     YBI_ASSERT(a);
     YBI_ASSERT(b);
     float t0 = 0.0f;
     float t1 = 1.0f;
-    const float4 ab = *b - *a;
+    const Vec4 ab = *b - *a;
     for (int plane = 0; plane < 6; ++plane)
     {
         const float fa = EvaluateFrustumPlane(*a, plane);
@@ -359,7 +359,7 @@ static bool ClipSegmentToFrustum(float4 *a, float4 *b)
     return true;
 }
 
-static bool ProjectClipPointToScreen(const float4 &clipP,
+static bool ProjectClipPointToScreen(const Vec4 &clipP,
                                      int viewportWidth,
                                      int viewportHeight,
                                      pxr::GfVec2f *outScreen)
@@ -398,8 +398,8 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
                                            int sampleStepsN,
                                            float targetPixelSpacing,
                                            int splitThreshold,
-                                           const float3 &eye,
-                                           const float3 &lookAt,
+                                           const Vec3 &eye,
+                                           const Vec3 &lookAt,
                                            int viewportWidth,
                                            int viewportHeight,
                                            float verticalFovDegrees,
@@ -427,12 +427,12 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
         useCameraMatrices
             ? clipFromCamera
             : BuildFallbackClipFromCamera(verticalFovDegrees, viewportWidth, viewportHeight);
-    const Float4x4 clipFromWorld = Mul(usedClipFromCamera, usedCameraFromWorld);
+    const Float4x4 clipFromWorld = usedClipFromCamera * usedCameraFromWorld;
 
     float maxLi = 0.0f;
     float sumLi = 0.0f;
     bool hadVisibleSegment = false;
-    float3 p0 = Vec3(0.0f);
+    Vec3 p0 = Vec3(0.0f);
     if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
     {
         if (nonUniformReasonOut)
@@ -441,12 +441,12 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
         }
         return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
     }
-    float4 prevClip = Mul(clipFromWorld, Vec4(p0.x, p0.y, p0.z, 1.0f));
+    Vec4 prevClip = clipFromWorld * Vec4(p0.x, p0.y, p0.z, 1.0f);
     for (int i = 1; i < sampleStepsN; ++i)
     {
         const float t = float(i) / float(sampleStepsN - 1);
         const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
-        float3 p = Vec3(0.0f);
+        Vec3 p = Vec3(0.0f);
         if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
         {
             if (nonUniformReasonOut)
@@ -455,9 +455,9 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
             }
             return SUBDIV_EDGE_FACTOR_NON_UNIFORM;
         }
-        const float4 currClip = Mul(clipFromWorld, Vec4(p.x, p.y, p.z, 1.0f));
-        float4 segA = prevClip;
-        float4 segB = currClip;
+        const Vec4 currClip = clipFromWorld * Vec4(p.x, p.y, p.z, 1.0f);
+        Vec4 segA = prevClip;
+        Vec4 segB = currClip;
         if (ClipSegmentToFrustum(&segA, &segB))
         {
             pxr::GfVec2f sa(0.0f), sb(0.0f);
@@ -506,7 +506,7 @@ static float ComputeLength(const Far::PatchMap &patchMap,
     }
 
     float sumLi = 0.0f;
-    float3 p0 = Vec3(0.0f);
+    Vec3 p0 = Vec3(0.0f);
     if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uvStart, &p0))
     {
         return 0.f;
@@ -515,7 +515,7 @@ static float ComputeLength(const Far::PatchMap &patchMap,
     {
         const float t = float(i) / float(sampleStepsN - 1);
         const pxr::GfVec2f uv = uvStart * (1.0f - t) + uvEnd * t;
-        float3 p = Vec3(0.0f);
+        Vec3 p = Vec3(0.0f);
         if (!EvaluateLimitPosition(patchMap, patchTable, limitValues, ptexFaceId, uv, &p))
         {
             return 0.f;

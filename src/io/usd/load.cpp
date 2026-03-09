@@ -5,10 +5,10 @@
 #include "scene/attributes.h"
 #include "scene/scene.h"
 #include "util/assert.h"
-#include "util/float2.h"
-#include "util/float3.h"
+#include "util/vec2.h"
+#include "util/vec3.h"
 #include "util/float3x4.h"
-#include "util/float4.h"
+#include "util/vec4.h"
 #include "util/float4x4.h"
 
 #include <algorithm>
@@ -375,12 +375,12 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
                                    TextureWrapMode *outWrapS,
                                    TextureWrapMode *outWrapT);
 
-static ybi::float3 ToFloat3(const pxr::GfVec3f &v)
+static ybi::Vec3 ToFloat3(const pxr::GfVec3f &v)
 {
     return ybi::Vec3(v[0], v[1], v[2]);
 }
 
-static ybi::float3 ToFloat3(const pxr::GfVec3d &v)
+static ybi::Vec3 ToFloat3(const pxr::GfVec3d &v)
 {
     return ybi::Vec3(static_cast<float>(v[0]),
                             static_cast<float>(v[1]),
@@ -404,14 +404,14 @@ static float ClampFinite(float value, float lo, float hi, float fallback)
     return value;
 }
 
-static ybi::float3 ClampFiniteColor(const ybi::float3 &value, float lo, float hi)
+static ybi::Vec3 ClampFiniteColor(const ybi::Vec3 &value, float lo, float hi)
 {
     return ybi::Vec3(ClampFinite(value.x, lo, hi, lo),
                             ClampFinite(value.y, lo, hi, lo),
                             ClampFinite(value.z, lo, hi, lo));
 }
 
-static ybi::float3 ReadInputColor3f(const pxr::UsdShadeInput &input, const ybi::float3 &fallback)
+static ybi::Vec3 ReadInputColor3f(const pxr::UsdShadeInput &input, const ybi::Vec3 &fallback)
 {
     if (!input)
     {
@@ -537,22 +537,22 @@ static void ReadCommonLightParams(const LightSchemaT &light, PackedLight *outLig
     outLight->flags = preserveFlags | (normalize ? LIGHT_FLAG_NORMALIZED : 0u);
 }
 
-static ybi::float3 TransformPoint(const pxr::GfMatrix4d &m, const pxr::GfVec3d &p)
+static ybi::Vec3 TransformPoint(const pxr::GfMatrix4d &m, const pxr::GfVec3d &p)
 {
     return ToFloat3(m.Transform(p));
 }
 
-static ybi::float3 TransformDirection(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
+static ybi::Vec3 TransformDirection(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
 {
     return ybi::Normalize(ToFloat3(m.TransformDir(v)));
 }
 
-static ybi::float3 TransformVector(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
+static ybi::Vec3 TransformVector(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
 {
     return ToFloat3(m.TransformDir(v));
 }
 
-static ybi::float3 SafeNormalizeOrDefault(const ybi::float3 &value, const ybi::float3 &fallback)
+static ybi::Vec3 SafeNormalizeOrDefault(const ybi::Vec3 &value, const ybi::Vec3 &fallback)
 {
     const float len = ybi::Length(value);
     if (len <= 1.0e-8f)
@@ -575,7 +575,7 @@ static void FinalizeLightBasis(PackedLight *light)
 
     if (std::fabs(ybi::Dot(light->direction, light->tangent)) > 0.999f)
     {
-        const ybi::float3 up = std::fabs(light->direction.z) < 0.999f
+        const ybi::Vec3 up = std::fabs(light->direction.z) < 0.999f
                                    ? ybi::Vec3(0.0f, 0.0f, 1.0f)
                                    : ybi::Vec3(0.0f, 1.0f, 0.0f);
         light->tangent = ybi::Normalize(ybi::Cross(up, light->direction));
@@ -593,7 +593,7 @@ static float ComputeAreaEmissionScale(float intensityScale, float area, bool nor
     return intensityScale;
 }
 
-static float ComputeLightLuminance(const ybi::float3 &rgb)
+static float ComputeLightLuminance(const ybi::Vec3 &rgb)
 {
     return std::max(0.0f, rgb.x * 0.2126f + rgb.y * 0.7152f + rgb.z * 0.0722f);
 }
@@ -735,9 +735,9 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.type = static_cast<uint32_t>(LightType::Rect);
             info.packed.flags |= LIGHT_FLAG_ONE_SIDED;
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
-            const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
-            const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
-            const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            const ybi::Vec3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            const ybi::Vec3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
+            const ybi::Vec3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
             info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::Vec3(0.0f, 0.0f, -1.0f));
             info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::Vec3(1.0f, 0.0f, 0.0f));
             info.packed.bitangent =
@@ -760,9 +760,9 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.type = static_cast<uint32_t>(LightType::Disk);
             info.packed.flags |= LIGHT_FLAG_ONE_SIDED;
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
-            const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
-            const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
-            const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
+            const ybi::Vec3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            const ybi::Vec3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
+            const ybi::Vec3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
             info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::Vec3(0.0f, 0.0f, -1.0f));
             info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::Vec3(1.0f, 0.0f, 0.0f));
             info.packed.bitangent =
@@ -808,9 +808,9 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             pxr::UsdLuxCylinderLight light(prim);
             info.packed.type = static_cast<uint32_t>(LightType::Cylinder);
             info.packed.position = TransformPoint(localToWorld, pxr::GfVec3d(0.0, 0.0, 0.0));
-            const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
-            const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
-            const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
+            const ybi::Vec3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
+            const ybi::Vec3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
+            const ybi::Vec3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
             info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::Vec3(0.0f, 0.0f, 1.0f));
             info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::Vec3(1.0f, 0.0f, 0.0f));
             info.packed.bitangent =
@@ -1039,7 +1039,7 @@ static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
     const bool hasExplicitIndices = stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, 0.0);
     const pxr::TfToken interpolation = stPrimvar.GetInterpolation();
 
-    Array<float2> texcoords(stValues);
+    Array<Vec2> texcoords(stValues);
     Array<int> triTexcoordIndices(static_cast<size_t>(numTriangles) * 3u);
 
     int faceIndexOffset = 0;
@@ -1102,10 +1102,10 @@ static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
         faceIndexOffset += faceCount;
     }
 
-    Array<uint8_t> dataBytes(sizeof(float2) * texcoords.size());
+    Array<uint8_t> dataBytes(sizeof(Vec2) * texcoords.size());
     if (texcoords.size() > 0)
     {
-        memcpy(dataBytes.data(), texcoords.data(), sizeof(float2) * texcoords.size());
+        memcpy(dataBytes.data(), texcoords.data(), sizeof(Vec2) * texcoords.size());
     }
     *outAttribute = Attribute(std::move(dataBytes),
                               std::move(triTexcoordIndices),
@@ -1142,7 +1142,7 @@ static bool BuildSubdivisionMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
     const bool hasExplicitIndices = stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, 0.0);
     const pxr::TfToken interpolation = stPrimvar.GetInterpolation();
 
-    Array<float2> texcoords(stValues);
+    Array<Vec2> texcoords(stValues);
     Array<int> cornerTexcoordIndices(faceIndices.size());
     for (size_t corner = 0; corner < faceIndices.size(); ++corner)
     {
@@ -1176,10 +1176,10 @@ static bool BuildSubdivisionMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
         cornerTexcoordIndices[corner] = tcIndex;
     }
 
-    Array<uint8_t> dataBytes(sizeof(float2) * texcoords.size());
+    Array<uint8_t> dataBytes(sizeof(Vec2) * texcoords.size());
     if (texcoords.size() > 0)
     {
-        memcpy(dataBytes.data(), texcoords.data(), sizeof(float2) * texcoords.size());
+        memcpy(dataBytes.data(), texcoords.data(), sizeof(Vec2) * texcoords.size());
     }
     *outAttribute = Attribute(std::move(dataBytes),
                               std::move(cornerTexcoordIndices),
@@ -1353,8 +1353,8 @@ static MemoryView<uint8_t> ConvertPrimvarValues(Scene *scene, const pxr::VtValue
     if (values.IsHolding<pxr::VtArray<pxr::GfVec2f>>())
     {
         pxr::VtArray<pxr::GfVec2f> array = values.Get<pxr::VtArray<pxr::GfVec2f>>();
-        // MemoryView<float2> view = scene->arena.PushArray<float2>(array.size());
-        // memcpy(view.data(), array.data(), array.size() * sizeof(float2));
+        // MemoryView<Vec2> view = scene->arena.PushArray<Vec2>(array.size());
+        // memcpy(view.data(), array.data(), array.size() * sizeof(Vec2));
         // return view.CastToBytes();
     }
     else
@@ -1446,7 +1446,7 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh,
 
     pxr::UsdPrim prim = mesh.GetPrim();
 
-    Array<float3> positionsArray(positions);
+    Array<Vec3> positionsArray(positions);
     Array<int> faceIndicesArray(faceIndices);
     Array<int> faceCountsArray(faceCounts);
 
@@ -1663,7 +1663,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
 
     int totalNumVertices = 0;
 
-    Array<float3> positions(points);
+    Array<Vec3> positions(points);
     Array<float> curveWidths(widths);
     Array<int> curveOffsets(numCurves);
     int curveOffsetIndex = 0;
@@ -1799,8 +1799,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         const pxr::GfMatrix4d cameraLocalToWorld = xformCache.GetLocalToWorldTransform(cameraPrim);
         const pxr::GfVec3d cameraP = cameraLocalToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
         const pxr::GfVec3d cameraFwd = cameraLocalToWorld.TransformDir(pxr::GfVec3d(0.0, 0.0, -1.0));
-        float3 worldPos = Vec3(float(cameraP[0]), float(cameraP[1]), float(cameraP[2]));
-        float3 forward = Vec3(float(cameraFwd[0]), float(cameraFwd[1]), float(cameraFwd[2]));
+        Vec3 worldPos = Vec3(float(cameraP[0]), float(cameraP[1]), float(cameraP[2]));
+        Vec3 forward = Vec3(float(cameraFwd[0]), float(cameraFwd[1]), float(cameraFwd[2]));
         const float forwardLen = Length(forward);
         if (forwardLen > 1e-8f)
         {
@@ -2070,7 +2070,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                 }
             }
 
-            Array<float3> finalPositions(positions);
+            Array<Vec3> finalPositions(positions);
             Array<int> finalIndices(3 * numTriangles);
 
             int inputOffset = 0;

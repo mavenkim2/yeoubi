@@ -17,14 +17,14 @@ YBI_INTEGRATOR_HD bool IntersectRectLight(const PackedLight &light,
     }
 
     const Vec3 center = ToVec3(light.position);
-    const float t = Dot(Sub(center, rayOrigin), normal) / denom;
+    const float t = Dot(center - rayOrigin, normal) / denom;
     if (t <= 1.0e-4f || t >= tMax)
     {
         return false;
     }
 
-    const Vec3 hitPoint = Add(rayOrigin, Mul(rayDir, t));
-    const Vec3 rel = Sub(hitPoint, center);
+    const Vec3 hitPoint = rayOrigin + rayDir * t;
+    const Vec3 rel = hitPoint - center;
     const float x = Dot(rel, tangent);
     const float y = Dot(rel, bitangent);
     if (fabsf(x) > light.width * 0.5f || fabsf(y) > light.height * 0.5f)
@@ -32,7 +32,7 @@ YBI_INTEGRATOR_HD bool IntersectRectLight(const PackedLight &light,
         return false;
     }
 
-    const float cosLight = Dot(normal, Mul(rayDir, -1.0f));
+    const float cosLight = Dot(normal, -rayDir);
     const float pdf = SolidAnglePdfFromArea(pickPdf, light.areaScale, t * t, cosLight);
     if (!outHit || pdf <= 0.0f)
     {
@@ -65,14 +65,14 @@ YBI_INTEGRATOR_HD bool IntersectDiskLight(const PackedLight &light,
     }
 
     const Vec3 center = ToVec3(light.position);
-    const float t = Dot(Sub(center, rayOrigin), normal) / denom;
+    const float t = Dot(center - rayOrigin, normal) / denom;
     if (t <= 1.0e-4f || t >= tMax)
     {
         return false;
     }
 
-    const Vec3 hitPoint = Add(rayOrigin, Mul(rayDir, t));
-    const Vec3 rel = Sub(hitPoint, center);
+    const Vec3 hitPoint = rayOrigin + rayDir * t;
+    const Vec3 rel = hitPoint - center;
     const float x = Dot(rel, tangent);
     const float y = Dot(rel, bitangent);
     if (x * x + y * y > light.radius * light.radius)
@@ -80,7 +80,7 @@ YBI_INTEGRATOR_HD bool IntersectDiskLight(const PackedLight &light,
         return false;
     }
 
-    const float cosLight = Dot(normal, Mul(rayDir, -1.0f));
+    const float cosLight = Dot(normal, -rayDir);
     const float pdf = SolidAnglePdfFromArea(pickPdf, light.areaScale, t * t, cosLight);
     if (!outHit || pdf <= 0.0f)
     {
@@ -102,7 +102,7 @@ YBI_INTEGRATOR_HD bool IntersectSphereLight(const PackedLight &light,
                                             LightRayHit *outHit)
 {
     const Vec3 center = ToVec3(light.position);
-    const Vec3 oc = Sub(rayOrigin, center);
+    const Vec3 oc = rayOrigin - center;
     const float a = Dot(rayDir, rayDir);
     const float b = 2.0f * Dot(oc, rayDir);
     const float c = Dot(oc, oc) - light.radius * light.radius;
@@ -124,9 +124,9 @@ YBI_INTEGRATOR_HD bool IntersectSphereLight(const PackedLight &light,
         return false;
     }
 
-    const Vec3 hitPoint = Add(rayOrigin, Mul(rayDir, t));
-    const Vec3 normal = Normalize(Sub(hitPoint, center));
-    const float cosLight = Dot(normal, Mul(rayDir, -1.0f));
+    const Vec3 hitPoint = rayOrigin + rayDir * t;
+    const Vec3 normal = Normalize(hitPoint - center);
+    const float cosLight = Dot(normal, -rayDir);
     const float pdf = SolidAnglePdfFromArea(pickPdf, light.areaScale, t * t, cosLight);
     if (!outHit || pdf <= 0.0f)
     {
@@ -152,7 +152,7 @@ YBI_INTEGRATOR_HD bool IntersectCylinderLight(const PackedLight &light,
     Vec3 axis = {};
     GetLightBasis(light, &tangent, &bitangent, &axis);
 
-    const Vec3 localOrigin = Sub(rayOrigin, ToVec3(light.position));
+    const Vec3 localOrigin = rayOrigin - ToVec3(light.position);
     const float ox = Dot(localOrigin, tangent);
     const float oy = Dot(localOrigin, bitangent);
     const float oz = Dot(localOrigin, axis);
@@ -186,8 +186,8 @@ YBI_INTEGRATOR_HD bool IntersectCylinderLight(const PackedLight &light,
             {
                 const float x = ox + t * dx;
                 const float y = oy + t * dy;
-                const Vec3 normal = Normalize(Add(Mul(tangent, x), Mul(bitangent, y)));
-                const float cosLight = Dot(normal, Mul(rayDir, -1.0f));
+                const Vec3 normal = Normalize(tangent * x + bitangent * y);
+                const float cosLight = Dot(normal, -rayDir);
                 const float pdf = SolidAnglePdfFromArea(pickPdf, light.areaScale, t * t, cosLight);
                 if (pdf <= 0.0f)
                 {

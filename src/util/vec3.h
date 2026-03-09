@@ -19,9 +19,6 @@ struct Vec3
     YBI_INTEGRATOR_HD float &operator[](int i) { return *(&x + i); }
 };
 
-using float3 = Vec3;
-
-static_assert(sizeof(float3) == sizeof(Vec3));
 static_assert(sizeof(Vec3) == sizeof(float) * 3);
 
 YBI_INTEGRATOR_HD Vec3 operator+(const Vec3 &a, const Vec3 &b)
@@ -121,26 +118,6 @@ YBI_INTEGRATOR_HD Vec3 Clamp(const Vec3 &v, float lo, float hi)
 YBI_INTEGRATOR_HD Vec3 Lerp(const Vec3 &a, const Vec3 &b, float t)
 {
     return a * (1.0f - t) + b * t;
-}
-
-YBI_INTEGRATOR_HD Vec3 Add(const Vec3 &a, const Vec3 &b)
-{
-    return a + b;
-}
-
-YBI_INTEGRATOR_HD Vec3 Sub(const Vec3 &a, const Vec3 &b)
-{
-    return a - b;
-}
-
-YBI_INTEGRATOR_HD Vec3 Mul(const Vec3 &a, const Vec3 &b)
-{
-    return a * b;
-}
-
-YBI_INTEGRATOR_HD Vec3 Mul(const Vec3 &a, float b)
-{
-    return a * b;
 }
 
 YBI_INTEGRATOR_HD float MaxComponent(const Vec3 &v)

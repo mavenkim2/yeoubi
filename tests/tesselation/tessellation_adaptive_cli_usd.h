@@ -4,7 +4,7 @@
 #include "scene/scene.h"
 #include "tessellation/subdivision.h"
 #include "util/assert.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 
 #include <cctype>
 #include <cmath>
@@ -56,7 +56,7 @@ static double BytesToMiB(size_t bytes)
     return double(bytes) / (1024.0 * 1024.0);
 }
 
-static bool IsFiniteFloat3(const ybi::float3 &v)
+static bool IsFiniteFloat3(const ybi::Vec3 &v)
 {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
@@ -75,14 +75,14 @@ static bool IsUsdInputPath(const std::string &path)
            (lower.size() >= 5 && lower.substr(lower.size() - 5) == ".usdc");
 }
 
-static ybi::float3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh)
+static ybi::Vec3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh)
 {
     if (mesh.vertices.size() == 0)
     {
         return ybi::Vec3(0.0f);
     }
-    ybi::float3 sum = ybi::Vec3(0.0f);
-    for (const ybi::float3 &p : mesh.vertices)
+    ybi::Vec3 sum = ybi::Vec3(0.0f);
+    for (const ybi::Vec3 &p : mesh.vertices)
     {
         sum += p;
     }
@@ -163,7 +163,7 @@ static bool WriteSubdivisionControlCageObj(const ybi::SubdivisionMesh &mesh,
     std::fprintf(f, "# control_cage_prim %s\n", primPath.empty() ? "<unknown>" : primPath.c_str());
     std::fprintf(f, "# vertices %zu\n", mesh.vertices.size());
     std::fprintf(f, "# faces %zu\n", mesh.vertsPerFace.size());
-    for (const ybi::float3 &p : mesh.vertices)
+    for (const ybi::Vec3 &p : mesh.vertices)
     {
         std::fprintf(f, "v %.9g %.9g %.9g\n", double(p.x), double(p.y), double(p.z));
     }
@@ -211,8 +211,8 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     }
 
     const ybi::Camera &camera = scenePool.camera;
-    const ybi::float3 cameraWorldPos = camera.worldPosition;
-    const ybi::float3 cameraForward = camera.forward;
+    const ybi::Vec3 cameraWorldPos = camera.worldPosition;
+    const ybi::Vec3 cameraForward = camera.forward;
     const float cameraVerticalFovDegrees = camera.verticalFovDegrees;
     const std::string cameraPath = camera.path;
     const bool hasCamera = camera.hasValidCamera;

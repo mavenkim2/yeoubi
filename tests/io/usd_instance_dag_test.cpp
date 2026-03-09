@@ -130,7 +130,7 @@ def Xform "World"
         rel prototypes = [</World/PI/Prototypes/ProtoA>]
         int[] protoIndices = [0, 0]
         point3f[] positions = [(1, 0, 0), (0, 2, 0)]
-        float3[] scales = [(2, 2, 2), (1, 3, 1)]
+        Vec3[] scales = [(2, 2, 2), (1, 3, 1)]
     }
 }
 )USDA";

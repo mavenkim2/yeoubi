@@ -2,7 +2,7 @@
 
 #include "scene/scene.h"
 #include "scene/subdivision_mesh.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 
 #include <string>
 #include <vector>
@@ -17,8 +17,8 @@ struct SubdivisionRunOptions
     int splitThreshold = 1;
     int sampleSteps = 8;
 
-    float3 eye = Vec3(0.0f, 0.0f, 5.0f);
-    float3 lookAt = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 eye = Vec3(0.0f, 0.0f, 5.0f);
+    Vec3 lookAt = Vec3(0.0f, 0.0f, 0.0f);
     int viewportWidth = 1920;
     int viewportHeight = 1080;
     float verticalFovDegrees = 45.0f;

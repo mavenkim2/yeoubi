@@ -51,7 +51,7 @@ YBI_INTEGRATOR_HD float LinearToSrgb(float value)
 YBI_INTEGRATOR_HD Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
 {
     constexpr float kDisplayExposure = 16.0f;
-    const Vec3 exposed = Mul(radiance, kDisplayExposure);
+    const Vec3 exposed = radiance * kDisplayExposure;
     const Vec3 mapped =
         Vec3(1.0f - expf(-exposed.x), 1.0f - expf(-exposed.y), 1.0f - expf(-exposed.z));
     return Vec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
@@ -165,8 +165,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 misWeight =
                     currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + lightHit.pdf, 1.0e-6f);
             }
-            radiance =
-                Add(radiance, MulComponents(throughput, Mul(lightHit.radiance, misWeight)));
+            radiance = radiance + MulComponents(throughput, lightHit.radiance * misWeight);
             break;
         }
 
@@ -180,9 +179,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
             }
             radiance =
-                Add(radiance,
-                    MulComponents(throughput,
-                                  Mul(EvaluateEnvironmentRadiance(state, rayDir), misWeight)));
+                radiance + MulComponents(throughput, EvaluateEnvironmentRadiance(state, rayDir) * misWeight);
             break;
         }
 
@@ -191,7 +188,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         {
             normal = FaceForward(Normalize(hit.geomNormal), rayDir);
         }
-        const Vec3 hitPoint = Add(hit.rayOrigin, Mul(hit.rayDir, hit.t));
+        const Vec3 hitPoint = hit.rayOrigin + hit.rayDir * hit.t;
 
         LaunchParams::InstanceGeomRef geomRef = {};
         geomRef.materialIndex = -1;
@@ -203,10 +200,10 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
         if ((material.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {
-            radiance = Add(radiance, MulComponents(throughput, material.emissiveColor));
+            radiance = radiance + MulComponents(throughput, material.emissiveColor);
         }
 
-        const Vec3 wo = Mul(rayDir, -1.0f);
+        const Vec3 wo = -rayDir;
         const bool skipNeeMis = ShouldSkipNeeMis(material);
         if (!skipNeeMis)
         {
@@ -216,7 +213,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 const float nDotL = MaxFloat(Dot(normal, lightSample.wi), 0.0f);
                 if (nDotL > 0.0f)
                 {
-                    const Vec3 shadowOrigin = Add(hitPoint, Mul(normal, rayBias));
+                    const Vec3 shadowOrigin = hitPoint + normal * rayBias;
                     const float shadowMax =
                         lightSample.distance >= 1.0e19f
                             ? 1.0e20f
@@ -236,9 +233,8 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                                 : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
                         const Vec3 direct =
                             MulComponents(MulComponents(throughput, f), lightSample.radiance);
-                        radiance = Add(
-                            radiance,
-                            Mul(direct, (nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f)));
+                        radiance =
+                            radiance + direct * ((nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f));
                     }
                 }
             }
@@ -249,7 +245,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 const float nDotL = MaxFloat(Dot(normal, domeSample.wi), 0.0f);
                 if (nDotL > 0.0f)
                 {
-                    const Vec3 shadowOrigin = Add(hitPoint, Mul(normal, rayBias));
+                    const Vec3 shadowOrigin = hitPoint + normal * rayBias;
                     if (!state.TraceLightOcclusion(
                             shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex))
                     {
@@ -259,9 +255,8 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                             domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
                         const Vec3 direct =
                             MulComponents(MulComponents(throughput, f), domeSample.radiance);
-                        radiance = Add(
-                            radiance,
-                            Mul(direct, (nDotL * misWeight) / MaxFloat(domeSample.pdf, 1.0e-6f)));
+                        radiance =
+                            radiance + direct * ((nDotL * misWeight) / MaxFloat(domeSample.pdf, 1.0e-6f));
                     }
                 }
             }
@@ -285,14 +280,14 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
             break;
         }
 
-        throughput = MulComponents(throughput, Mul(bsdf.f, nDotL / MaxFloat(bsdf.pdf, 1.0e-6f)));
+        throughput = MulComponents(throughput, bsdf.f * (nDotL / MaxFloat(bsdf.pdf, 1.0e-6f)));
         if (MaxComponent(throughput) <= 0.0f)
         {
             break;
         }
 
         const float normalSign = Dot(normal, bsdf.wi) >= 0.0f ? 1.0f : -1.0f;
-        rayOrigin = Add(hitPoint, Mul(normal, rayBias * normalSign));
+        rayOrigin = hitPoint + normal * (rayBias * normalSign);
         rayDir = bsdf.wi;
         currentRayHasBsdfContext = true;
         currentRaySkipNeeMis = bsdf.skipNeeMis;

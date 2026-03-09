@@ -40,8 +40,8 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
     }
     if (evalAttr.type == AttributeType::Float2)
     {
-        float2 value = Vec2(0.0f);
-        if (!EvaluateLimitValue<LimitEvalFloat2, float2>(patchMap,
+        Vec2 value = Vec2(0.0f);
+        if (!EvaluateLimitValue<LimitEvalFloat2, Vec2>(patchMap,
                                                          patchTable,
                                                          evalAttr.valuesFloat2,
                                                          ptexFaceId,
@@ -52,13 +52,13 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
         {
             return false;
         }
-        *outIndex = AppendAttributeValue<float2>(dst, value);
+        *outIndex = AppendAttributeValue<Vec2>(dst, value);
         return true;
     }
     if (evalAttr.type == AttributeType::Float3)
     {
-        float3 value = Vec3(0.0f);
-        if (!EvaluateLimitValue<LimitEvalFloat3, float3>(patchMap,
+        Vec3 value = Vec3(0.0f);
+        if (!EvaluateLimitValue<LimitEvalFloat3, Vec3>(patchMap,
                                                          patchTable,
                                                          evalAttr.valuesFloat3,
                                                          ptexFaceId,
@@ -69,13 +69,13 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
         {
             return false;
         }
-        *outIndex = AppendAttributeValue<float3>(dst, value);
+        *outIndex = AppendAttributeValue<Vec3>(dst, value);
         return true;
     }
     if (evalAttr.type == AttributeType::Float4)
     {
-        float4 value = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
-        if (!EvaluateLimitValue<LimitEvalFloat4, float4>(patchMap,
+        Vec4 value = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
+        if (!EvaluateLimitValue<LimitEvalFloat4, Vec4>(patchMap,
                                                          patchTable,
                                                          evalAttr.valuesFloat4,
                                                          ptexFaceId,
@@ -86,7 +86,7 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
         {
             return false;
         }
-        *outIndex = AppendAttributeValue<float4>(dst, value);
+        *outIndex = AppendAttributeValue<Vec4>(dst, value);
         return true;
     }
     return false;
@@ -178,7 +178,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int maxVertexId = nextGeneratedVertexId;
 
     const float inf = std::numeric_limits<float>::infinity();
-    std::vector<float3> sharedPos(maxVertexId, Vec3(inf, inf, inf));
+    std::vector<Vec3> sharedPos(maxVertexId, Vec3(inf, inf, inf));
     std::vector<pxr::GfVec2f> sharedUV(maxVertexId, pxr::GfVec2f(0.0f, 0.0f));
     std::vector<int> sharedPtexFace(maxVertexId, -1);
     std::vector<uint8_t> sharedInit(maxVertexId, uint8_t(0));
@@ -230,7 +230,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         {
             const float a = float(k) / float(t);
             const pxr::GfVec2f uv = edge.storedUv0 * (1.0f - a) + edge.storedUv1 * a;
-            float3 p = Vec3(0.0f);
+            Vec3 p = Vec3(0.0f);
             if (!EvaluateLimitPosition(
                     patchMap, patchTable, limitValues, edge.storedPtexFaceId, uv, &p))
             {
@@ -262,7 +262,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         }
     }
 
-    Array<float3> positions;
+    Array<Vec3> positions;
     Array<int> indices;
     if (outTriPatchFaceIds)
     {
@@ -597,7 +597,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 const pxr::GfVec2f uvTop = patch.uv[3] * (1.0f - su) + patch.uv[2] * su;
                 const pxr::GfVec2f uv = uvBottom * (1.0f - sv) + uvTop * sv;
 
-                float3 p = Vec3(0.0f);
+                Vec3 p = Vec3(0.0f);
                 if (!EvaluateLimitPosition(
                         patchMap, patchTable, limitValues, patch.ptexFaceId, uv, &p))
                 {

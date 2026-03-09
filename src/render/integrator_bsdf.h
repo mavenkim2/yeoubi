@@ -78,7 +78,7 @@ YBI_INTEGRATOR_HD bool ShouldSkipNeeMis(const EvaluatedMaterial &material)
 YBI_INTEGRATOR_HD Vec3 FresnelSchlick(float cosTheta, const Vec3 &f0)
 {
     const float m = Pow5(1.0f - Saturate(cosTheta));
-    return Add(f0, Mul(Sub(Vec3(1.0f, 1.0f, 1.0f), f0), m));
+    return f0 + (Vec3(1.0f, 1.0f, 1.0f) - f0) * m;
 }
 
 YBI_INTEGRATOR_HD float Dggx(float alpha, float nDotH)
@@ -111,7 +111,7 @@ YBI_INTEGRATOR_HD Vec3 SampleGgxHalfVector(float alpha, float u1, float u2)
 
 YBI_INTEGRATOR_HD Vec3 LocalToWorld(const Vec3 &local, const Vec3 &t, const Vec3 &b, const Vec3 &n)
 {
-    return Add(Add(Mul(t, local.x), Mul(b, local.y)), Mul(n, local.z));
+    return t * local.x + b * local.y + n * local.z;
 }
 
 YBI_INTEGRATOR_HD Vec3 ComputeF0(const EvaluatedMaterial &material)
@@ -145,7 +145,7 @@ YBI_INTEGRATOR_HD float ComputeSpecularPdf(const EvaluatedMaterial &material,
                                            const Vec3 &wo,
                                            const Vec3 &wi)
 {
-    const Vec3 halfUnnormalized = Add(wo, wi);
+    const Vec3 halfUnnormalized = wo + wi;
     const float halfLen2 = Dot(halfUnnormalized, halfUnnormalized);
     if (halfLen2 <= 1.0e-8f)
     {
@@ -181,7 +181,7 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
         return Vec3(0.0f, 0.0f, 0.0f);
     }
 
-    const Vec3 halfUnnormalized = Add(wo, wi);
+    const Vec3 halfUnnormalized = wo + wi;
     if (Dot(halfUnnormalized, halfUnnormalized) <= 1.0e-8f)
     {
         if (outPdf)
@@ -200,10 +200,10 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
     const float alpha = ComputeAlpha(material);
     const float d = Dggx(alpha, nDotH);
     const float g = GSmith(alpha, nDotV, nDotL);
-    const Vec3 specular = Mul(fresnel, d * g / MaxFloat(4.0f * nDotV * nDotL, 1.0e-6f));
+    const Vec3 specular = fresnel * (d * g / MaxFloat(4.0f * nDotV * nDotL, 1.0e-6f));
 
-    const Vec3 diffuseColor = Mul(material.baseColor, 1.0f - material.metallic);
-    const Vec3 diffuse = Mul(diffuseColor, 0.31830988618f);
+    const Vec3 diffuseColor = material.baseColor * (1.0f - material.metallic);
+    const Vec3 diffuse = diffuseColor * 0.31830988618f;
 
     if (outPdf)
     {
@@ -214,17 +214,17 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
         *outPdf = diffuseProb * diffusePdf + specProb * specularPdf;
     }
 
-    return Add(diffuse, specular);
+    return diffuse + specular;
 }
 
-// YBI_INTEGRATOR_HD void EvaluateOrenNayar(float3 wi, float3 wo)
+// YBI_INTEGRATOR_HD void EvaluateOrenNayar(Vec3 wi, Vec3 wo)
 // {
 //     float s = ωi⋅ωo−(n⋅ωi)(n⋅ωo) = cos(ϕi−ϕo) sinθisinθo;
 // }
 
-YBI_INTEGRATOR_HD void SampleOrenNayar(float3 help)
+YBI_INTEGRATOR_HD void SampleOrenNayar(Vec3 help)
 {
-    float3 h = Normalize(help);
+    Vec3 h = Normalize(help);
 }
 
 YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
@@ -255,7 +255,7 @@ YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
         const Vec3 localHalf =
             SampleGgxHalfVector(ComputeAlpha(material), Random01(rngState), Random01(rngState));
         const Vec3 halfVec = Normalize(LocalToWorld(localHalf, tangent, bitangent, normal));
-        wi = Normalize(Reflect(Mul(wo, -1.0f), halfVec));
+        wi = Normalize(Reflect(-wo, halfVec));
     }
     else
     {

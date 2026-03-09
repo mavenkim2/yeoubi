@@ -1,9 +1,9 @@
 #include "io/usd/instance_dag_build.h"
 
 #include "util/assert.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 #include "util/float3x4.h"
-#include "util/float4.h"
+#include "util/vec4.h"
 
 #include <algorithm>
 #include <cstdint>

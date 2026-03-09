@@ -1,6 +1,6 @@
 #include "scene.h"
 #include "util/assert.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 #include "util/float4x4.h"
 
 #include <string>
@@ -332,7 +332,7 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
                 return false;
             }
             const Float4x4 worldFromChild =
-                Mul(entry.worldFromScene, ToFloat4x4(instance.parentFromLocal));
+                entry.worldFromScene * ToFloat4x4(instance.parentFromLocal);
             stack.push_back({child, worldFromChild});
         }
 
@@ -344,7 +344,7 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
         for (size_t meshIndex = 0; meshIndex < scene->meshes.size(); meshIndex++)
         {
             const Float4x4 worldFromMesh =
-                Mul(entry.worldFromScene, ToFloat4x4(scene->meshes[meshIndex].parentFromLocal));
+                entry.worldFromScene * ToFloat4x4(scene->meshes[meshIndex].parentFromLocal);
             const uint32_t leafIndex = getOrCreateLeafForMesh(scene, meshIndex);
             Scene *leafScene = dst->scenes[leafIndex].get();
             YBI_ASSERT(leafScene);
@@ -356,7 +356,7 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
         for (size_t curveIndex = 0; curveIndex < scene->curves.size(); curveIndex++)
         {
             const Float4x4 worldFromCurve =
-                Mul(entry.worldFromScene, ToFloat4x4(scene->curves[curveIndex].parentFromLocal));
+                entry.worldFromScene * ToFloat4x4(scene->curves[curveIndex].parentFromLocal);
             const uint32_t leafIndex = getOrCreateLeafForCurves(scene, curveIndex);
             Scene *leafScene = dst->scenes[leafIndex].get();
             YBI_ASSERT(leafScene);
@@ -367,8 +367,9 @@ bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string 
 
         for (size_t subdivIndex = 0; subdivIndex < scene->subdivisionMeshes.size(); ++subdivIndex)
         {
-            const Float4x4 worldFromMesh = Mul(
-                entry.worldFromScene, ToFloat4x4(scene->subdivisionMeshes[subdivIndex].parentFromLocal));
+            const Float4x4 worldFromMesh =
+                entry.worldFromScene *
+                ToFloat4x4(scene->subdivisionMeshes[subdivIndex].parentFromLocal);
             uint32_t leafIndex = 0u;
             if (!getOrCreateLeafForSubdivision(scene, subdivIndex, &leafIndex))
             {
@@ -413,23 +414,23 @@ void CollectScenePoolMeshUploadRefs(ScenePool *scenePool, std::vector<SceneMeshU
     }
 }
 
-Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx)
+Mesh::Mesh(Array<Vec3> &&pos, Array<int> &&idx)
     : positions(std::move(pos)), indices(std::move(idx)), parentFromLocal(GetIdentityTransform())
 {
 }
 
-Mesh::Mesh(Array<float3> &&pos, Array<int> &&idx, const Float3x4 &parentFromLocal)
+Mesh::Mesh(Array<Vec3> &&pos, Array<int> &&idx, const Float3x4 &parentFromLocal)
     : positions(std::move(pos)), indices(std::move(idx)), parentFromLocal(parentFromLocal)
 {
 }
 
-Curves::Curves(Array<float3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets)
+Curves::Curves(Array<Vec3> &&positions, Array<float> &&widths, Array<int> &&curveVertexOffsets)
     : positions(std::move(positions)), widths(std::move(widths)),
       curveVertexOffsets(std::move(curveVertexOffsets)), parentFromLocal(GetIdentityTransform())
 {
 }
 
-Curves::Curves(Array<float3> &&positions,
+Curves::Curves(Array<Vec3> &&positions,
                Array<float> &&widths,
                Array<int> &&curveVertexOffsets,
                const Float3x4 &parentFromLocal)
@@ -477,7 +478,7 @@ void Curves::GetCurveRange(uint32_t index, uint32_t &start, uint32_t &count) con
     count -= start;
 }
 
-const Array<float3> &Curves::GetVertices() const
+const Array<Vec3> &Curves::GetVertices() const
 {
     return positions;
 }

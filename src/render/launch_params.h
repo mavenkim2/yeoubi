@@ -10,7 +10,7 @@
 
 #include "device/device.h"
 #include "scene/material_light.h"
-#include "util/float3.h"
+#include "util/vec3.h"
 
 YBI_NAMESPACE_BEGIN
 
@@ -83,10 +83,10 @@ struct LaunchParams
     DevicePtr image;
     int width;
     int height;
-    ybi::float3 cameraOrigin;
-    ybi::float3 cameraU;
-    ybi::float3 cameraV;
-    ybi::float3 cameraW;
+    ybi::Vec3 cameraOrigin;
+    ybi::Vec3 cameraU;
+    ybi::Vec3 cameraV;
+    ybi::Vec3 cameraW;
     WireframeConfig wireframe;
     int integrator;
     int spp;

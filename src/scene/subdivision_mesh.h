@@ -2,8 +2,8 @@
 
 #include "scene/attributes.h"
 #include "util/array.h"
-#include "util/float2.h"
-#include "util/float3.h"
+#include "util/vec2.h"
+#include "util/vec3.h"
 #include "util/float3x4.h"
 
 #include <string>
@@ -47,7 +47,7 @@ struct SubdivisionMesh
     Float3x4 parentFromLocal =
         Float3x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
 
-    Array<float3> vertices;
+    Array<Vec3> vertices;
     Array<int> indices;
     Array<int> vertsPerFace;
     std::vector<Attribute> attributes;
@@ -67,7 +67,7 @@ struct SubdivisionMesh
 
     SubdivisionMesh() = default;
     SubdivisionMesh(
-        Array<float3> &&vertices,
+        Array<Vec3> &&vertices,
         Array<int> &&indices,
         Array<int> &&vertsPerFace,
         Array<int> &&cornerIndices,

@@ -217,7 +217,7 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
         return false;
     }
 
-    const ybi::float3 *positions = reinterpret_cast<const ybi::float3 *>(ref.positions);
+    const ybi::Vec3 *positions = reinterpret_cast<const ybi::Vec3 *>(ref.positions);
     const int *indices = reinterpret_cast<const int *>(ref.indices);
     const int i0 = indices[triCornerBase + 0];
     const int i1 = indices[triCornerBase + 1];
@@ -379,8 +379,7 @@ bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3
         {
             return false;
         }
-        currentOrigin = ybi::render::integrator::Add(
-            currentOrigin, ybi::render::integrator::Mul(direction, advance));
+        currentOrigin = currentOrigin + direction * advance;
         currentMax -= advance;
     }
 
