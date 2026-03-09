@@ -2,6 +2,7 @@
 
 #include "render/integrator_common.h"
 #include "scene/material_light.h"
+#include "util/math_common.h"
 
 namespace ybi
 {
@@ -92,6 +93,21 @@ YBI_INTEGRATOR_HD float GSchlickGgx(float alpha, float nDotV)
 YBI_INTEGRATOR_HD float GSmith(float alpha, float nDotV, float nDotL)
 {
     return GSchlickGgx(alpha, nDotV) * GSchlickGgx(alpha, nDotL);
+}
+
+// Sampling Visible GGX Normals with Spherical Caps (Dupuy and Bennyoub, 2023)
+// https://arxiv.org/pdf/2306.05044
+YBI_INTEGRATOR_HD Vec3 SampleGgxHalfVector(Vec3 wi, Vec2 alpha, Vec2 u)
+{
+    wi = Normalize(wi.x * alpha.x, wi.y * alpha.y, wi.z);
+
+    float phi = 2 * M_PI * u.x;
+    float z = (1 - u.y) * (1 + wi.z) - wi.z;
+    float sinTheta = sqrtf(Clamp01(1 - z * z));
+    Vec3 wo(sinTheta * cosf(phi), sinTheta * sinf(phi), z);
+    Vec3 h = wi + wo;
+
+    return Normalize(Vec3(h.x * alpha.x, h.y * alpha.y, h.z));
 }
 
 YBI_INTEGRATOR_HD Vec3 SampleGgxHalfVector(float alpha, float u1, float u2)
@@ -247,8 +263,8 @@ YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
     Vec3 wi = {};
     if (Random01(rngState) < specProb)
     {
-        const Vec3 localHalf =
-            SampleGgxHalfVector(ComputeAlpha(material), Random01(rngState), Random01(rngState));
+        const Vec3 localHalf = SampleGgxHalfVector(
+            wo, ComputeAlpha(material), Vec2(Random01(rngState), Random01(rngState)));
         const Vec3 halfVec = Normalize(LocalToWorld(localHalf, tangent, bitangent, normal));
         wi = Normalize(Reflect(-wo, halfVec));
     }
