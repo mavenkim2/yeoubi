@@ -52,13 +52,13 @@ YBI_INTEGRATOR_HD Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
 {
     constexpr float kDisplayExposure = 16.0f;
     const Vec3 exposed = Mul(radiance, kDisplayExposure);
-    const Vec3 mapped = MakeVec3(1.0f - expf(-exposed.x),
-                                 1.0f - expf(-exposed.y),
-                                 1.0f - expf(-exposed.z));
+    const Vec3 mapped =
+        MakeVec3(1.0f - expf(-exposed.x), 1.0f - expf(-exposed.y), 1.0f - expf(-exposed.z));
     return MakeVec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
 }
 
-YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params, int materialIndex)
+YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
+                                                          int materialIndex)
 {
     EvaluatedMaterial material = DefaultMaterial();
     const PackedMaterial *materials = GetPackedMaterials(params);
@@ -69,7 +69,8 @@ YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &pa
 
     const PackedMaterial &src = materials[materialIndex];
     material.baseColor = MakeVec3(src.baseColor.x, src.baseColor.y, src.baseColor.z);
-    material.emissiveColor = MakeVec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
+    material.emissiveColor =
+        MakeVec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
     material.roughness = src.roughness;
     material.metallic = src.metallic;
     material.ior = src.ior;
@@ -88,7 +89,8 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     Vec4 sample = {};
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticDiffuse, sample))
     {
-        material.baseColor = MulComponents(material.baseColor, MakeVec3(sample.x, sample.y, sample.z));
+        material.baseColor =
+            MulComponents(material.baseColor, MakeVec3(sample.x, sample.y, sample.z));
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticRoughness, sample))
     {
@@ -144,9 +146,9 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
     float currentRayBsdfPdf = 0.0f;
 
     const UInt2 launchIndex = state.LaunchIndex();
-    unsigned int rngState = Hash32((launchIndex.x + 1u) * 73856093u ^
-                                   (launchIndex.y + 1u) * 19349663u ^
-                                   (static_cast<unsigned int>(params.currentSpp) + 1u) * 83492791u);
+    unsigned int rngState =
+        Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u ^
+               (static_cast<unsigned int>(params.currentSpp) + 1u) * 83492791u);
 
     for (int depth = 0; depth <= MaxInt(params.maxDepth, 0); ++depth)
     {
@@ -171,14 +173,16 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         if (!hasSceneHit)
         {
             float misWeight = 1.0f;
-            if (currentRayHasBsdfContext && !currentRaySkipNeeMis && FindDomeLightIndex(params) >= 0)
+            if (currentRayHasBsdfContext && !currentRaySkipNeeMis &&
+                FindDomeLightIndex(params) >= 0)
             {
                 const float domePdf = DomeDirectionPdf();
                 misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
             }
-            radiance = Add3(
-                radiance,
-                MulComponents(throughput, Mul(EnvironmentRadiance(params, rayDir), misWeight)));
+            radiance =
+                Add3(radiance,
+                     MulComponents(throughput,
+                                   Mul(EvaluateEnvironmentRadiance(state, rayDir), misWeight)));
             break;
         }
 
@@ -213,18 +217,23 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 if (nDotL > 0.0f)
                 {
                     const Vec3 shadowOrigin = Add(hitPoint, Mul(normal, rayBias));
-                    const float shadowMax = lightSample.distance >= 1.0e19f
-                                                ? 1.0e20f
-                                                : MaxFloat(lightSample.distance - rayBias, rayBias);
-                    if (!state.TraceLightOcclusion(
-                            shadowOrigin, lightSample.wi, rayBias, shadowMax, lightSample.lightIndex))
+                    const float shadowMax =
+                        lightSample.distance >= 1.0e19f
+                            ? 1.0e20f
+                            : MaxFloat(lightSample.distance - rayBias, rayBias);
+                    if (!state.TraceLightOcclusion(shadowOrigin,
+                                                   lightSample.wi,
+                                                   rayBias,
+                                                   shadowMax,
+                                                   lightSample.lightIndex))
                     {
                         float bsdfPdf = 0.0f;
-                        const Vec3 f = EvaluateBsdf(material, normal, wo, lightSample.wi, &bsdfPdf);
-                        const float misWeight = lightSample.isDeltaLight
-                                                    ? 1.0f
-                                                    : lightSample.pdf /
-                                                          MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
+                        const Vec3 f =
+                            EvaluateBsdf(material, normal, wo, lightSample.wi, &bsdfPdf);
+                        const float misWeight =
+                            lightSample.isDeltaLight
+                                ? 1.0f
+                                : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
                         const Vec3 direct =
                             MulComponents(MulComponents(throughput, f), lightSample.radiance);
                         radiance = Add3(
@@ -235,7 +244,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
             }
 
             DirectLightSample domeSample = {};
-            if (SampleDomeLight(params, rngState, &domeSample))
+            if (SampleDomeLight(state, rngState, &domeSample))
             {
                 const float nDotL = MaxFloat(Dot(normal, domeSample.wi), 0.0f);
                 if (nDotL > 0.0f)
@@ -264,6 +273,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         }
 
         BsdfSample bsdf = {};
+        SampleOrenNayar(make_float3(wo.x, wo.y, wo.z));
         if (!SampleBsdf(material, normal, wo, rngState, &bsdf))
         {
             break;

@@ -99,6 +99,7 @@ struct LaunchParams
     int materialTextureRefCount;
     int materialTextureRefStride;
     int materialTextureRefSemanticCount;
+    MaterialTextureRef domeTextureRef;
     unsigned long long materials;
     int materialCount;
     unsigned long long lights;

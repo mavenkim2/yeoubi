@@ -148,6 +148,45 @@ YBI_INTEGRATOR_HD float DomeDirectionPdf()
     return 0.25f * 0.31830988618f;
 }
 
+YBI_INTEGRATOR_HD void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV)
+{
+    const Vec3 d = Normalize(direction);
+    const float phi = atan2f(d.x, -d.z);
+    const float clampedY = MaxF(-1.0f, MinF(1.0f, d.y));
+    const float theta = acosf(clampedY);
+    if (outU)
+    {
+        *outU = phi * (0.5f / 3.14159265358979323846f) + 0.5f;
+    }
+    if (outV)
+    {
+        *outV = theta * (1.0f / 3.14159265358979323846f);
+    }
+}
+
+template <typename State>
+YBI_INTEGRATOR_HD Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
+{
+    const LaunchParams &params = state.Params();
+    Vec3 env = EnvironmentRadiance(params, direction);
+    const LaunchParams::MaterialTextureRef &textureRef = params.domeTextureRef;
+    if (textureRef.textureObject == 0ull || textureRef.valid == 0 || textureRef.width <= 0 ||
+        textureRef.height <= 0)
+    {
+        return env;
+    }
+
+    float u = 0.5f;
+    float v = 0.5f;
+    DirectionToLatLongUv(direction, &u, &v);
+    Vec4 sample = {};
+    if (!state.SampleTexture2D(textureRef, u, v, sample))
+    {
+        return env;
+    }
+    return MakeVec3(env.x * sample.x, env.y * sample.y, env.z * sample.z);
+}
+
 YBI_INTEGRATOR_HD int CountDirectLights(const LaunchParams &params)
 {
     const PackedLight *lights = GetPackedLights(params);
@@ -521,7 +560,8 @@ YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
     }
 }
 
-YBI_INTEGRATOR_HD bool SampleDomeLight(const LaunchParams &params,
+template <typename State>
+YBI_INTEGRATOR_HD bool SampleDomeLight(State &state,
                                        unsigned int &rngState,
                                        DirectLightSample *outSample)
 {
@@ -530,6 +570,7 @@ YBI_INTEGRATOR_HD bool SampleDomeLight(const LaunchParams &params,
         return false;
     }
 
+    const LaunchParams &params = state.Params();
     const int domeLightIndex = FindDomeLightIndex(params);
     if (domeLightIndex < 0)
     {
@@ -538,7 +579,7 @@ YBI_INTEGRATOR_HD bool SampleDomeLight(const LaunchParams &params,
 
     outSample->lightIndex = domeLightIndex;
     outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
-    outSample->radiance = EnvironmentRadiance(params, outSample->wi);
+    outSample->radiance = EvaluateEnvironmentRadiance(state, outSample->wi);
     outSample->lightPoint = MakeVec3(0.0f, 0.0f, 0.0f);
     outSample->lightNormal = Mul(outSample->wi, -1.0f);
     outSample->distance = 1.0e20f;

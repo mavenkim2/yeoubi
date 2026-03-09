@@ -5,9 +5,12 @@
 
 #if defined(__CUDACC__)
 #define YBI_INTEGRATOR_HD __host__ __device__ inline
+#define GPU_INTEGRATOR
 #else
 #define YBI_INTEGRATOR_HD inline
 #endif
+
+#include 
 
 namespace ybi
 {
@@ -41,8 +44,8 @@ struct UInt2
     unsigned int y;
 };
 
-YBI_INTEGRATOR_HD bool
-ShouldRenderLaunchPixel(int singlePixelEnabled, int singlePixelX, int singlePixelY, unsigned int x, unsigned int y)
+YBI_INTEGRATOR_HD bool ShouldRenderLaunchPixel(
+    int singlePixelEnabled, int singlePixelX, int singlePixelY, unsigned int x, unsigned int y)
 {
     if (singlePixelEnabled == 0)
     {
@@ -202,8 +205,7 @@ YBI_INTEGRATOR_HD float Random01(unsigned int &state)
 
 YBI_INTEGRATOR_HD void BuildOrthonormalBasis(const Vec3 &n, Vec3 &t, Vec3 &b)
 {
-    const Vec3 up = fabsf(n.z) < 0.999f ? MakeVec3(0.0f, 0.0f, 1.0f)
-                                        : MakeVec3(0.0f, 1.0f, 0.0f);
+    const Vec3 up = fabsf(n.z) < 0.999f ? MakeVec3(0.0f, 0.0f, 1.0f) : MakeVec3(0.0f, 1.0f, 0.0f);
     t = Normalize(Cross(up, n));
     b = Normalize(Cross(n, t));
 }

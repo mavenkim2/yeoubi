@@ -796,6 +796,13 @@ struct UploadedMaterialTextures
     uint64_t deviceBytes = 0u;
 };
 
+struct UploadedStandaloneTexture
+{
+    LaunchParams::MaterialTextureRef ref = {};
+    DeviceTexture texture = {};
+    uint64_t deviceBytes = 0u;
+};
+
 static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1100u;
 static constexpr int kUdimSlotCount = 128;
@@ -1171,6 +1178,69 @@ static void DestroyUploadedTextures(Device *device, UploadedMaterialTextures *te
     textures->deviceBytes = 0u;
 }
 
+static bool UploadDecodedTexture(Device *device,
+                                 const DecodedMaterialTexture &decodedTexture,
+                                 UploadedStandaloneTexture *outTexture,
+                                 std::string *outError)
+{
+    YBI_ASSERT(device);
+    YBI_ASSERT(outTexture);
+    if (outTexture->texture.valid)
+    {
+        device->DestroyTexture(outTexture->texture);
+    }
+    outTexture->ref = {};
+    outTexture->texture = {};
+    outTexture->deviceBytes = 0u;
+
+    if (!decodedTexture.valid || decodedTexture.width <= 0 || decodedTexture.height <= 0 ||
+        decodedTexture.rgba8.empty())
+    {
+        return true;
+    }
+
+    DeviceTextureCreateInfo createInfo = {};
+    createInfo.pixels = decodedTexture.rgba8.data();
+    createInfo.pixelBytes = decodedTexture.rgba8.size();
+    createInfo.width = static_cast<uint32_t>(decodedTexture.width);
+    createInfo.height = static_cast<uint32_t>(decodedTexture.height);
+    createInfo.wrapS = ToDeviceTextureWrapMode(decodedTexture.wrapS);
+    createInfo.wrapT = ToDeviceTextureWrapMode(decodedTexture.wrapT);
+    createInfo.filter = DeviceTextureFilterMode::Linear;
+    createInfo.format = DeviceTextureFormat::RGBA8_UNORM;
+
+    if (!device->CreateTexture(createInfo, &outTexture->texture, outError))
+    {
+        return false;
+    }
+
+    outTexture->deviceBytes =
+        static_cast<uint64_t>(decodedTexture.width) * static_cast<uint64_t>(decodedTexture.height) * 4u;
+    outTexture->ref.textureObject = outTexture->texture.handle;
+    outTexture->ref.width = decodedTexture.width;
+    outTexture->ref.height = decodedTexture.height;
+    outTexture->ref.valid = 1;
+    outTexture->ref.wrapS = static_cast<int>(decodedTexture.wrapS);
+    outTexture->ref.wrapT = static_cast<int>(decodedTexture.wrapT);
+    return true;
+}
+
+static void DestroyUploadedTexture(Device *device, UploadedStandaloneTexture *texture)
+{
+    YBI_ASSERT(device);
+    if (!texture)
+    {
+        return;
+    }
+    if (texture->texture.valid)
+    {
+        device->DestroyTexture(texture->texture);
+    }
+    texture->ref = {};
+    texture->texture = {};
+    texture->deviceBytes = 0u;
+}
+
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
@@ -1231,6 +1301,22 @@ static void ResolveLightShadowExcludes(const std::vector<SceneMeshUploadRef> &me
             static_cast<uint32_t>(outExcludeRefs->size()) - packed.shadowExcludeOffset;
         outPackedLights->push_back(packed);
     }
+}
+
+static bool FindFirstDomeTexturePath(const std::vector<LightInfo> &lights, std::string *outPath)
+{
+    YBI_ASSERT(outPath);
+    outPath->clear();
+    for (const LightInfo &light : lights)
+    {
+        if (light.packed.type != static_cast<uint32_t>(LightType::Dome) || light.texturePath.empty())
+        {
+            continue;
+        }
+        *outPath = light.texturePath;
+        return true;
+    }
+    return false;
 }
 
 struct HarnessMemoryStats
@@ -1420,6 +1506,7 @@ RenderTraversable(Device *device,
                   int materialTextureRefCount,
                   int materialTextureRefStride,
                   int materialTextureRefSemanticCount,
+                  const LaunchParams::MaterialTextureRef &domeTextureRef,
                   MaterialTextureSemantic textureViewSemantic,
                   bool virtualTexture,
                   const std::vector<ybi::texture::VirtualTextureRegisterInput> &virtualTextureRegistrations,
@@ -1546,6 +1633,7 @@ RenderTraversable(Device *device,
     params.materialTextureRefCount = materialTextureRefCount;
     params.materialTextureRefStride = materialTextureRefStride;
     params.materialTextureRefSemanticCount = materialTextureRefSemanticCount;
+    params.domeTextureRef = domeTextureRef;
     params.textureViewSemantic = static_cast<int>(textureViewSemantic);
     params.feedbackKeys = (unsigned long long)feedbackKeysBuffer.data();
     params.feedbackStats = (unsigned long long)feedbackStatsBuffer.data();
@@ -1848,6 +1936,8 @@ struct HarnessState
     std::vector<LaunchParams::MaterialTextureRef> materialTextureRefsHost;
     std::vector<DecodedMaterialTexture> decodedTextures;
     UploadedMaterialTextures uploadedMaterialTextures = {};
+    DecodedMaterialTexture domeTexture = {};
+    UploadedStandaloneTexture uploadedDomeTexture = {};
     std::vector<ybi::texture::VirtualTextureRegisterInput> virtualTextureRegistrations;
 
     std::vector<SceneMeshUploadRef> meshUploadRefs;
@@ -1917,7 +2007,9 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     state->memoryStats.hostFlattenedSceneBytes = ComputeScenePoolHostBytes(state->flattenedScenePool);
     state->memoryStats.hostTessellatedMeshBytes = ComputeMeshVectorHostBytes(state->rootScene->meshes);
 
+    DestroyUploadedTexture(device, &state->uploadedDomeTexture);
     state->decodedTextures.clear();
+    state->domeTexture = {};
     state->packedMaterials.clear();
     state->packedLights.clear();
     state->lightShadowExcludeRefs.clear();
@@ -2093,6 +2185,37 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         device->CopyBytesToDevice(state->materialTextureRefsBuffer, launchRefs.data(), refsBytes);
         state->materialTextureRefCount = static_cast<int>(state->scenePool.materials.size());
     }
+
+    std::string domeTexturePath;
+    if (FindFirstDomeTexturePath(state->scenePool.lights, &domeTexturePath))
+    {
+        state->domeTexture.valid = true;
+        state->domeTexture.udim = kUdimMin;
+        state->domeTexture.sourcePath = domeTexturePath;
+        state->domeTexture.wrapS = TEXTURE_WRAP_MODE_REPEAT;
+        state->domeTexture.wrapT = TEXTURE_WRAP_MODE_CLAMP;
+        std::string domeReason;
+        if (!LoadImageRgba8(domeTexturePath,
+                            &state->domeTexture.width,
+                            &state->domeTexture.height,
+                            &state->domeTexture.rgba8,
+                            &domeReason))
+        {
+            std::fprintf(stderr, "Dome texture load failed (%s): %s\n", domeTexturePath.c_str(), domeReason.c_str());
+            return false;
+        }
+
+        state->memoryStats.hostDecodedTextureBytes +=
+            static_cast<uint64_t>(state->domeTexture.rgba8.size());
+        std::string domeUploadError;
+        if (!UploadDecodedTexture(
+                device, state->domeTexture, &state->uploadedDomeTexture, &domeUploadError))
+        {
+            std::fprintf(stderr, "Dome texture upload failed: %s\n", domeUploadError.c_str());
+            return false;
+        }
+        state->memoryStats.deviceUploadedTextureBytes += state->uploadedDomeTexture.deviceBytes;
+    }
     auto tTexRefs = LogPhase("upload_texture_refs", tTextureReady);
 
     CollectScenePoolMeshUploadRefs(&state->flattenedScenePool, &state->meshUploadRefs);
@@ -2223,6 +2346,7 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       state.materialTextureRefCount,
                       state.materialTextureRefStride,
                       state.materialTextureRefSemanticCount,
+                      state.uploadedDomeTexture.ref,
                       options.textureView,
                       options.virtualTexture,
                       state.virtualTextureRegistrations,
@@ -2267,6 +2391,7 @@ static void DeinitPhase(Device *device, HostMemoryArena *hostArena, HarnessState
     {
         device->FreeBytes(state->materialTextureRefsBuffer);
     }
+    DestroyUploadedTexture(device, &state->uploadedDomeTexture);
     DestroyUploadedTextures(device, &state->uploadedMaterialTextures);
     for (DeviceMemoryView<uint8_t> &buffer : state->uploadedRefs.ownedBuffers)
     {

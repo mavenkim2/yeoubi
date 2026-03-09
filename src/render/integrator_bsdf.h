@@ -150,12 +150,12 @@ YBI_INTEGRATOR_HD Vec3 ComputeF0(const EvaluatedMaterial &material)
 {
     const float dielectric = (material.ior - 1.0f) / MaxFloat(material.ior + 1.0f, 1.0e-6f);
     const float dielectricF0 = dielectric * dielectric;
-    return LerpVec3(MakeVec3(dielectricF0, dielectricF0, dielectricF0),
-                    material.baseColor,
-                    material.metallic);
+    return LerpVec3(
+        MakeVec3(dielectricF0, dielectricF0, dielectricF0), material.baseColor, material.metallic);
 }
 
-YBI_INTEGRATOR_HD float ComputeSpecularProbability(const EvaluatedMaterial &material, const Vec3 &f0)
+YBI_INTEGRATOR_HD float ComputeSpecularProbability(const EvaluatedMaterial &material,
+                                                   const Vec3 &f0)
 {
     const float diffuseWeight =
         (1.0f - material.metallic) * MaxFloat(Luminance(material.baseColor), 0.0f);
@@ -249,6 +249,16 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
     return Add3(diffuse, specular);
 }
 
+// YBI_INTEGRATOR_HD void EvaluateOrenNayar(float3 wi, float3 wo)
+// {
+//     float s = ωi⋅ωo−(n⋅ωi)(n⋅ωo) = cos(ϕi−ϕo) sinθisinθo;
+// }
+
+YBI_INTEGRATOR_HD void SampleOrenNayar(float3 help)
+{
+    float3 h = normalize(help);
+}
+
 YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
                                   const Vec3 &normal,
                                   const Vec3 &wo,
@@ -262,10 +272,10 @@ YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
 
     const Vec3 f0 = ComputeF0(material);
     const float specProbRaw = ComputeSpecularProbability(material, f0);
-    const float specProb = specProbRaw <= 0.0f ? 0.0f
-                                               : (specProbRaw < 0.05f ? 0.05f
-                                                                      : (specProbRaw > 0.95f ? 0.95f
-                                                                                             : specProbRaw));
+    const float specProb =
+        specProbRaw <= 0.0f
+            ? 0.0f
+            : (specProbRaw < 0.05f ? 0.05f : (specProbRaw > 0.95f ? 0.95f : specProbRaw));
 
     Vec3 tangent = {};
     Vec3 bitangent = {};

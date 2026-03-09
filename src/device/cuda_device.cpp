@@ -1,6 +1,5 @@
 #include "device/cuda_device.h"
 #include "render/dispatch_types.h"
-#include "cuda.h"
 #include <cstdio>
 #include <cstdlib>
 

@@ -1,11 +1,13 @@
 #pragma once
 
 #include "util/assert.h"
+#include "util/basemath.h"
 #include "util/forceinline.h"
 #include <cmath>
 
 YBI_NAMESPACE_BEGIN
 
+#ifndef GPU_INTEGRATOR
 struct float3
 {
     float x, y, z;
@@ -27,11 +29,17 @@ __forceinline float3 make_float3(const float x, const float y, const float z)
 {
     return {x, y, z};
 }
+#endif
+
+#ifndef YBI_INTEGRATOR_HD
+#define YBI_INTEGRATOR_HD inline
+#endif
 
 __forceinline float3 make_float3(const float a)
 {
     return {a, a, a};
 }
+
 
 // operators ////////////////////////////////////////////////////////////////
 
