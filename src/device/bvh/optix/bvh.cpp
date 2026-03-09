@@ -142,7 +142,7 @@ bool CUDADevice::CreateOptixPrimaryPipeline(const std::string &ptx)
 #if (OPTIX_VERSION >= 90000)
     pipelineCompileOptions.allowClusteredGeometry = SupportsClusterAccel() ? 1 : 0;
 #endif
-    pipelineCompileOptions.numPayloadValues = 1;
+    pipelineCompileOptions.numPayloadValues = 2;
     pipelineCompileOptions.numAttributeValues = 4;
     pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
@@ -437,7 +437,7 @@ static OptixAccelBuildOptions GetDefaultBuildOptions(uint32_t numMotionKeys)
     return options;
 }
 
-static bool IsIdentityTransform(const float3x4 &transform)
+static bool IsIdentityTransform(const Float3x4 &transform)
 {
     const float identity[3][4] = {
         {1.0f, 0.0f, 0.0f, 0.0f},
@@ -447,7 +447,7 @@ static bool IsIdentityTransform(const float3x4 &transform)
     return memcmp(transform.m, identity, sizeof(identity)) == 0;
 }
 
-static void CopyTransformMatrix(const float3x4 &transform, float out[12])
+static void CopyTransformMatrix(const Float3x4 &transform, float out[12])
 {
     memcpy(out, transform.m, sizeof(float) * 12);
 }

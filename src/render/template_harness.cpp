@@ -101,10 +101,10 @@ struct RenderCameraOverride
 {
     int width = 1280;
     int height = 720;
-    ybi::float3 origin = ybi::make_float3(0.0f, 0.0f, 0.0f);
-    ybi::float3 U = ybi::make_float3(1.0f, 0.0f, 0.0f);
-    ybi::float3 V = ybi::make_float3(0.0f, 1.0f, 0.0f);
-    ybi::float3 W = ybi::make_float3(0.0f, 0.0f, 1.0f);
+    ybi::float3 origin = ybi::Vec3(0.0f, 0.0f, 0.0f);
+    ybi::float3 U = ybi::Vec3(1.0f, 0.0f, 0.0f);
+    ybi::float3 V = ybi::Vec3(0.0f, 1.0f, 0.0f);
+    ybi::float3 W = ybi::Vec3(0.0f, 0.0f, 1.0f);
 };
 
 static std::string ReadTextFile(const std::string &path)
@@ -118,23 +118,7 @@ static std::string ReadTextFile(const std::string &path)
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 }
 
-static ybi::float3 Cross(const ybi::float3 &a, const ybi::float3 &b)
-{
-    return ybi::make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-}
-
-static ybi::float3 Normalize(const ybi::float3 &v)
-{
-    const float lenSq = ybi::dot(v, v);
-    if (lenSq <= 0.0f)
-    {
-        return ybi::make_float3(0.0f, 0.0f, 1.0f);
-    }
-    const float invLen = 1.0f / std::sqrt(lenSq);
-    return v * invLen;
-}
-
-static bool InvertAffine(const ybi::float4x4 &m, ybi::float4x4 &out)
+static bool InvertAffine(const ybi::Float4x4 &m, ybi::Float4x4 &out)
 {
     const float a00 = m.m[0][0], a01 = m.m[0][1], a02 = m.m[0][2];
     const float a10 = m.m[1][0], a11 = m.m[1][1], a12 = m.m[1][2];
@@ -168,7 +152,7 @@ static bool InvertAffine(const ybi::float4x4 &m, ybi::float4x4 &out)
     const float ity = -(r10 * tx + r11 * ty + r12 * tz);
     const float itz = -(r20 * tx + r21 * ty + r22 * tz);
 
-    out = ybi::float4x4(
+    out = ybi::Float4x4(
         r00, r01, r02, itx, r10, r11, r12, ity, r20, r21, r22, itz, 0.0f, 0.0f, 0.0f, 1.0f);
     return true;
 }
@@ -180,19 +164,19 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
         return std::nullopt;
     }
 
-    ybi::float4x4 worldFromCamera = {};
+    ybi::Float4x4 worldFromCamera = {};
     if (!InvertAffine(camera.cameraFromWorld, worldFromCamera))
     {
         return std::nullopt;
     }
 
-    ybi::float3 right = Normalize(ybi::make_float3(
+    ybi::float3 right = ybi::Normalize(ybi::Vec3(
         worldFromCamera.m[0][0], worldFromCamera.m[1][0], worldFromCamera.m[2][0]));
-    ybi::float3 up = Normalize(ybi::make_float3(
+    ybi::float3 up = ybi::Normalize(ybi::Vec3(
         worldFromCamera.m[0][1], worldFromCamera.m[1][1], worldFromCamera.m[2][1]));
-    ybi::float3 forward = Normalize(ybi::make_float3(
+    ybi::float3 forward = ybi::Normalize(ybi::Vec3(
         -worldFromCamera.m[0][2], -worldFromCamera.m[1][2], -worldFromCamera.m[2][2]));
-    if (std::abs(ybi::dot(forward, forward)) < 1e-6f)
+    if (std::abs(ybi::Dot(forward, forward)) < 1e-6f)
     {
         return std::nullopt;
     }
@@ -215,7 +199,7 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
     RenderCameraOverride out = {};
     out.width = camera.viewportWidth;
     out.height = camera.viewportHeight;
-    out.origin = ybi::make_float3(
+    out.origin = ybi::Vec3(
         worldFromCamera.m[0][3], worldFromCamera.m[1][3], worldFromCamera.m[2][3]);
     out.U = right * (aspect * tanHalfFov);
     out.V = up * tanHalfFov;
@@ -1574,7 +1558,7 @@ RenderTraversable(Device *device,
 
     const ybi::float3 center = (boundsMin + boundsMax) * 0.5f;
     const ybi::float3 extent = boundsMax - boundsMin;
-    const float diagonal = std::max(0.001f, ybi::length(extent));
+    const float diagonal = std::max(0.001f, ybi::Length(extent));
 
     LaunchParams params = {};
     params.traversable = traversable;
@@ -1592,16 +1576,16 @@ RenderTraversable(Device *device,
     {
         const ybi::float3 eye = cameraPositionOverride.has_value()
                                     ? cameraPositionOverride.value()
-                                    : center + ybi::make_float3(0.0f, 0.0f, 1.25f * diagonal);
+                                    : center + ybi::Vec3(0.0f, 0.0f, 1.25f * diagonal);
         const ybi::float3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
-        const ybi::float3 forward = Normalize(lookAt - eye);
-        ybi::float3 worldUp = ybi::make_float3(0.0f, 0.0f, 1.0f);
-        if (std::abs(ybi::dot(forward, worldUp)) > 0.999f)
+        const ybi::float3 forward = ybi::Normalize(lookAt - eye);
+        ybi::float3 worldUp = ybi::Vec3(0.0f, 0.0f, 1.0f);
+        if (std::abs(ybi::Dot(forward, worldUp)) > 0.999f)
         {
-            worldUp = ybi::make_float3(0.0f, 1.0f, 0.0f);
+            worldUp = ybi::Vec3(0.0f, 1.0f, 0.0f);
         }
-        const ybi::float3 right = Normalize(Cross(forward, worldUp));
-        const ybi::float3 up = Normalize(Cross(right, forward));
+        const ybi::float3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
+        const ybi::float3 up = ybi::Normalize(ybi::Cross(right, forward));
         const float aspect = static_cast<float>(width) / static_cast<float>(height);
         const float fovY = 45.0f * 3.14159265358979323846f / 180.0f;
         const float tanHalfFov = std::tan(fovY * 0.5f);
@@ -2324,8 +2308,8 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
         }
     }
 
-    const ybi::float3 dummyBoundsMin = ybi::make_float3(-1.0f, -1.0f, -1.0f);
-    const ybi::float3 dummyBoundsMax = ybi::make_float3(1.0f, 1.0f, 1.0f);
+    const ybi::float3 dummyBoundsMin = ybi::Vec3(-1.0f, -1.0f, -1.0f);
+    const ybi::float3 dummyBoundsMax = ybi::Vec3(1.0f, 1.0f, 1.0f);
     RenderTraversable(device,
                       state.rootScene->bvhHandle,
                       dummyBoundsMin,

@@ -29,7 +29,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPrimaryDiffuse(State &state, const HitInfo 
     }
 
     const LaunchParams::InstanceGeomRef geomRef = refs[hit.instanceId];
-    Vec3 color = MakeVec3(0.7f, 0.7f, 0.7f);
+    Vec3 color = Vec3(0.7f, 0.7f, 0.7f);
     const bool sampled = TrySampleMaterialTexture(state, geomRef, hit, color);
 
     float outR = 0.0f;

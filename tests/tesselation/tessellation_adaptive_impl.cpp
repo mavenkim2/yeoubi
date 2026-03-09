@@ -14,10 +14,10 @@ static ybi::float3 ComputeMeshCenter(const ybi::SubdivisionMesh &mesh)
 {
     if (mesh.vertices.size() == 0)
     {
-        return ybi::make_float3(0.0f);
+        return ybi::Vec3(0.0f);
     }
 
-    ybi::float3 sum = ybi::make_float3(0.0f);
+    ybi::float3 sum = ybi::Vec3(0.0f);
     for (const ybi::float3 &p : mesh.vertices)
     {
         sum += p;
@@ -233,12 +233,12 @@ int main(int argc, char **argv)
         options.splitThreshold = cli.splitThreshold;
         options.sampleSteps = cli.sampleSteps;
         options.eye = camera.found
-                          ? ybi::make_float3(camera.worldPosition[0],
+                          ? ybi::Vec3(camera.worldPosition[0],
                                              camera.worldPosition[1],
                                              camera.worldPosition[2])
-                          : (meshCenter + ybi::make_float3(0.0f, 0.0f, 5.0f));
+                          : (meshCenter + ybi::Vec3(0.0f, 0.0f, 5.0f));
         options.lookAt =
-            camera.found ? ybi::make_float3(camera.meshCenter[0], camera.meshCenter[1], camera.meshCenter[2])
+            camera.found ? ybi::Vec3(camera.meshCenter[0], camera.meshCenter[1], camera.meshCenter[2])
                          : meshCenter;
         options.subdivisionScheme = subdivisionScheme;
         options.generateTriangleMetadata = cli.writeMetadata;

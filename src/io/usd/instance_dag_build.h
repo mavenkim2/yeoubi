@@ -29,18 +29,18 @@ struct USDPrototypePrimLists
 struct USDBuildSceneMesh
 {
     std::string path;
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
 };
 
 struct USDBuildSceneCurve
 {
     std::string path;
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
 };
 
 struct USDBuildSceneInstance
 {
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
     uint32_t childSceneIndex;
 };
 

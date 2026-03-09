@@ -14,10 +14,10 @@ namespace integrator
 struct DirectLightSample
 {
     int lightIndex = -1;
-    Vec3 wi = MakeVec3(0.0f, 0.0f, 1.0f);
-    Vec3 radiance = MakeVec3(0.0f, 0.0f, 0.0f);
-    Vec3 lightPoint = MakeVec3(0.0f, 0.0f, 0.0f);
-    Vec3 lightNormal = MakeVec3(0.0f, 0.0f, 1.0f);
+    Vec3 wi = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 radiance = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 lightPoint = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 lightNormal = Vec3(0.0f, 0.0f, 1.0f);
     float distance = 0.0f;
     float pdf = 0.0f;
     bool isDeltaLight = false;
@@ -26,7 +26,7 @@ struct DirectLightSample
 struct LightRayHit
 {
     int lightIndex = -1;
-    Vec3 radiance = MakeVec3(0.0f, 0.0f, 0.0f);
+    Vec3 radiance = Vec3(0.0f, 0.0f, 0.0f);
     float distance = 0.0f;
     float pdf = 0.0f;
     bool isDeltaLight = false;
@@ -44,7 +44,7 @@ YBI_INTEGRATOR_HD float MinF(float a, float b)
 
 YBI_INTEGRATOR_HD Vec3 ToVec3(const ybi::float3 &value)
 {
-    return MakeVec3(value.x, value.y, value.z);
+    return Vec3(value.x, value.y, value.z);
 }
 
 YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params);
@@ -102,7 +102,7 @@ YBI_INTEGRATOR_HD void GetLightBasis(const PackedLight &light, Vec3 *outT, Vec3 
 
 YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec3 &direction)
 {
-    Vec3 env = MakeVec3(0.0f, 0.0f, 0.0f);
+    Vec3 env = Vec3(0.0f, 0.0f, 0.0f);
     bool hasDome = false;
     const PackedLight *lights = GetPackedLights(params);
     if (lights)
@@ -184,7 +184,7 @@ YBI_INTEGRATOR_HD Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &dir
     {
         return env;
     }
-    return MakeVec3(env.x * sample.x, env.y * sample.y, env.z * sample.z);
+    return Vec3(env.x * sample.x, env.y * sample.y, env.z * sample.z);
 }
 
 YBI_INTEGRATOR_HD int CountDirectLights(const LaunchParams &params)
@@ -483,7 +483,7 @@ YBI_INTEGRATOR_HD Vec3 SampleUniformSphereDirection(float u1, float u2)
     const float z = 1.0f - 2.0f * u1;
     const float r = SafeSqrt(1.0f - z * z);
     const float phi = 6.28318530718f * u2;
-    return MakeVec3(r * cosf(phi), r * sinf(phi), z);
+    return Vec3(r * cosf(phi), r * sinf(phi), z);
 }
 
 YBI_INTEGRATOR_HD bool SampleSphereLight(int lightIndex,
@@ -580,7 +580,7 @@ YBI_INTEGRATOR_HD bool SampleDomeLight(State &state,
     outSample->lightIndex = domeLightIndex;
     outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
     outSample->radiance = EvaluateEnvironmentRadiance(state, outSample->wi);
-    outSample->lightPoint = MakeVec3(0.0f, 0.0f, 0.0f);
+    outSample->lightPoint = Vec3(0.0f, 0.0f, 0.0f);
     outSample->lightNormal = Mul(outSample->wi, -1.0f);
     outSample->distance = 1.0e20f;
     outSample->pdf = DomeDirectionPdf();

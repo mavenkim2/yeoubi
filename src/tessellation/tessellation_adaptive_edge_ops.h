@@ -88,8 +88,8 @@ static int EnsurePatchEdgeFactor(const SubdivisionPatch &patch,
                                  int viewportHeight,
                                  float verticalFovDegrees,
                                  bool useCameraMatrices,
-                                 const float4x4 &cameraFromWorld,
-                                 const float4x4 &clipFromCamera,
+                                 const Float4x4 &cameraFromWorld,
+                                 const Float4x4 &clipFromCamera,
                                  int *computedCountOut)
 {
     auto nonUniformReasonLabel = [](DiagSplitNonUniformReason reason) {
@@ -244,8 +244,8 @@ DiagSplitPatches(const std::vector<SubdivisionPatch> &patches,
                  int viewportHeight,
                  float verticalFovDegrees,
                  bool useCameraMatrices,
-                 const float4x4 &cameraFromWorld,
-                 const float4x4 &clipFromCamera,
+                 const Float4x4 &cameraFromWorld,
+                 const Float4x4 &clipFromCamera,
                  int *computedCountOut)
 {
     std::vector<SubdivisionPatch> worklist = patches;

@@ -377,12 +377,12 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
 
 static ybi::float3 ToFloat3(const pxr::GfVec3f &v)
 {
-    return ybi::make_float3(v[0], v[1], v[2]);
+    return ybi::Vec3(v[0], v[1], v[2]);
 }
 
 static ybi::float3 ToFloat3(const pxr::GfVec3d &v)
 {
-    return ybi::make_float3(static_cast<float>(v[0]),
+    return ybi::Vec3(static_cast<float>(v[0]),
                             static_cast<float>(v[1]),
                             static_cast<float>(v[2]));
 }
@@ -406,7 +406,7 @@ static float ClampFinite(float value, float lo, float hi, float fallback)
 
 static ybi::float3 ClampFiniteColor(const ybi::float3 &value, float lo, float hi)
 {
-    return ybi::make_float3(ClampFinite(value.x, lo, hi, lo),
+    return ybi::Vec3(ClampFinite(value.x, lo, hi, lo),
                             ClampFinite(value.y, lo, hi, lo),
                             ClampFinite(value.z, lo, hi, lo));
 }
@@ -479,10 +479,10 @@ static void ReadPreviewSurfaceMaterial(const pxr::UsdShadeShader &shader, Materi
     outInfo->packed = {};
     outInfo->packed.baseColor = ReadInputColor3f(
         shader.GetInput(pxr::TfToken("diffuseColor")),
-        ybi::make_float3(0.18f, 0.18f, 0.18f));
+        ybi::Vec3(0.18f, 0.18f, 0.18f));
     outInfo->packed.emissiveColor = ReadInputColor3f(
         shader.GetInput(pxr::TfToken("emissiveColor")),
-        ybi::make_float3(0.0f, 0.0f, 0.0f));
+        ybi::Vec3(0.0f, 0.0f, 0.0f));
     outInfo->packed.roughness =
         ReadInputFloat(shader.GetInput(pxr::TfToken("roughness")), 0.5f);
     outInfo->packed.metallic =
@@ -544,7 +544,7 @@ static ybi::float3 TransformPoint(const pxr::GfMatrix4d &m, const pxr::GfVec3d &
 
 static ybi::float3 TransformDirection(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
 {
-    return ybi::normalize(ToFloat3(m.TransformDir(v)));
+    return ybi::Normalize(ToFloat3(m.TransformDir(v)));
 }
 
 static ybi::float3 TransformVector(const pxr::GfMatrix4d &m, const pxr::GfVec3d &v)
@@ -554,7 +554,7 @@ static ybi::float3 TransformVector(const pxr::GfMatrix4d &m, const pxr::GfVec3d 
 
 static ybi::float3 SafeNormalizeOrDefault(const ybi::float3 &value, const ybi::float3 &fallback)
 {
-    const float len = ybi::length(value);
+    const float len = ybi::Length(value);
     if (len <= 1.0e-8f)
     {
         return fallback;
@@ -567,21 +567,21 @@ static void FinalizeLightBasis(PackedLight *light)
     YBI_ASSERT(light);
 
     light->direction =
-        SafeNormalizeOrDefault(light->direction, ybi::make_float3(0.0f, 0.0f, -1.0f));
+        SafeNormalizeOrDefault(light->direction, ybi::Vec3(0.0f, 0.0f, -1.0f));
     light->tangent =
-        SafeNormalizeOrDefault(light->tangent, ybi::make_float3(1.0f, 0.0f, 0.0f));
+        SafeNormalizeOrDefault(light->tangent, ybi::Vec3(1.0f, 0.0f, 0.0f));
     light->bitangent =
-        SafeNormalizeOrDefault(light->bitangent, ybi::cross(light->direction, light->tangent));
+        SafeNormalizeOrDefault(light->bitangent, ybi::Cross(light->direction, light->tangent));
 
-    if (std::fabs(ybi::dot(light->direction, light->tangent)) > 0.999f)
+    if (std::fabs(ybi::Dot(light->direction, light->tangent)) > 0.999f)
     {
         const ybi::float3 up = std::fabs(light->direction.z) < 0.999f
-                                   ? ybi::make_float3(0.0f, 0.0f, 1.0f)
-                                   : ybi::make_float3(0.0f, 1.0f, 0.0f);
-        light->tangent = ybi::normalize(ybi::cross(up, light->direction));
+                                   ? ybi::Vec3(0.0f, 0.0f, 1.0f)
+                                   : ybi::Vec3(0.0f, 1.0f, 0.0f);
+        light->tangent = ybi::Normalize(ybi::Cross(up, light->direction));
     }
-    light->bitangent = ybi::normalize(ybi::cross(light->direction, light->tangent));
-    light->tangent = ybi::normalize(ybi::cross(light->bitangent, light->direction));
+    light->bitangent = ybi::Normalize(ybi::Cross(light->direction, light->tangent));
+    light->tangent = ybi::Normalize(ybi::Cross(light->bitangent, light->direction));
 }
 
 static float ComputeAreaEmissionScale(float intensityScale, float area, bool normalized)
@@ -738,17 +738,17 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
             const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
             const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
-            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::make_float3(0.0f, 0.0f, -1.0f));
-            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::make_float3(1.0f, 0.0f, 0.0f));
+            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::Vec3(0.0f, 0.0f, -1.0f));
+            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::Vec3(1.0f, 0.0f, 0.0f));
             info.packed.bitangent =
-                SafeNormalizeOrDefault(axisY, ybi::make_float3(0.0f, 1.0f, 0.0f));
+                SafeNormalizeOrDefault(axisY, ybi::Vec3(0.0f, 1.0f, 0.0f));
             ReadCommonLightParams(light, &info.packed);
             float localWidth = 0.0f;
             float localHeight = 0.0f;
             light.GetWidthAttr().Get(&localWidth);
             light.GetHeightAttr().Get(&localHeight);
-            info.packed.width = std::max(localWidth, 0.0f) * ybi::length(axisX);
-            info.packed.height = std::max(localHeight, 0.0f) * ybi::length(axisY);
+            info.packed.width = std::max(localWidth, 0.0f) * ybi::Length(axisX);
+            info.packed.height = std::max(localHeight, 0.0f) * ybi::Length(axisY);
             info.packed.areaScale = std::max(info.packed.width * info.packed.height, 1.0e-4f);
             const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
             info.packed.emissionScale =
@@ -763,15 +763,15 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
             const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
             const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, -1.0));
-            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::make_float3(0.0f, 0.0f, -1.0f));
-            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::make_float3(1.0f, 0.0f, 0.0f));
+            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::Vec3(0.0f, 0.0f, -1.0f));
+            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::Vec3(1.0f, 0.0f, 0.0f));
             info.packed.bitangent =
-                SafeNormalizeOrDefault(axisY, ybi::make_float3(0.0f, 1.0f, 0.0f));
+                SafeNormalizeOrDefault(axisY, ybi::Vec3(0.0f, 1.0f, 0.0f));
             ReadCommonLightParams(light, &info.packed);
             float localRadius = 0.0f;
             light.GetRadiusAttr().Get(&localRadius);
-            const float worldScaleX = ybi::length(axisX);
-            const float worldScaleY = ybi::length(axisY);
+            const float worldScaleX = ybi::Length(axisX);
+            const float worldScaleY = ybi::Length(axisY);
             info.packed.radius = std::max(localRadius, 0.0f) * 0.5f * (worldScaleX + worldScaleY);
             info.packed.areaScale =
                 std::max(kPi * std::max(localRadius, 0.0f) * worldScaleX * std::max(localRadius, 0.0f) *
@@ -792,9 +792,9 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             ReadCommonLightParams(light, &info.packed);
             float localRadius = 0.0f;
             light.GetRadiusAttr().Get(&localRadius);
-            const float worldScaleX = ybi::length(TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0)));
-            const float worldScaleY = ybi::length(TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0)));
-            const float worldScaleZ = ybi::length(TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0)));
+            const float worldScaleX = ybi::Length(TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0)));
+            const float worldScaleY = ybi::Length(TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0)));
+            const float worldScaleZ = ybi::Length(TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0)));
             const float worldScale = (worldScaleX + worldScaleY + worldScaleZ) / 3.0f;
             info.packed.radius = std::max(localRadius, 0.0f) * worldScale;
             info.packed.areaScale =
@@ -811,19 +811,19 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             const ybi::float3 axisX = TransformVector(localToWorld, pxr::GfVec3d(1.0, 0.0, 0.0));
             const ybi::float3 axisY = TransformVector(localToWorld, pxr::GfVec3d(0.0, 1.0, 0.0));
             const ybi::float3 axisZ = TransformVector(localToWorld, pxr::GfVec3d(0.0, 0.0, 1.0));
-            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::make_float3(0.0f, 0.0f, 1.0f));
-            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::make_float3(1.0f, 0.0f, 0.0f));
+            info.packed.direction = SafeNormalizeOrDefault(axisZ, ybi::Vec3(0.0f, 0.0f, 1.0f));
+            info.packed.tangent = SafeNormalizeOrDefault(axisX, ybi::Vec3(1.0f, 0.0f, 0.0f));
             info.packed.bitangent =
-                SafeNormalizeOrDefault(axisY, ybi::make_float3(0.0f, 1.0f, 0.0f));
+                SafeNormalizeOrDefault(axisY, ybi::Vec3(0.0f, 1.0f, 0.0f));
             ReadCommonLightParams(light, &info.packed);
             float localRadius = 0.0f;
             float localLength = 0.0f;
             light.GetRadiusAttr().Get(&localRadius);
             light.GetLengthAttr().Get(&localLength);
             const float worldRadiusScale =
-                0.5f * (ybi::length(axisX) + ybi::length(axisY));
+                0.5f * (ybi::Length(axisX) + ybi::Length(axisY));
             info.packed.radius = std::max(localRadius, 0.0f) * worldRadiusScale;
-            info.packed.length = std::max(localLength, 0.0f) * ybi::length(axisZ);
+            info.packed.length = std::max(localLength, 0.0f) * ybi::Length(axisZ);
             info.packed.areaScale =
                 std::max(2.0f * kPi * info.packed.radius * info.packed.length, 1.0e-4f);
             const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
@@ -1400,7 +1400,7 @@ static void
 ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh,
                         Scene *scene,
                         int materialIndex,
-                        const float3x4 &parentFromLocal,
+                        const Float3x4 &parentFromLocal,
                         pxr::UsdTimeCode timeCode = 0.0)
 {
     pxr::VtVec3fArray positions;
@@ -1799,16 +1799,16 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         const pxr::GfMatrix4d cameraLocalToWorld = xformCache.GetLocalToWorldTransform(cameraPrim);
         const pxr::GfVec3d cameraP = cameraLocalToWorld.Transform(pxr::GfVec3d(0.0, 0.0, 0.0));
         const pxr::GfVec3d cameraFwd = cameraLocalToWorld.TransformDir(pxr::GfVec3d(0.0, 0.0, -1.0));
-        float3 worldPos = make_float3(float(cameraP[0]), float(cameraP[1]), float(cameraP[2]));
-        float3 forward = make_float3(float(cameraFwd[0]), float(cameraFwd[1]), float(cameraFwd[2]));
-        const float forwardLen = length(forward);
+        float3 worldPos = Vec3(float(cameraP[0]), float(cameraP[1]), float(cameraP[2]));
+        float3 forward = Vec3(float(cameraFwd[0]), float(cameraFwd[1]), float(cameraFwd[2]));
+        const float forwardLen = Length(forward);
         if (forwardLen > 1e-8f)
         {
             forward = forward * (1.0f / forwardLen);
         }
         else
         {
-            forward = make_float3(0.0f, 0.0f, -1.0f);
+            forward = Vec3(0.0f, 0.0f, -1.0f);
         }
         const float verticalFovDegrees =
             float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical));

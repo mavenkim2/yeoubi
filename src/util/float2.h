@@ -1,91 +1,83 @@
 #pragma once
 
-#include "util/assert.h"
-#include "util/forceinline.h"
+#include "util/math_common.h"
 #include <cmath>
 
 YBI_NAMESPACE_BEGIN
 
-struct float2
+struct Vec2
 {
-    float x, y;
-    __forceinline float operator[](int i) const
-    {
-        YBI_ASSERT(i >= 0);
-        YBI_ASSERT(i < 2);
-        return *(&x + i);
-    }
-    __forceinline float &operator[](int i)
-    {
-        YBI_ASSERT(i >= 0);
-        YBI_ASSERT(i < 2);
-        return *(&x + i);
-    }
+    float x;
+    float y;
+
+    Vec2() = default;
+    YBI_INTEGRATOR_HD constexpr Vec2(float value) : x(value), y(value) {}
+    YBI_INTEGRATOR_HD constexpr Vec2(float x_, float y_) : x(x_), y(y_) {}
+
+    YBI_INTEGRATOR_HD float operator[](int i) const { return *(&x + i); }
+    YBI_INTEGRATOR_HD float &operator[](int i) { return *(&x + i); }
 };
 
-__forceinline float2 make_float2(const float x, const float y)
+using float2 = Vec2;
+
+static_assert(sizeof(float2) == sizeof(Vec2));
+static_assert(sizeof(Vec2) == sizeof(float) * 2);
+
+YBI_INTEGRATOR_HD Vec2 operator+(const Vec2 &a, const Vec2 &b)
 {
-    return {x, y};
+    return Vec2(a.x + b.x, a.y + b.y);
 }
 
-__forceinline float2 make_float2(const float a)
-{
-    return {a, a};
-}
-
-// operators ////////////////////////////////////////////////////////////////
-
-__forceinline float2 operator+(const float2 &a, const float2 &b)
-{
-    return {a.x + b.x, a.y + b.y};
-}
-
-__forceinline float2 &operator+=(float2 &a, const float2 &b)
+YBI_INTEGRATOR_HD Vec2 &operator+=(Vec2 &a, const Vec2 &b)
 {
     a.x += b.x;
     a.y += b.y;
     return a;
 }
 
-__forceinline float2 operator-(const float2 &a, const float2 &b)
+YBI_INTEGRATOR_HD Vec2 operator-(const Vec2 &a, const Vec2 &b)
 {
-    return {a.x - b.x, a.y - b.y};
+    return Vec2(a.x - b.x, a.y - b.y);
 }
 
-__forceinline float2 operator*(const float2 &a, const float2 &b)
+YBI_INTEGRATOR_HD Vec2 operator*(const Vec2 &a, const Vec2 &b)
 {
-    return {a.x * b.x, a.y * b.y};
+    return Vec2(a.x * b.x, a.y * b.y);
 }
 
-__forceinline float2 operator/(const float2 &a, const float2 &b)
+YBI_INTEGRATOR_HD Vec2 operator*(const Vec2 &a, float b)
 {
-    return {a.x / b.x, a.y / b.y};
+    return Vec2(a.x * b, a.y * b);
 }
 
-__forceinline float2 operator/(const float2 &a, const float b)
+YBI_INTEGRATOR_HD Vec2 operator*(float a, const Vec2 &b)
 {
-    return {a.x / b, a.y / b};
+    return b * a;
 }
 
-__forceinline float2 operator*(const float2 &a, const float b)
+YBI_INTEGRATOR_HD Vec2 operator/(const Vec2 &a, const Vec2 &b)
 {
-    return {a.x * b, a.y * b};
+    return Vec2(a.x / b.x, a.y / b.y);
 }
 
-// utility functions ////////////////////////////////////////////////////////
-
-__forceinline float2 lerp(const float2 &a, const float2 &b, const float t)
+YBI_INTEGRATOR_HD Vec2 operator/(const Vec2 &a, float b)
 {
-    return a * (1.f - t) + b * t;
+    return Vec2(a.x / b, a.y / b);
 }
 
-__forceinline float dot(const float2 &a, const float2 &b)
+YBI_INTEGRATOR_HD Vec2 Lerp(const Vec2 &a, const Vec2 &b, float t)
+{
+    return a * (1.0f - t) + b * t;
+}
+
+YBI_INTEGRATOR_HD float Dot(const Vec2 &a, const Vec2 &b)
 {
     return a.x * b.x + a.y * b.y;
 }
 
-__forceinline float length(const float2 &a)
+YBI_INTEGRATOR_HD float Length(const Vec2 &a)
 {
-    return std::sqrt(dot(a, a));
+    return sqrtf(Dot(a, a));
 }
+
 YBI_NAMESPACE_END

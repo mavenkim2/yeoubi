@@ -53,8 +53,8 @@ YBI_INTEGRATOR_HD Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
     constexpr float kDisplayExposure = 16.0f;
     const Vec3 exposed = Mul(radiance, kDisplayExposure);
     const Vec3 mapped =
-        MakeVec3(1.0f - expf(-exposed.x), 1.0f - expf(-exposed.y), 1.0f - expf(-exposed.z));
-    return MakeVec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
+        Vec3(1.0f - expf(-exposed.x), 1.0f - expf(-exposed.y), 1.0f - expf(-exposed.z));
+    return Vec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
 }
 
 YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
@@ -68,9 +68,9 @@ YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &pa
     }
 
     const PackedMaterial &src = materials[materialIndex];
-    material.baseColor = MakeVec3(src.baseColor.x, src.baseColor.y, src.baseColor.z);
+    material.baseColor = Vec3(src.baseColor.x, src.baseColor.y, src.baseColor.z);
     material.emissiveColor =
-        MakeVec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
+        Vec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
     material.roughness = src.roughness;
     material.metallic = src.metallic;
     material.ior = src.ior;
@@ -90,7 +90,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticDiffuse, sample))
     {
         material.baseColor =
-            MulComponents(material.baseColor, MakeVec3(sample.x, sample.y, sample.z));
+            MulComponents(material.baseColor, Vec3(sample.x, sample.y, sample.z));
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticRoughness, sample))
     {
@@ -103,7 +103,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticEmissive, sample))
     {
         material.emissiveColor =
-            MulComponents(material.emissiveColor, MakeVec3(sample.x, sample.y, sample.z));
+            MulComponents(material.emissiveColor, Vec3(sample.x, sample.y, sample.z));
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticIor, sample))
     {
@@ -136,8 +136,8 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
 {
     const LaunchParams &params = state.Params();
     const LaunchParams::InstanceGeomRef *geomRefs = GetGeomRefs(params);
-    Vec3 radiance = MakeVec3(0.0f, 0.0f, 0.0f);
-    Vec3 throughput = MakeVec3(1.0f, 1.0f, 1.0f);
+    Vec3 radiance = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 throughput = Vec3(1.0f, 1.0f, 1.0f);
     Vec3 rayOrigin = origin;
     Vec3 rayDir = direction;
     const float rayBias = params.aoBias > 0.0f ? params.aoBias : 0.001f;
@@ -166,7 +166,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                     currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + lightHit.pdf, 1.0e-6f);
             }
             radiance =
-                Add3(radiance, MulComponents(throughput, Mul(lightHit.radiance, misWeight)));
+                Add(radiance, MulComponents(throughput, Mul(lightHit.radiance, misWeight)));
             break;
         }
 
@@ -180,13 +180,13 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
             }
             radiance =
-                Add3(radiance,
-                     MulComponents(throughput,
-                                   Mul(EvaluateEnvironmentRadiance(state, rayDir), misWeight)));
+                Add(radiance,
+                    MulComponents(throughput,
+                                  Mul(EvaluateEnvironmentRadiance(state, rayDir), misWeight)));
             break;
         }
 
-        Vec3 normal = MakeVec3(-rayDir.x, -rayDir.y, -rayDir.z);
+        Vec3 normal = Vec3(-rayDir.x, -rayDir.y, -rayDir.z);
         if (hit.hasGeomNormal)
         {
             normal = FaceForward(Normalize(hit.geomNormal), rayDir);
@@ -203,7 +203,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
         if ((material.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {
-            radiance = Add3(radiance, MulComponents(throughput, material.emissiveColor));
+            radiance = Add(radiance, MulComponents(throughput, material.emissiveColor));
         }
 
         const Vec3 wo = Mul(rayDir, -1.0f);
@@ -236,7 +236,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                                 : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
                         const Vec3 direct =
                             MulComponents(MulComponents(throughput, f), lightSample.radiance);
-                        radiance = Add3(
+                        radiance = Add(
                             radiance,
                             Mul(direct, (nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f)));
                     }
@@ -259,7 +259,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                             domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
                         const Vec3 direct =
                             MulComponents(MulComponents(throughput, f), domeSample.radiance);
-                        radiance = Add3(
+                        radiance = Add(
                             radiance,
                             Mul(direct, (nDotL * misWeight) / MaxFloat(domeSample.pdf, 1.0e-6f)));
                     }
@@ -273,7 +273,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         }
 
         BsdfSample bsdf = {};
-        SampleOrenNayar(make_float3(wo.x, wo.y, wo.z));
+        SampleOrenNayar(Vec3(wo.x, wo.y, wo.z));
         if (!SampleBsdf(material, normal, wo, rngState, &bsdf))
         {
             break;

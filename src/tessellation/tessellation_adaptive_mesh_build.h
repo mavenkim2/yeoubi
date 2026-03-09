@@ -40,7 +40,7 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
     }
     if (evalAttr.type == AttributeType::Float2)
     {
-        float2 value = make_float2(0.0f);
+        float2 value = Vec2(0.0f);
         if (!EvaluateLimitValue<LimitEvalFloat2, float2>(patchMap,
                                                          patchTable,
                                                          evalAttr.valuesFloat2,
@@ -57,7 +57,7 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
     }
     if (evalAttr.type == AttributeType::Float3)
     {
-        float3 value = make_float3(0.0f);
+        float3 value = Vec3(0.0f);
         if (!EvaluateLimitValue<LimitEvalFloat3, float3>(patchMap,
                                                          patchTable,
                                                          evalAttr.valuesFloat3,
@@ -74,7 +74,7 @@ static bool EvaluateAndAppendAttributeSample(const SubdivisionLimitEvalAttribute
     }
     if (evalAttr.type == AttributeType::Float4)
     {
-        float4 value = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+        float4 value = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
         if (!EvaluateLimitValue<LimitEvalFloat4, float4>(patchMap,
                                                          patchTable,
                                                          evalAttr.valuesFloat4,
@@ -178,7 +178,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     int maxVertexId = nextGeneratedVertexId;
 
     const float inf = std::numeric_limits<float>::infinity();
-    std::vector<float3> sharedPos(maxVertexId, make_float3(inf, inf, inf));
+    std::vector<float3> sharedPos(maxVertexId, Vec3(inf, inf, inf));
     std::vector<pxr::GfVec2f> sharedUV(maxVertexId, pxr::GfVec2f(0.0f, 0.0f));
     std::vector<int> sharedPtexFace(maxVertexId, -1);
     std::vector<uint8_t> sharedInit(maxVertexId, uint8_t(0));
@@ -230,7 +230,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
         {
             const float a = float(k) / float(t);
             const pxr::GfVec2f uv = edge.storedUv0 * (1.0f - a) + edge.storedUv1 * a;
-            float3 p = make_float3(0.0f);
+            float3 p = Vec3(0.0f);
             if (!EvaluateLimitPosition(
                     patchMap, patchTable, limitValues, edge.storedPtexFaceId, uv, &p))
             {
@@ -597,7 +597,7 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
                 const pxr::GfVec2f uvTop = patch.uv[3] * (1.0f - su) + patch.uv[2] * su;
                 const pxr::GfVec2f uv = uvBottom * (1.0f - sv) + uvTop * sv;
 
-                float3 p = make_float3(0.0f);
+                float3 p = Vec3(0.0f);
                 if (!EvaluateLimitPosition(
                         patchMap, patchTable, limitValues, patch.ptexFaceId, uv, &p))
                 {

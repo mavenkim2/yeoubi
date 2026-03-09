@@ -79,9 +79,9 @@ static ybi::float3 ComputeSubdivisionMeshCenter(const ybi::SubdivisionMesh &mesh
 {
     if (mesh.vertices.size() == 0)
     {
-        return ybi::make_float3(0.0f);
+        return ybi::Vec3(0.0f);
     }
-    ybi::float3 sum = ybi::make_float3(0.0f);
+    ybi::float3 sum = ybi::Vec3(0.0f);
     for (const ybi::float3 &p : mesh.vertices)
     {
         sum += p;
@@ -219,7 +219,7 @@ static bool RunUsdTessellationInput(const std::string &inPath,
     YBI_ASSERT(hasCamera);
     YBI_ASSERT(IsFiniteFloat3(cameraWorldPos));
     YBI_ASSERT(IsFiniteFloat3(cameraForward));
-    YBI_ASSERT(ybi::length(cameraForward) > 1e-8f);
+    YBI_ASSERT(ybi::Length(cameraForward) > 1e-8f);
     YBI_ASSERT(std::isfinite(cameraVerticalFovDegrees));
     YBI_ASSERT(cameraVerticalFovDegrees > 0.0f);
     if (!hasCamera)

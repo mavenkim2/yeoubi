@@ -38,7 +38,7 @@ static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &le
     }
 
     const float inf = std::numeric_limits<float>::infinity();
-    std::vector<float3> cornerPos(maxVertexId + 1, make_float3(inf, inf, inf));
+    std::vector<float3> cornerPos(maxVertexId + 1, Vec3(inf, inf, inf));
     std::vector<uint8_t> cornerInit(maxVertexId + 1, uint8_t(0));
 
     for (const SubdivisionPatch &patch : leafPatches)
@@ -52,7 +52,7 @@ static bool WriteLeafPatchCornerQuadsObj(const std::vector<SubdivisionPatch> &le
                 continue;
             }
 
-            float3 p = make_float3(0.0f);
+            float3 p = Vec3(0.0f);
             if (!EvaluateLimitPosition(
                     patchMap, patchTable, limitValues, patch.ptexFaceId, patch.uv[i], &p))
             {

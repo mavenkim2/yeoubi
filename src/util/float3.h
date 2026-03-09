@@ -1,62 +1,35 @@
 #pragma once
 
-#include "util/assert.h"
-#include "util/basemath.h"
-#include "util/forceinline.h"
+#include "util/math_common.h"
 #include <cmath>
 
 YBI_NAMESPACE_BEGIN
 
-#ifndef GPU_INTEGRATOR
-struct float3
+struct Vec3
 {
-    float x, y, z;
-    __forceinline float operator[](int i) const
-    {
-        YBI_ASSERT(i >= 0);
-        YBI_ASSERT(i < 3);
-        return *(&x + i);
-    }
-    __forceinline float &operator[](int i)
-    {
-        YBI_ASSERT(i >= 0);
-        YBI_ASSERT(i < 3);
-        return *(&x + i);
-    }
+    float x;
+    float y;
+    float z;
+
+    Vec3() = default;
+    YBI_INTEGRATOR_HD constexpr Vec3(float value) : x(value), y(value), z(value) {}
+    YBI_INTEGRATOR_HD constexpr Vec3(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
+
+    YBI_INTEGRATOR_HD float operator[](int i) const { return *(&x + i); }
+    YBI_INTEGRATOR_HD float &operator[](int i) { return *(&x + i); }
 };
 
-__forceinline float3 make_float3(const float x, const float y, const float z)
-{
-    return {x, y, z};
-}
-#endif
+using float3 = Vec3;
 
-#ifndef YBI_INTEGRATOR_HD
-#define YBI_INTEGRATOR_HD inline
-#endif
+static_assert(sizeof(float3) == sizeof(Vec3));
+static_assert(sizeof(Vec3) == sizeof(float) * 3);
 
-__forceinline float3 make_float3(const float a)
+YBI_INTEGRATOR_HD Vec3 operator+(const Vec3 &a, const Vec3 &b)
 {
-    return {a, a, a};
+    return Vec3(a.x + b.x, a.y + b.y, a.z + b.z);
 }
 
-
-// operators ////////////////////////////////////////////////////////////////
-
-__forceinline float3 operator+(const float3 &a, const float3 &b)
-{
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-__forceinline float3 &operator-=(float3 &a, const float3 &b)
-{
-    a.x -= b.x;
-    a.y -= b.y;
-    a.z -= b.z;
-    return a;
-}
-
-__forceinline float3 &operator+=(float3 &a, const float3 &b)
+YBI_INTEGRATOR_HD Vec3 &operator+=(Vec3 &a, const Vec3 &b)
 {
     a.x += b.x;
     a.y += b.y;
@@ -64,65 +37,137 @@ __forceinline float3 &operator+=(float3 &a, const float3 &b)
     return a;
 }
 
-__forceinline float3 operator-(const float3 &a, const float3 &b)
+YBI_INTEGRATOR_HD Vec3 operator-(const Vec3 &a, const Vec3 &b)
 {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
+    return Vec3(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
-__forceinline float3 operator*(const float3 &a, const float3 &b)
+YBI_INTEGRATOR_HD Vec3 &operator-=(Vec3 &a, const Vec3 &b)
 {
-    return {a.x * b.x, a.y * b.y, a.z * b.z};
+    a.x -= b.x;
+    a.y -= b.y;
+    a.z -= b.z;
+    return a;
 }
 
-__forceinline float3 operator*(const float3 &a, const float b)
+YBI_INTEGRATOR_HD Vec3 operator-(const Vec3 &a)
 {
-    return {a.x * b, a.y * b, a.z * b};
+    return Vec3(-a.x, -a.y, -a.z);
 }
 
-__forceinline float3 operator*(float a, const float3 &b)
+YBI_INTEGRATOR_HD Vec3 operator*(const Vec3 &a, const Vec3 &b)
+{
+    return Vec3(a.x * b.x, a.y * b.y, a.z * b.z);
+}
+
+YBI_INTEGRATOR_HD Vec3 operator*(const Vec3 &a, float b)
+{
+    return Vec3(a.x * b, a.y * b, a.z * b);
+}
+
+YBI_INTEGRATOR_HD Vec3 operator*(float a, const Vec3 &b)
 {
     return b * a;
 }
 
-__forceinline float3 operator/(const float3 &a, const float3 &b)
+YBI_INTEGRATOR_HD Vec3 operator/(const Vec3 &a, const Vec3 &b)
 {
-    return {a.x / b.x, a.y / b.y, a.z / b.z};
+    return Vec3(a.x / b.x, a.y / b.y, a.z / b.z);
 }
 
-__forceinline float3 operator/(const float3 &a, const float b)
+YBI_INTEGRATOR_HD Vec3 operator/(const Vec3 &a, float b)
 {
-    return {a.x / b, a.y / b, a.z / b};
+    return Vec3(a.x / b, a.y / b, a.z / b);
 }
 
-__forceinline float dot(const float3 &a, const float3 &b)
+YBI_INTEGRATOR_HD float Dot(const Vec3 &a, const Vec3 &b)
 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-__forceinline float3 cross(const float3 &a, const float3 &b)
+YBI_INTEGRATOR_HD Vec3 Cross(const Vec3 &a, const Vec3 &b)
 {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+    return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
 }
 
-__forceinline float length_squared(const float3 &a)
+YBI_INTEGRATOR_HD float LengthSquared(const Vec3 &a)
 {
-    return dot(a, a);
+    return Dot(a, a);
 }
 
-__forceinline float length(const float3 &a)
+YBI_INTEGRATOR_HD float Length(const Vec3 &a)
 {
-    return std::sqrt(dot(a, a));
+    return sqrtf(Dot(a, a));
 }
 
-__forceinline float3 normalize(const float3 &a)
+YBI_INTEGRATOR_HD Vec3 Normalize(const Vec3 &a)
 {
-    const float lenSq = length_squared(a);
+    const float lenSq = LengthSquared(a);
     if (lenSq <= 1e-20f)
     {
-        return make_float3(0.0f, 0.0f, 1.0f);
+        return Vec3(0.0f, 0.0f, 1.0f);
     }
-    const float invLen = 1.0f / std::sqrt(lenSq);
-    return a * invLen;
+    return a * (1.0f / sqrtf(lenSq));
+}
+
+YBI_INTEGRATOR_HD Vec3 Clamp(const Vec3 &v, float lo, float hi)
+{
+    const float x = v.x < lo ? lo : (v.x > hi ? hi : v.x);
+    const float y = v.y < lo ? lo : (v.y > hi ? hi : v.y);
+    const float z = v.z < lo ? lo : (v.z > hi ? hi : v.z);
+    return Vec3(x, y, z);
+}
+
+YBI_INTEGRATOR_HD Vec3 Lerp(const Vec3 &a, const Vec3 &b, float t)
+{
+    return a * (1.0f - t) + b * t;
+}
+
+YBI_INTEGRATOR_HD Vec3 Add(const Vec3 &a, const Vec3 &b)
+{
+    return a + b;
+}
+
+YBI_INTEGRATOR_HD Vec3 Sub(const Vec3 &a, const Vec3 &b)
+{
+    return a - b;
+}
+
+YBI_INTEGRATOR_HD Vec3 Mul(const Vec3 &a, const Vec3 &b)
+{
+    return a * b;
+}
+
+YBI_INTEGRATOR_HD Vec3 Mul(const Vec3 &a, float b)
+{
+    return a * b;
+}
+
+YBI_INTEGRATOR_HD float MaxComponent(const Vec3 &v)
+{
+    return fmaxf(v.x, fmaxf(v.y, v.z));
+}
+
+YBI_INTEGRATOR_HD float Luminance(const Vec3 &v)
+{
+    return 0.2126f * v.x + 0.7152f * v.y + 0.0722f * v.z;
+}
+
+YBI_INTEGRATOR_HD Vec3 Reflect(const Vec3 &incident, const Vec3 &normal)
+{
+    return incident - 2.0f * Dot(incident, normal) * normal;
+}
+
+YBI_INTEGRATOR_HD Vec3 FaceForward(const Vec3 &normal, const Vec3 &referenceDirection)
+{
+    return Dot(normal, referenceDirection) < 0.0f ? normal : -normal;
+}
+
+YBI_INTEGRATOR_HD void BuildOrthonormalBasis(const Vec3 &n, Vec3 &t, Vec3 &b)
+{
+    const Vec3 up = fabsf(n.z) < 0.999f ? Vec3(0.0f, 0.0f, 1.0f) : Vec3(0.0f, 1.0f, 0.0f);
+    t = Normalize(Cross(up, n));
+    b = Normalize(Cross(n, t));
 }
 
 YBI_NAMESPACE_END

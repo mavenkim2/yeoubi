@@ -17,7 +17,6 @@
 
 YBI_NAMESPACE_BEGIN
 
-struct float3;
 struct Device;
 
 enum PrimitiveType : int
@@ -57,7 +56,7 @@ struct Mesh
     Array<int> indices;
     std::vector<Attribute> attributes;
     std::string primPath;
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
     uint32_t refIndex = UINT32_MAX;
     int materialIndex = -1;
 
@@ -66,7 +65,7 @@ struct Mesh
     Mesh(Mesh &&other) = default;
 
     Mesh(Array<float3> &&pos, Array<int> &&idx);
-    Mesh(Array<float3> &&pos, Array<int> &&idx, const float3x4 &parentFromLocal);
+    Mesh(Array<float3> &&pos, Array<int> &&idx, const Float3x4 &parentFromLocal);
 };
 
 struct Curves
@@ -79,7 +78,7 @@ private:
     int curveFlags;
 
 public:
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
 
     Curves() = default;
     ~Curves() = default;
@@ -89,7 +88,7 @@ public:
     Curves(Array<float3> &&positions,
            Array<float> &&widths,
            Array<int> &&curveVertexOffsets,
-           const float3x4 &parentFromLocal);
+           const Float3x4 &parentFromLocal);
     size_t GetNumVertices() const;
     size_t GetNumCurves() const;
     size_t GetNumSegments() const;
@@ -103,14 +102,14 @@ public:
 
 struct Instance
 {
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
     uint32_t childSceneIndex;
 
     Instance() = default;
     ~Instance() = default;
     Instance(Instance &&other) = default;
 
-    Instance(const float3x4 &parentFromLocal, uint32_t childSceneIndex);
+    Instance(const Float3x4 &parentFromLocal, uint32_t childSceneIndex);
 };
 
 struct Primitive
@@ -153,10 +152,10 @@ struct Camera
 {
     int viewportWidth = 1920;
     int viewportHeight = 1080;
-    float4x4 cameraFromWorld = float4x4::Identity();
-    float4x4 clipFromCamera = float4x4::Identity();
-    float3 worldPosition = make_float3(0.0f, 0.0f, 0.0f);
-    float3 forward = make_float3(0.0f, 0.0f, -1.0f);
+    Float4x4 cameraFromWorld = Float4x4::Identity();
+    Float4x4 clipFromCamera = Float4x4::Identity();
+    float3 worldPosition = Vec3(0.0f, 0.0f, 0.0f);
+    float3 forward = Vec3(0.0f, 0.0f, -1.0f);
     float verticalFovDegrees = 45.0f;
     float nearPlane = 1.0f;
     bool hasValidCamera = false;

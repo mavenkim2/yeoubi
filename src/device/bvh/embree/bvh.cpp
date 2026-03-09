@@ -15,7 +15,7 @@ YBI_NAMESPACE_BEGIN
 
 namespace
 {
-static void CopyTransformMatrix(const float3x4 &src, float dst[12])
+static void CopyTransformMatrix(const Float3x4 &src, float dst[12])
 {
     std::memcpy(dst, src.m, sizeof(float) * 12);
 }
@@ -134,7 +134,7 @@ static RTCScene BuildCurveLeafScene(RTCDevice embreeDevice, const Curves &curves
             const uint32_t vertexIndex = start + localVertex;
             const float3 p = positions[vertexIndex];
             const float width = std::max(0.0f, ResolveCurveWidth(curves, widths, curveIndex, vertexIndex));
-            vertexBuffer[vertexIndex] = make_float4(p.x, p.y, p.z, width * 0.5f);
+            vertexBuffer[vertexIndex] = Vec4(p.x, p.y, p.z, width * 0.5f);
         }
     }
 

@@ -17,9 +17,9 @@ YBI_INTEGRATOR_HD Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4
     if (semantic == kSemanticRoughness || semantic == kSemanticMetallic ||
         semantic == kSemanticOcclusion || semantic == kSemanticIor || semantic == kSemanticOpacity)
     {
-        return MakeVec3(sample.x, sample.x, sample.x);
+        return Vec3(sample.x, sample.x, sample.x);
     }
-    return MakeVec3(sample.x, sample.y, sample.z);
+    return Vec3(sample.x, sample.y, sample.z);
 }
 
 YBI_INTEGRATOR_HD Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4 &sample)
@@ -538,7 +538,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
     if (params.virtualTexturePageTableEntries == 0ull || params.virtualTextureStreamPixels == 0ull ||
         params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull)
     {
-        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+        outColor = Vec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
@@ -554,7 +554,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
     if (!ResolveVirtualTextureTextureMeta(params, geomRef, &meta) ||
         !TryResolveVirtualTextureLocalUdim(*meta, udimBits, &localUdim))
     {
-        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+        outColor = Vec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
@@ -569,7 +569,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
         if (!TryResolveVirtualTextureTailSample(
                 meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset))
         {
-            outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+            outColor = Vec3(0.0f, 0.0f, 0.0f);
             return true;
         }
     }
@@ -581,7 +581,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
             if (!TryResolveVirtualTextureTailSample(
                     meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset))
             {
-                outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+                outColor = Vec3(0.0f, 0.0f, 0.0f);
                 return true;
             }
         }
@@ -637,11 +637,11 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
 
     if (!samplePixels)
     {
-        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+        outColor = Vec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
-    const Vec4 sample = MakeVec4(float(samplePixels[sampleOffset + 0]) * (1.0f / 255.0f),
+    const Vec4 sample = Vec4(float(samplePixels[sampleOffset + 0]) * (1.0f / 255.0f),
                                  float(samplePixels[sampleOffset + 1]) * (1.0f / 255.0f),
                                  float(samplePixels[sampleOffset + 2]) * (1.0f / 255.0f),
                                  float(samplePixels[sampleOffset + 3]) * (1.0f / 255.0f));
@@ -802,7 +802,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
     const float wrappedV = ApplyWrapMode(inputs.unitV, wrapRef.wrapT, blackT);
     if (blackS || blackT)
     {
-        outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+        outColor = Vec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
@@ -819,7 +819,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
                                            &resolvedUdimBits,
                                            nullptr))
         {
-            outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+            outColor = Vec3(0.0f, 0.0f, 0.0f);
             return true;
         }
 
@@ -829,7 +829,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
         if (!FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, resolvedUdimSlot, &vtRef) ||
             !IsUsableMaterialTextureRef(vtRef))
         {
-            outColor = MakeVec3(0.0f, 0.0f, 0.0f);
+            outColor = Vec3(0.0f, 0.0f, 0.0f);
             return true;
         }
 
@@ -946,7 +946,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
     const float wrappedV = ApplyWrapMode(inputs.unitV, wrapRef.wrapT, blackT);
     if (blackS || blackT)
     {
-        outSample = MakeVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        outSample = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
         return true;
     }
 
@@ -984,7 +984,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
                 if (TrySampleVirtualTexture(
                         state, geomRef, vtRef, wrappedU, wrappedV, resolvedUdimBits, sampleMip, vtColor))
                 {
-                    outSample = MakeVec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
+                    outSample = Vec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
                     if (haveMip)
                     {
                         TryWriteTextureFeedback(state,

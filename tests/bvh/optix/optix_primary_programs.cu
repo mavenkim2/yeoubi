@@ -11,7 +11,6 @@
 
 using ybi::LaunchParams;
 using ybi::render::integrator::HitInfo;
-using ybi::render::integrator::MakeVec3;
 using ybi::render::integrator::Vec3;
 using ybi::render::integrator::Vec4;
 using ybi::render::integrator::UInt2;
@@ -26,22 +25,22 @@ __device__ unsigned int g_try_sample_logged = 0u;
 static __forceinline__ __device__ float3 Normalize3(const float3 &v)
 {
     const float invLen = rsqrtf(v.x * v.x + v.y * v.y + v.z * v.z + 1e-20f);
-    return make_float3(v.x * invLen, v.y * invLen, v.z * invLen);
+    return float3{v.x * invLen, v.y * invLen, v.z * invLen};
 }
 
 static __forceinline__ __device__ float3 Cross3(const float3 &a, const float3 &b)
 {
-    return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    return float3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 
 static __forceinline__ __device__ Vec3 ToVec3(const float3 &v)
 {
-    return MakeVec3(v.x, v.y, v.z);
+    return Vec3(v.x, v.y, v.z);
 }
 
 static __forceinline__ __device__ float3 ToFloat3(const Vec3 &v)
 {
-    return make_float3(v.x, v.y, v.z);
+    return float3{v.x, v.y, v.z};
 }
 
 static __forceinline__ __device__ void PackPointer(const void *ptr,
@@ -185,13 +184,13 @@ static __forceinline__ __device__ float3 ComputeDirection(const uint3 &launchInd
                                                           const float2 &pixelOffset)
 {
     const float2 ndc =
-        make_float2(((float)launchIndex.x + pixelOffset.x) / (float)launchDims.x * 2.0f - 1.0f,
-                    1.0f - ((float)launchIndex.y + pixelOffset.y) / (float)launchDims.y * 2.0f);
+        float2{((float)launchIndex.x + pixelOffset.x) / (float)launchDims.x * 2.0f - 1.0f,
+               1.0f - ((float)launchIndex.y + pixelOffset.y) / (float)launchDims.y * 2.0f};
 
     return Normalize3(
-        make_float3(params.cameraU.x * ndc.x + params.cameraV.x * ndc.y + params.cameraW.x,
-                    params.cameraU.y * ndc.x + params.cameraV.y * ndc.y + params.cameraW.y,
-                    params.cameraU.z * ndc.x + params.cameraV.z * ndc.y + params.cameraW.z));
+        float3{params.cameraU.x * ndc.x + params.cameraV.x * ndc.y + params.cameraW.x,
+               params.cameraU.y * ndc.x + params.cameraV.y * ndc.y + params.cameraW.y,
+               params.cameraU.z * ndc.x + params.cameraV.z * ndc.y + params.cameraW.z});
 }
 
 static __forceinline__ __device__ unsigned int TraceColor(const float3 &origin,
@@ -248,8 +247,8 @@ static __forceinline__ __device__ bool TryComputeTriangleNormal(int instanceId,
     const float3 p0 = positions[i0];
     const float3 p1 = positions[i1];
     const float3 p2 = positions[i2];
-    const float3 edge01 = make_float3(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
-    const float3 edge02 = make_float3(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
+    const float3 edge01 = float3{p1.x - p0.x, p1.y - p0.y, p1.z - p0.z};
+    const float3 edge02 = float3{p2.x - p0.x, p2.y - p0.y, p2.z - p0.z};
     const float3 localNormal = Normalize3(Cross3(edge01, edge02));
     const float3 worldNormal =
         Normalize3(optixTransformNormalFromObjectToWorldSpace(localNormal));
@@ -309,11 +308,9 @@ extern "C" __global__ void __raygen__primary()
         image[pixelIndex] = make_uchar4(0u, 0u, 0u, 255u);
         return;
     }
-    const float2 centerOffset = make_float2(0.5f, 0.5f);
+    const float2 centerOffset = float2{0.5f, 0.5f};
     const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
-    const float3 origin = make_float3(params.cameraOrigin.x,
-                                      params.cameraOrigin.y,
-                                      params.cameraOrigin.z);
+    const float3 origin = float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
     if (params.integrator == 3)
     {
         OptixState state = {};
@@ -344,11 +341,9 @@ extern "C" __global__ void __raygen__feedback()
     {
         return;
     }
-    const float2 centerOffset = make_float2(0.5f, 0.5f);
+    const float2 centerOffset = float2{0.5f, 0.5f};
     const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
-    const float3 origin = make_float3(params.cameraOrigin.x,
-                                      params.cameraOrigin.y,
-                                      params.cameraOrigin.z);
+    const float3 origin = float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
     TraceColor(origin, centerDirection);
 }
 
@@ -400,7 +395,7 @@ extern "C" __global__ void __closesthit__primary()
     if (isTriangle)
     {
         const float2 bary = optixGetTriangleBarycentrics();
-        hit.barycentrics = MakeVec3(1.0f - bary.x - bary.y, bary.x, bary.y);
+        hit.barycentrics = Vec3(1.0f - bary.x - bary.y, bary.x, bary.y);
         hit.hasBarycentrics = true;
         hit.instanceId = static_cast<int>(optixGetInstanceId());
         hit.primitiveIndex = static_cast<int>(optixGetPrimitiveIndex());
@@ -415,7 +410,7 @@ extern "C" __global__ void __closesthit__primary()
             *outHit = hit;
             if (isTriangle && hit.hasBarycentrics)
             {
-                Vec3 geomNormal = MakeVec3(-rayDirection.x, -rayDirection.y, -rayDirection.z);
+                Vec3 geomNormal(-rayDirection.x, -rayDirection.y, -rayDirection.z);
                 bool hasGeom = false;
                 hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
                 outHit->geomNormal = geomNormal;
@@ -437,7 +432,7 @@ extern "C" __global__ void __closesthit__primary()
 
     if (params.integrator == 1)
     {
-        Vec3 geomNormal = MakeVec3(-rayDirection.x, -rayDirection.y, -rayDirection.z);
+        Vec3 geomNormal(-rayDirection.x, -rayDirection.y, -rayDirection.z);
         bool hasGeom = false;
         if (isTriangle && hit.hasBarycentrics)
         {

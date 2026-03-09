@@ -40,7 +40,7 @@ template <> struct LimitEvalValueTraits<float2>
 {
     static float2 Zero()
     {
-        return make_float2(0.0f);
+        return Vec2(0.0f);
     }
 };
 
@@ -48,7 +48,7 @@ template <> struct LimitEvalValueTraits<float3>
 {
     static float3 Zero()
     {
-        return make_float3(0.0f);
+        return Vec3(0.0f);
     }
 };
 
@@ -56,7 +56,7 @@ template <> struct LimitEvalValueTraits<float4>
 {
     static float4 Zero()
     {
-        return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+        return Vec4(0.0f, 0.0f, 0.0f, 0.0f);
     }
 };
 

@@ -12,8 +12,8 @@ namespace integrator
 
 struct EvaluatedMaterial
 {
-    Vec3 baseColor = MakeVec3(0.7f, 0.7f, 0.7f);
-    Vec3 emissiveColor = MakeVec3(0.0f, 0.0f, 0.0f);
+    Vec3 baseColor = Vec3(0.7f, 0.7f, 0.7f);
+    Vec3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
     float roughness = 1.0f;
     float metallic = 0.0f;
     float ior = 1.5f;
@@ -23,8 +23,8 @@ struct EvaluatedMaterial
 
 struct BsdfSample
 {
-    Vec3 wi = MakeVec3(0.0f, 0.0f, 1.0f);
-    Vec3 f = MakeVec3(0.0f, 0.0f, 0.0f);
+    Vec3 wi = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 f = Vec3(0.0f, 0.0f, 0.0f);
     float pdf = 0.0f;
     bool skipNeeMis = false;
 };
@@ -41,44 +41,12 @@ YBI_INTEGRATOR_HD float MinFloat(float a, float b)
 
 YBI_INTEGRATOR_HD Vec3 MulComponents(const Vec3 &a, const Vec3 &b)
 {
-    return MakeVec3(a.x * b.x, a.y * b.y, a.z * b.z);
-}
-
-YBI_INTEGRATOR_HD Vec3 Add3(const Vec3 &a, const Vec3 &b)
-{
-    return MakeVec3(a.x + b.x, a.y + b.y, a.z + b.z);
-}
-
-YBI_INTEGRATOR_HD Vec3 Sub3(const Vec3 &a, const Vec3 &b)
-{
-    return MakeVec3(a.x - b.x, a.y - b.y, a.z - b.z);
+    return a * b;
 }
 
 YBI_INTEGRATOR_HD Vec3 ClampVec3(const Vec3 &v, float lo, float hi)
 {
-    return MakeVec3(Clamp01((v.x - lo) / MaxFloat(hi - lo, 1.0e-8f)) * (hi - lo) + lo,
-                    Clamp01((v.y - lo) / MaxFloat(hi - lo, 1.0e-8f)) * (hi - lo) + lo,
-                    Clamp01((v.z - lo) / MaxFloat(hi - lo, 1.0e-8f)) * (hi - lo) + lo);
-}
-
-YBI_INTEGRATOR_HD float MaxComponent(const Vec3 &v)
-{
-    return MaxFloat(v.x, MaxFloat(v.y, v.z));
-}
-
-YBI_INTEGRATOR_HD float Luminance(const Vec3 &v)
-{
-    return 0.2126f * v.x + 0.7152f * v.y + 0.0722f * v.z;
-}
-
-YBI_INTEGRATOR_HD Vec3 LerpVec3(const Vec3 &a, const Vec3 &b, float t)
-{
-    return Add3(Mul(a, 1.0f - t), Mul(b, t));
-}
-
-YBI_INTEGRATOR_HD Vec3 Reflect(const Vec3 &incident, const Vec3 &normal)
-{
-    return Sub(incident, Mul(normal, 2.0f * Dot(normal, incident)));
+    return Clamp(v, lo, hi);
 }
 
 YBI_INTEGRATOR_HD float Saturate(float value)
@@ -110,7 +78,7 @@ YBI_INTEGRATOR_HD bool ShouldSkipNeeMis(const EvaluatedMaterial &material)
 YBI_INTEGRATOR_HD Vec3 FresnelSchlick(float cosTheta, const Vec3 &f0)
 {
     const float m = Pow5(1.0f - Saturate(cosTheta));
-    return Add3(f0, Mul(Sub3(MakeVec3(1.0f, 1.0f, 1.0f), f0), m));
+    return Add(f0, Mul(Sub(Vec3(1.0f, 1.0f, 1.0f), f0), m));
 }
 
 YBI_INTEGRATOR_HD float Dggx(float alpha, float nDotH)
@@ -138,20 +106,20 @@ YBI_INTEGRATOR_HD Vec3 SampleGgxHalfVector(float alpha, float u1, float u2)
     const float tan2Theta = a2 * u1 / MaxFloat(1.0f - u1, 1.0e-6f);
     const float cosTheta = 1.0f / SafeSqrt(1.0f + tan2Theta);
     const float sinTheta = SafeSqrt(1.0f - cosTheta * cosTheta);
-    return MakeVec3(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
+    return Vec3(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
 }
 
 YBI_INTEGRATOR_HD Vec3 LocalToWorld(const Vec3 &local, const Vec3 &t, const Vec3 &b, const Vec3 &n)
 {
-    return Add3(Add3(Mul(t, local.x), Mul(b, local.y)), Mul(n, local.z));
+    return Add(Add(Mul(t, local.x), Mul(b, local.y)), Mul(n, local.z));
 }
 
 YBI_INTEGRATOR_HD Vec3 ComputeF0(const EvaluatedMaterial &material)
 {
     const float dielectric = (material.ior - 1.0f) / MaxFloat(material.ior + 1.0f, 1.0e-6f);
     const float dielectricF0 = dielectric * dielectric;
-    return LerpVec3(
-        MakeVec3(dielectricF0, dielectricF0, dielectricF0), material.baseColor, material.metallic);
+    return Lerp(
+        Vec3(dielectricF0, dielectricF0, dielectricF0), material.baseColor, material.metallic);
 }
 
 YBI_INTEGRATOR_HD float ComputeSpecularProbability(const EvaluatedMaterial &material,
@@ -177,7 +145,7 @@ YBI_INTEGRATOR_HD float ComputeSpecularPdf(const EvaluatedMaterial &material,
                                            const Vec3 &wo,
                                            const Vec3 &wi)
 {
-    const Vec3 halfUnnormalized = Add3(wo, wi);
+    const Vec3 halfUnnormalized = Add(wo, wi);
     const float halfLen2 = Dot(halfUnnormalized, halfUnnormalized);
     if (halfLen2 <= 1.0e-8f)
     {
@@ -210,17 +178,17 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
         {
             *outPdf = 0.0f;
         }
-        return MakeVec3(0.0f, 0.0f, 0.0f);
+        return Vec3(0.0f, 0.0f, 0.0f);
     }
 
-    const Vec3 halfUnnormalized = Add3(wo, wi);
+    const Vec3 halfUnnormalized = Add(wo, wi);
     if (Dot(halfUnnormalized, halfUnnormalized) <= 1.0e-8f)
     {
         if (outPdf)
         {
             *outPdf = 0.0f;
         }
-        return MakeVec3(0.0f, 0.0f, 0.0f);
+        return Vec3(0.0f, 0.0f, 0.0f);
     }
 
     const Vec3 halfVec = Normalize(halfUnnormalized);
@@ -246,7 +214,7 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
         *outPdf = diffuseProb * diffusePdf + specProb * specularPdf;
     }
 
-    return Add3(diffuse, specular);
+    return Add(diffuse, specular);
 }
 
 // YBI_INTEGRATOR_HD void EvaluateOrenNayar(float3 wi, float3 wo)
@@ -256,7 +224,7 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
 
 YBI_INTEGRATOR_HD void SampleOrenNayar(float3 help)
 {
-    float3 h = normalize(help);
+    float3 h = Normalize(help);
 }
 
 YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,

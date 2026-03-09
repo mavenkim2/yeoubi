@@ -28,20 +28,20 @@ namespace
 
 struct SceneInstance
 {
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
     uint32_t childSceneIndex;
 };
 
 struct SceneMesh
 {
     std::string path;
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
 };
 
 struct SceneCurve
 {
     std::string path;
-    float3x4 parentFromLocal;
+    Float3x4 parentFromLocal;
 };
 
 struct BuildScene
@@ -67,16 +67,16 @@ static void SetError(std::string *error, const std::string &message)
     }
 }
 
-static float3x4 ConvertAffineTransform(const pxr::GfMatrix4d &m)
+static Float3x4 ConvertAffineTransform(const pxr::GfMatrix4d &m)
 {
     const pxr::GfMatrix4d t = m.GetTranspose();
     const pxr::GfVec4d r0 = t.GetRow(0);
     const pxr::GfVec4d r1 = t.GetRow(1);
     const pxr::GfVec4d r2 = t.GetRow(2);
 
-    return float3x4(make_float4((float)r0[0], (float)r0[1], (float)r0[2], (float)r0[3]),
-                    make_float4((float)r1[0], (float)r1[1], (float)r1[2], (float)r1[3]),
-                    make_float4((float)r2[0], (float)r2[1], (float)r2[2], (float)r2[3]));
+    return Float3x4(Vec4((float)r0[0], (float)r0[1], (float)r0[2], (float)r0[3]),
+                    Vec4((float)r1[0], (float)r1[1], (float)r1[2], (float)r1[3]),
+                    Vec4((float)r2[0], (float)r2[1], (float)r2[2], (float)r2[3]));
 }
 
 static pxr::GfMatrix4d GetPrimLocalToParentTransform(const pxr::UsdPrim &prim,

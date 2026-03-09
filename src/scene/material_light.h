@@ -15,9 +15,9 @@ enum MaterialFlags : uint32_t
 
 struct PackedMaterial
 {
-    float3 baseColor = make_float3(0.7f, 0.7f, 0.7f);
+    float3 baseColor = Vec3(0.7f, 0.7f, 0.7f);
     float roughness = 1.0f;
-    float3 emissiveColor = make_float3(0.0f, 0.0f, 0.0f);
+    float3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
     float metallic = 0.0f;
     float ior = 1.5f;
     float opacity = 1.0f;
@@ -45,15 +45,15 @@ struct PackedLight
 {
     uint32_t type = 0u;
     uint32_t flags = 0u;
-    float3 position = make_float3(0.0f, 0.0f, 0.0f);
+    float3 position = Vec3(0.0f, 0.0f, 0.0f);
     float _padding0 = 0.0f;
-    float3 direction = make_float3(0.0f, 0.0f, -1.0f);
+    float3 direction = Vec3(0.0f, 0.0f, -1.0f);
     float _padding1 = 0.0f;
-    float3 tangent = make_float3(1.0f, 0.0f, 0.0f);
+    float3 tangent = Vec3(1.0f, 0.0f, 0.0f);
     float _padding2 = 0.0f;
-    float3 bitangent = make_float3(0.0f, 1.0f, 0.0f);
+    float3 bitangent = Vec3(0.0f, 1.0f, 0.0f);
     float emissionScale = 0.0f;
-    float3 color = make_float3(0.0f, 0.0f, 0.0f);
+    float3 color = Vec3(0.0f, 0.0f, 0.0f);
     float width = 0.0f;
     float height = 0.0f;
     float radius = 0.0f;

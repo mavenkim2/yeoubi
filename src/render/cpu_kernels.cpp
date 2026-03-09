@@ -173,7 +173,7 @@ static ybi::render::integrator::Vec3 ComputeDirection(const LaunchParams &params
     const float ndcX = (float(x) + 0.5f) / float(width) * 2.0f - 1.0f;
     const float ndcY = 1.0f - (float(y) + 0.5f) / float(height) * 2.0f;
     const ybi::render::integrator::Vec3 dir = ybi::render::integrator::Normalize(
-        ybi::render::integrator::MakeVec3(params.cameraU.x * ndcX + params.cameraV.x * ndcY +
+        ybi::render::integrator::Vec3(params.cameraU.x * ndcX + params.cameraV.x * ndcY +
                                               params.cameraW.x,
                                           params.cameraU.y * ndcX + params.cameraV.y * ndcY +
                                               params.cameraW.y,
@@ -185,7 +185,7 @@ static ybi::render::integrator::Vec3 ComputeDirection(const LaunchParams &params
 static ybi::render::integrator::Vec3 TransformPoint3x4RowMajor(
     const float transform[12], const ybi::render::integrator::Vec3 &p)
 {
-    return ybi::render::integrator::MakeVec3(transform[0] * p.x + transform[1] * p.y +
+    return ybi::render::integrator::Vec3(transform[0] * p.x + transform[1] * p.y +
                                                  transform[2] * p.z + transform[3],
                                              transform[4] * p.x + transform[5] * p.y +
                                                  transform[6] * p.z + transform[7],
@@ -243,13 +243,13 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
 
     outHit->worldTri0 = TransformPoint3x4RowMajor(
         transform,
-        ybi::render::integrator::MakeVec3(positions[i0].x, positions[i0].y, positions[i0].z));
+        ybi::render::integrator::Vec3(positions[i0].x, positions[i0].y, positions[i0].z));
     outHit->worldTri1 = TransformPoint3x4RowMajor(
         transform,
-        ybi::render::integrator::MakeVec3(positions[i1].x, positions[i1].y, positions[i1].z));
+        ybi::render::integrator::Vec3(positions[i1].x, positions[i1].y, positions[i1].z));
     outHit->worldTri2 = TransformPoint3x4RowMajor(
         transform,
-        ybi::render::integrator::MakeVec3(positions[i2].x, positions[i2].y, positions[i2].z));
+        ybi::render::integrator::Vec3(positions[i2].x, positions[i2].y, positions[i2].z));
     outHit->hasWorldTriangle = true;
     return true;
 }
@@ -320,7 +320,7 @@ static bool TracePrimary(const LaunchParams &params,
         outHit->instanceId = instanceId;
         outHit->primitiveIndex = static_cast<int>(rayHit.hit.primID);
         outHit->geomNormal = ybi::render::integrator::Normalize(
-            ybi::render::integrator::MakeVec3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z));
+            ybi::render::integrator::Vec3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z));
         outHit->hasGeomNormal = true;
 
         const bool hasMeshRef =
@@ -329,7 +329,7 @@ static bool TracePrimary(const LaunchParams &params,
         {
             const float u = rayHit.hit.u;
             const float v = rayHit.hit.v;
-            outHit->barycentrics = ybi::render::integrator::MakeVec3(1.0f - u - v, u, v);
+            outHit->barycentrics = ybi::render::integrator::Vec3(1.0f - u - v, u, v);
             outHit->hasBarycentrics = true;
             (void)TryComputeTriangleWorldPositions(params, rayHit, outHit);
         }
@@ -457,7 +457,7 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                                   state.pixelY = y;
 
                                   const ybi::render::integrator::Vec3 origin =
-                                      ybi::render::integrator::MakeVec3(params->cameraOrigin.x,
+                                      ybi::render::integrator::Vec3(params->cameraOrigin.x,
                                                                         params->cameraOrigin.y,
                                                                         params->cameraOrigin.z);
                                   const ybi::render::integrator::Vec3 direction =

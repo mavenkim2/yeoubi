@@ -17,14 +17,14 @@ struct SubdivisionRunOptions
     int splitThreshold = 1;
     int sampleSteps = 8;
 
-    float3 eye = make_float3(0.0f, 0.0f, 5.0f);
-    float3 lookAt = make_float3(0.0f, 0.0f, 0.0f);
+    float3 eye = Vec3(0.0f, 0.0f, 5.0f);
+    float3 lookAt = Vec3(0.0f, 0.0f, 0.0f);
     int viewportWidth = 1920;
     int viewportHeight = 1080;
     float verticalFovDegrees = 45.0f;
     bool useCameraMatrices = false;
-    float4x4 cameraFromWorld = float4x4::Identity();
-    float4x4 clipFromCamera = float4x4::Identity();
+    Float4x4 cameraFromWorld = Float4x4::Identity();
+    Float4x4 clipFromCamera = Float4x4::Identity();
 
     std::string subdivisionScheme = "catmullClark";
     SubdivisionCreasingMethod creasingMethod = SUBDIVISION_CREASING_UNIFORM;

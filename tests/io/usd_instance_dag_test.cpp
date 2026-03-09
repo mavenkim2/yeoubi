@@ -195,13 +195,13 @@ static pxr::UsdStageRefPtr CreateStageFromUsda(const char *usda, std::string *er
     return stage;
 }
 
-static ybi::float3x4 ConvertAffineTransformForTest(const pxr::GfMatrix4d &m)
+static ybi::Float3x4 ConvertAffineTransformForTest(const pxr::GfMatrix4d &m)
 {
     const pxr::GfMatrix4d t = m.GetTranspose();
     const pxr::GfVec4d r0 = t.GetRow(0);
     const pxr::GfVec4d r1 = t.GetRow(1);
     const pxr::GfVec4d r2 = t.GetRow(2);
-    return ybi::float3x4(static_cast<float>(r0[0]),
+    return ybi::Float3x4(static_cast<float>(r0[0]),
                          static_cast<float>(r0[1]),
                          static_cast<float>(r0[2]),
                          static_cast<float>(r0[3]),
@@ -215,8 +215,8 @@ static ybi::float3x4 ConvertAffineTransformForTest(const pxr::GfMatrix4d &m)
                          static_cast<float>(r2[3]));
 }
 
-static bool MatrixNear(const ybi::float3x4 &actual,
-                       const ybi::float3x4 &expected,
+static bool MatrixNear(const ybi::Float3x4 &actual,
+                       const ybi::Float3x4 &expected,
                        float eps,
                        const char *label)
 {
@@ -327,14 +327,14 @@ static bool RunPointInstancerTransformLoadTest()
     t0.SetTranslateOnly(pxr::GfVec3d(1.0, 0.0, 0.0));
     pxr::GfMatrix4d s0(1.0);
     s0.SetScale(pxr::GfVec3d(2.0, 2.0, 2.0));
-    const ybi::float3x4 expected0 = ConvertAffineTransformForTest(
+    const ybi::Float3x4 expected0 = ConvertAffineTransformForTest(
         pointInstancerLocalToWorld * t0 * s0 * prototypeLocalToParent);
 
     pxr::GfMatrix4d t1(1.0);
     t1.SetTranslateOnly(pxr::GfVec3d(0.0, 2.0, 0.0));
     pxr::GfMatrix4d s1(1.0);
     s1.SetScale(pxr::GfVec3d(1.0, 3.0, 1.0));
-    const ybi::float3x4 expected1 = ConvertAffineTransformForTest(
+    const ybi::Float3x4 expected1 = ConvertAffineTransformForTest(
         pointInstancerLocalToWorld * t1 * s1 * prototypeLocalToParent);
 
     if (!MatrixNear(root.instances[0].parentFromLocal, expected0, 1e-4f, "PointInstancer[0]"))
