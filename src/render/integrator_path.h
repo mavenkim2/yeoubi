@@ -89,8 +89,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     Vec4 sample = {};
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticDiffuse, sample))
     {
-        material.baseColor =
-            MulComponents(material.baseColor, Vec3(sample.x, sample.y, sample.z));
+        material.baseColor = material.baseColor * Vec3(sample.x, sample.y, sample.z);
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticRoughness, sample))
     {
@@ -102,8 +101,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticEmissive, sample))
     {
-        material.emissiveColor =
-            MulComponents(material.emissiveColor, Vec3(sample.x, sample.y, sample.z));
+        material.emissiveColor = material.emissiveColor * Vec3(sample.x, sample.y, sample.z);
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticIor, sample))
     {
@@ -165,7 +163,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 misWeight =
                     currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + lightHit.pdf, 1.0e-6f);
             }
-            radiance = radiance + MulComponents(throughput, lightHit.radiance * misWeight);
+            radiance = radiance + throughput * (lightHit.radiance * misWeight);
             break;
         }
 
@@ -178,8 +176,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                 const float domePdf = DomeDirectionPdf();
                 misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
             }
-            radiance =
-                radiance + MulComponents(throughput, EvaluateEnvironmentRadiance(state, rayDir) * misWeight);
+            radiance = radiance + throughput * (EvaluateEnvironmentRadiance(state, rayDir) * misWeight);
             break;
         }
 
@@ -200,7 +197,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
         if ((material.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {
-            radiance = radiance + MulComponents(throughput, material.emissiveColor);
+            radiance = radiance + throughput * material.emissiveColor;
         }
 
         const Vec3 wo = -rayDir;
@@ -231,8 +228,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                             lightSample.isDeltaLight
                                 ? 1.0f
                                 : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
-                        const Vec3 direct =
-                            MulComponents(MulComponents(throughput, f), lightSample.radiance);
+                        const Vec3 direct = throughput * f * lightSample.radiance;
                         radiance =
                             radiance + direct * ((nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f));
                     }
@@ -253,8 +249,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                         const Vec3 f = EvaluateBsdf(material, normal, wo, domeSample.wi, &bsdfPdf);
                         const float misWeight =
                             domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
-                        const Vec3 direct =
-                            MulComponents(MulComponents(throughput, f), domeSample.radiance);
+                        const Vec3 direct = throughput * f * domeSample.radiance;
                         radiance =
                             radiance + direct * ((nDotL * misWeight) / MaxFloat(domeSample.pdf, 1.0e-6f));
                     }
@@ -280,7 +275,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
             break;
         }
 
-        throughput = MulComponents(throughput, bsdf.f * (nDotL / MaxFloat(bsdf.pdf, 1.0e-6f)));
+        throughput = throughput * (bsdf.f * (nDotL / MaxFloat(bsdf.pdf, 1.0e-6f)));
         if (MaxComponent(throughput) <= 0.0f)
         {
             break;

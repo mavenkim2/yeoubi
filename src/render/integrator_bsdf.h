@@ -39,11 +39,6 @@ YBI_INTEGRATOR_HD float MinFloat(float a, float b)
     return a < b ? a : b;
 }
 
-YBI_INTEGRATOR_HD Vec3 MulComponents(const Vec3 &a, const Vec3 &b)
-{
-    return a * b;
-}
-
 YBI_INTEGRATOR_HD Vec3 ClampVec3(const Vec3 &v, float lo, float hi)
 {
     return Clamp(v, lo, hi);
