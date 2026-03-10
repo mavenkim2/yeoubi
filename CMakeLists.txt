@@ -52,6 +52,10 @@ if (WITH_USD)
     # install(FILES ${OPENUSD_LIBRARIES} DESTINATION ${CMAKE_INSTALL_PREFIX})
 endif()
 
+if (OPENPBR_BSDF_FOUND)
+    list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${OPENPBR_BSDF_INCLUDE_DIR})
+endif()
+
 if (WITH_USD)
     add_executable(yeoubi_usd_add_look_camera
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_add_look_camera.cpp)
@@ -252,21 +256,32 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     set(YBI_OPTIX_PRIMARY_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/optix_primary_programs.ptx")
     set(YBI_OPTIX_PRIMARY_PTX_FROZEN_PATH
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/frozen/optix_primary_programs_2026_03_03.ptx")
+    file(GLOB_RECURSE YBI_OPTIX_PRIMARY_PTX_DEPENDS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/*.cu"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/scene/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/texture/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/openpbr-bsdf/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/openpbr-bsdf/impl/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/openpbr-bsdf/impl/data/*.h")
     add_custom_command(
         OUTPUT "${YBI_OPTIX_PRIMARY_PTX_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
             --ptx
             "--gpu-architecture=${YBI_OPTIX_PTX_GPU_ARCH}"
-            "--std=c++14"
+            "--std=c++17"
+            "--expt-relaxed-constexpr"
             "--use_fast_math"
             "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
             "-I${OPTIX_INCLUDE_DIR}"
             "-I${YBI_CUDA_INCLUDE_DIR}"
             "-I${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/RTXNTC/libraries/RTXNTC-Library/include"
+            "-I${OPENPBR_BSDF_INCLUDE_DIR}"
             "-o" "${YBI_OPTIX_PRIMARY_PTX_PATH}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_programs.cu"
         DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_programs.cu"
+            ${YBI_OPTIX_PRIMARY_PTX_DEPENDS}
         VERBATIM)
     add_custom_target(yeoubi_optix_primary_programs_ptx DEPENDS "${YBI_OPTIX_PRIMARY_PTX_PATH}")
 

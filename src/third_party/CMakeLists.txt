@@ -2,6 +2,7 @@
 # then setting USD_ROOT to the install location.
 set(USD_ROOT "" CACHE PATH "Path to the OpenUSD installation directory")
 option(WITH_NTC "Enable RTX NTC library" ON)
+set(OPENPBR_BSDF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/openpbr-bsdf")
 
 if (USD_ROOT)
     find_package(OpenUSD)
@@ -11,6 +12,11 @@ if (USD_ROOT)
         set (OPENUSD_LIBRARIES ${OPENUSD_LIBRARIES} PARENT_SCOPE)
         set (OPENUSD_LIBRARY_DIR ${OPENUSD_LIBRARY_DIR} PARENT_SCOPE)
     endif()
+endif()
+
+if (EXISTS "${OPENPBR_BSDF_INCLUDE_DIR}/openpbr.h")
+    set(OPENPBR_BSDF_FOUND ON PARENT_SCOPE)
+    set(OPENPBR_BSDF_INCLUDE_DIR "${OPENPBR_BSDF_INCLUDE_DIR}" PARENT_SCOPE)
 endif()
 
 add_subdirectory(meshoptimizer)
