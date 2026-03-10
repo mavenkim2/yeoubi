@@ -1,6 +1,8 @@
 #pragma once
 
 #include "render/integrator_common.h"
+#include "render/integrator_shading.h"
+#include "render/openpbr_ybi.h"
 #include "scene/material_light.h"
 #include "util/math_common.h"
 
@@ -15,19 +17,38 @@ struct EvaluatedMaterial
 {
     Vec3 baseColor = Vec3(0.7f, 0.7f, 0.7f);
     Vec3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 specularColor = Vec3(1.0f, 1.0f, 1.0f);
     float roughness = 1.0f;
     float metallic = 0.0f;
     float ior = 1.5f;
     float opacity = 1.0f;
+    float clearcoat = 0.0f;
+    float clearcoatRoughness = 0.01f;
+    float opacityThreshold = 0.0f;
+    unsigned int flags = 0u;
+    unsigned int useSpecularWorkflow = 0u;
+};
+
+struct PreparedMaterial
+{
+    OpenPBR_PreparedBsdf prepared = {};
+    Vec3 geomNormal = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 shadingNormal = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 tangent = Vec3(1.0f, 0.0f, 0.0f);
+    Vec3 bitangent = Vec3(0.0f, 1.0f, 0.0f);
+    Vec3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
+    float opacity = 1.0f;
+    float opacityThreshold = 0.0f;
     unsigned int flags = 0u;
 };
 
 struct BsdfSample
 {
     Vec3 wi = Vec3(0.0f, 0.0f, 1.0f);
-    Vec3 f = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 weight = Vec3(0.0f, 0.0f, 0.0f);
     float pdf = 0.0f;
     bool skipNeeMis = false;
+    bool transmission = false;
 };
 
 YBI_INTEGRATOR_HD float MaxFloat(float a, float b)
@@ -40,207 +61,102 @@ YBI_INTEGRATOR_HD float MinFloat(float a, float b)
     return a < b ? a : b;
 }
 
-YBI_INTEGRATOR_HD Vec3 ClampVec3(const Vec3 &v, float lo, float hi)
-{
-    return Clamp(v, lo, hi);
-}
-
-YBI_INTEGRATOR_HD float Saturate(float value)
-{
-    return Clamp01(value);
-}
-
-YBI_INTEGRATOR_HD float Pow5(float x)
-{
-    const float x2 = x * x;
-    return x2 * x2 * x;
-}
-
 YBI_INTEGRATOR_HD float SafeSqrt(float x)
 {
     return sqrtf(MaxFloat(x, 0.0f));
 }
 
-YBI_INTEGRATOR_HD float ComputeAlpha(const EvaluatedMaterial &material)
+YBI_INTEGRATOR_HD Vec3 ClampVec3(const Vec3 &v, float lo, float hi)
 {
-    return MaxFloat(material.roughness * material.roughness, 1.0e-6f);
+    return Clamp(v, lo, hi);
 }
 
-YBI_INTEGRATOR_HD bool ShouldSkipNeeMis(const EvaluatedMaterial &material)
+YBI_INTEGRATOR_HD bool ShouldAlphaCutout(const PreparedMaterial &material)
 {
-    return material.roughness <= 1.0e-3f;
+    return material.opacityThreshold > 0.0f && material.opacity < material.opacityThreshold;
 }
 
-YBI_INTEGRATOR_HD Vec3 FresnelSchlick(float cosTheta, const Vec3 &f0)
+YBI_INTEGRATOR_HD OpenPBR_Basis MakeOpenPbrBasis(const ShadingFrame &frame)
 {
-    const float m = Pow5(1.0f - Saturate(cosTheta));
-    return f0 + (Vec3(1.0f, 1.0f, 1.0f) - f0) * m;
+    OpenPBR_Basis basis = {};
+    basis.t = frame.tangent;
+    basis.b = frame.bitangent;
+    basis.n = frame.shadingNormal;
+    return basis;
 }
 
-YBI_INTEGRATOR_HD float Dggx(float alpha, float nDotH)
+YBI_INTEGRATOR_HD void FillOpenPbrEmission(const Vec3 &emissiveColor,
+                                           OpenPBR_ResolvedInputs *inputs)
 {
-    const float a2 = alpha * alpha;
-    const float denom = MaxFloat((nDotH * nDotH) * (a2 - 1.0f) + 1.0f, 1.0e-6f);
-    return a2 / (3.14159265358979323846f * denom * denom);
-}
-
-YBI_INTEGRATOR_HD float GSchlickGgx(float alpha, float nDotV)
-{
-    const float k = 0.5f * alpha;
-    return nDotV / MaxFloat(nDotV * (1.0f - k) + k, 1.0e-6f);
-}
-
-YBI_INTEGRATOR_HD float GSmith(float alpha, float nDotV, float nDotL)
-{
-    return GSchlickGgx(alpha, nDotV) * GSchlickGgx(alpha, nDotL);
-}
-
-// Sampling Visible GGX Normals with Spherical Caps (Dupuy and Bennyoub, 2023)
-// https://arxiv.org/pdf/2306.05044
-YBI_INTEGRATOR_HD Vec3 SampleGgxHalfVector(Vec3 wi, Vec2 alpha, Vec2 u)
-{
-    wi = Normalize(wi.x * alpha.x, wi.y * alpha.y, wi.z);
-
-    float phi = 2 * M_PI * u.x;
-    float z = (1 - u.y) * (1 + wi.z) - wi.z;
-    float sinTheta = sqrtf(Clamp01(1 - z * z));
-    Vec3 wo(sinTheta * cosf(phi), sinTheta * sinf(phi), z);
-    Vec3 h = wi + wo;
-
-    return Normalize(Vec3(h.x * alpha.x, h.y * alpha.y, h.z));
-}
-
-YBI_INTEGRATOR_HD Vec3 SampleGgxHalfVector(float alpha, float u1, float u2)
-{
-    const float a2 = alpha * alpha;
-    const float phi = 6.28318530718f * u2;
-    const float tan2Theta = a2 * u1 / MaxFloat(1.0f - u1, 1.0e-6f);
-    const float cosTheta = 1.0f / SafeSqrt(1.0f + tan2Theta);
-    const float sinTheta = SafeSqrt(1.0f - cosTheta * cosTheta);
-    return Vec3(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
-}
-
-YBI_INTEGRATOR_HD Vec3 LocalToWorld(const Vec3 &local, const Vec3 &t, const Vec3 &b, const Vec3 &n)
-{
-    return t * local.x + b * local.y + n * local.z;
-}
-
-YBI_INTEGRATOR_HD Vec3 ComputeF0(const EvaluatedMaterial &material)
-{
-    const float dielectric = (material.ior - 1.0f) / MaxFloat(material.ior + 1.0f, 1.0e-6f);
-    const float dielectricF0 = dielectric * dielectric;
-    return Lerp(
-        Vec3(dielectricF0, dielectricF0, dielectricF0), material.baseColor, material.metallic);
-}
-
-YBI_INTEGRATOR_HD float ComputeSpecularProbability(const EvaluatedMaterial &material,
-                                                   const Vec3 &f0)
-{
-    const float diffuseWeight =
-        (1.0f - material.metallic) * MaxFloat(Luminance(material.baseColor), 0.0f);
-    const float specularWeight = 0.02f + MaxFloat(Luminance(f0), 0.0f);
-    if (diffuseWeight <= 1.0e-6f)
+    if (!inputs)
     {
-        return 1.0f;
-    }
-    return Clamp01(specularWeight / MaxFloat(diffuseWeight + specularWeight, 1.0e-6f));
-}
-
-YBI_INTEGRATOR_HD float ComputeDiffusePdf(float nDotL)
-{
-    return nDotL * 0.31830988618f;
-}
-
-YBI_INTEGRATOR_HD float ComputeSpecularPdf(const EvaluatedMaterial &material,
-                                           const Vec3 &normal,
-                                           const Vec3 &wo,
-                                           const Vec3 &wi)
-{
-    const Vec3 halfUnnormalized = wo + wi;
-    const float halfLen2 = Dot(halfUnnormalized, halfUnnormalized);
-    if (halfLen2 <= 1.0e-8f)
-    {
-        return 0.0f;
+        return;
     }
 
-    const Vec3 halfVec = Normalize(halfUnnormalized);
-    const float nDotH = MaxFloat(Dot(normal, halfVec), 0.0f);
-    const float vDotH = MaxFloat(Dot(wo, halfVec), 0.0f);
-    if (nDotH <= 0.0f || vDotH <= 0.0f)
-    {
-        return 0.0f;
-    }
-
-    const float d = Dggx(ComputeAlpha(material), nDotH);
-    return d * nDotH / MaxFloat(4.0f * vDotH, 1.0e-6f);
+    const float luminance = MaxFloat(Luminance(emissiveColor), 0.0f);
+    inputs->emission_luminance = luminance;
+    inputs->emission_color =
+        luminance > 1.0e-6f ? emissiveColor / luminance : Vec3(1.0f, 1.0f, 1.0f);
 }
 
-YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const EvaluatedMaterial &material,
-                                    const Vec3 &normal,
-                                    const Vec3 &wo,
+YBI_INTEGRATOR_HD OpenPBR_ResolvedInputs BuildOpenPbrResolvedInputs(const EvaluatedMaterial &material,
+                                                                    const ShadingFrame &frame)
+{
+    OpenPBR_ResolvedInputs inputs = openpbr_make_default_resolved_inputs();
+    inputs.base_color = material.baseColor;
+    inputs.base_metalness = material.useSpecularWorkflow != 0u ? 0.0f : material.metallic;
+    inputs.specular_color =
+        material.useSpecularWorkflow != 0u ? material.specularColor : Vec3(1.0f, 1.0f, 1.0f);
+    inputs.specular_roughness = material.roughness;
+    inputs.specular_ior = material.ior;
+    inputs.coat_weight = material.clearcoat;
+    inputs.coat_roughness = material.clearcoatRoughness;
+    inputs.coat_color = Vec3(1.0f, 1.0f, 1.0f);
+    inputs.coat_ior = 1.5f;
+    inputs.transmission_weight = material.opacity < 1.0f ? (1.0f - material.opacity) : 0.0f;
+    inputs.transmission_color = Vec3(1.0f, 1.0f, 1.0f);
+    inputs.transmission_depth = 0.0f;
+    inputs.geometry_opacity = material.opacity;
+    inputs.geometry_thin_walled = inputs.transmission_weight > 0.0f;
+    inputs.shading_basis = MakeOpenPbrBasis(frame);
+    inputs.coat_basis = inputs.shading_basis;
+    FillOpenPbrEmission(material.emissiveColor, &inputs);
+    return inputs;
+}
+
+YBI_INTEGRATOR_HD PreparedMaterial PrepareMaterialBsdf(const EvaluatedMaterial &material,
+                                                       const ShadingFrame &frame,
+                                                       const Vec3 &pathThroughput,
+                                                       const Vec3 &viewDirection)
+{
+    PreparedMaterial out = {};
+    out.geomNormal = frame.geomNormal;
+    out.shadingNormal = frame.shadingNormal;
+    out.tangent = frame.tangent;
+    out.bitangent = frame.bitangent;
+    out.emissiveColor = material.emissiveColor;
+    out.opacity = material.opacity;
+    out.opacityThreshold = material.opacityThreshold;
+    out.flags = material.flags;
+
+    const OpenPBR_ResolvedInputs inputs = BuildOpenPbrResolvedInputs(material, frame);
+    out.prepared = openpbr_prepare_bsdf_and_volume(
+        inputs, pathThroughput, OpenPbrDefaultRgbWavelengthsNm(), 1.0f, viewDirection);
+    return out;
+}
+
+YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const PreparedMaterial &material,
                                     const Vec3 &wi,
                                     float *outPdf = nullptr)
 {
-    const float nDotV = MaxFloat(Dot(normal, wo), 0.0f);
-    const float nDotL = MaxFloat(Dot(normal, wi), 0.0f);
-    if (nDotV <= 0.0f || nDotL <= 0.0f)
-    {
-        if (outPdf)
-        {
-            *outPdf = 0.0f;
-        }
-        return Vec3(0.0f, 0.0f, 0.0f);
-    }
-
-    const Vec3 halfUnnormalized = wo + wi;
-    if (Dot(halfUnnormalized, halfUnnormalized) <= 1.0e-8f)
-    {
-        if (outPdf)
-        {
-            *outPdf = 0.0f;
-        }
-        return Vec3(0.0f, 0.0f, 0.0f);
-    }
-
-    const Vec3 halfVec = Normalize(halfUnnormalized);
-    const float nDotH = MaxFloat(Dot(normal, halfVec), 0.0f);
-    const float vDotH = MaxFloat(Dot(wo, halfVec), 0.0f);
-
-    const Vec3 f0 = ComputeF0(material);
-    const Vec3 fresnel = FresnelSchlick(vDotH, f0);
-    const float alpha = ComputeAlpha(material);
-    const float d = Dggx(alpha, nDotH);
-    const float g = GSmith(alpha, nDotV, nDotL);
-    const Vec3 specular = fresnel * (d * g / MaxFloat(4.0f * nDotV * nDotL, 1.0e-6f));
-
-    const Vec3 diffuseColor = material.baseColor * (1.0f - material.metallic);
-    const Vec3 diffuse = diffuseColor * 0.31830988618f;
-
     if (outPdf)
     {
-        const float specProb = ComputeSpecularProbability(material, f0);
-        const float diffuseProb = 1.0f - specProb;
-        const float diffusePdf = ComputeDiffusePdf(nDotL);
-        const float specularPdf = ComputeSpecularPdf(material, normal, wo, wi);
-        *outPdf = diffuseProb * diffusePdf + specProb * specularPdf;
+        *outPdf = openpbr_pdf(material.prepared, wi);
     }
-
-    return diffuse + specular;
+    return OpenPbrCombinedWeight(openpbr_eval(material.prepared, wi));
 }
 
-// YBI_INTEGRATOR_HD void EvaluateOrenNayar(Vec3 wi, Vec3 wo)
-// {
-//     float s = ωi⋅ωo−(n⋅ωi)(n⋅ωo) = cos(ϕi−ϕo) sinθisinθo;
-// }
-
-YBI_INTEGRATOR_HD void SampleOrenNayar(Vec3 help)
-{
-    Vec3 h = Normalize(help);
-}
-
-YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
-                                  const Vec3 &normal,
-                                  const Vec3 &wo,
+YBI_INTEGRATOR_HD bool SampleBsdf(const PreparedMaterial &material,
                                   unsigned int &rngState,
                                   BsdfSample *outSample)
 {
@@ -249,48 +165,27 @@ YBI_INTEGRATOR_HD bool SampleBsdf(const EvaluatedMaterial &material,
         return false;
     }
 
-    const Vec3 f0 = ComputeF0(material);
-    const float specProbRaw = ComputeSpecularProbability(material, f0);
-    const float specProb =
-        specProbRaw <= 0.0f
-            ? 0.0f
-            : (specProbRaw < 0.05f ? 0.05f : (specProbRaw > 0.95f ? 0.95f : specProbRaw));
-
-    Vec3 tangent = {};
-    Vec3 bitangent = {};
-    BuildOrthonormalBasis(normal, tangent, bitangent);
-
-    Vec3 wi = {};
-    if (Random01(rngState) < specProb)
-    {
-        const Vec3 localHalf = SampleGgxHalfVector(
-            wo, ComputeAlpha(material), Vec2(Random01(rngState), Random01(rngState)));
-        const Vec3 halfVec = Normalize(LocalToWorld(localHalf, tangent, bitangent, normal));
-        wi = Normalize(Reflect(-wo, halfVec));
-    }
-    else
-    {
-        const Vec3 local = SampleCosineHemisphere(Random01(rngState), Random01(rngState));
-        wi = Normalize(LocalToWorld(local, tangent, bitangent, normal));
-    }
-
-    if (Dot(normal, wi) <= 0.0f)
-    {
-        return false;
-    }
-
+    vec3 lightDirection = vec3(0.0f, 0.0f, 1.0f);
+    OpenPBR_DiffuseSpecular weight = openpbr_make_zero_diffuse_specular();
     float pdf = 0.0f;
-    const Vec3 f = EvaluateBsdf(material, normal, wo, wi, &pdf);
+    OpenPBR_BsdfLobeType sampledType = OpenPBR_BsdfLobeTypeNone;
+    openpbr_sample(material.prepared,
+                   vec3(Random01(rngState), Random01(rngState), Random01(rngState)),
+                   lightDirection,
+                   weight,
+                   pdf,
+                   sampledType);
     if (pdf <= 1.0e-8f)
     {
         return false;
     }
 
-    outSample->wi = wi;
-    outSample->f = f;
+    outSample->wi = lightDirection;
+    outSample->weight = OpenPbrCombinedWeight(weight);
     outSample->pdf = pdf;
-    outSample->skipNeeMis = ShouldSkipNeeMis(material);
-    return true;
+    outSample->skipNeeMis = OpenPbrSampleIsDelta(sampledType);
+    outSample->transmission = (sampledType & OpenPBR_BsdfLobeTypeTransmission) != 0u;
+    return MaxComponent(outSample->weight) > 0.0f;
 }
 
 } // namespace integrator

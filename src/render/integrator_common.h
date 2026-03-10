@@ -37,6 +37,9 @@ static constexpr int kSemanticNormal = 4;
 static constexpr int kSemanticIor = 5;
 static constexpr int kSemanticEmissive = 6;
 static constexpr int kSemanticOpacity = 7;
+static constexpr int kSemanticSpecularColor = 8;
+static constexpr int kSemanticClearcoat = 9;
+static constexpr int kSemanticClearcoatRoughness = 10;
 
 static constexpr int kWrapModeUnknown = 0;
 static constexpr int kWrapModeRepeat = 1;
@@ -84,11 +87,13 @@ struct HitInfo
     Vec3 rayDir = Vec3(0.0f, 0.0f, 1.0f);
     float t = 0.0f;
     Vec3 geomNormal = Vec3(0.0f, 0.0f, 1.0f);
+    Vec3 shadingNormal = Vec3(0.0f, 0.0f, 1.0f);
     Vec3 worldTri0 = Vec3(0.0f, 0.0f, 0.0f);
     Vec3 worldTri1 = Vec3(0.0f, 0.0f, 0.0f);
     Vec3 worldTri2 = Vec3(0.0f, 0.0f, 0.0f);
     bool hasBarycentrics = false;
     bool hasGeomNormal = false;
+    bool hasShadingNormal = false;
     bool hasWorldTriangle = false;
 };
 

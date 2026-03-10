@@ -19,10 +19,16 @@ struct PackedMaterial
     float roughness = 1.0f;
     Vec3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
     float metallic = 0.0f;
+    Vec3 specularColor = Vec3(1.0f, 1.0f, 1.0f);
     float ior = 1.5f;
     float opacity = 1.0f;
+    float clearcoat = 0.0f;
+    float clearcoatRoughness = 0.01f;
+    float opacityThreshold = 0.0f;
     uint32_t flags = 0u;
+    uint32_t useSpecularWorkflow = 0u;
     uint32_t _padding0 = 0u;
+    uint32_t _padding1 = 0u;
 };
 
 enum class LightType : uint32_t

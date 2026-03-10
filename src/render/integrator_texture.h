@@ -15,7 +15,8 @@ namespace integrator
 YBI_INTEGRATOR_HD Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sample)
 {
     if (semantic == kSemanticRoughness || semantic == kSemanticMetallic ||
-        semantic == kSemanticOcclusion || semantic == kSemanticIor || semantic == kSemanticOpacity)
+        semantic == kSemanticOcclusion || semantic == kSemanticIor || semantic == kSemanticOpacity ||
+        semantic == kSemanticClearcoat || semantic == kSemanticClearcoatRoughness)
     {
         return Vec3(sample.x, sample.x, sample.x);
     }
@@ -209,10 +210,16 @@ YBI_INTEGRATOR_HD bool TryComputeMaterialTextureSampleInputs(
 YBI_INTEGRATOR_HD bool ResolveVirtualTextureTextureMeta(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
+    int semantic,
     const LaunchParams::VirtualTextureTextureMeta **outMeta)
 {
-    if (params.virtualTextureTextureMeta == 0ull || geomRef.materialIndex < 0 ||
-        geomRef.materialIndex >= params.virtualTextureTextureMetaCount)
+    if (params.virtualTextureTextureMeta == 0ull || geomRef.materialIndex < 0 || semantic < 0 ||
+        semantic >= params.materialTextureRefSemanticCount)
+    {
+        return false;
+    }
+    const int textureId = geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic;
+    if (textureId < 0 || textureId >= params.virtualTextureTextureMetaCount)
     {
         return false;
     }
@@ -220,7 +227,7 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureTextureMeta(
         reinterpret_cast<const LaunchParams::VirtualTextureTextureMeta *>(params.virtualTextureTextureMeta);
     if (outMeta)
     {
-        *outMeta = &textures[geomRef.materialIndex];
+        *outMeta = &textures[textureId];
     }
     return true;
 }
@@ -249,6 +256,7 @@ YBI_INTEGRATOR_HD bool TryResolveVirtualTextureLocalUdim(
 YBI_INTEGRATOR_HD bool ResolveVirtualTextureUdimBits(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
+    int semantic,
     float u,
     float v,
     float wrappedU,
@@ -258,7 +266,7 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureUdimBits(
     unsigned int *outLocalUdim)
 {
     const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
-    if (!ResolveVirtualTextureTextureMeta(params, geomRef, &meta) || !meta)
+    if (!ResolveVirtualTextureTextureMeta(params, geomRef, semantic, &meta) || !meta)
     {
         return false;
     }
@@ -353,6 +361,7 @@ YBI_INTEGRATOR_HD bool TryResolveVirtualTextureTailSample(
 
 YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
                                                  const LaunchParams::InstanceGeomRef &geomRef,
+                                                 int semantic,
                                                  unsigned int mip,
                                                  unsigned int udimBits,
                                                  unsigned int tileX,
@@ -364,15 +373,17 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
                                                  unsigned int *outVay)
 {
     if (params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull ||
-        params.virtualTextureUdimInfos == 0ull ||
-        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.virtualTextureTextureMetaCount)
+        params.virtualTextureUdimInfos == 0ull)
     {
         return false;
     }
 
-    const LaunchParams::VirtualTextureTextureMeta *textures =
-        reinterpret_cast<const LaunchParams::VirtualTextureTextureMeta *>(params.virtualTextureTextureMeta);
-    const LaunchParams::VirtualTextureTextureMeta &meta = textures[geomRef.materialIndex];
+    const LaunchParams::VirtualTextureTextureMeta *metaPtr = nullptr;
+    if (!ResolveVirtualTextureTextureMeta(params, geomRef, semantic, &metaPtr) || !metaPtr)
+    {
+        return false;
+    }
+    const LaunchParams::VirtualTextureTextureMeta &meta = *metaPtr;
     if (mip >= meta.mipCount || udimBits >= 128u)
     {
         return false;
@@ -475,6 +486,7 @@ YBI_INTEGRATOR_HD bool ReadVirtualTexturePageEntry(const LaunchParams &params,
 template <typename State>
 YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
                                                const LaunchParams::InstanceGeomRef &geomRef,
+                                               int semantic,
                                                unsigned int primitiveIndex,
                                                float wrappedU,
                                                float wrappedV,
@@ -497,7 +509,10 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
                (static_cast<unsigned int>(params.currentSpp) + 1u) * 2654435761u ^
                (static_cast<unsigned int>(ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u))) +
                 1u) *
-                   374761393u);
+                   374761393u ^
+               (static_cast<unsigned int>(ClampInt(semantic, 0, params.materialTextureRefSemanticCount)) +
+                1u) *
+                   668265263u);
     if ((seed % 100u) >= static_cast<unsigned int>(params.feedbackSamplePercent))
     {
         return;
@@ -511,8 +526,9 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
     const int texelY = ybi::texture::TexelFromUnitUV(wrappedV, mipHeight);
     const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
     const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
+    const int textureIdInt = geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic;
     const unsigned int textureId =
-        static_cast<unsigned int>(ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u)));
+        static_cast<unsigned int>(ClampInt(textureIdInt, 0, int((1u << 23u) - 1u)));
     const unsigned long long key =
         ybi::texture::PackVirtualTextureKey(tileX, tileY, udimBits, textureId, mip);
 
@@ -522,6 +538,7 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
 template <typename State>
 YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
                                                const LaunchParams::InstanceGeomRef &geomRef,
+                                               int semantic,
                                                const LaunchParams::MaterialTextureRef &textureRef,
                                                float wrappedU,
                                                float wrappedV,
@@ -551,7 +568,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
     const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
     const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
     unsigned int localUdim = 0u;
-    if (!ResolveVirtualTextureTextureMeta(params, geomRef, &meta) ||
+    if (!ResolveVirtualTextureTextureMeta(params, geomRef, semantic, &meta) ||
         !TryResolveVirtualTextureLocalUdim(*meta, udimBits, &localUdim))
     {
         outColor = Vec3(0.0f, 0.0f, 0.0f);
@@ -564,7 +581,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
     const unsigned char *samplePixels = nullptr;
     unsigned long long sampleOffset = 0ull;
     if (!ResolveVirtualTextureInfo(
-            params, geomRef, mip, udimBits, tileX, tileY, &meta, &mipInfo, &localUdim, &vaX, &vaY))
+            params, geomRef, semantic, mip, udimBits, tileX, tileY, &meta, &mipInfo, &localUdim, &vaX, &vaY))
     {
         if (!TryResolveVirtualTextureTailSample(
                 meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset))
@@ -708,6 +725,7 @@ TryWriteFeedbackOnly(State &state,
         unsigned int resolvedUdimBits = 0u;
         if (!ResolveVirtualTextureUdimBits(params,
                                            geomRef,
+                                           params.textureViewSemantic,
                                            inputs.u,
                                            inputs.v,
                                            wrappedU,
@@ -744,6 +762,7 @@ TryWriteFeedbackOnly(State &state,
     TryWriteTextureFeedback(
         state,
         geomRef,
+        params.textureViewSemantic,
         static_cast<unsigned int>(hit.primitiveIndex),
         wrappedU,
         wrappedV,
@@ -811,6 +830,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
         unsigned int resolvedUdimBits = 0u;
         if (!ResolveVirtualTextureUdimBits(params,
                                            geomRef,
+                                           params.textureViewSemantic,
                                            inputs.u,
                                            inputs.v,
                                            wrappedU,
@@ -845,12 +865,21 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
         }
 
         if (TrySampleVirtualTexture(
-                state, geomRef, vtRef, wrappedU, wrappedV, resolvedUdimBits, sampleMip, outColor))
+                state,
+                geomRef,
+                params.textureViewSemantic,
+                vtRef,
+                wrappedU,
+                wrappedV,
+                resolvedUdimBits,
+                sampleMip,
+                outColor))
         {
             if (haveMip)
             {
                 TryWriteTextureFeedback(state,
                                         geomRef,
+                                        params.textureViewSemantic,
                                         static_cast<unsigned int>(hit.primitiveIndex),
                                         wrappedU,
                                         wrappedV,
@@ -885,6 +914,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
     {
         TryWriteTextureFeedback(state,
                                 geomRef,
+                                params.textureViewSemantic,
                                 static_cast<unsigned int>(hit.primitiveIndex),
                                 inputs.unitU,
                                 inputs.unitV,
@@ -956,6 +986,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
         unsigned int resolvedUdimBits = 0u;
         if (ResolveVirtualTextureUdimBits(params,
                                           geomRef,
+                                          semantic,
                                           inputs.u,
                                           inputs.v,
                                           wrappedU,
@@ -982,13 +1013,22 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
                 }
 
                 if (TrySampleVirtualTexture(
-                        state, geomRef, vtRef, wrappedU, wrappedV, resolvedUdimBits, sampleMip, vtColor))
+                        state,
+                        geomRef,
+                        semantic,
+                        vtRef,
+                        wrappedU,
+                        wrappedV,
+                        resolvedUdimBits,
+                        sampleMip,
+                        vtColor))
                 {
                     outSample = Vec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
                     if (haveMip)
                     {
                         TryWriteTextureFeedback(state,
                                                 geomRef,
+                                                semantic,
                                                 static_cast<unsigned int>(hit.primitiveIndex),
                                                 wrappedU,
                                                 wrappedV,
@@ -1023,6 +1063,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
     {
         TryWriteTextureFeedback(state,
                                 geomRef,
+                                semantic,
                                 static_cast<unsigned int>(hit.primitiveIndex),
                                 inputs.unitU,
                                 inputs.unitV,

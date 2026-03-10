@@ -7,13 +7,30 @@ YBI_NAMESPACE_BEGIN
 
 struct Vec4
 {
-    float x;
-    float y;
-    float z;
-    float w;
+    union
+    {
+        struct
+        {
+            float x;
+            float y;
+            float z;
+            float w;
+        };
+        struct
+        {
+            float r;
+            float g;
+            float b;
+            float a;
+        };
+    };
 
     Vec4() = default;
     YBI_INTEGRATOR_HD constexpr Vec4(float value) : x(value), y(value), z(value), w(value) {}
+    YBI_INTEGRATOR_HD constexpr Vec4(const Vec3 &xyz_, float w_)
+        : x(xyz_.x), y(xyz_.y), z(xyz_.z), w(w_)
+    {
+    }
     YBI_INTEGRATOR_HD constexpr Vec4(float x_, float y_, float z_, float w_)
         : x(x_), y(y_), z(z_), w(w_)
     {
@@ -49,14 +66,60 @@ YBI_INTEGRATOR_HD Vec4 operator*(const Vec4 &a, const Vec4 &b)
     return Vec4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w);
 }
 
+YBI_INTEGRATOR_HD Vec4 &operator*=(Vec4 &a, const Vec4 &b)
+{
+    a.x *= b.x;
+    a.y *= b.y;
+    a.z *= b.z;
+    a.w *= b.w;
+    return a;
+}
+
 YBI_INTEGRATOR_HD Vec4 operator*(const Vec4 &a, float b)
 {
     return Vec4(a.x * b, a.y * b, a.z * b, a.w * b);
 }
 
+YBI_INTEGRATOR_HD Vec4 &operator*=(Vec4 &a, float b)
+{
+    a.x *= b;
+    a.y *= b;
+    a.z *= b;
+    a.w *= b;
+    return a;
+}
+
 YBI_INTEGRATOR_HD Vec4 operator*(float b, const Vec4 &a)
 {
     return a * b;
+}
+
+YBI_INTEGRATOR_HD Vec4 operator/(const Vec4 &a, const Vec4 &b)
+{
+    return Vec4(a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w);
+}
+
+YBI_INTEGRATOR_HD Vec4 operator/(const Vec4 &a, float b)
+{
+    return Vec4(a.x / b, a.y / b, a.z / b, a.w / b);
+}
+
+YBI_INTEGRATOR_HD Vec4 &operator/=(Vec4 &a, const Vec4 &b)
+{
+    a.x /= b.x;
+    a.y /= b.y;
+    a.z /= b.z;
+    a.w /= b.w;
+    return a;
+}
+
+YBI_INTEGRATOR_HD Vec4 &operator/=(Vec4 &a, float b)
+{
+    a.x /= b;
+    a.y /= b;
+    a.z /= b;
+    a.w /= b;
+    return a;
 }
 
 YBI_INTEGRATOR_HD Vec4 Lerp(const Vec4 &a, const Vec4 &b, float t)

@@ -7,9 +7,21 @@ YBI_NAMESPACE_BEGIN
 
 struct Vec3
 {
-    float x;
-    float y;
-    float z;
+    union
+    {
+        struct
+        {
+            float x;
+            float y;
+            float z;
+        };
+        struct
+        {
+            float r;
+            float g;
+            float b;
+        };
+    };
 
     Vec3() = default;
     YBI_INTEGRATOR_HD constexpr Vec3(float value) : x(value), y(value), z(value) {}
@@ -57,9 +69,25 @@ YBI_INTEGRATOR_HD Vec3 operator*(const Vec3 &a, const Vec3 &b)
     return Vec3(a.x * b.x, a.y * b.y, a.z * b.z);
 }
 
+YBI_INTEGRATOR_HD Vec3 &operator*=(Vec3 &a, const Vec3 &b)
+{
+    a.x *= b.x;
+    a.y *= b.y;
+    a.z *= b.z;
+    return a;
+}
+
 YBI_INTEGRATOR_HD Vec3 operator*(const Vec3 &a, float b)
 {
     return Vec3(a.x * b, a.y * b, a.z * b);
+}
+
+YBI_INTEGRATOR_HD Vec3 &operator*=(Vec3 &a, float b)
+{
+    a.x *= b;
+    a.y *= b;
+    a.z *= b;
+    return a;
 }
 
 YBI_INTEGRATOR_HD Vec3 operator*(float a, const Vec3 &b)
@@ -75,6 +103,22 @@ YBI_INTEGRATOR_HD Vec3 operator/(const Vec3 &a, const Vec3 &b)
 YBI_INTEGRATOR_HD Vec3 operator/(const Vec3 &a, float b)
 {
     return Vec3(a.x / b, a.y / b, a.z / b);
+}
+
+YBI_INTEGRATOR_HD Vec3 &operator/=(Vec3 &a, const Vec3 &b)
+{
+    a.x /= b.x;
+    a.y /= b.y;
+    a.z /= b.z;
+    return a;
+}
+
+YBI_INTEGRATOR_HD Vec3 &operator/=(Vec3 &a, float b)
+{
+    a.x /= b;
+    a.y /= b;
+    a.z /= b;
+    return a;
 }
 
 YBI_INTEGRATOR_HD float Dot(const Vec3 &a, const Vec3 &b)

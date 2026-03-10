@@ -190,7 +190,71 @@ static ybi::render::integrator::Vec3 TransformPoint3x4RowMajor(
                                              transform[4] * p.x + transform[5] * p.y +
                                                  transform[6] * p.z + transform[7],
                                              transform[8] * p.x + transform[9] * p.y +
-                                                 transform[10] * p.z + transform[11]);
+                                             transform[10] * p.z + transform[11]);
+}
+
+static ybi::render::integrator::Vec3 TransformVector3x4RowMajor(
+    const float transform[12], const ybi::render::integrator::Vec3 &v)
+{
+    return ybi::render::integrator::Vec3(transform[0] * v.x + transform[1] * v.y +
+                                             transform[2] * v.z,
+                                         transform[4] * v.x + transform[5] * v.y +
+                                             transform[6] * v.z,
+                                         transform[8] * v.x + transform[9] * v.y +
+                                             transform[10] * v.z);
+}
+
+static ybi::render::integrator::Vec3 TransformNormal3x4RowMajor(
+    const float transform[12], const ybi::render::integrator::Vec3 &n)
+{
+    const float m00 = transform[0];
+    const float m01 = transform[1];
+    const float m02 = transform[2];
+    const float m10 = transform[4];
+    const float m11 = transform[5];
+    const float m12 = transform[6];
+    const float m20 = transform[8];
+    const float m21 = transform[9];
+    const float m22 = transform[10];
+
+    const float c00 = m11 * m22 - m12 * m21;
+    const float c01 = m02 * m21 - m01 * m22;
+    const float c02 = m01 * m12 - m02 * m11;
+    const float c10 = m12 * m20 - m10 * m22;
+    const float c11 = m00 * m22 - m02 * m20;
+    const float c12 = m02 * m10 - m00 * m12;
+    const float c20 = m10 * m21 - m11 * m20;
+    const float c21 = m01 * m20 - m00 * m21;
+    const float c22 = m00 * m11 - m01 * m10;
+    const float det = m00 * c00 + m01 * c10 + m02 * c20;
+    if (fabsf(det) <= 1.0e-12f)
+    {
+        return ybi::render::integrator::Normalize(TransformVector3x4RowMajor(transform, n));
+    }
+    const float invDet = 1.0f / det;
+    const ybi::render::integrator::Vec3 transformed(
+        (c00 * n.x + c10 * n.y + c20 * n.z) * invDet,
+        (c01 * n.x + c11 * n.y + c21 * n.z) * invDet,
+        (c02 * n.x + c12 * n.y + c22 * n.z) * invDet);
+    return ybi::render::integrator::Normalize(transformed);
+}
+
+static bool TryGetRayHitWorldTransform(const LaunchParams &params,
+                                       const RTCRayHit &rayHit,
+                                       float transform[12])
+{
+    unsigned int sceneGeomId = rayHit.hit.geomID;
+    if (rayHit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
+    {
+        sceneGeomId = rayHit.hit.instID[0];
+    }
+
+    rtcGetGeometryTransformFromScene(reinterpret_cast<RTCScene>(params.traversable),
+                                     sceneGeomId,
+                                     0.0f,
+                                     RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
+                                     transform);
+    return true;
 }
 
 static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
@@ -228,18 +292,8 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
         return false;
     }
 
-    unsigned int sceneGeomId = rayHit.hit.geomID;
-    if (rayHit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
-    {
-        sceneGeomId = rayHit.hit.instID[0];
-    }
-
     float transform[12] = {};
-    rtcGetGeometryTransformFromScene(reinterpret_cast<RTCScene>(params.traversable),
-                                     sceneGeomId,
-                                     0.0f,
-                                     RTC_FORMAT_FLOAT3X4_ROW_MAJOR,
-                                     transform);
+    TryGetRayHitWorldTransform(params, rayHit, transform);
 
     outHit->worldTri0 = TransformPoint3x4RowMajor(
         transform,
@@ -251,6 +305,60 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
         transform,
         ybi::render::integrator::Vec3(positions[i2].x, positions[i2].y, positions[i2].z));
     outHit->hasWorldTriangle = true;
+    return true;
+}
+
+static bool TryComputeTriangleShadingNormal(const LaunchParams &params,
+                                            const RTCRayHit &rayHit,
+                                            int instanceId,
+                                            ybi::render::integrator::Vec3 *outNormal)
+{
+    if (!outNormal || params.instanceGeomRefs == 0ull || instanceId < 0 ||
+        instanceId >= params.instanceGeomRefCount)
+    {
+        return false;
+    }
+
+    const LaunchParams::InstanceGeomRef *refs =
+        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+    if (ref.normals == 0ull || ref.normalIndices == 0ull)
+    {
+        return false;
+    }
+
+    const int triCornerBase = static_cast<int>(rayHit.hit.primID) * 3;
+    if (triCornerBase + 2 >= ref.numNormalIndices)
+    {
+        return false;
+    }
+
+    const ybi::Vec3 *normals = reinterpret_cast<const ybi::Vec3 *>(ref.normals);
+    const int *normalIndices = reinterpret_cast<const int *>(ref.normalIndices);
+    const int n0 = normalIndices[triCornerBase + 0];
+    const int n1 = normalIndices[triCornerBase + 1];
+    const int n2 = normalIndices[triCornerBase + 2];
+    if (n0 < 0 || n0 >= ref.numNormals || n1 < 0 || n1 >= ref.numNormals || n2 < 0 ||
+        n2 >= ref.numNormals)
+    {
+        return false;
+    }
+
+    const float u = rayHit.hit.u;
+    const float v = rayHit.hit.v;
+    const float w = 1.0f - u - v;
+    const ybi::render::integrator::Vec3 localNormal(
+        normals[n0].x * w + normals[n1].x * u + normals[n2].x * v,
+        normals[n0].y * w + normals[n1].y * u + normals[n2].y * v,
+        normals[n0].z * w + normals[n1].z * u + normals[n2].z * v);
+    if (ybi::render::integrator::LengthSquared(localNormal) <= 1.0e-12f)
+    {
+        return false;
+    }
+
+    float transform[12] = {};
+    TryGetRayHitWorldTransform(params, rayHit, transform);
+    *outNormal = TransformNormal3x4RowMajor(transform, localNormal);
     return true;
 }
 
@@ -332,6 +440,8 @@ static bool TracePrimary(const LaunchParams &params,
             outHit->barycentrics = ybi::render::integrator::Vec3(1.0f - u - v, u, v);
             outHit->hasBarycentrics = true;
             (void)TryComputeTriangleWorldPositions(params, rayHit, outHit);
+            outHit->hasShadingNormal =
+                TryComputeTriangleShadingNormal(params, rayHit, outHit->instanceId, &outHit->shadingNormal);
         }
     }
 

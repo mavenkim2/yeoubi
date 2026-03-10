@@ -70,7 +70,10 @@ enum class MaterialTextureSemantic : int
     Ior = 5,
     Emissive = 6,
     Opacity = 7,
-    Count = 8
+    SpecularColor = 8,
+    Clearcoat = 9,
+    ClearcoatRoughness = 10,
+    Count = 11
 };
 
 struct CliOptions
@@ -373,6 +376,21 @@ static bool ParseTextureViewSemantic(const std::string &input,
         *outSemantic = MaterialTextureSemantic::Opacity;
         return true;
     }
+    if (token == "specular" || token == "specularcolor")
+    {
+        *outSemantic = MaterialTextureSemantic::SpecularColor;
+        return true;
+    }
+    if (token == "clearcoat" || token == "coat")
+    {
+        *outSemantic = MaterialTextureSemantic::Clearcoat;
+        return true;
+    }
+    if (token == "clearcoatroughness" || token == "coatroughness")
+    {
+        *outSemantic = MaterialTextureSemantic::ClearcoatRoughness;
+        return true;
+    }
     return false;
 }
 
@@ -420,6 +438,21 @@ static bool TryMapInputNameToSemantic(const std::string &inputName,
         *outSemantic = MaterialTextureSemantic::Opacity;
         return true;
     }
+    if (inputName == "specularColor")
+    {
+        *outSemantic = MaterialTextureSemantic::SpecularColor;
+        return true;
+    }
+    if (inputName == "clearcoat")
+    {
+        *outSemantic = MaterialTextureSemantic::Clearcoat;
+        return true;
+    }
+    if (inputName == "clearcoatRoughness")
+    {
+        *outSemantic = MaterialTextureSemantic::ClearcoatRoughness;
+        return true;
+    }
     return false;
 }
 
@@ -446,7 +479,7 @@ static void PrintUsage(const char *exeName)
     printf("  --vt-max-page-uploads max new stream pages uploaded after each feedback pass\n");
     printf("  --pixel x y render only image-space pixel (x right, y down)\n");
     printf("  --write-feedback dump feedback text files next to output PNG\n");
-    printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity\n");
+    printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity|specular|clearcoat|clearcoatroughness\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
     printf("  --purpose single purpose token, repeatable; overrides defaults\n");
 }
@@ -1408,6 +1441,22 @@ static const Attribute *FindMeshSTAttribute(const Mesh &mesh)
     return nullptr;
 }
 
+static const Attribute *FindMeshNormalAttribute(const Mesh &mesh)
+{
+    for (const Attribute &attr : mesh.attributes)
+    {
+        if (attr.name == "normal" && attr.type == AttributeType::Float3 &&
+            attr.interpolation == PrimvarInterpolation::FaceVarying && attr.indices.size() > 0)
+        {
+            if ((attr.data.size() % sizeof(ybi::Vec3)) == 0)
+            {
+                return &attr;
+            }
+        }
+    }
+    return nullptr;
+}
+
 static UploadedMeshRefs
 UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &meshUploadRefs)
 {
@@ -1435,8 +1484,12 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
 
         DeviceMemoryView<uint8_t> texcoordsBuffer = {};
         DeviceMemoryView<uint8_t> texcoordIndicesBuffer = {};
+        DeviceMemoryView<uint8_t> normalsBuffer = {};
+        DeviceMemoryView<uint8_t> normalIndicesBuffer = {};
         int texcoordCount = 0;
         int texcoordIndexCount = 0;
+        int normalCount = 0;
+        int normalIndexCount = 0;
         const Attribute *stAttr = FindMeshSTAttribute(mesh);
         if (stAttr)
         {
@@ -1453,15 +1506,35 @@ UploadScenePoolMeshRefs(Device *device, const std::vector<SceneMeshUploadRef> &m
             texcoordCount = int(stAttr->data.size() / sizeof(ybi::Vec2));
             texcoordIndexCount = int(stAttr->indices.size());
         }
+        const Attribute *normalAttr = FindMeshNormalAttribute(mesh);
+        if (normalAttr)
+        {
+            const size_t normalsBytes = normalAttr->data.size();
+            const size_t normalIndicesBytes = sizeof(int) * normalAttr->indices.size();
+            normalsBuffer = device->AllocBytes(normalsBytes);
+            normalIndicesBuffer = device->AllocBytes(normalIndicesBytes);
+            out.deviceBytes += normalsBuffer.numBytes() + normalIndicesBuffer.numBytes();
+            device->CopyBytesToDevice(normalsBuffer, normalAttr->data.data(), normalsBytes);
+            device->CopyBytesToDevice(
+                normalIndicesBuffer, normalAttr->indices.data(), normalIndicesBytes);
+            out.ownedBuffers.push_back(normalsBuffer);
+            out.ownedBuffers.push_back(normalIndicesBuffer);
+            normalCount = int(normalAttr->data.size() / sizeof(ybi::Vec3));
+            normalIndexCount = int(normalAttr->indices.size());
+        }
 
         out.refs[job.refIndex] = {(unsigned long long)positionsBuffer.data(),
                                   (unsigned long long)indicesBuffer.data(),
                                   (unsigned long long)texcoordsBuffer.data(),
                                   (unsigned long long)texcoordIndicesBuffer.data(),
+                                  (unsigned long long)normalsBuffer.data(),
+                                  (unsigned long long)normalIndicesBuffer.data(),
                                   (int)mesh.positions.size(),
                                   (int)mesh.indices.size(),
                                   texcoordCount,
                                   texcoordIndexCount,
+                                  normalCount,
+                                  normalIndexCount,
                                   mesh.materialIndex};
         out.ownedBuffers.push_back(positionsBuffer);
         out.ownedBuffers.push_back(indicesBuffer);
@@ -2033,23 +2106,34 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
 
         std::vector<std::pair<unsigned int, std::string>> texturePaths;
         std::vector<ybi::texture::VirtualTextureMaterialSource> vtSources;
-        texturePaths.reserve(state->scenePool.materials.size());
-        vtSources.reserve(state->scenePool.materials.size());
+        texturePaths.reserve(state->scenePool.materials.size() * static_cast<size_t>(kMaterialSemanticCount));
+        vtSources.reserve(state->scenePool.materials.size() * static_cast<size_t>(kMaterialSemanticCount));
         for (size_t materialIndex = 0; materialIndex < state->scenePool.materials.size(); ++materialIndex)
         {
-            const MaterialTextureInput *input =
-                FindTextureInputBySemantic(state->scenePool.materials[materialIndex], options.textureView);
-            if (!input || input->texturePath.empty())
+            for (const MaterialTextureInput &input : state->scenePool.materials[materialIndex].textureInputs)
             {
-                continue;
+                if (input.texturePath.empty())
+                {
+                    continue;
+                }
+                MaterialTextureSemantic semantic = MaterialTextureSemantic::Diffuse;
+                if (!TryMapInputNameToSemantic(input.inputName, &semantic))
+                {
+                    continue;
+                }
+                const unsigned int textureId = static_cast<unsigned int>(
+                    materialIndex * static_cast<size_t>(kMaterialSemanticCount) +
+                    static_cast<size_t>(semantic));
+                texturePaths.emplace_back(textureId, input.texturePath);
+                ybi::texture::VirtualTextureMaterialSource source = {};
+                source.textureId = textureId;
+                source.materialIndex = static_cast<uint32_t>(materialIndex);
+                source.semanticIndex = static_cast<int>(semantic);
+                source.texturePath = input.texturePath;
+                source.wrapS = input.wrapS;
+                source.wrapT = input.wrapT;
+                vtSources.push_back(std::move(source));
             }
-            texturePaths.emplace_back(static_cast<unsigned int>(materialIndex), input->texturePath);
-            ybi::texture::VirtualTextureMaterialSource source = {};
-            source.materialIndex = static_cast<uint32_t>(materialIndex);
-            source.texturePath = input->texturePath;
-            source.wrapS = input->wrapS;
-            source.wrapT = input->wrapT;
-            vtSources.push_back(std::move(source));
         }
 
         const std::unordered_map<unsigned int, std::string> tileFiles =
@@ -2057,7 +2141,6 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         ybi::texture::VirtualTextureMaterialBuildResult vtBuild = {};
         std::string vtError;
         if (!ybi::texture::BuildVirtualTextureMaterialMetadata(state->scenePool.materials.size(),
-                                                               static_cast<int>(options.textureView),
                                                                state->materialTextureRefSemanticCount,
                                                                state->materialTextureRefStride,
                                                                vtSources,
@@ -2071,10 +2154,15 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         launchRefs = std::move(vtBuild.materialTextureRefs);
         state->virtualTextureRegistrations = std::move(vtBuild.registrations);
         state->memoryStats.virtualTextureVirtualBytes = vtBuild.totalVirtualTextureBytes;
-        std::printf("virtual-texture: mapped %u materials and %u active UDIMs from %s\n",
+        std::printf("virtual-texture: mapped %u texture slots and %u active UDIMs from %s\n",
                     vtBuild.mappedMaterialCount,
                     vtBuild.activeUdimCount,
                     options.virtualTextureTilesDir.c_str());
+        if (vtBuild.skippedMissingTileCount > 0u)
+        {
+            std::printf("virtual-texture: skipped %u missing tile bins\n",
+                        vtBuild.skippedMissingTileCount);
+        }
         std::printf(
             "virtual-texture: strict VT path enabled; skipping image decode and classic texture upload\n");
         tTextureReady = LogPhase("build_virtual_texture_metadata", tTess);

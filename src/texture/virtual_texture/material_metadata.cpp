@@ -18,7 +18,6 @@ static constexpr uint32_t kUdimMin = 1001u;
 
 bool BuildVirtualTextureMaterialMetadata(
     size_t materialCount,
-    int semanticIndex,
     int materialTextureRefSemanticCount,
     int materialTextureRefStride,
     const std::vector<VirtualTextureMaterialSource> &sources,
@@ -40,15 +39,6 @@ bool BuildVirtualTextureMaterialMetadata(
     {
         return true;
     }
-    if (semanticIndex < 0 || semanticIndex >= materialTextureRefSemanticCount)
-    {
-        if (outError)
-        {
-            *outError = "BuildVirtualTextureMaterialMetadata: semantic index out of range";
-        }
-        return false;
-    }
-
     const size_t refCount = materialCount * static_cast<size_t>(materialTextureRefSemanticCount) *
                             static_cast<size_t>(materialTextureRefStride);
     out->materialTextureRefs.assign(refCount, LaunchParams::MaterialTextureRef{});
@@ -61,17 +51,20 @@ bool BuildVirtualTextureMaterialMetadata(
             continue;
         }
 
-        const auto tileFileIt = tileFiles.find(source.materialIndex);
-        if (tileFileIt == tileFiles.end() || tileFileIt->second.empty())
+        if (source.semanticIndex < 0 || source.semanticIndex >= materialTextureRefSemanticCount)
         {
             if (outError)
             {
-                std::ostringstream oss;
-                oss << "virtual-texture metadata: missing tile bin for material "
-                    << source.materialIndex << " path " << source.texturePath;
-                *outError = oss.str();
+                *outError = "BuildVirtualTextureMaterialMetadata: semantic index out of range";
             }
             return false;
+        }
+
+        const auto tileFileIt = tileFiles.find(source.textureId);
+        if (tileFileIt == tileFiles.end() || tileFileIt->second.empty())
+        {
+            out->skippedMissingTileCount++;
+            continue;
         }
 
         VirtualTextureTileFile tileFile = {};
@@ -108,14 +101,14 @@ bool BuildVirtualTextureMaterialMetadata(
         std::sort(udims.begin(), udims.end());
 
         VirtualTextureRegisterInput reg = {};
-        reg.textureId = source.materialIndex;
+        reg.textureId = source.textureId;
         reg.tileFilePath = tileFileIt->second;
         reg.activeUdims.reserve(udims.size());
         reg.udimExtents.reserve(udims.size());
 
         const size_t base = (static_cast<size_t>(source.materialIndex) *
                              static_cast<size_t>(materialTextureRefSemanticCount) +
-                             static_cast<size_t>(semanticIndex)) *
+                             static_cast<size_t>(source.semanticIndex)) *
                             static_cast<size_t>(materialTextureRefStride);
 
         for (uint32_t udim : udims)

@@ -17,7 +17,9 @@ namespace texture
 
 struct VirtualTextureMaterialSource
 {
+    uint32_t textureId = 0u;
     uint32_t materialIndex = 0u;
+    int semanticIndex = 0;
     std::string texturePath;
     TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
     TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
@@ -30,11 +32,11 @@ struct VirtualTextureMaterialBuildResult
     uint64_t totalVirtualTextureBytes = 0u;
     uint32_t mappedMaterialCount = 0u;
     uint32_t activeUdimCount = 0u;
+    uint32_t skippedMissingTileCount = 0u;
 };
 
 bool BuildVirtualTextureMaterialMetadata(
     size_t materialCount,
-    int semanticIndex,
     int materialTextureRefSemanticCount,
     int materialTextureRefStride,
     const std::vector<VirtualTextureMaterialSource> &sources,

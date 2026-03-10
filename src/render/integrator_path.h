@@ -71,11 +71,17 @@ YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &pa
     material.baseColor = Vec3(src.baseColor.x, src.baseColor.y, src.baseColor.z);
     material.emissiveColor =
         Vec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
+    material.specularColor =
+        Vec3(src.specularColor.x, src.specularColor.y, src.specularColor.z);
     material.roughness = src.roughness;
     material.metallic = src.metallic;
     material.ior = src.ior;
     material.opacity = src.opacity;
+    material.clearcoat = src.clearcoat;
+    material.clearcoatRoughness = src.clearcoatRoughness;
+    material.opacityThreshold = src.opacityThreshold;
     material.flags = src.flags;
+    material.useSpecularWorkflow = src.useSpecularWorkflow;
     return material;
 }
 
@@ -103,6 +109,10 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     {
         material.emissiveColor = material.emissiveColor * Vec3(sample.x, sample.y, sample.z);
     }
+    if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticSpecularColor, sample))
+    {
+        material.specularColor = material.specularColor * Vec3(sample.x, sample.y, sample.z);
+    }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticIor, sample))
     {
         material.ior *= MaxFloat(sample.x, 0.0f);
@@ -111,13 +121,25 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     {
         material.opacity *= sample.x;
     }
+    if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticClearcoat, sample))
+    {
+        material.clearcoat *= sample.x;
+    }
+    if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticClearcoatRoughness, sample))
+    {
+        material.clearcoatRoughness *= sample.x;
+    }
 
     material.baseColor = ClampVec3(material.baseColor, 0.0f, 1.0f);
     material.emissiveColor = ClampVec3(material.emissiveColor, 0.0f, 65504.0f);
+    material.specularColor = ClampVec3(material.specularColor, 0.0f, 1.0f);
     material.roughness = MaxFloat(MinFloat(material.roughness, 1.0f), 0.0f);
     material.metallic = Clamp01(material.metallic);
     material.ior = MaxFloat(material.ior, 1.0f);
     material.opacity = Clamp01(material.opacity);
+    material.clearcoat = Clamp01(material.clearcoat);
+    material.clearcoatRoughness = Clamp01(material.clearcoatRoughness);
+    material.opacityThreshold = Clamp01(material.opacityThreshold);
     material.flags = 0u;
     if (material.emissiveColor.x > 0.0f || material.emissiveColor.y > 0.0f ||
         material.emissiveColor.z > 0.0f)
@@ -180,11 +202,6 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
             break;
         }
 
-        Vec3 normal = Vec3(-rayDir.x, -rayDir.y, -rayDir.z);
-        if (hit.hasGeomNormal)
-        {
-            normal = FaceForward(Normalize(hit.geomNormal), rayDir);
-        }
         const Vec3 hitPoint = hit.rayOrigin + hit.rayDir * hit.t;
 
         LaunchParams::InstanceGeomRef geomRef = {};
@@ -195,64 +212,71 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         }
 
         const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
-        if ((material.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
+        const ShadingFrame shadingFrame = EvaluateShadingFrame(state, geomRef, hit);
+        const Vec3 wo = -rayDir;
+        const PreparedMaterial preparedMaterial =
+            PrepareMaterialBsdf(material, shadingFrame, throughput, wo);
+
+        if (ShouldAlphaCutout(preparedMaterial))
         {
-            radiance = radiance + throughput * material.emissiveColor;
+            rayOrigin = hitPoint + rayDir * rayBias;
+            depth--;
+            continue;
         }
 
-        const Vec3 wo = -rayDir;
-        const bool skipNeeMis = ShouldSkipNeeMis(material);
-        if (!skipNeeMis)
+        if ((preparedMaterial.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {
-            DirectLightSample lightSample = {};
-            if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
+            radiance = radiance + throughput * preparedMaterial.emissiveColor;
+        }
+
+        DirectLightSample lightSample = {};
+        if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
+        {
+            const float shadowNormalSign =
+                Dot(preparedMaterial.geomNormal, lightSample.wi) >= 0.0f ? 1.0f : -1.0f;
+            const Vec3 shadowOrigin =
+                hitPoint + preparedMaterial.geomNormal * (rayBias * shadowNormalSign);
+            const float shadowMax =
+                lightSample.distance >= 1.0e19f
+                    ? 1.0e20f
+                    : MaxFloat(lightSample.distance - rayBias, rayBias);
+            if (!state.TraceLightOcclusion(
+                    shadowOrigin, lightSample.wi, rayBias, shadowMax, lightSample.lightIndex))
             {
-                const float nDotL = MaxFloat(Dot(normal, lightSample.wi), 0.0f);
-                if (nDotL > 0.0f)
+                float bsdfPdf = 0.0f;
+                const Vec3 f = EvaluateBsdf(preparedMaterial, lightSample.wi, &bsdfPdf);
+                if (MaxComponent(f) > 0.0f)
                 {
-                    const Vec3 shadowOrigin = hitPoint + normal * rayBias;
-                    const float shadowMax =
-                        lightSample.distance >= 1.0e19f
-                            ? 1.0e20f
-                            : MaxFloat(lightSample.distance - rayBias, rayBias);
-                    if (!state.TraceLightOcclusion(shadowOrigin,
-                                                   lightSample.wi,
-                                                   rayBias,
-                                                   shadowMax,
-                                                   lightSample.lightIndex))
-                    {
-                        float bsdfPdf = 0.0f;
-                        const Vec3 f =
-                            EvaluateBsdf(material, normal, wo, lightSample.wi, &bsdfPdf);
-                        const float misWeight =
-                            lightSample.isDeltaLight
-                                ? 1.0f
-                                : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
-                        const Vec3 direct = throughput * f * lightSample.radiance;
-                        radiance =
-                            radiance + direct * ((nDotL * misWeight) / MaxFloat(lightSample.pdf, 1.0e-6f));
-                    }
+                    const float misWeight =
+                        lightSample.isDeltaLight
+                            ? 1.0f
+                            : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
+                    radiance = radiance +
+                               throughput * f * lightSample.radiance *
+                                   (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
                 }
             }
+        }
 
-            DirectLightSample domeSample = {};
-            if (SampleDomeLight(state, rngState, &domeSample))
+        DirectLightSample domeSample = {};
+        if (SampleDomeLight(state, rngState, &domeSample))
+        {
+            const float shadowNormalSign =
+                Dot(preparedMaterial.geomNormal, domeSample.wi) >= 0.0f ? 1.0f : -1.0f;
+            const Vec3 shadowOrigin =
+                hitPoint + preparedMaterial.geomNormal * (rayBias * shadowNormalSign);
+            if (!state.TraceLightOcclusion(
+                    shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex))
             {
-                const float nDotL = MaxFloat(Dot(normal, domeSample.wi), 0.0f);
-                if (nDotL > 0.0f)
+                float bsdfPdf = 0.0f;
+                const Vec3 f = EvaluateBsdf(preparedMaterial, domeSample.wi, &bsdfPdf);
+                if (MaxComponent(f) > 0.0f)
                 {
-                    const Vec3 shadowOrigin = hitPoint + normal * rayBias;
-                    if (!state.TraceLightOcclusion(
-                            shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex))
-                    {
-                        float bsdfPdf = 0.0f;
-                        const Vec3 f = EvaluateBsdf(material, normal, wo, domeSample.wi, &bsdfPdf);
-                        const float misWeight =
-                            domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
-                        const Vec3 direct = throughput * f * domeSample.radiance;
-                        radiance =
-                            radiance + direct * ((nDotL * misWeight) / MaxFloat(domeSample.pdf, 1.0e-6f));
-                    }
+                    const float misWeight =
+                        domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
+                    radiance = radiance +
+                               throughput * f * domeSample.radiance *
+                                   (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
                 }
             }
         }
@@ -263,26 +287,19 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         }
 
         BsdfSample bsdf = {};
-        SampleOrenNayar(Vec3(wo.x, wo.y, wo.z));
-        if (!SampleBsdf(material, normal, wo, rngState, &bsdf))
+        if (!SampleBsdf(preparedMaterial, rngState, &bsdf))
         {
             break;
         }
 
-        const float nDotL = MaxFloat(Dot(normal, bsdf.wi), 0.0f);
-        if (nDotL <= 0.0f)
-        {
-            break;
-        }
-
-        throughput = throughput * (bsdf.f * (nDotL / MaxFloat(bsdf.pdf, 1.0e-6f)));
+        throughput = throughput * bsdf.weight;
         if (MaxComponent(throughput) <= 0.0f)
         {
             break;
         }
 
-        const float normalSign = Dot(normal, bsdf.wi) >= 0.0f ? 1.0f : -1.0f;
-        rayOrigin = hitPoint + normal * (rayBias * normalSign);
+        const float normalSign = Dot(preparedMaterial.geomNormal, bsdf.wi) >= 0.0f ? 1.0f : -1.0f;
+        rayOrigin = hitPoint + preparedMaterial.geomNormal * (rayBias * normalSign);
         rayDir = bsdf.wi;
         currentRayHasBsdfContext = true;
         currentRaySkipNeeMis = bsdf.skipNeeMis;

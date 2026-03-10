@@ -455,15 +455,42 @@ static float ReadInputFloat(const pxr::UsdShadeInput &input, float fallback)
     return fallback;
 }
 
+static bool ReadInputBool(const pxr::UsdShadeInput &input, bool fallback)
+{
+    if (!input)
+    {
+        return fallback;
+    }
+
+    bool boolValue = fallback;
+    if (input.Get(&boolValue))
+    {
+        return boolValue;
+    }
+
+    int intValue = fallback ? 1 : 0;
+    if (input.Get(&intValue))
+    {
+        return intValue != 0;
+    }
+
+    return ReadInputFloat(input, fallback ? 1.0f : 0.0f) > 0.5f;
+}
+
 static void FinalizePackedMaterial(PackedMaterial *packed)
 {
     YBI_ASSERT(packed);
     packed->baseColor = ClampFiniteColor(packed->baseColor, 0.0f, 1.0f);
     packed->emissiveColor = ClampFiniteColor(packed->emissiveColor, 0.0f, 65504.0f);
+    packed->specularColor = ClampFiniteColor(packed->specularColor, 0.0f, 1.0f);
     packed->roughness = ClampFinite(packed->roughness, 0.0f, 1.0f, 1.0f);
     packed->metallic = ClampFinite(packed->metallic, 0.0f, 1.0f, 0.0f);
     packed->ior = ClampFinite(packed->ior, 1.0f, 4.0f, 1.5f);
     packed->opacity = ClampFinite(packed->opacity, 0.0f, 1.0f, 1.0f);
+    packed->clearcoat = ClampFinite(packed->clearcoat, 0.0f, 1.0f, 0.0f);
+    packed->clearcoatRoughness = ClampFinite(packed->clearcoatRoughness, 0.0f, 1.0f, 0.01f);
+    packed->opacityThreshold = ClampFinite(packed->opacityThreshold, 0.0f, 1.0f, 0.0f);
+    packed->useSpecularWorkflow = packed->useSpecularWorkflow != 0u ? 1u : 0u;
 
     packed->flags = 0u;
     if (packed->emissiveColor.x > 0.0f || packed->emissiveColor.y > 0.0f ||
@@ -487,9 +514,20 @@ static void ReadPreviewSurfaceMaterial(const pxr::UsdShadeShader &shader, Materi
         ReadInputFloat(shader.GetInput(pxr::TfToken("roughness")), 0.5f);
     outInfo->packed.metallic =
         ReadInputFloat(shader.GetInput(pxr::TfToken("metallic")), 0.0f);
+    outInfo->packed.specularColor = ReadInputColor3f(
+        shader.GetInput(pxr::TfToken("specularColor")),
+        ybi::Vec3(1.0f, 1.0f, 1.0f));
     outInfo->packed.ior = ReadInputFloat(shader.GetInput(pxr::TfToken("ior")), 1.5f);
     outInfo->packed.opacity =
         ReadInputFloat(shader.GetInput(pxr::TfToken("opacity")), 1.0f);
+    outInfo->packed.clearcoat =
+        ReadInputFloat(shader.GetInput(pxr::TfToken("clearcoat")), 0.0f);
+    outInfo->packed.clearcoatRoughness =
+        ReadInputFloat(shader.GetInput(pxr::TfToken("clearcoatRoughness")), 0.01f);
+    outInfo->packed.opacityThreshold =
+        ReadInputFloat(shader.GetInput(pxr::TfToken("opacityThreshold")), 0.0f);
+    outInfo->packed.useSpecularWorkflow =
+        ReadInputBool(shader.GetInput(pxr::TfToken("useSpecularWorkflow")), false) ? 1u : 0u;
 
     for (const pxr::UsdShadeInput &input : shader.GetInputs())
     {
@@ -1112,6 +1150,109 @@ static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
                               AttributeType::Float2,
                               PrimvarInterpolation::FaceVarying,
                               "st");
+    return true;
+}
+
+static bool BuildTriangulatedMeshNormalAttribute(const pxr::UsdGeomMesh &mesh,
+                                                 const pxr::VtIntArray &faceCounts,
+                                                 const pxr::VtIntArray &faceIndices,
+                                                 int numTriangles,
+                                                 Attribute *outAttribute)
+{
+    YBI_ASSERT(outAttribute);
+
+    pxr::VtVec3fArray normals;
+    if (!mesh.GetNormalsAttr().Get(&normals, 0.0))
+    {
+        return false;
+    }
+    if (normals.empty())
+    {
+        return false;
+    }
+
+    const pxr::TfToken interpolation = mesh.GetNormalsInterpolation();
+    Array<Vec3> normalValues(normals);
+    Array<int> triNormalIndices(static_cast<size_t>(numTriangles) * 3u);
+
+    int faceIndexOffset = 0;
+    int triIndexOffset = 0;
+    int faceIndex = 0;
+    for (int faceCount : faceCounts)
+    {
+        int faceNormals[4] = {-1, -1, -1, -1};
+        if (faceCount < 3 || faceCount > 4)
+        {
+            return false;
+        }
+
+        for (int corner = 0; corner < faceCount; ++corner)
+        {
+            const int cornerIndex = faceIndexOffset + corner;
+            int normalIndex = -1;
+            if (interpolation == pxr::UsdGeomTokens->vertex ||
+                interpolation == pxr::UsdGeomTokens->varying)
+            {
+                if (cornerIndex < 0 || cornerIndex >= static_cast<int>(faceIndices.size()))
+                {
+                    return false;
+                }
+                normalIndex = faceIndices[cornerIndex];
+            }
+            else if (interpolation == pxr::UsdGeomTokens->faceVarying)
+            {
+                normalIndex = cornerIndex;
+            }
+            else if (interpolation == pxr::UsdGeomTokens->uniform)
+            {
+                normalIndex = faceIndex;
+            }
+            else if (interpolation == pxr::UsdGeomTokens->constant)
+            {
+                normalIndex = 0;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (normalIndex < 0 || normalIndex >= static_cast<int>(normalValues.size()))
+            {
+                return false;
+            }
+            faceNormals[corner] = normalIndex;
+        }
+
+        if (faceCount == 3)
+        {
+            triNormalIndices[triIndexOffset++] = faceNormals[0];
+            triNormalIndices[triIndexOffset++] = faceNormals[1];
+            triNormalIndices[triIndexOffset++] = faceNormals[2];
+        }
+        else
+        {
+            triNormalIndices[triIndexOffset++] = faceNormals[0];
+            triNormalIndices[triIndexOffset++] = faceNormals[1];
+            triNormalIndices[triIndexOffset++] = faceNormals[2];
+            triNormalIndices[triIndexOffset++] = faceNormals[0];
+            triNormalIndices[triIndexOffset++] = faceNormals[2];
+            triNormalIndices[triIndexOffset++] = faceNormals[3];
+        }
+
+        faceIndexOffset += faceCount;
+        faceIndex++;
+    }
+
+    Array<uint8_t> dataBytes(sizeof(Vec3) * normalValues.size());
+    if (normalValues.size() > 0)
+    {
+        memcpy(dataBytes.data(), normalValues.data(), sizeof(Vec3) * normalValues.size());
+    }
+    *outAttribute = Attribute(std::move(dataBytes),
+                              std::move(triNormalIndices),
+                              AttributeType::Float3,
+                              PrimvarInterpolation::FaceVarying,
+                              "normal");
     return true;
 }
 
@@ -2110,8 +2251,11 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             }
 
             Attribute stAttr;
+            Attribute normalAttr;
             const bool hasSt =
                 BuildTriangulatedMeshSTAttribute(mesh, faceCounts, faceIndices, numTriangles, &stAttr);
+            const bool hasNormals = BuildTriangulatedMeshNormalAttribute(
+                mesh, faceCounts, faceIndices, numTriangles, &normalAttr);
 
             outScene->meshes.emplace_back(
                 std::move(finalPositions), std::move(finalIndices), meshRef.parentFromLocal);
@@ -2121,6 +2265,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             if (hasSt)
             {
                 outMesh.attributes.push_back(std::move(stAttr));
+            }
+            if (hasNormals)
+            {
+                outMesh.attributes.push_back(std::move(normalAttr));
             }
         }
     }

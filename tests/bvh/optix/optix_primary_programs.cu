@@ -256,6 +256,53 @@ static __forceinline__ __device__ bool TryComputeTriangleNormal(int instanceId,
     return true;
 }
 
+static __forceinline__ __device__ bool TryComputeTriangleShadingNormal(int instanceId,
+                                                                       int primitiveIndex,
+                                                                       const Vec3 &barycentrics,
+                                                                       Vec3 &outNormal)
+{
+    if (params.instanceGeomRefs == 0ull || instanceId < 0 ||
+        instanceId >= params.instanceGeomRefCount)
+    {
+        return false;
+    }
+
+    const LaunchParams::InstanceGeomRef *refs =
+        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+    const int indexBase = primitiveIndex * 3;
+    const float3 *normals = reinterpret_cast<const float3 *>(ref.normals);
+    const int *normalIndices = reinterpret_cast<const int *>(ref.normalIndices);
+    if (!normals || !normalIndices || indexBase + 2 >= ref.numNormalIndices)
+    {
+        return false;
+    }
+
+    const int n0 = normalIndices[indexBase + 0];
+    const int n1 = normalIndices[indexBase + 1];
+    const int n2 = normalIndices[indexBase + 2];
+    if (n0 < 0 || n0 >= ref.numNormals || n1 < 0 || n1 >= ref.numNormals || n2 < 0 ||
+        n2 >= ref.numNormals)
+    {
+        return false;
+    }
+
+    const float3 localNormal = float3{normals[n0].x * barycentrics.x + normals[n1].x * barycentrics.y +
+                                          normals[n2].x * barycentrics.z,
+                                      normals[n0].y * barycentrics.x + normals[n1].y * barycentrics.y +
+                                          normals[n2].y * barycentrics.z,
+                                      normals[n0].z * barycentrics.x + normals[n1].z * barycentrics.y +
+                                          normals[n2].z * barycentrics.z};
+    if (localNormal.x * localNormal.x + localNormal.y * localNormal.y + localNormal.z * localNormal.z <=
+        1.0e-12f)
+    {
+        return false;
+    }
+
+    outNormal = ToVec3(Normalize3(optixTransformNormalFromObjectToWorldSpace(localNormal)));
+    return true;
+}
+
 static __forceinline__ __device__ bool TryComputeTriangleWorldPositions(int instanceId,
                                                                         int primitiveIndex,
                                                                         HitInfo *outHit)
@@ -415,6 +462,8 @@ extern "C" __global__ void __closesthit__primary()
                 hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
                 outHit->geomNormal = geomNormal;
                 outHit->hasGeomNormal = hasGeom;
+                outHit->hasShadingNormal = TryComputeTriangleShadingNormal(
+                    hit.instanceId, hit.primitiveIndex, hit.barycentrics, outHit->shadingNormal);
             }
         }
         return;

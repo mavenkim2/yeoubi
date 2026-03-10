@@ -22,10 +22,14 @@ struct LaunchParams
         unsigned long long indices;
         unsigned long long texcoords;
         unsigned long long texcoordIndices;
+        unsigned long long normals;
+        unsigned long long normalIndices;
         int numPositions;
         int numIndices;
         int numTexcoords;
         int numTexcoordIndices;
+        int numNormals;
+        int numNormalIndices;
         int materialIndex;
         int _padding0;
     };
