@@ -120,6 +120,55 @@ YBI_INTEGRATOR_HD int MaxInt(int a, int b)
     return a > b ? a : b;
 }
 
+YBI_INTEGRATOR_HD int32_t FloatAsInt(float value)
+{
+    union
+    {
+        float f;
+        int32_t i;
+    } bits = {value};
+    return bits.i;
+}
+
+YBI_INTEGRATOR_HD float IntAsFloat(int32_t value)
+{
+    union
+    {
+        int32_t i;
+        float f;
+    } bits = {value};
+    return bits.f;
+}
+
+YBI_INTEGRATOR_HD Vec3 OffsetRayOrigin(const Vec3 &point, const Vec3 &normal)
+{
+    constexpr float kOrigin = 1.0f / 32.0f;
+    constexpr float kFloatScale = 1.0f / 65536.0f;
+    constexpr float kIntScale = 256.0f;
+
+    const int32_t ofx = static_cast<int32_t>(kIntScale * normal.x);
+    const int32_t ofy = static_cast<int32_t>(kIntScale * normal.y);
+    const int32_t ofz = static_cast<int32_t>(kIntScale * normal.z);
+
+    const Vec3 offsetPoint(
+        IntAsFloat(FloatAsInt(point.x) + (point.x < 0.0f ? -ofx : ofx)),
+        IntAsFloat(FloatAsInt(point.y) + (point.y < 0.0f ? -ofy : ofy)),
+        IntAsFloat(FloatAsInt(point.z) + (point.z < 0.0f ? -ofz : ofz)));
+
+    return Vec3(fabsf(point.x) < kOrigin ? point.x + kFloatScale * normal.x : offsetPoint.x,
+                fabsf(point.y) < kOrigin ? point.y + kFloatScale * normal.y : offsetPoint.y,
+                fabsf(point.z) < kOrigin ? point.z + kFloatScale * normal.z : offsetPoint.z);
+}
+
+YBI_INTEGRATOR_HD Vec3 OffsetRayOrigin(const Vec3 &point,
+                                       const Vec3 &geomNormal,
+                                       const Vec3 &rayDirection)
+{
+    const Vec3 offsetNormal =
+        Dot(geomNormal, rayDirection) >= 0.0f ? geomNormal : -geomNormal;
+    return OffsetRayOrigin(point, offsetNormal);
+}
+
 YBI_INTEGRATOR_HD unsigned int Hash32(unsigned int x)
 {
     x ^= x >> 16;

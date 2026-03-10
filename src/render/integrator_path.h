@@ -149,6 +149,100 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     return material;
 }
 
+YBI_INTEGRATOR_HD LaunchParams::InstanceGeomRef ResolveGeomRef(
+    const LaunchParams &params,
+    const LaunchParams::InstanceGeomRef *geomRefs,
+    int instanceId)
+{
+    LaunchParams::InstanceGeomRef geomRef = {};
+    geomRef.materialIndex = -1;
+    if (geomRefs && instanceId >= 0 && instanceId < params.instanceGeomRefCount)
+    {
+        geomRef = geomRefs[instanceId];
+    }
+    return geomRef;
+}
+
+YBI_INTEGRATOR_HD bool ShouldAlphaCutout(const EvaluatedMaterial &material)
+{
+    return material.opacityThreshold > 0.0f && material.opacity < material.opacityThreshold;
+}
+
+YBI_INTEGRATOR_HD Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
+{
+    const float transmission = Clamp01(1.0f - material.opacity);
+    return Vec3(transmission, transmission, transmission);
+}
+
+template <typename State>
+YBI_INTEGRATOR_HD Vec3 TraceShadowTransmittance(State &state,
+                                                const LaunchParams::InstanceGeomRef *geomRefs,
+                                                const Vec3 &origin,
+                                                const Vec3 &direction,
+                                                float tMin,
+                                                float tMax,
+                                                int lightIndex)
+{
+    const LaunchParams &params = state.Params();
+    Vec3 transmittance = Vec3(1.0f, 1.0f, 1.0f);
+    Vec3 currentOrigin = origin;
+    float currentMax = tMax;
+    constexpr int kMaxShadowHits = 64;
+
+    for (int shadowHit = 0; shadowHit < kMaxShadowHits; ++shadowHit)
+    {
+        HitInfo hit = {};
+        if (!state.TraceClosest(currentOrigin, direction, tMin, currentMax, &hit))
+        {
+            return transmittance;
+        }
+
+        const float advance = hit.t;
+        if (advance <= tMin)
+        {
+            return Vec3(0.0f, 0.0f, 0.0f);
+        }
+
+        const Vec3 hitPoint = hit.rayOrigin + hit.rayDir * hit.t;
+        currentMax -= advance;
+        if (currentMax <= tMin)
+        {
+            return transmittance;
+        }
+
+        if (lightIndex >= 0 && IsRefExcludedFromLightShadow(params, lightIndex, hit.instanceId))
+        {
+            currentOrigin = OffsetRayOrigin(hitPoint, hit.geomNormal, direction);
+            continue;
+        }
+
+        const LaunchParams::InstanceGeomRef geomRef =
+            ResolveGeomRef(params, geomRefs, hit.instanceId);
+        const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
+        if (ShouldAlphaCutout(material))
+        {
+            currentOrigin = OffsetRayOrigin(hitPoint, hit.geomNormal, direction);
+            continue;
+        }
+
+        const Vec3 shadowTr = ShadowTransmittance(material);
+        if (MaxComponent(shadowTr) <= 0.0f)
+        {
+            return Vec3(0.0f, 0.0f, 0.0f);
+        }
+
+        transmittance = transmittance * shadowTr;
+        if (MaxComponent(transmittance) <= 1.0e-3f)
+        {
+            return Vec3(0.0f, 0.0f, 0.0f);
+        }
+
+        currentOrigin = OffsetRayOrigin(hitPoint, hit.geomNormal, direction);
+    }
+
+    return Vec3(0.0f, 0.0f, 0.0f);
+}
+
 template <typename State>
 YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                                                const Vec3 &origin,
@@ -204,12 +298,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
 
         const Vec3 hitPoint = hit.rayOrigin + hit.rayDir * hit.t;
 
-        LaunchParams::InstanceGeomRef geomRef = {};
-        geomRef.materialIndex = -1;
-        if (geomRefs && hit.instanceId >= 0 && hit.instanceId < params.instanceGeomRefCount)
-        {
-            geomRef = geomRefs[hit.instanceId];
-        }
+        const LaunchParams::InstanceGeomRef geomRef = ResolveGeomRef(params, geomRefs, hit.instanceId);
 
         const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
         const ShadingFrame shadingFrame = EvaluateShadingFrame(state, geomRef, hit);
@@ -219,7 +308,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
 
         if (ShouldAlphaCutout(preparedMaterial))
         {
-            rayOrigin = hitPoint + rayDir * rayBias;
+            rayOrigin = OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, rayDir);
             depth--;
             continue;
         }
@@ -232,16 +321,15 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         DirectLightSample lightSample = {};
         if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
         {
-            const float shadowNormalSign =
-                Dot(preparedMaterial.geomNormal, lightSample.wi) >= 0.0f ? 1.0f : -1.0f;
             const Vec3 shadowOrigin =
-                hitPoint + preparedMaterial.geomNormal * (rayBias * shadowNormalSign);
+                OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, lightSample.wi);
             const float shadowMax =
                 lightSample.distance >= 1.0e19f
                     ? 1.0e20f
                     : MaxFloat(lightSample.distance - rayBias, rayBias);
-            if (!state.TraceLightOcclusion(
-                    shadowOrigin, lightSample.wi, rayBias, shadowMax, lightSample.lightIndex))
+            const Vec3 shadowTr = TraceShadowTransmittance(
+                state, geomRefs, shadowOrigin, lightSample.wi, rayBias, shadowMax, lightSample.lightIndex);
+            if (MaxComponent(shadowTr) > 0.0f)
             {
                 float bsdfPdf = 0.0f;
                 const Vec3 f = EvaluateBsdf(preparedMaterial, lightSample.wi, &bsdfPdf);
@@ -252,7 +340,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                             ? 1.0f
                             : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
                     radiance = radiance +
-                               throughput * f * lightSample.radiance *
+                               throughput * f * shadowTr * lightSample.radiance *
                                    (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
                 }
             }
@@ -261,12 +349,11 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
         DirectLightSample domeSample = {};
         if (SampleDomeLight(state, rngState, &domeSample))
         {
-            const float shadowNormalSign =
-                Dot(preparedMaterial.geomNormal, domeSample.wi) >= 0.0f ? 1.0f : -1.0f;
             const Vec3 shadowOrigin =
-                hitPoint + preparedMaterial.geomNormal * (rayBias * shadowNormalSign);
-            if (!state.TraceLightOcclusion(
-                    shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex))
+                OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, domeSample.wi);
+            const Vec3 shadowTr = TraceShadowTransmittance(
+                state, geomRefs, shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex);
+            if (MaxComponent(shadowTr) > 0.0f)
             {
                 float bsdfPdf = 0.0f;
                 const Vec3 f = EvaluateBsdf(preparedMaterial, domeSample.wi, &bsdfPdf);
@@ -275,7 +362,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
                     const float misWeight =
                         domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
                     radiance = radiance +
-                               throughput * f * domeSample.radiance *
+                               throughput * f * shadowTr * domeSample.radiance *
                                    (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
                 }
             }
@@ -298,8 +385,7 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
             break;
         }
 
-        const float normalSign = Dot(preparedMaterial.geomNormal, bsdf.wi) >= 0.0f ? 1.0f : -1.0f;
-        rayOrigin = hitPoint + preparedMaterial.geomNormal * (rayBias * normalSign);
+        rayOrigin = OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, bsdf.wi);
         rayDir = bsdf.wi;
         currentRayHasBsdfContext = true;
         currentRaySkipNeeMis = bsdf.skipNeeMis;
