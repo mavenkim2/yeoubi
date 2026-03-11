@@ -1,19 +1,20 @@
+#include "render/integrator_ao.h"
+#include "render/integrator_common.h"
+#include "render/integrator_hit.h"
+#include "render/integrator_path.h"
+#include "render/integrator_primary.h"
+#include "render/integrator_texture.h"
+#include "render/launch_params.h"
+#include "render/shading_core.h"
+#include <assert.h>
 #include <optix.h>
 #include <optix_device.h>
-#include <assert.h>
-#include "render/launch_params.h"
-#include "render/integrator_common.h"
-#include "render/integrator_path.h"
-#include "render/integrator_texture.h"
-#include "render/integrator_primary.h"
-#include "render/integrator_ao.h"
-#include "render/shading_core.h"
 
 using ybi::LaunchParams;
 using ybi::render::integrator::HitInfo;
+using ybi::render::integrator::UInt2;
 using ybi::render::integrator::Vec3;
 using ybi::render::integrator::Vec4;
-using ybi::render::integrator::UInt2;
 
 extern "C"
 {
@@ -43,9 +44,8 @@ static __forceinline__ __device__ float3 ToFloat3(const Vec3 &v)
     return float3{v.x, v.y, v.z};
 }
 
-static __forceinline__ __device__ void PackPointer(const void *ptr,
-                                                   unsigned int &payload0,
-                                                   unsigned int &payload1)
+static __forceinline__ __device__ void
+PackPointer(const void *ptr, unsigned int &payload0, unsigned int &payload1)
 {
     const unsigned long long value = reinterpret_cast<unsigned long long>(ptr);
     payload0 = static_cast<unsigned int>(value & 0xffffffffu);
@@ -55,9 +55,8 @@ static __forceinline__ __device__ void PackPointer(const void *ptr,
 template <typename T>
 static __forceinline__ __device__ T *UnpackPointer(unsigned int payload0, unsigned int payload1)
 {
-    const unsigned long long value =
-        static_cast<unsigned long long>(payload0) |
-        (static_cast<unsigned long long>(payload1) << 32u);
+    const unsigned long long value = static_cast<unsigned long long>(payload0) |
+                                     (static_cast<unsigned long long>(payload1) << 32u);
     return reinterpret_cast<T *>(value);
 }
 
@@ -101,10 +100,8 @@ struct OptixState
         }
     }
 
-    __device__ bool TraceOcclusion(const Vec3 &origin,
-                                   const Vec3 &direction,
-                                   float tMin,
-                                   float tMax) const
+    __device__ bool
+    TraceOcclusion(const Vec3 &origin, const Vec3 &direction, float tMin, float tMax) const
     {
         unsigned int hit = 0x80000000u;
         const OptixTraversableHandle handle =
@@ -134,11 +131,8 @@ struct OptixState
         return TraceOcclusion(origin, direction, tMin, tMax);
     }
 
-    __device__ bool TraceClosest(const Vec3 &origin,
-                                 const Vec3 &direction,
-                                 float tMin,
-                                 float tMax,
-                                 HitInfo *outHit) const
+    __device__ bool TraceClosest(
+        const Vec3 &origin, const Vec3 &direction, float tMin, float tMax, HitInfo *outHit) const
     {
         if (!outHit)
         {
@@ -197,8 +191,7 @@ static __forceinline__ __device__ unsigned int TraceColor(const float3 &origin,
                                                           const float3 &direction)
 {
     unsigned int packedColor = 0;
-    const OptixTraversableHandle handle =
-        static_cast<OptixTraversableHandle>(params.traversable);
+    const OptixTraversableHandle handle = static_cast<OptixTraversableHandle>(params.traversable);
     optixTrace(handle,
                origin,
                direction,
@@ -214,9 +207,8 @@ static __forceinline__ __device__ unsigned int TraceColor(const float3 &origin,
     return packedColor;
 }
 
-static __forceinline__ __device__ bool TryComputeTriangleNormal(int instanceId,
-                                                                int primitiveIndex,
-                                                                Vec3 &outNormal)
+static __forceinline__ __device__ bool
+TryComputeTriangleNormal(int instanceId, int primitiveIndex, Vec3 &outNormal)
 {
     if (params.instanceGeomRefs == 0ull || instanceId < 0 ||
         instanceId >= params.instanceGeomRefCount)
@@ -250,62 +242,13 @@ static __forceinline__ __device__ bool TryComputeTriangleNormal(int instanceId,
     const float3 edge01 = float3{p1.x - p0.x, p1.y - p0.y, p1.z - p0.z};
     const float3 edge02 = float3{p2.x - p0.x, p2.y - p0.y, p2.z - p0.z};
     const float3 localNormal = Normalize3(Cross3(edge01, edge02));
-    const float3 worldNormal =
-        Normalize3(optixTransformNormalFromObjectToWorldSpace(localNormal));
+    const float3 worldNormal = Normalize3(optixTransformNormalFromObjectToWorldSpace(localNormal));
     outNormal = ToVec3(worldNormal);
     return true;
 }
 
-static __forceinline__ __device__ bool TryComputeTriangleShadingNormal(int instanceId,
-                                                                       int primitiveIndex,
-                                                                       const Vec3 &barycentrics,
-                                                                       Vec3 &outNormal)
-{
-    if (params.instanceGeomRefs == 0ull || instanceId < 0 ||
-        instanceId >= params.instanceGeomRefCount)
-    {
-        return false;
-    }
-
-    const LaunchParams::InstanceGeomRef *refs =
-        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
-    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
-    const int indexBase = primitiveIndex * 3;
-    const float3 *normals = reinterpret_cast<const float3 *>(ref.normals);
-    const int *normalIndices = reinterpret_cast<const int *>(ref.normalIndices);
-    if (!normals || !normalIndices || indexBase + 2 >= ref.numNormalIndices)
-    {
-        return false;
-    }
-
-    const int n0 = normalIndices[indexBase + 0];
-    const int n1 = normalIndices[indexBase + 1];
-    const int n2 = normalIndices[indexBase + 2];
-    if (n0 < 0 || n0 >= ref.numNormals || n1 < 0 || n1 >= ref.numNormals || n2 < 0 ||
-        n2 >= ref.numNormals)
-    {
-        return false;
-    }
-
-    const float3 localNormal = float3{normals[n0].x * barycentrics.x + normals[n1].x * barycentrics.y +
-                                          normals[n2].x * barycentrics.z,
-                                      normals[n0].y * barycentrics.x + normals[n1].y * barycentrics.y +
-                                          normals[n2].y * barycentrics.z,
-                                      normals[n0].z * barycentrics.x + normals[n1].z * barycentrics.y +
-                                          normals[n2].z * barycentrics.z};
-    if (localNormal.x * localNormal.x + localNormal.y * localNormal.y + localNormal.z * localNormal.z <=
-        1.0e-12f)
-    {
-        return false;
-    }
-
-    outNormal = ToVec3(Normalize3(optixTransformNormalFromObjectToWorldSpace(localNormal)));
-    return true;
-}
-
-static __forceinline__ __device__ bool TryComputeTriangleWorldPositions(int instanceId,
-                                                                        int primitiveIndex,
-                                                                        HitInfo *outHit)
+static __forceinline__ __device__ bool
+TryComputeTriangleWorldPositions(int instanceId, int primitiveIndex, HitInfo *outHit)
 {
     if (!outHit || params.instanceGeomRefs == 0ull || instanceId < 0 ||
         instanceId >= params.instanceGeomRefCount)
@@ -357,12 +300,13 @@ extern "C" __global__ void __raygen__primary()
     }
     const float2 centerOffset = float2{0.5f, 0.5f};
     const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
-    const float3 origin = float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
+    const float3 origin =
+        float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
     if (params.integrator == 3)
     {
         OptixState state = {};
-        const unsigned int packedColor =
-            ybi::render::integrator::IntegratorPathTrace(state, ToVec3(origin), ToVec3(centerDirection));
+        const unsigned int packedColor = ybi::render::integrator::IntegratorPathTrace(
+            state, ToVec3(origin), ToVec3(centerDirection));
         image[pixelIndex] = make_uchar4((unsigned char)(packedColor & 255u),
                                         (unsigned char)((packedColor >> 8) & 255u),
                                         (unsigned char)((packedColor >> 16) & 255u),
@@ -390,7 +334,8 @@ extern "C" __global__ void __raygen__feedback()
     }
     const float2 centerOffset = float2{0.5f, 0.5f};
     const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
-    const float3 origin = float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
+    const float3 origin =
+        float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
     TraceColor(origin, centerDirection);
 }
 
@@ -435,9 +380,8 @@ extern "C" __global__ void __closesthit__primary()
     hit.t = optixGetRayTmax();
 
     const unsigned int hitKind = optixGetHitKind();
-    const bool isTriangle =
-        (hitKind == OPTIX_HIT_KIND_TRIANGLE_FRONT_FACE ||
-         hitKind == OPTIX_HIT_KIND_TRIANGLE_BACK_FACE);
+    const bool isTriangle = (hitKind == OPTIX_HIT_KIND_TRIANGLE_FRONT_FACE ||
+                             hitKind == OPTIX_HIT_KIND_TRIANGLE_BACK_FACE);
 
     if (isTriangle)
     {
@@ -462,8 +406,15 @@ extern "C" __global__ void __closesthit__primary()
                 hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
                 outHit->geomNormal = geomNormal;
                 outHit->hasGeomNormal = hasGeom;
-                outHit->hasShadingNormal = TryComputeTriangleShadingNormal(
-                    hit.instanceId, hit.primitiveIndex, hit.barycentrics, outHit->shadingNormal);
+                outHit->hasShadingNormal = ComputeTriangleShadingNormal(params,
+                                                                        hit.barycentrics.y,
+                                                                        hit.barycentrics.z,
+                                                                        hit.primitiveIndex,
+                                                                        hit.instanceId,
+                                                                        outHit->shadingNormal);
+
+                outHit->shadingNormal =
+                    Normalize(optixTransformNormalFromObjectToWorldSpace(outHit->shadingNormal));
             }
         }
         return;

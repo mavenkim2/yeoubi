@@ -4,6 +4,7 @@
 
 #include "device/cpu_device.h"
 #include "render/integrator_ao.h"
+#include "render/integrator_hit.h"
 #include "render/integrator_path.h"
 #include "render/integrator_primary.h"
 #include "render/launch_params.h"
@@ -74,15 +75,16 @@ struct CPUIntegratorState
 
         const int texelX = ybi::texture::TexelFromUnitUV(wrappedU, textureRef.width);
         const int texelY = ybi::texture::TexelFromUnitUV(wrappedV, textureRef.height);
-        const int safeX = texelX < 0 ? 0 : (texelX >= textureRef.width ? textureRef.width - 1 : texelX);
-        const int safeY = texelY < 0 ? 0 : (texelY >= textureRef.height ? textureRef.height - 1 : texelY);
+        const int safeX =
+            texelX < 0 ? 0 : (texelX >= textureRef.width ? textureRef.width - 1 : texelX);
+        const int safeY =
+            texelY < 0 ? 0 : (texelY >= textureRef.height ? textureRef.height - 1 : texelY);
 
         const unsigned char *pixels =
             reinterpret_cast<const unsigned char *>(textureRef.textureObject);
-        const size_t index =
-            (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
-             static_cast<size_t>(safeX)) *
-            4u;
+        const size_t index = (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                              static_cast<size_t>(safeX)) *
+                             4u;
         outSample = {pixels[index + 0] * (1.0f / 255.0f),
                      pixels[index + 1] * (1.0f / 255.0f),
                      pixels[index + 2] * (1.0f / 255.0f),
@@ -172,40 +174,34 @@ static ybi::render::integrator::Vec3 ComputeDirection(const LaunchParams &params
 {
     const float ndcX = (float(x) + 0.5f) / float(width) * 2.0f - 1.0f;
     const float ndcY = 1.0f - (float(y) + 0.5f) / float(height) * 2.0f;
-    const ybi::render::integrator::Vec3 dir = ybi::render::integrator::Normalize(
-        ybi::render::integrator::Vec3(params.cameraU.x * ndcX + params.cameraV.x * ndcY +
-                                              params.cameraW.x,
-                                          params.cameraU.y * ndcX + params.cameraV.y * ndcY +
-                                              params.cameraW.y,
-                                          params.cameraU.z * ndcX + params.cameraV.z * ndcY +
-                                              params.cameraW.z));
+    const ybi::render::integrator::Vec3 dir =
+        ybi::render::integrator::Normalize(ybi::render::integrator::Vec3(
+            params.cameraU.x * ndcX + params.cameraV.x * ndcY + params.cameraW.x,
+            params.cameraU.y * ndcX + params.cameraV.y * ndcY + params.cameraW.y,
+            params.cameraU.z * ndcX + params.cameraV.z * ndcY + params.cameraW.z));
     return dir;
 }
 
-static ybi::render::integrator::Vec3 TransformPoint3x4RowMajor(
-    const float transform[12], const ybi::render::integrator::Vec3 &p)
+static ybi::render::integrator::Vec3
+TransformPoint3x4RowMajor(const float transform[12], const ybi::render::integrator::Vec3 &p)
 {
-    return ybi::render::integrator::Vec3(transform[0] * p.x + transform[1] * p.y +
-                                                 transform[2] * p.z + transform[3],
-                                             transform[4] * p.x + transform[5] * p.y +
-                                                 transform[6] * p.z + transform[7],
-                                             transform[8] * p.x + transform[9] * p.y +
-                                             transform[10] * p.z + transform[11]);
+    return ybi::render::integrator::Vec3(
+        transform[0] * p.x + transform[1] * p.y + transform[2] * p.z + transform[3],
+        transform[4] * p.x + transform[5] * p.y + transform[6] * p.z + transform[7],
+        transform[8] * p.x + transform[9] * p.y + transform[10] * p.z + transform[11]);
 }
 
-static ybi::render::integrator::Vec3 TransformVector3x4RowMajor(
-    const float transform[12], const ybi::render::integrator::Vec3 &v)
+static ybi::render::integrator::Vec3
+TransformVector3x4RowMajor(const float transform[12], const ybi::render::integrator::Vec3 &v)
 {
-    return ybi::render::integrator::Vec3(transform[0] * v.x + transform[1] * v.y +
-                                             transform[2] * v.z,
-                                         transform[4] * v.x + transform[5] * v.y +
-                                             transform[6] * v.z,
-                                         transform[8] * v.x + transform[9] * v.y +
-                                             transform[10] * v.z);
+    return ybi::render::integrator::Vec3(
+        transform[0] * v.x + transform[1] * v.y + transform[2] * v.z,
+        transform[4] * v.x + transform[5] * v.y + transform[6] * v.z,
+        transform[8] * v.x + transform[9] * v.y + transform[10] * v.z);
 }
 
-static ybi::render::integrator::Vec3 TransformNormal3x4RowMajor(
-    const float transform[12], const ybi::render::integrator::Vec3 &n)
+static ybi::render::integrator::Vec3
+TransformNormal3x4RowMajor(const float transform[12], const ybi::render::integrator::Vec3 &n)
 {
     const float m00 = transform[0];
     const float m01 = transform[1];
@@ -232,10 +228,9 @@ static ybi::render::integrator::Vec3 TransformNormal3x4RowMajor(
         return ybi::render::integrator::Normalize(TransformVector3x4RowMajor(transform, n));
     }
     const float invDet = 1.0f / det;
-    const ybi::render::integrator::Vec3 transformed(
-        (c00 * n.x + c10 * n.y + c20 * n.z) * invDet,
-        (c01 * n.x + c11 * n.y + c21 * n.z) * invDet,
-        (c02 * n.x + c12 * n.y + c22 * n.z) * invDet);
+    const ybi::render::integrator::Vec3 transformed((c00 * n.x + c10 * n.y + c20 * n.z) * invDet,
+                                                    (c01 * n.x + c11 * n.y + c21 * n.z) * invDet,
+                                                    (c02 * n.x + c12 * n.y + c22 * n.z) * invDet);
     return ybi::render::integrator::Normalize(transformed);
 }
 
@@ -305,60 +300,6 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
         transform,
         ybi::render::integrator::Vec3(positions[i2].x, positions[i2].y, positions[i2].z));
     outHit->hasWorldTriangle = true;
-    return true;
-}
-
-static bool TryComputeTriangleShadingNormal(const LaunchParams &params,
-                                            const RTCRayHit &rayHit,
-                                            int instanceId,
-                                            ybi::render::integrator::Vec3 *outNormal)
-{
-    if (!outNormal || params.instanceGeomRefs == 0ull || instanceId < 0 ||
-        instanceId >= params.instanceGeomRefCount)
-    {
-        return false;
-    }
-
-    const LaunchParams::InstanceGeomRef *refs =
-        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
-    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
-    if (ref.normals == 0ull || ref.normalIndices == 0ull)
-    {
-        return false;
-    }
-
-    const int triCornerBase = static_cast<int>(rayHit.hit.primID) * 3;
-    if (triCornerBase + 2 >= ref.numNormalIndices)
-    {
-        return false;
-    }
-
-    const ybi::Vec3 *normals = reinterpret_cast<const ybi::Vec3 *>(ref.normals);
-    const int *normalIndices = reinterpret_cast<const int *>(ref.normalIndices);
-    const int n0 = normalIndices[triCornerBase + 0];
-    const int n1 = normalIndices[triCornerBase + 1];
-    const int n2 = normalIndices[triCornerBase + 2];
-    if (n0 < 0 || n0 >= ref.numNormals || n1 < 0 || n1 >= ref.numNormals || n2 < 0 ||
-        n2 >= ref.numNormals)
-    {
-        return false;
-    }
-
-    const float u = rayHit.hit.u;
-    const float v = rayHit.hit.v;
-    const float w = 1.0f - u - v;
-    const ybi::render::integrator::Vec3 localNormal(
-        normals[n0].x * w + normals[n1].x * u + normals[n2].x * v,
-        normals[n0].y * w + normals[n1].y * u + normals[n2].y * v,
-        normals[n0].z * w + normals[n1].z * u + normals[n2].z * v);
-    if (ybi::render::integrator::LengthSquared(localNormal) <= 1.0e-12f)
-    {
-        return false;
-    }
-
-    float transform[12] = {};
-    TryGetRayHitWorldTransform(params, rayHit, transform);
-    *outNormal = TransformNormal3x4RowMajor(transform, localNormal);
     return true;
 }
 
@@ -440,8 +381,12 @@ static bool TracePrimary(const LaunchParams &params,
             outHit->barycentrics = ybi::render::integrator::Vec3(1.0f - u - v, u, v);
             outHit->hasBarycentrics = true;
             (void)TryComputeTriangleWorldPositions(params, rayHit, outHit);
-            outHit->hasShadingNormal =
-                TryComputeTriangleShadingNormal(params, rayHit, outHit->instanceId, &outHit->shadingNormal);
+            outHit->hasShadingNormal = ComputeTriangleShadingNormal(
+                params, u, v, rayHit.hit.primID, outHit->instanceId, &outHit->shadingNormal);
+
+            float transform[12] = {};
+            TryGetRayHitWorldTransform(params, rayHit, transform);
+            outHit->shadingNormal = TransformNormal3x4RowMajor(transform, outHit->shadingNormal);
         }
     }
 
@@ -532,92 +477,88 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
 
     tbb::enumerable_thread_specific<FeedbackAccumulator> feedbackTLS;
 
-    tbb::parallel_for(tbb::blocked_range<uint32_t>(0, height),
-                      [&](const tbb::blocked_range<uint32_t> &range) {
-                          FeedbackAccumulator &local = feedbackTLS.local();
-                          CPUIntegratorState state = {};
-                          state.params = params;
-                          state.feedback = &local;
+    tbb::parallel_for(
+        tbb::blocked_range<uint32_t>(0, height), [&](const tbb::blocked_range<uint32_t> &range) {
+            FeedbackAccumulator &local = feedbackTLS.local();
+            CPUIntegratorState state = {};
+            state.params = params;
+            state.feedback = &local;
 
-                          for (uint32_t y = range.begin(); y != range.end(); ++y)
-                          {
-                              for (uint32_t x = 0; x < width; ++x)
-                              {
-                                  const size_t pixelIndex =
-                                      (static_cast<size_t>(y) * static_cast<size_t>(width) +
-                                       static_cast<size_t>(x)) *
-                                      4u;
-                                  uint8_t *dst = dispatchParams.outputRGBA8.data();
-                                  if (!ybi::render::integrator::ShouldRenderLaunchPixel(
-                                          params->singlePixelEnabled,
-                                          params->singlePixelX,
-                                          params->singlePixelY,
-                                          x,
-                                          y))
-                                  {
-                                      dst[pixelIndex + 0] = 0u;
-                                      dst[pixelIndex + 1] = 0u;
-                                      dst[pixelIndex + 2] = 0u;
-                                      dst[pixelIndex + 3] = 255u;
-                                      continue;
-                                  }
+            for (uint32_t y = range.begin(); y != range.end(); ++y)
+            {
+                for (uint32_t x = 0; x < width; ++x)
+                {
+                    const size_t pixelIndex =
+                        (static_cast<size_t>(y) * static_cast<size_t>(width) +
+                         static_cast<size_t>(x)) *
+                        4u;
+                    uint8_t *dst = dispatchParams.outputRGBA8.data();
+                    if (!ybi::render::integrator::ShouldRenderLaunchPixel(
+                            params->singlePixelEnabled,
+                            params->singlePixelX,
+                            params->singlePixelY,
+                            x,
+                            y))
+                    {
+                        dst[pixelIndex + 0] = 0u;
+                        dst[pixelIndex + 1] = 0u;
+                        dst[pixelIndex + 2] = 0u;
+                        dst[pixelIndex + 3] = 255u;
+                        continue;
+                    }
 
-                                  state.pixelX = x;
-                                  state.pixelY = y;
+                    state.pixelX = x;
+                    state.pixelY = y;
 
-                                  const ybi::render::integrator::Vec3 origin =
-                                      ybi::render::integrator::Vec3(params->cameraOrigin.x,
-                                                                        params->cameraOrigin.y,
-                                                                        params->cameraOrigin.z);
-                                  const ybi::render::integrator::Vec3 direction =
-                                      ComputeDirection(*params, x, y, width, height);
+                    const ybi::render::integrator::Vec3 origin = ybi::render::integrator::Vec3(
+                        params->cameraOrigin.x, params->cameraOrigin.y, params->cameraOrigin.z);
+                    const ybi::render::integrator::Vec3 direction =
+                        ComputeDirection(*params, x, y, width, height);
 
-                                  ybi::render::integrator::HitInfo hit = {};
-                                  const bool hitFound = TracePrimary(
-                                      *params,
-                                      origin,
-                                      direction,
-                                      0.001f,
-                                      std::numeric_limits<float>::infinity(),
-                                      &hit);
+                    ybi::render::integrator::HitInfo hit = {};
+                    const bool hitFound = TracePrimary(*params,
+                                                       origin,
+                                                       direction,
+                                                       0.001f,
+                                                       std::numeric_limits<float>::infinity(),
+                                                       &hit);
 
-                                  unsigned int packed = 0u;
-                                  if (!hitFound)
-                                  {
-                                      const ybi::render::integrator::Vec3 sky =
-                                          ybi::render::integrator::SkyColor(direction);
-                                      packed = ybi::render::PackRGB8(sky.x, sky.y, sky.z);
-                                  }
-                                  else if (params->integrator == 2)
-                                  {
-                                      if (hit.hasBarycentrics)
-                                      {
-                                          ybi::render::integrator::IntegratorFeedbackOnly(state, hit);
-                                      }
-                                      packed = ybi::render::PackRGB8(0.0f, 0.0f, 0.0f);
-                                  }
-                                  else if (kernelId == RenderKernelId::AO)
-                                  {
-                                      packed = ybi::render::integrator::IntegratorAO(state, hit);
-                                  }
-                                  else if (kernelId == RenderKernelId::PathTrace)
-                                  {
-                                      packed = ybi::render::integrator::IntegratorPathTrace(
-                                          state, origin, direction);
-                                  }
-                                  else
-                                  {
-                                      packed =
-                                          ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
-                                  }
+                    unsigned int packed = 0u;
+                    if (!hitFound)
+                    {
+                        const ybi::render::integrator::Vec3 sky =
+                            ybi::render::integrator::SkyColor(direction);
+                        packed = ybi::render::PackRGB8(sky.x, sky.y, sky.z);
+                    }
+                    else if (params->integrator == 2)
+                    {
+                        if (hit.hasBarycentrics)
+                        {
+                            ybi::render::integrator::IntegratorFeedbackOnly(state, hit);
+                        }
+                        packed = ybi::render::PackRGB8(0.0f, 0.0f, 0.0f);
+                    }
+                    else if (kernelId == RenderKernelId::AO)
+                    {
+                        packed = ybi::render::integrator::IntegratorAO(state, hit);
+                    }
+                    else if (kernelId == RenderKernelId::PathTrace)
+                    {
+                        packed =
+                            ybi::render::integrator::IntegratorPathTrace(state, origin, direction);
+                    }
+                    else
+                    {
+                        packed = ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
+                    }
 
-                                  dst[pixelIndex + 0] = static_cast<uint8_t>(packed & 0xffu);
-                                  dst[pixelIndex + 1] = static_cast<uint8_t>((packed >> 8) & 0xffu);
-                                  dst[pixelIndex + 2] = static_cast<uint8_t>((packed >> 16) & 0xffu);
-                                  dst[pixelIndex + 3] = 255u;
-                              }
-                          }
-                      });
+                    dst[pixelIndex + 0] = static_cast<uint8_t>(packed & 0xffu);
+                    dst[pixelIndex + 1] = static_cast<uint8_t>((packed >> 8) & 0xffu);
+                    dst[pixelIndex + 2] = static_cast<uint8_t>((packed >> 16) & 0xffu);
+                    dst[pixelIndex + 3] = 255u;
+                }
+            }
+        });
 
     if (params->feedbackStats != 0ull && params->feedbackKeys != 0ull &&
         params->feedbackCapacity > 0)
@@ -630,8 +571,7 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
             totalOverflow += accum.overflow;
         }
 
-        unsigned long long *keys =
-            reinterpret_cast<unsigned long long *>(params->feedbackKeys);
+        unsigned long long *keys = reinterpret_cast<unsigned long long *>(params->feedbackKeys);
         const size_t capacity = static_cast<size_t>(params->feedbackCapacity);
         size_t offset = 0;
         for (FeedbackAccumulator &accum : feedbackTLS)
@@ -644,7 +584,8 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                 std::min(capacity - offset, static_cast<size_t>(accum.keys.size()));
             if (copyCount > 0)
             {
-                std::memcpy(keys + offset, accum.keys.data(), copyCount * sizeof(unsigned long long));
+                std::memcpy(
+                    keys + offset, accum.keys.data(), copyCount * sizeof(unsigned long long));
                 offset += copyCount;
             }
         }
