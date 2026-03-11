@@ -369,8 +369,11 @@ static bool TracePrimary(const LaunchParams &params,
         outHit->t = rayHit.ray.tfar;
         outHit->instanceId = instanceId;
         outHit->primitiveIndex = static_cast<int>(rayHit.hit.primID);
-        outHit->geomNormal = ybi::render::integrator::Normalize(
-            ybi::render::integrator::Vec3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z));
+
+        float transform[12] = {};
+        TryGetRayHitWorldTransform(params, rayHit, transform);
+        outHit->geomNormal = TransformNormal3x4RowMajor(
+            transform, Vec3(rayHit.hit.Ng_x, rayHit.hit.Ng_y, rayHit.hit.Ng_z));
         outHit->hasGeomNormal = true;
 
         const bool hasMeshRef =
@@ -387,8 +390,6 @@ static bool TracePrimary(const LaunchParams &params,
 
             if (outHit->hasShadingNormal)
             {
-                float transform[12] = {};
-                TryGetRayHitWorldTransform(params, rayHit, transform);
                 outHit->shadingNormal =
                     TransformNormal3x4RowMajor(transform, outHit->shadingNormal);
             }
