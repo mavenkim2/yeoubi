@@ -1580,6 +1580,31 @@ RenderTraversable(Device *device,
                   const std::optional<ybi::Vec3> &lookAtOverride)
 {
     YBI_ASSERT(device);
+    using Clock = std::chrono::steady_clock;
+    auto LogDuration = [](const char *label, int sppIndex, double ms) {
+        std::printf("profile: %s spp=%d %.3f ms\n", label, sppIndex, ms);
+    };
+    auto LogProcessFeedbackProfile = [](const char *label,
+                                        int sppIndex,
+                                        const ybi::texture::VirtualTextureUpdateStats &stats) {
+        std::printf(
+            "profile: %s spp=%d total=%.3f ms histogram=%.3f resolve=%.3f touch=%.3f "
+            "allocate=%.3f(%u) load=%.3f(%u) upload=%.3f(%u) update_page_table=%.3f(%u)\n",
+            label,
+            sppIndex,
+            stats.totalMs,
+            stats.histogramMs,
+            stats.resolveKeyMs,
+            stats.touchResidentMs,
+            stats.allocateStreamSlotMs,
+            stats.allocateStreamSlotCalls,
+            stats.loadStreamPageMs,
+            stats.loadStreamPageCalls,
+            stats.uploadStreamPageMs,
+            stats.uploadStreamPageCalls,
+            stats.updatePageTableMs,
+            stats.updatePageTableCalls);
+    };
     printf("render: begin\n");
     fflush(stdout);
     const int width = cameraOverride.has_value() ? cameraOverride->width : 1280;
@@ -1843,6 +1868,7 @@ RenderTraversable(Device *device,
             fprintf(stderr, "virtual-texture prepass update failed: %s\n", vtError.c_str());
             std::abort();
         }
+        LogProcessFeedbackProfile("vt_process_feedback", -1, prepassStats);
         std::printf("virtual-texture cache: unique=%u hits=%u misses=%u uploads=%u evictions=%u failed=%u\n",
                     prepassStats.uniqueCount,
                     prepassStats.hits,
@@ -1868,6 +1894,7 @@ RenderTraversable(Device *device,
 
     for (int sppIndex = 0; sppIndex < sppPassCount; ++sppIndex)
     {
+        const Clock::time_point passStart = Clock::now();
         params.spp = integrator == IntegratorType::AO ? 1 : 1;
         params.currentSpp = sppIndex;
         device->CopyBytesToDevice(paramsBuffer, &params, sizeof(LaunchParams));
@@ -1928,6 +1955,7 @@ RenderTraversable(Device *device,
                 fprintf(stderr, "virtual-texture pass update failed: %s\n", vtError.c_str());
                 std::abort();
             }
+            LogProcessFeedbackProfile("vt_process_feedback", sppIndex, passStats);
             std::printf("virtual-texture cache spp=%d: unique=%u hits=%u misses=%u uploads=%u "
                         "evictions=%u failed=%u\n",
                         sppIndex,
@@ -1939,6 +1967,10 @@ RenderTraversable(Device *device,
                         passStats.failed);
             virtualTextureManager.BindLaunchParams(&params);
         }
+
+        LogDuration("spp_pass_total",
+                    sppIndex,
+                    std::chrono::duration<double, std::milli>(Clock::now() - passStart).count());
     }
 
     std::vector<uint8_t> hostImage(imageSize, 0);

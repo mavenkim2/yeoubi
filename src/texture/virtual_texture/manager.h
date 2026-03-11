@@ -50,6 +50,18 @@ struct VirtualTextureUpdateStats
     uint32_t uploads = 0u;
     uint32_t evictions = 0u;
     uint32_t failed = 0u;
+    double totalMs = 0.0;
+    double histogramMs = 0.0;
+    double resolveKeyMs = 0.0;
+    double touchResidentMs = 0.0;
+    double allocateStreamSlotMs = 0.0;
+    double loadStreamPageMs = 0.0;
+    double uploadStreamPageMs = 0.0;
+    double updatePageTableMs = 0.0;
+    uint32_t allocateStreamSlotCalls = 0u;
+    uint32_t loadStreamPageCalls = 0u;
+    uint32_t uploadStreamPageCalls = 0u;
+    uint32_t updatePageTableCalls = 0u;
 };
 
 struct VirtualTextureMemoryStats

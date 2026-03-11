@@ -4,6 +4,7 @@
 #include "texture/virtual_texture/key.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 namespace ybi
@@ -16,6 +17,13 @@ namespace
 static constexpr uint32_t kPageTypeStream = 1u;
 static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1128u;
+
+using Clock = std::chrono::steady_clock;
+
+double ElapsedMs(Clock::time_point start, Clock::time_point end)
+{
+    return std::chrono::duration<double, std::milli>(end - start).count();
+}
 } // namespace
 
 bool VirtualTextureManager::OpenTileFileIfNeeded(TextureState *texture, std::string *outError)
@@ -267,6 +275,7 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
                                             VirtualTextureUpdateStats *outStats,
                                             std::string *outError)
 {
+    const Clock::time_point processStart = Clock::now();
     if (outStats)
     {
         *outStats = {};
@@ -278,18 +287,24 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
 
     std::vector<unsigned long long> keyVec(keys, keys + keyCount);
     std::vector<VirtualTextureFeedbackEntry> histogram;
+    const Clock::time_point histogramStart = Clock::now();
     BuildFeedbackHistogram(keyVec, keyCount, &histogram);
+    const Clock::time_point histogramEnd = Clock::now();
 
     VirtualTextureUpdateStats stats = {};
     stats.feedbackCount = keyCount;
     stats.uniqueCount = static_cast<uint32_t>(histogram.size());
+    stats.histogramMs = ElapsedMs(histogramStart, histogramEnd);
 
     uint32_t uploadsBudget = config_.maxUploadsPerPass;
     for (const VirtualTextureFeedbackEntry &entry : histogram)
     {
         const unsigned long long key = entry.key;
         KeyVirtualInfo info = {};
-        if (!ResolveKey(key, &info) || !info.valid)
+        const Clock::time_point resolveStart = Clock::now();
+        const bool resolved = ResolveKey(key, &info);
+        stats.resolveKeyMs += ElapsedMs(resolveStart, Clock::now());
+        if (!resolved || !info.valid)
         {
             stats.failed++;
             continue;
@@ -299,7 +314,10 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
             stats.hits++;
             continue;
         }
-        if (TouchResidentKey(key))
+        const Clock::time_point touchStart = Clock::now();
+        const bool resident = TouchResidentKey(key);
+        stats.touchResidentMs += ElapsedMs(touchStart, Clock::now());
+        if (resident)
         {
             stats.hits++;
             continue;
@@ -313,11 +331,15 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
 
         uint32_t slotIndex = 0u;
         bool evicted = false;
+        stats.allocateStreamSlotCalls++;
+        const Clock::time_point allocateStart = Clock::now();
         if (!AllocateStreamSlot(&slotIndex, &evicted, outError))
         {
+            stats.allocateStreamSlotMs += ElapsedMs(allocateStart, Clock::now());
             stats.failed++;
             continue;
         }
+        stats.allocateStreamSlotMs += ElapsedMs(allocateStart, Clock::now());
         if (evicted)
         {
             stats.evictions++;
@@ -326,28 +348,40 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
         std::vector<unsigned char> rgba8;
         uint32_t width = 0u;
         uint32_t height = 0u;
+        stats.loadStreamPageCalls++;
+        const Clock::time_point loadStart = Clock::now();
         if (!LoadStreamPageForKey(info, &rgba8, &width, &height, outError))
         {
+            stats.loadStreamPageMs += ElapsedMs(loadStart, Clock::now());
             stats.failed++;
             freeSlots_.push_back(slotIndex);
             continue;
         }
+        stats.loadStreamPageMs += ElapsedMs(loadStart, Clock::now());
+        stats.uploadStreamPageCalls++;
+        const Clock::time_point uploadStart = Clock::now();
         if (!UploadStreamPage(slotIndex, rgba8, width, height, outError))
         {
+            stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
             stats.failed++;
             freeSlots_.push_back(slotIndex);
             continue;
         }
+        stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
 
         const uint32_t pageX = slotIndex % streamPageCountX_;
         const uint32_t pageY = slotIndex / streamPageCountX_;
         const uint32_t packed = PackPageTableEntry(pageX, pageY, kPageTypeStream, 1u);
+        stats.updatePageTableCalls++;
+        const Clock::time_point pageTableStart = Clock::now();
         if (!UpdatePageTableTexel(info.mip, info.vaX, info.vaY, packed, outError))
         {
+            stats.updatePageTableMs += ElapsedMs(pageTableStart, Clock::now());
             stats.failed++;
             freeSlots_.push_back(slotIndex);
             continue;
         }
+        stats.updatePageTableMs += ElapsedMs(pageTableStart, Clock::now());
 
         StreamSlotState &slot = streamSlots_[slotIndex];
         slot.occupied = true;
@@ -360,6 +394,7 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
         uploadsBudget--;
     }
 
+    stats.totalMs = ElapsedMs(processStart, Clock::now());
     if (outStats)
     {
         *outStats = stats;
