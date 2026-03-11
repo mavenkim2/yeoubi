@@ -60,7 +60,8 @@
 
 #include <immintrin.h>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 #define USD_ASSERT(expr) \
     { \
@@ -2327,4 +2328,4 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
     printf("num cat clarks: %i\n", total);
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

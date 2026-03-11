@@ -15,7 +15,8 @@
 #include <string>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Device;
 
@@ -238,4 +239,4 @@ struct SceneMeshUploadRef
 bool FlattenScenePoolToRootChildren(ScenePool *src, ScenePool *dst, std::string *error = nullptr);
 void CollectScenePoolMeshUploadRefs(ScenePool *scenePool, std::vector<SceneMeshUploadRef> *out);
 
-YBI_NAMESPACE_END
+} // namespace ybi

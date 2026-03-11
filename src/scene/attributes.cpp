@@ -2,7 +2,8 @@
 
 #include <cstring>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 static Array<uint8_t> CopyBytes(MemoryView<uint8_t> view)
 {
@@ -59,4 +60,4 @@ Attribute::Attribute(MemoryView<uint8_t> data,
 {
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

@@ -6,7 +6,8 @@
 #include <algorithm>
 #include <cuda.h>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 void BuildMeshCLAS(CUDADevice *cudaDevice,
                    HostMemoryArena &hostArena,
@@ -365,4 +366,4 @@ __global__ void ComputeCLASDestAddresses(const uint32_t *sizes,
     }
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

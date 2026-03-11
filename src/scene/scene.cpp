@@ -7,7 +7,8 @@
 #include <unordered_map>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 BVH::BVH() : flags(BVHFlags(0)) {}
 
@@ -505,4 +506,4 @@ Scene::Scene(Scene &&other) noexcept
 {
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

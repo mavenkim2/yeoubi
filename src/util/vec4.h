@@ -3,7 +3,8 @@
 #include "util/math_common.h"
 #include <cmath>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Vec4
 {
@@ -137,4 +138,4 @@ YBI_INTEGRATOR_HD float Length(const Vec4 &a)
     return sqrtf(Dot(a, a));
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

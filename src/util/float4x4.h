@@ -2,7 +2,8 @@
 
 #include "util/float3x4.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 // Row-major 4x4. Matrix multiplication is right-to-left.
 struct Float4x4
@@ -110,4 +111,4 @@ YBI_INTEGRATOR_HD Vec4 operator*(const Float4x4 &mat, const Vec4 &p)
                 Dot(Vec4(mat.m[3][0], mat.m[3][1], mat.m[3][2], mat.m[3][3]), p));
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

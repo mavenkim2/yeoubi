@@ -8,7 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct USDPrimLists
 {
@@ -69,4 +70,4 @@ bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage,
                              USDBuildSceneDAG *out,
                              std::string *error);
 
-YBI_NAMESPACE_END
+} // namespace ybi

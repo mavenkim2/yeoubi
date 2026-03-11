@@ -3,7 +3,8 @@
 #include "util/assert.h"
 #include "util/forceinline.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 namespace util
 {
@@ -15,4 +16,4 @@ __forceinline size_t AlignUp(size_t val, size_t align)
 
 } // namespace util
 
-YBI_NAMESPACE_END
+} // namespace ybi

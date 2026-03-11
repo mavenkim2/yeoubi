@@ -1,16 +1,20 @@
+#pragma once
+
+#include "render/launch_params.h"
 #include "util/math_common.h"
 #include "util/vec3.h"
+#include <assert.h>
 
-YBI_NAMESPACE_BEGIN
-
-static bool ComputeTriangleShadingNormal(const LaunchParams &params,
-                                         float u,
-                                         float v,
-                                         int primitiveIndex,
-                                         int instanceId,
-                                         Vec3 &outNormal)
+namespace ybi
 {
-    assert(outNormal);
+
+static YBI_INTEGRATOR_HD bool ComputeTriangleShadingNormal(const LaunchParams &params,
+                                                           float u,
+                                                           float v,
+                                                           int primitiveIndex,
+                                                           int instanceId,
+                                                           Vec3 &outNormal)
+{
     const LaunchParams::InstanceGeomRef *refs =
         reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
     const LaunchParams::InstanceGeomRef ref = refs[instanceId];
@@ -26,8 +30,6 @@ static bool ComputeTriangleShadingNormal(const LaunchParams &params,
     assert(!(n0 < 0 || n0 >= ref.numNormals || n1 < 0 || n1 >= ref.numNormals || n2 < 0 ||
              n2 >= ref.numNormals));
 
-    const float u = rayHit.hit.u;
-    const float v = rayHit.hit.v;
     const float w = 1.0f - u - v;
     const Vec3 localNormal(normals[n0].x * w + normals[n1].x * u + normals[n2].x * v,
                            normals[n0].y * w + normals[n1].y * u + normals[n2].y * v,
@@ -41,4 +43,4 @@ static bool ComputeTriangleShadingNormal(const LaunchParams &params,
     return true;
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

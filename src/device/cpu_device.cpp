@@ -8,7 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 CPUDevice::CPUDevice()
 {
@@ -178,6 +179,6 @@ bool CPUDevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &para
     return CPUDispatchKernel(params, kernel);
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi
 
 #endif

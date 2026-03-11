@@ -8,7 +8,8 @@
 #include <type_traits>
 #include <utility>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 template <typename C, typename = void>
 struct has_data_and_size : std::false_type
@@ -234,4 +235,4 @@ private:
     size_t m_capacity;
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

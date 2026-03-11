@@ -24,7 +24,8 @@
 
 using namespace OpenSubdiv;
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 template <typename T> struct LimitEvalValueTraits;
 
@@ -471,4 +472,4 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
     return true;
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

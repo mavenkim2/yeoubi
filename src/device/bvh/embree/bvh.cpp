@@ -11,7 +11,8 @@
 #include <cstdio>
 #include <cstring>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 namespace
 {
@@ -282,6 +283,6 @@ void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene)
     scene->bvhHandle = (Scene::BVHHandle)embreeScene;
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi
 
 #endif

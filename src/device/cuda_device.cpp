@@ -3,7 +3,8 @@
 #include <cstdio>
 #include <cstdlib>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 #if defined(WITH_CUDA) && defined(WITH_OPTIX)
 
@@ -558,4 +559,4 @@ bool CUDADevice::DispatchKernel(RenderKernelId kernel, const DispatchParams &par
 
 #endif
 
-YBI_NAMESPACE_END
+} // namespace ybi

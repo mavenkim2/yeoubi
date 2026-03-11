@@ -3,7 +3,8 @@
 #include "util/math_common.h"
 #include <cmath>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Vec3
 {
@@ -191,4 +192,4 @@ YBI_INTEGRATOR_HD void BuildOrthonormalBasis(const Vec3 &n, Vec3 &t, Vec3 &b)
     b = Normalize(Cross(n, t));
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

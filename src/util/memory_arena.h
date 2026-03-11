@@ -12,7 +12,8 @@
 #define ARENA_RESERVE_SIZE (64ll * 1024ll * 1024ll)
 #define ARENA_COMMIT_SIZE (64ll * 1024ll)
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct ArenaCommit
 {
@@ -151,4 +152,4 @@ public:
     }
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

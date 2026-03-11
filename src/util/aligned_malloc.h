@@ -6,7 +6,8 @@
 #include <stdlib.h>
 #endif
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 namespace util
 {
@@ -34,4 +35,4 @@ inline void AlignedFree(void *ptr)
 
 } // namespace util
 
-YBI_NAMESPACE_END
+} // namespace ybi

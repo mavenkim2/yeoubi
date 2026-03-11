@@ -3,7 +3,8 @@
 #include <string>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct ScenePool;
 
@@ -15,4 +16,4 @@ struct USDLoadOptions
 void LoadUSDScene(ScenePool *scenePool, const std::string &filePath);
 void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLoadOptions &options);
 
-YBI_NAMESPACE_END
+} // namespace ybi

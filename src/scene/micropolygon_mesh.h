@@ -3,7 +3,8 @@
 #include "scene/subdivision.h"
 #include "util/vec3.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Grid
 {
@@ -18,4 +19,4 @@ struct MicropolygonMesh
     Array<Grid> grids;
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

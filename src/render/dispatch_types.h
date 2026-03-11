@@ -4,7 +4,8 @@
 
 #include <cstdint>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Scene;
 struct ScenePool;
@@ -36,4 +37,4 @@ struct DispatchParams
     bool enableVirtualTexture = false;
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

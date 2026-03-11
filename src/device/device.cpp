@@ -9,7 +9,8 @@
 #include "device/cpu_device.h"
 #endif
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 Device *Device::CreateDevice(DeviceKind kind, std::unique_ptr<Device> &storage)
 {
@@ -42,4 +43,4 @@ Device *Device::CreateDevice(DeviceKind kind, std::unique_ptr<Device> &storage)
     return nullptr;
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

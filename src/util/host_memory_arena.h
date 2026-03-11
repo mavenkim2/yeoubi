@@ -9,7 +9,8 @@
 #include "util/memory_arena.h"
 #include "util/memory_view.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct CPUMemoryProvider
 {
@@ -58,4 +59,4 @@ struct CPUMemoryProvider
 
 using HostMemoryArena = MemoryArena<CPUMemoryProvider>;
 
-YBI_NAMESPACE_END
+} // namespace ybi

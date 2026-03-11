@@ -2,7 +2,8 @@
 
 #include "util/vec4.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 // NOTE: row major, multiplication order right to left
 struct Float3x4
@@ -62,4 +63,4 @@ YBI_INTEGRATOR_HD Vec3 operator*(const Float3x4 &m, const Vec4 &p)
                 Dot(Vec4(m.m[2][0], m.m[2][1], m.m[2][2], m.m[2][3]), p));
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

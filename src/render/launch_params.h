@@ -1,18 +1,11 @@
 #pragma once
 
-#ifndef YBI_NAMESPACE_BEGIN
-#define YBI_NAMESPACE_BEGIN namespace ybi {
-#endif
-
-#ifndef YBI_NAMESPACE_END
-#define YBI_NAMESPACE_END }
-#endif
-
 #include "device/device.h"
 #include "scene/material_light.h"
 #include "util/vec3.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct LaunchParams
 {
@@ -140,4 +133,4 @@ struct LaunchParams
     int virtualTextureUdimInfoCount;
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

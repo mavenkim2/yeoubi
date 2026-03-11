@@ -9,7 +9,8 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 template <CUmemLocationType type>
 struct CUDAMemoryProvider
@@ -75,6 +76,6 @@ struct CUDAMemoryProvider
 using CUDAMemoryArena = MemoryArena<CUDAMemoryProvider<CU_MEM_LOCATION_TYPE_DEVICE>>;
 using CUDAPinnedHostMemoryArena = MemoryArena<CUDAMemoryProvider<CU_MEM_LOCATION_TYPE_HOST>>;
 
-YBI_NAMESPACE_END
+} // namespace ybi
 
 #endif

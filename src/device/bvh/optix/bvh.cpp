@@ -13,7 +13,8 @@
 #include "device/bvh/optix/clusters.cuh"
 #endif
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 #if defined(WITH_CUDA) && defined(WITH_OPTIX)
 
@@ -872,4 +873,4 @@ void CUDADevice::BuildBVH(Scene *scene)
 
 #endif
 
-YBI_NAMESPACE_END
+} // namespace ybi

@@ -4,7 +4,8 @@
 #include <meshoptimizer.h>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct MeshletClustersResult
 {
@@ -57,4 +58,4 @@ inline MeshletClustersResult ClusterizeTest(const Mesh &mesh)
     return result;
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

@@ -22,7 +22,8 @@
 #include <tbb/parallel_for.h>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 namespace
 {
@@ -382,7 +383,7 @@ static bool TracePrimary(const LaunchParams &params,
             outHit->hasBarycentrics = true;
             (void)TryComputeTriangleWorldPositions(params, rayHit, outHit);
             outHit->hasShadingNormal = ComputeTriangleShadingNormal(
-                params, u, v, rayHit.hit.primID, outHit->instanceId, &outHit->shadingNormal);
+                params, u, v, rayHit.hit.primID, outHit->instanceId, outHit->shadingNormal);
 
             float transform[12] = {};
             TryGetRayHitWorldTransform(params, rayHit, transform);
@@ -598,6 +599,6 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
     return true;
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi
 
 #endif

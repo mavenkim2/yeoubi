@@ -7,7 +7,8 @@
 #include <memory>
 #include <string>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Scene;
 enum class RenderKernelId : uint8_t;
@@ -130,4 +131,4 @@ struct Device
     }
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

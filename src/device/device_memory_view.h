@@ -3,7 +3,8 @@
 #include "util/assert.h"
 #include <cstddef>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 template <typename T>
 struct DeviceMemoryView
@@ -38,4 +39,4 @@ struct DeviceMemoryView
     }
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

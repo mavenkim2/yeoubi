@@ -7,7 +7,8 @@
 #include <string>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct SubdivisionRunOptions
 {
@@ -67,4 +68,4 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                       const SubdivisionRunOptions &options,
                       SubdivisionRunResult *outResult);
 
-YBI_NAMESPACE_END
+} // namespace ybi

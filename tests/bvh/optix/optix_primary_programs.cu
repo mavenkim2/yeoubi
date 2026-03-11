@@ -406,15 +406,18 @@ extern "C" __global__ void __closesthit__primary()
                 hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
                 outHit->geomNormal = geomNormal;
                 outHit->hasGeomNormal = hasGeom;
-                outHit->hasShadingNormal = ComputeTriangleShadingNormal(params,
-                                                                        hit.barycentrics.y,
-                                                                        hit.barycentrics.z,
-                                                                        hit.primitiveIndex,
-                                                                        hit.instanceId,
-                                                                        outHit->shadingNormal);
+                outHit->hasShadingNormal =
+                    ybi::ComputeTriangleShadingNormal(params,
+                                                      hit.barycentrics.y,
+                                                      hit.barycentrics.z,
+                                                      hit.primitiveIndex,
+                                                      hit.instanceId,
+                                                      outHit->shadingNormal);
 
-                outHit->shadingNormal =
-                    Normalize(optixTransformNormalFromObjectToWorldSpace(outHit->shadingNormal));
+                outHit->shadingNormal = Normalize(
+                    ToVec3(optixTransformNormalFromObjectToWorldSpace({outHit->shadingNormal.x,
+                                                                       outHit->shadingNormal.y,
+                                                                       outHit->shadingNormal.z})));
             }
         }
         return;

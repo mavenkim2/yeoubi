@@ -5,7 +5,8 @@
 #include <cstdint>
 #include <string>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 enum class PrimvarInterpolation
 {
@@ -93,4 +94,4 @@ struct Attribute
               const std::string &name = "");
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

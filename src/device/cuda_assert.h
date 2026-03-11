@@ -2,7 +2,8 @@
 
 #include "util/assert.h"
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 #ifdef WITH_CUDA
 #ifdef YBI_DEBUG
@@ -56,4 +57,4 @@ YBI_NAMESPACE_BEGIN
 #endif
 #endif
 
-YBI_NAMESPACE_END
+} // namespace ybi

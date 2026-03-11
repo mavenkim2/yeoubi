@@ -20,7 +20,8 @@
 #include <optix_types.h>
 #include <string>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Scene;
 struct ScenePool;
@@ -126,6 +127,6 @@ BuildCurveGASFromCurves(CUDADevice *cudaDevice,
                         HostMemoryArena &hostArena,
                         Curves &curves);
 
-YBI_NAMESPACE_END
+} // namespace ybi
 
 #endif

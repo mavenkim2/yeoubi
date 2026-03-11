@@ -6,7 +6,8 @@
 #include <cuda_runtime.h>
 #include <optix_types.h>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct CUDADevice;
 struct MeshletClustersResult;
@@ -47,4 +48,4 @@ WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
                                 uint8_t *outputIndices,
                                 OptixClusterAccelBuildInputTrianglesArgs *buildArgs);
 
-YBI_NAMESPACE_END
+} // namespace ybi

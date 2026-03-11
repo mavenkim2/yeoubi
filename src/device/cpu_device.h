@@ -15,7 +15,8 @@
 #error "Embree headers not found: expected embree3/rtcore.h or embree4/rtcore.h"
 #endif
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 struct Scene;
 
@@ -51,6 +52,6 @@ struct CPUDevice : Device
 
 void BuildEmbreeBVH(CPUDevice *cpuDevice, Scene *scene);
 
-YBI_NAMESPACE_END
+} // namespace ybi
 
 #endif

@@ -6,7 +6,8 @@
 #include <string>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 enum MaterialFlags : uint32_t
 {
@@ -78,4 +79,4 @@ struct LightInfo
     PackedLight packed = {};
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

@@ -9,7 +9,8 @@
 #include <string>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 enum BoundaryInterpolation
 {
@@ -90,4 +91,4 @@ struct SubdivisionMesh
     }
 };
 
-YBI_NAMESPACE_END
+} // namespace ybi

@@ -21,7 +21,8 @@
 #include <unordered_map>
 #include <vector>
 
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 namespace
 {
@@ -840,4 +841,4 @@ bool BuildInstanceDAGFromUSD(const pxr::UsdStageRefPtr &stage,
     return ExportBuildSceneDAG(build, out, error);
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi

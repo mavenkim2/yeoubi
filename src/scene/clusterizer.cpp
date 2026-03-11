@@ -1,7 +1,8 @@
-YBI_NAMESPACE_BEGIN
+namespace ybi
+{
 
 void Test()
 {
 }
 
-YBI_NAMESPACE_END
+} // namespace ybi
