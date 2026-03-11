@@ -385,9 +385,13 @@ static bool TracePrimary(const LaunchParams &params,
             outHit->hasShadingNormal = ComputeTriangleShadingNormal(
                 params, u, v, rayHit.hit.primID, outHit->instanceId, outHit->shadingNormal);
 
-            float transform[12] = {};
-            TryGetRayHitWorldTransform(params, rayHit, transform);
-            outHit->shadingNormal = TransformNormal3x4RowMajor(transform, outHit->shadingNormal);
+            if (outHit->hasShadingNormal)
+            {
+                float transform[12] = {};
+                TryGetRayHitWorldTransform(params, rayHit, transform);
+                outHit->shadingNormal =
+                    TransformNormal3x4RowMajor(transform, outHit->shadingNormal);
+            }
         }
     }
 

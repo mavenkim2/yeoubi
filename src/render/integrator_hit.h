@@ -19,6 +19,9 @@ static YBI_INTEGRATOR_HD bool ComputeTriangleShadingNormal(const LaunchParams &p
         reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
     const LaunchParams::InstanceGeomRef ref = refs[instanceId];
 
+    if (ref.numNormalIndices == 0)
+        return false;
+
     const int triCornerBase = primitiveIndex * 3;
     assert(triCornerBase + 2 < ref.numNormalIndices);
 

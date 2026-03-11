@@ -414,10 +414,13 @@ extern "C" __global__ void __closesthit__primary()
                                                       hit.instanceId,
                                                       outHit->shadingNormal);
 
-                outHit->shadingNormal = Normalize(
-                    ToVec3(optixTransformNormalFromObjectToWorldSpace({outHit->shadingNormal.x,
-                                                                       outHit->shadingNormal.y,
-                                                                       outHit->shadingNormal.z})));
+                if (outHit->hasShadingNormal)
+                {
+                    outHit->shadingNormal = Normalize(ToVec3(
+                        optixTransformNormalFromObjectToWorldSpace({outHit->shadingNormal.x,
+                                                                    outHit->shadingNormal.y,
+                                                                    outHit->shadingNormal.z})));
+                }
             }
         }
         return;
