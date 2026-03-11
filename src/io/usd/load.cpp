@@ -72,6 +72,73 @@ YBI_NAMESPACE_BEGIN
         } \
     }
 
+struct TextureGatherLogStats
+{
+    size_t subsetsNotHandled = 0u;
+    size_t unsupportedSourceCount = 0u;
+    size_t unsupportedSourcePrimType = 0u;
+    size_t unsupportedShaderNodeType = 0u;
+    size_t missingFileInput = 0u;
+    size_t unreadableFileValue = 0u;
+    size_t emptyTextureFilePath = 0u;
+    size_t unsupportedSurfaceShader = 0u;
+    size_t materialsWithoutSurface = 0u;
+    size_t materials = 0u;
+    size_t materialsWithTextures = 0u;
+    size_t materialTextureInputs = 0u;
+    size_t materialsWithNtcDiffuse = 0u;
+};
+
+static TextureGatherLogStats g_textureGatherLogStats = {};
+
+static void ResetTextureGatherLogStats()
+{
+    g_textureGatherLogStats = {};
+}
+
+static void PrintTextureGatherLogSummary()
+{
+    std::printf("materials: total=%zu with_textures=%zu texture_inputs=%zu ntc_diffuse=%zu\n",
+                g_textureGatherLogStats.materials,
+                g_textureGatherLogStats.materialsWithTextures,
+                g_textureGatherLogStats.materialTextureInputs,
+                g_textureGatherLogStats.materialsWithNtcDiffuse);
+
+    const size_t warningCount = g_textureGatherLogStats.subsetsNotHandled +
+                                g_textureGatherLogStats.unsupportedSourceCount +
+                                g_textureGatherLogStats.unsupportedSourcePrimType +
+                                g_textureGatherLogStats.unsupportedShaderNodeType +
+                                g_textureGatherLogStats.missingFileInput +
+                                g_textureGatherLogStats.unreadableFileValue +
+                                g_textureGatherLogStats.emptyTextureFilePath +
+                                g_textureGatherLogStats.unsupportedSurfaceShader +
+                                g_textureGatherLogStats.materialsWithoutSurface;
+    if (warningCount == 0u)
+    {
+        return;
+    }
+
+    std::printf("texture gather warnings:"
+                " subsets=%zu"
+                " source_count=%zu"
+                " source_prim_type=%zu"
+                " shader_type=%zu"
+                " missing_file=%zu"
+                " unreadable_file=%zu"
+                " empty_path=%zu"
+                " unsupported_surface=%zu"
+                " no_surface=%zu\n",
+                g_textureGatherLogStats.subsetsNotHandled,
+                g_textureGatherLogStats.unsupportedSourceCount,
+                g_textureGatherLogStats.unsupportedSourcePrimType,
+                g_textureGatherLogStats.unsupportedShaderNodeType,
+                g_textureGatherLogStats.missingFileInput,
+                g_textureGatherLogStats.unreadableFileValue,
+                g_textureGatherLogStats.emptyTextureFilePath,
+                g_textureGatherLogStats.unsupportedSurfaceShader,
+                g_textureGatherLogStats.materialsWithoutSurface);
+}
+
 static void CollectUSDCameras(const pxr::UsdPrim &root, std::vector<pxr::UsdGeomCamera> *out)
 {
     YBI_ASSERT(out);
@@ -276,9 +343,7 @@ static bool TryGetSingleConnectedShader(const pxr::UsdShadeInput &input,
     if (sources.size() != 1)
     {
         // TODO: handle multiple or zero sources for a shading input.
-        printf("Texture gather: unsupported source count (%zu) for input %s\n",
-               sources.size(),
-               input.GetBaseName().GetText());
+        g_textureGatherLogStats.unsupportedSourceCount++;
         return false;
     }
 
@@ -286,9 +351,7 @@ static bool TryGetSingleConnectedShader(const pxr::UsdShadeInput &input,
     if (!sourcePrim.IsA<pxr::UsdShadeShader>())
     {
         // TODO: handle non-shader source nodes (e.g. nodegraphs/other source types).
-        printf("Texture gather: unsupported source prim type %s for input %s\n",
-               sourcePrim.GetTypeName().GetText(),
-               input.GetBaseName().GetText());
+        g_textureGatherLogStats.unsupportedSourcePrimType++;
         return false;
     }
     shaderOut = pxr::UsdShadeShader(sourcePrim);
@@ -922,9 +985,7 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
     if (shaderId != pxr::TfToken("UsdUVTexture"))
     {
         // TODO: support non-UsdUVTexture image producers (MaterialX image nodes, etc.).
-        printf("Texture gather: unsupported shader node type %s at %s\n",
-               shaderId.GetText(),
-               sourceShader.GetPath().GetText());
+        g_textureGatherLogStats.unsupportedShaderNodeType++;
         return false;
     }
 
@@ -932,8 +993,7 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
     if (!fileInput)
     {
         // TODO: support alternate file-bearing texture nodes/ports.
-        printf("Texture gather: UsdUVTexture missing 'file' input at %s\n",
-               sourceShader.GetPath().GetText());
+        g_textureGatherLogStats.missingFileInput++;
         return false;
     }
 
@@ -941,15 +1001,14 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
     if (!fileInput.Get(&assetPath))
     {
         // TODO: support connected/indirected file inputs.
-        printf("Texture gather: could not read 'file' value at %s\n",
-               sourceShader.GetPath().GetText());
+        g_textureGatherLogStats.unreadableFileValue++;
         return false;
     }
 
     outPath = ResolveUsdAssetPath(fileInput.GetAttr(), assetPath);
     if (outPath.empty())
     {
-        printf("Texture gather: empty texture file path at %s\n", sourceShader.GetPath().GetText());
+        g_textureGatherLogStats.emptyTextureFilePath++;
         return false;
     }
 
@@ -1993,6 +2052,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         printf("open: %f close: %f\n", shutterOpen, shutterClose);
     }
 
+    ResetTextureGatherLogStats();
+
     std::unordered_map<std::string, int> materialMap;
     std::vector<pxr::UsdShadeMaterial> materials;
 
@@ -2040,7 +2101,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                 pxr::UsdGeomSubset::GetAllGeomSubsets(mesh);
             if (subsets.size())
             {
-                printf("subsets not handled yet\n");
+                g_textureGatherLogStats.subsetsNotHandled++;
             }
             else
             {
@@ -2050,10 +2111,9 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         }
     }
 
-    printf("num materials: %zi\n", materials.size());
-
     std::vector<MaterialInfo> materialTextures;
     materialTextures.reserve(materials.size());
+    g_textureGatherLogStats.materials = materials.size();
 
     for (pxr::UsdShadeMaterial &material : materials)
     {
@@ -2072,15 +2132,13 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             else
             {
                 // TODO: support non-UsdPreviewSurface material networks.
-                printf("Texture gather: material %s uses unsupported surface shader %s\n",
-                       material.GetPath().GetText(),
-                       token.GetText());
+                g_textureGatherLogStats.unsupportedSurfaceShader++;
                 FinalizePackedMaterial(&info.packed);
             }
         }
         else
         {
-            printf("Texture gather: material %s has no surface source\n", material.GetPath().GetText());
+            g_textureGatherLogStats.materialsWithoutSurface++;
             FinalizePackedMaterial(&info.packed);
         }
         materialTextures.push_back(std::move(info));
@@ -2088,24 +2146,17 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
 
     for (const MaterialInfo &info : materialTextures)
     {
-        printf("material %s image textures: %zu\n",
-               info.materialPath.c_str(),
-               info.textureInputs.size());
-        for (const MaterialTextureInput &textureInput : info.textureInputs)
+        g_textureGatherLogStats.materialTextureInputs += info.textureInputs.size();
+        if (!info.textureInputs.empty())
         {
-            printf("  %s (%s) wrapS=%s wrapT=%s\n",
-                   textureInput.texturePath.c_str(),
-                   textureInput.inputName.c_str(),
-                   TextureWrapModeToString(textureInput.wrapS),
-                   TextureWrapModeToString(textureInput.wrapT));
+            g_textureGatherLogStats.materialsWithTextures++;
         }
         if (!info.ntcDiffuseFile.empty())
         {
-            printf("  ntc diffuse: %s (%s)\n",
-                   info.ntcDiffuseFile.c_str(),
-                   info.ntcDiffuseTextureName.c_str());
+            g_textureGatherLogStats.materialsWithNtcDiffuse++;
         }
     }
+    PrintTextureGatherLogSummary();
     scenePool->materials = std::move(materialTextures);
 
     const pxr::UsdTimeCode lightTimeCode(0.0);
