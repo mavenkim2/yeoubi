@@ -21,6 +21,160 @@ struct RayDifferential
     bool valid = false;
 };
 
+struct TextureDifferentialResult
+{
+    float dSdx = 0.0f;
+    float dTdx = 0.0f;
+    float dSdy = 0.0f;
+    float dTdy = 0.0f;
+    bool valid = false;
+};
+
+YBI_INTEGRATOR_HD bool IsFiniteScalar(float value)
+{
+    return value == value && fabsf(value) <= 1.0e30f;
+}
+
+YBI_INTEGRATOR_HD bool IsFiniteVec3(const Vec3 &value)
+{
+    return IsFiniteScalar(value.x) && IsFiniteScalar(value.y) && IsFiniteScalar(value.z);
+}
+
+YBI_INTEGRATOR_HD bool SolveLinear2x2(float a00,
+                                      float a01,
+                                      float a10,
+                                      float a11,
+                                      float b0,
+                                      float b1,
+                                      float *outX,
+                                      float *outY)
+{
+    if (!outX || !outY)
+    {
+        return false;
+    }
+
+    const float det = a00 * a11 - a01 * a10;
+    if (fabsf(det) <= 1.0e-8f)
+    {
+        return false;
+    }
+
+    const float invDet = 1.0f / det;
+    const float x = (b0 * a11 - a01 * b1) * invDet;
+    const float y = (a00 * b1 - b0 * a10) * invDet;
+    if (!IsFiniteScalar(x) || !IsFiniteScalar(y))
+    {
+        return false;
+    }
+
+    *outX = x;
+    *outY = y;
+    return true;
+}
+
+YBI_INTEGRATOR_HD TextureDifferentialResult ComputeTextureDifferentials(const Vec3 &dpdx,
+                                                                        const Vec3 &dpdy,
+                                                                        const Vec3 &dPds,
+                                                                        const Vec3 &dPdt,
+                                                                        const Vec3 &geomNormal)
+{
+    TextureDifferentialResult result = {};
+    if (!IsFiniteVec3(dpdx) || !IsFiniteVec3(dpdy) || !IsFiniteVec3(dPds) ||
+        !IsFiniteVec3(dPdt) || !IsFiniteVec3(geomNormal))
+    {
+        return result;
+    }
+
+    const float dPdsLengthSq = Dot(dPds, dPds);
+    const float dPdtLengthSq = Dot(dPdt, dPdt);
+    const float geomNormalLengthSq = Dot(geomNormal, geomNormal);
+    if (dPdsLengthSq <= 1.0e-8f || dPdtLengthSq <= 1.0e-8f || geomNormalLengthSq <= 1.0e-8f)
+    {
+        return result;
+    }
+
+    const float basisDot = Dot(dPds, dPdt);
+    if (fabsf(basisDot) <= 1.0e-8f)
+    {
+        const float invDsds = 1.0f / dPdsLengthSq;
+        const float invDtdt = 1.0f / dPdtLengthSq;
+        result.dSdx = Dot(dpdx, dPds) * invDsds;
+        result.dTdx = Dot(dpdx, dPdt) * invDtdt;
+        result.dSdy = Dot(dpdy, dPds) * invDsds;
+        result.dTdy = Dot(dpdy, dPdt) * invDtdt;
+    }
+    else
+    {
+        const Vec3 n2 = geomNormal * geomNormal;
+        float a00 = 0.0f;
+        float a01 = 0.0f;
+        float a10 = 0.0f;
+        float a11 = 0.0f;
+        float bx0 = 0.0f;
+        float bx1 = 0.0f;
+        float by0 = 0.0f;
+        float by1 = 0.0f;
+
+        if (n2.x > n2.y && n2.x > n2.z)
+        {
+            a00 = dPds.y;
+            a01 = dPdt.y;
+            a10 = dPds.z;
+            a11 = dPdt.z;
+            bx0 = dpdx.y;
+            bx1 = dpdx.z;
+            by0 = dpdy.y;
+            by1 = dpdy.z;
+        }
+        else if (n2.y > n2.z)
+        {
+            a00 = dPds.x;
+            a01 = dPdt.x;
+            a10 = dPds.z;
+            a11 = dPdt.z;
+            bx0 = dpdx.x;
+            bx1 = dpdx.z;
+            by0 = dpdy.x;
+            by1 = dpdy.z;
+        }
+        else
+        {
+            a00 = dPds.x;
+            a01 = dPdt.x;
+            a10 = dPds.y;
+            a11 = dPdt.y;
+            bx0 = dpdx.x;
+            bx1 = dpdx.y;
+            by0 = dpdy.x;
+            by1 = dpdy.y;
+        }
+
+        if (!SolveLinear2x2(
+                a00, a01, a10, a11, bx0, bx1, &result.dSdx, &result.dTdx) ||
+            !SolveLinear2x2(
+                a00, a01, a10, a11, by0, by1, &result.dSdy, &result.dTdy))
+        {
+            result.dSdx = 0.0f;
+            result.dTdx = 0.0f;
+            result.dSdy = 0.0f;
+            result.dTdy = 0.0f;
+            return result;
+        }
+    }
+
+    result.valid = IsFiniteScalar(result.dSdx) && IsFiniteScalar(result.dTdx) &&
+                   IsFiniteScalar(result.dSdy) && IsFiniteScalar(result.dTdy);
+    if (!result.valid)
+    {
+        result.dSdx = 0.0f;
+        result.dTdx = 0.0f;
+        result.dSdy = 0.0f;
+        result.dTdy = 0.0f;
+    }
+    return result;
+}
+
 YBI_INTEGRATOR_HD Vec3 ComputePerspectiveCameraDirection(const LaunchParams &params,
                                                          float rasterX,
                                                          float rasterY)
