@@ -8,6 +8,51 @@
 namespace ybi
 {
 
+static YBI_INTEGRATOR_HD bool
+TryGetTriangleLocalPositions(const LaunchParams &params,
+                             int instanceId,
+                             int primitiveIndex,
+                             Vec3 &outP0,
+                             Vec3 &outP1,
+                             Vec3 &outP2)
+{
+    if (params.instanceGeomRefs == 0ull || instanceId < 0 ||
+        instanceId >= params.instanceGeomRefCount || primitiveIndex < 0)
+    {
+        return false;
+    }
+
+    const LaunchParams::InstanceGeomRef *refs =
+        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+    if (ref.positions == 0ull || ref.indices == 0ull)
+    {
+        return false;
+    }
+
+    const int triCornerBase = primitiveIndex * 3;
+    if (triCornerBase + 2 >= ref.numIndices)
+    {
+        return false;
+    }
+
+    const Vec3 *positions = reinterpret_cast<const Vec3 *>(ref.positions);
+    const int *indices = reinterpret_cast<const int *>(ref.indices);
+    const int i0 = indices[triCornerBase + 0];
+    const int i1 = indices[triCornerBase + 1];
+    const int i2 = indices[triCornerBase + 2];
+    if (i0 < 0 || i0 >= ref.numPositions || i1 < 0 || i1 >= ref.numPositions || i2 < 0 ||
+        i2 >= ref.numPositions)
+    {
+        return false;
+    }
+
+    outP0 = positions[i0];
+    outP1 = positions[i1];
+    outP2 = positions[i2];
+    return true;
+}
+
 static YBI_INTEGRATOR_HD bool ComputeTriangleShadingNormal(const LaunchParams &params,
                                                            float u,
                                                            float v,

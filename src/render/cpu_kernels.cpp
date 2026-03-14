@@ -263,27 +263,11 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
         return false;
     }
 
-    const LaunchParams::InstanceGeomRef *refs =
-        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
-    const LaunchParams::InstanceGeomRef ref = refs[outHit->instanceId];
-    if (ref.positions == 0ull || ref.indices == 0ull)
-    {
-        return false;
-    }
-
-    const int triCornerBase = outHit->primitiveIndex * 3;
-    if (triCornerBase + 2 >= ref.numIndices)
-    {
-        return false;
-    }
-
-    const ybi::Vec3 *positions = reinterpret_cast<const ybi::Vec3 *>(ref.positions);
-    const int *indices = reinterpret_cast<const int *>(ref.indices);
-    const int i0 = indices[triCornerBase + 0];
-    const int i1 = indices[triCornerBase + 1];
-    const int i2 = indices[triCornerBase + 2];
-    if (i0 < 0 || i0 >= ref.numPositions || i1 < 0 || i1 >= ref.numPositions || i2 < 0 ||
-        i2 >= ref.numPositions)
+    ybi::render::integrator::Vec3 p0 = {};
+    ybi::render::integrator::Vec3 p1 = {};
+    ybi::render::integrator::Vec3 p2 = {};
+    if (!ybi::TryGetTriangleLocalPositions(
+            params, outHit->instanceId, outHit->primitiveIndex, p0, p1, p2))
     {
         return false;
     }
@@ -291,15 +275,9 @@ static bool TryComputeTriangleWorldPositions(const LaunchParams &params,
     float transform[12] = {};
     TryGetRayHitWorldTransform(params, rayHit, transform);
 
-    outHit->worldTri0 = TransformPoint3x4RowMajor(
-        transform,
-        ybi::render::integrator::Vec3(positions[i0].x, positions[i0].y, positions[i0].z));
-    outHit->worldTri1 = TransformPoint3x4RowMajor(
-        transform,
-        ybi::render::integrator::Vec3(positions[i1].x, positions[i1].y, positions[i1].z));
-    outHit->worldTri2 = TransformPoint3x4RowMajor(
-        transform,
-        ybi::render::integrator::Vec3(positions[i2].x, positions[i2].y, positions[i2].z));
+    outHit->worldTri0 = TransformPoint3x4RowMajor(transform, p0);
+    outHit->worldTri1 = TransformPoint3x4RowMajor(transform, p1);
+    outHit->worldTri2 = TransformPoint3x4RowMajor(transform, p2);
     outHit->hasWorldTriangle = true;
     return true;
 }

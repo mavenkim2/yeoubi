@@ -250,35 +250,22 @@ TryComputeTriangleNormal(int instanceId, int primitiveIndex, Vec3 &outNormal)
 static __forceinline__ __device__ bool
 TryComputeTriangleWorldPositions(int instanceId, int primitiveIndex, HitInfo *outHit)
 {
-    if (!outHit || params.instanceGeomRefs == 0ull || instanceId < 0 ||
-        instanceId >= params.instanceGeomRefCount)
+    if (!outHit)
     {
         return false;
     }
 
-    const LaunchParams::InstanceGeomRef *refs =
-        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
-    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
-    const int indexBase = primitiveIndex * 3;
-    const float3 *positions = reinterpret_cast<const float3 *>(ref.positions);
-    const int *indices = reinterpret_cast<const int *>(ref.indices);
-    if (!positions || !indices || indexBase + 2 >= ref.numIndices)
+    Vec3 p0 = {};
+    Vec3 p1 = {};
+    Vec3 p2 = {};
+    if (!ybi::TryGetTriangleLocalPositions(params, instanceId, primitiveIndex, p0, p1, p2))
     {
         return false;
     }
 
-    const int i0 = indices[indexBase + 0];
-    const int i1 = indices[indexBase + 1];
-    const int i2 = indices[indexBase + 2];
-    if (i0 < 0 || i0 >= ref.numPositions || i1 < 0 || i1 >= ref.numPositions || i2 < 0 ||
-        i2 >= ref.numPositions)
-    {
-        return false;
-    }
-
-    outHit->worldTri0 = ToVec3(optixTransformPointFromObjectToWorldSpace(positions[i0]));
-    outHit->worldTri1 = ToVec3(optixTransformPointFromObjectToWorldSpace(positions[i1]));
-    outHit->worldTri2 = ToVec3(optixTransformPointFromObjectToWorldSpace(positions[i2]));
+    outHit->worldTri0 = ToVec3(optixTransformPointFromObjectToWorldSpace(ToFloat3(p0)));
+    outHit->worldTri1 = ToVec3(optixTransformPointFromObjectToWorldSpace(ToFloat3(p1)));
+    outHit->worldTri2 = ToVec3(optixTransformPointFromObjectToWorldSpace(ToFloat3(p2)));
     outHit->hasWorldTriangle = true;
     return true;
 }
