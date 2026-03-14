@@ -23,40 +23,24 @@ YBI_INTEGRATOR_HD int ComputeTextureMipCount(int width, int height)
     return mipCount;
 }
 
-YBI_INTEGRATOR_HD bool ProjectWorldToRaster(const LaunchParams &params,
-                                            const Vec3 &worldPoint,
-                                            Vec2 *outRaster)
+YBI_INTEGRATOR_HD bool
+ProjectWorldToRaster(const LaunchParams &params, const Vec3 &worldPoint, Vec2 *outRaster)
 {
     if (!outRaster || params.width <= 0 || params.height <= 0)
     {
         return false;
     }
 
-    const Vec3 cameraOrigin =
-        Vec3(params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z);
-    const Vec3 cameraU = Vec3(params.cameraU.x, params.cameraU.y, params.cameraU.z);
-    const Vec3 cameraV = Vec3(params.cameraV.x, params.cameraV.y, params.cameraV.z);
-    const Vec3 cameraW = Vec3(params.cameraW.x, params.cameraW.y, params.cameraW.z);
-    const Vec3 rel = worldPoint - cameraOrigin;
-
-    const float det = Dot(cameraU, Cross(cameraV, cameraW));
-    if (fabsf(det) <= 1e-8f)
+    const Vec3 cameraPoint = TransformPointAffine(params.cameraFromWorld, worldPoint);
+    const Vec3 rasterPoint = TransformPointPerspective(params.rasterFromCamera, cameraPoint);
+    if (!(rasterPoint.x == rasterPoint.x && rasterPoint.y == rasterPoint.y &&
+          rasterPoint.z == rasterPoint.z))
     {
         return false;
     }
 
-    const float alpha = Dot(rel, Cross(cameraV, cameraW)) / det;
-    const float beta = Dot(cameraU, Cross(rel, cameraW)) / det;
-    const float gamma = Dot(cameraU, Cross(cameraV, rel)) / det;
-    if (fabsf(gamma) <= 1e-8f)
-    {
-        return false;
-    }
-
-    const float ndcX = alpha / gamma;
-    const float ndcY = beta / gamma;
-    outRaster->x = (ndcX + 1.0f) * 0.5f * float(params.width) - 0.5f;
-    outRaster->y = (1.0f - ndcY) * 0.5f * float(params.height) - 0.5f;
+    outRaster->x = rasterPoint.x;
+    outRaster->y = rasterPoint.y;
     return true;
 }
 

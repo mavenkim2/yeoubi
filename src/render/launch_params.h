@@ -2,6 +2,7 @@
 
 #include "device/device.h"
 #include "scene/material_light.h"
+#include "util/float4x4.h"
 #include "util/vec3.h"
 
 namespace ybi
@@ -81,6 +82,10 @@ struct LaunchParams
     int width;
     int height;
     ybi::Vec3 cameraOrigin;
+    ybi::Float4x4 cameraFromWorld;
+    ybi::Float4x4 worldFromCamera;
+    ybi::Float4x4 cameraFromRaster;
+    ybi::Float4x4 rasterFromCamera;
     ybi::Vec3 cameraU;
     ybi::Vec3 cameraV;
     ybi::Vec3 cameraW;

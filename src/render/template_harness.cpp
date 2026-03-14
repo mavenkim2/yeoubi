@@ -105,6 +105,11 @@ struct RenderCameraOverride
     int width = 1280;
     int height = 720;
     ybi::Vec3 origin = ybi::Vec3(0.0f, 0.0f, 0.0f);
+    ybi::Float4x4 cameraFromWorld = ybi::Float4x4::Identity();
+    ybi::Float4x4 worldFromCamera = ybi::Float4x4::Identity();
+    ybi::Float4x4 clipFromCamera = ybi::Float4x4::Identity();
+    ybi::Float4x4 cameraFromRaster = ybi::Float4x4::Identity();
+    ybi::Float4x4 rasterFromCamera = ybi::Float4x4::Identity();
     ybi::Vec3 U = ybi::Vec3(1.0f, 0.0f, 0.0f);
     ybi::Vec3 V = ybi::Vec3(0.0f, 1.0f, 0.0f);
     ybi::Vec3 W = ybi::Vec3(0.0f, 0.0f, 1.0f);
@@ -160,6 +165,100 @@ static bool InvertAffine(const ybi::Float4x4 &m, ybi::Float4x4 &out)
     return true;
 }
 
+static ybi::Float4x4 BuildRasterFromNdc(int width, int height)
+{
+    const float sx = 0.5f * static_cast<float>(width);
+    const float sy = 0.5f * static_cast<float>(height);
+    return ybi::Float4x4(
+        sx, 0.0f, 0.0f, sx, 0.0f, -sy, 0.0f, sy, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+static ybi::Float4x4 BuildFallbackCameraFromWorld(const ybi::Vec3 &eye, const ybi::Vec3 &lookAt)
+{
+    ybi::Vec3 forward = ybi::Normalize(lookAt - eye);
+    if (ybi::Length(forward) <= 1.0e-8f)
+    {
+        forward = ybi::Vec3(0.0f, 0.0f, 1.0f);
+    }
+    ybi::Vec3 worldUp = ybi::Vec3(0.0f, 0.0f, 1.0f);
+    if (std::abs(ybi::Dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = ybi::Vec3(0.0f, 1.0f, 0.0f);
+    }
+    const ybi::Vec3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
+    const ybi::Vec3 up = ybi::Normalize(ybi::Cross(right, forward));
+    return ybi::Float4x4(right.x,
+                         right.y,
+                         right.z,
+                         -ybi::Dot(right, eye),
+                         up.x,
+                         up.y,
+                         up.z,
+                         -ybi::Dot(up, eye),
+                         forward.x,
+                         forward.y,
+                         forward.z,
+                         -ybi::Dot(forward, eye),
+                         0.0f,
+                         0.0f,
+                         0.0f,
+                         1.0f);
+}
+
+static ybi::Float4x4 BuildFallbackClipFromCamera(float verticalFovDegrees,
+                                                 int viewportWidth,
+                                                 int viewportHeight)
+{
+    const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
+    const float tanHalfFovY = std::max(1.0e-8f, std::tan(0.5f * fovY));
+    const float aspect =
+        std::max(1.0e-8f, float(viewportWidth) / float(std::max(viewportHeight, 1)));
+    const float nearPlane = 1.0f;
+    const float farPlane = 1.0e6f;
+    const float m00 = 1.0f / (tanHalfFovY * aspect);
+    const float m11 = 1.0f / tanHalfFovY;
+    const float m22 = (farPlane + nearPlane) / (farPlane - nearPlane);
+    const float m23 = (-2.0f * farPlane * nearPlane) / (farPlane - nearPlane);
+    return ybi::Float4x4(m00,
+                         0.0f,
+                         0.0f,
+                         0.0f,
+                         0.0f,
+                         m11,
+                         0.0f,
+                         0.0f,
+                         0.0f,
+                         0.0f,
+                         m22,
+                         m23,
+                         0.0f,
+                         0.0f,
+                         1.0f,
+                         0.0f);
+}
+
+static bool FinalizeRenderCameraOverride(RenderCameraOverride *camera)
+{
+    if (!camera || camera->width <= 0 || camera->height <= 0)
+    {
+        return false;
+    }
+
+    if (!InvertAffine(camera->cameraFromWorld, camera->worldFromCamera))
+    {
+        return false;
+    }
+    camera->rasterFromCamera =
+        BuildRasterFromNdc(camera->width, camera->height) * camera->clipFromCamera;
+    if (!ybi::Invert(camera->rasterFromCamera, &camera->cameraFromRaster))
+    {
+        return false;
+    }
+
+    camera->origin = ybi::TransformPointAffine(camera->worldFromCamera, ybi::Vec3(0.0f));
+    return true;
+}
+
 static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &camera)
 {
     if (camera.viewportWidth <= 0 || camera.viewportHeight <= 0)
@@ -202,11 +301,15 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
     RenderCameraOverride out = {};
     out.width = camera.viewportWidth;
     out.height = camera.viewportHeight;
-    out.origin = ybi::Vec3(
-        worldFromCamera.m[0][3], worldFromCamera.m[1][3], worldFromCamera.m[2][3]);
+    out.cameraFromWorld = camera.cameraFromWorld;
+    out.clipFromCamera = camera.clipFromCamera;
     out.U = right * (aspect * tanHalfFov);
     out.V = up * tanHalfFov;
     out.W = forward;
+    if (!FinalizeRenderCameraOverride(&out))
+    {
+        return std::nullopt;
+    }
     return out;
 }
 
@@ -1666,6 +1769,10 @@ RenderTraversable(Device *device,
     if (cameraOverride.has_value())
     {
         params.cameraOrigin = cameraOverride->origin;
+        params.cameraFromWorld = cameraOverride->cameraFromWorld;
+        params.worldFromCamera = cameraOverride->worldFromCamera;
+        params.cameraFromRaster = cameraOverride->cameraFromRaster;
+        params.rasterFromCamera = cameraOverride->rasterFromCamera;
         params.cameraU = cameraOverride->U;
         params.cameraV = cameraOverride->V;
         params.cameraW = cameraOverride->W;
@@ -1687,7 +1794,20 @@ RenderTraversable(Device *device,
         const float aspect = static_cast<float>(width) / static_cast<float>(height);
         const float fovY = 45.0f * 3.14159265358979323846f / 180.0f;
         const float tanHalfFov = std::tan(fovY * 0.5f);
+        const ybi::Float4x4 clipFromCamera = BuildFallbackClipFromCamera(45.0f, width, height);
         params.cameraOrigin = eye;
+        params.cameraFromWorld = BuildFallbackCameraFromWorld(eye, lookAt);
+        if (!InvertAffine(params.cameraFromWorld, params.worldFromCamera))
+        {
+            std::fprintf(stderr, "Failed to invert fallback camera transform.\n");
+            std::abort();
+        }
+        params.rasterFromCamera = BuildRasterFromNdc(width, height) * clipFromCamera;
+        if (!ybi::Invert(params.rasterFromCamera, &params.cameraFromRaster))
+        {
+            std::fprintf(stderr, "Failed to invert rasterFromCamera.\n");
+            std::abort();
+        }
         params.cameraU = right * (aspect * tanHalfFov);
         params.cameraV = up * tanHalfFov;
         params.cameraW = forward;

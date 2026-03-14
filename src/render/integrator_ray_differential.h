@@ -23,22 +23,20 @@ struct RayDifferential
 
 YBI_INTEGRATOR_HD Vec3 ComputePerspectiveCameraDirection(const LaunchParams &params,
                                                          float rasterX,
-                                                         float rasterY,
-                                                         unsigned int width,
-                                                         unsigned int height)
+                                                         float rasterY)
 {
-    if (width == 0u || height == 0u)
+    const Vec3 cameraPoint =
+        TransformPointPerspective(params.cameraFromRaster, Vec3(rasterX, rasterY, 0.0f));
+    if (!(cameraPoint.x == cameraPoint.x && cameraPoint.y == cameraPoint.y &&
+          cameraPoint.z == cameraPoint.z))
     {
         return Vec3(0.0f, 0.0f, 1.0f);
     }
 
-    const float invWidth = 1.0f / static_cast<float>(width);
-    const float invHeight = 1.0f / static_cast<float>(height);
-    const float ndcX = rasterX * invWidth * 2.0f - 1.0f;
-    const float ndcY = 1.0f - rasterY * invHeight * 2.0f;
-    return Normalize(Vec3(params.cameraU.x * ndcX + params.cameraV.x * ndcY + params.cameraW.x,
-                          params.cameraU.y * ndcX + params.cameraV.y * ndcY + params.cameraW.y,
-                          params.cameraU.z * ndcX + params.cameraV.z * ndcY + params.cameraW.z));
+    const Vec3 worldPoint = TransformPointAffine(params.worldFromCamera, cameraPoint);
+    const Vec3 worldOrigin =
+        Vec3(params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z);
+    return Normalize(worldPoint - worldOrigin);
 }
 
 YBI_INTEGRATOR_HD RayDifferential InitPerspectiveRayDifferential(const LaunchParams &params,
@@ -58,12 +56,9 @@ YBI_INTEGRATOR_HD RayDifferential InitPerspectiveRayDifferential(const LaunchPar
         return rayDiff;
     }
 
-    rayDiff.dir =
-        ComputePerspectiveCameraDirection(params, pixelX + 0.5f, pixelY + 0.5f, width, height);
-    rayDiff.dirX =
-        ComputePerspectiveCameraDirection(params, pixelX + 1.5f, pixelY + 0.5f, width, height);
-    rayDiff.dirY =
-        ComputePerspectiveCameraDirection(params, pixelX + 0.5f, pixelY + 1.5f, width, height);
+    rayDiff.dir = ComputePerspectiveCameraDirection(params, pixelX + 0.5f, pixelY + 0.5f);
+    rayDiff.dirX = ComputePerspectiveCameraDirection(params, pixelX + 1.5f, pixelY + 0.5f);
+    rayDiff.dirY = ComputePerspectiveCameraDirection(params, pixelX + 0.5f, pixelY + 1.5f);
     rayDiff.valid = true;
     return rayDiff;
 }
