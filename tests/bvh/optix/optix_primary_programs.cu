@@ -3,6 +3,7 @@
 #include "render/integrator_hit.h"
 #include "render/integrator_path.h"
 #include "render/integrator_primary.h"
+#include "render/integrator_ray_differential.h"
 #include "render/integrator_texture.h"
 #include "render/launch_params.h"
 #include "render/shading_core.h"
@@ -173,20 +174,6 @@ struct OptixState
     }
 };
 
-static __forceinline__ __device__ float3 ComputeDirection(const uint3 &launchIndex,
-                                                          const uint3 &launchDims,
-                                                          const float2 &pixelOffset)
-{
-    const float2 ndc =
-        float2{((float)launchIndex.x + pixelOffset.x) / (float)launchDims.x * 2.0f - 1.0f,
-               1.0f - ((float)launchIndex.y + pixelOffset.y) / (float)launchDims.y * 2.0f};
-
-    return Normalize3(
-        float3{params.cameraU.x * ndc.x + params.cameraV.x * ndc.y + params.cameraW.x,
-               params.cameraU.y * ndc.x + params.cameraV.y * ndc.y + params.cameraW.y,
-               params.cameraU.z * ndc.x + params.cameraV.z * ndc.y + params.cameraW.z});
-}
-
 static __forceinline__ __device__ unsigned int TraceColor(const float3 &origin,
                                                           const float3 &direction)
 {
@@ -285,10 +272,15 @@ extern "C" __global__ void __raygen__primary()
         image[pixelIndex] = make_uchar4(0u, 0u, 0u, 255u);
         return;
     }
-    const float2 centerOffset = float2{0.5f, 0.5f};
-    const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
-    const float3 origin =
-        float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
+    const ybi::render::integrator::RayDifferential rayDiff =
+        ybi::render::integrator::InitPerspectiveRayDifferential(
+            params,
+            static_cast<float>(launchIndex.x),
+            static_cast<float>(launchIndex.y),
+            launchDims.x,
+            launchDims.y);
+    const float3 centerDirection = ToFloat3(rayDiff.dir);
+    const float3 origin = ToFloat3(rayDiff.origin);
     if (params.integrator == 3)
     {
         OptixState state = {};
@@ -319,10 +311,15 @@ extern "C" __global__ void __raygen__feedback()
     {
         return;
     }
-    const float2 centerOffset = float2{0.5f, 0.5f};
-    const float3 centerDirection = ComputeDirection(launchIndex, launchDims, centerOffset);
-    const float3 origin =
-        float3{params.cameraOrigin.x, params.cameraOrigin.y, params.cameraOrigin.z};
+    const ybi::render::integrator::RayDifferential rayDiff =
+        ybi::render::integrator::InitPerspectiveRayDifferential(
+            params,
+            static_cast<float>(launchIndex.x),
+            static_cast<float>(launchIndex.y),
+            launchDims.x,
+            launchDims.y);
+    const float3 centerDirection = ToFloat3(rayDiff.dir);
+    const float3 origin = ToFloat3(rayDiff.origin);
     TraceColor(origin, centerDirection);
 }
 

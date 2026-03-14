@@ -7,6 +7,7 @@
 #include "render/integrator_hit.h"
 #include "render/integrator_path.h"
 #include "render/integrator_primary.h"
+#include "render/integrator_ray_differential.h"
 #include "render/launch_params.h"
 #include "render/shading_core.h"
 #include "texture/virtual_texture/key.h"
@@ -166,22 +167,6 @@ struct CPUIntegratorState
         }
     }
 };
-
-static ybi::render::integrator::Vec3 ComputeDirection(const LaunchParams &params,
-                                                      unsigned int x,
-                                                      unsigned int y,
-                                                      unsigned int width,
-                                                      unsigned int height)
-{
-    const float ndcX = (float(x) + 0.5f) / float(width) * 2.0f - 1.0f;
-    const float ndcY = 1.0f - (float(y) + 0.5f) / float(height) * 2.0f;
-    const ybi::render::integrator::Vec3 dir =
-        ybi::render::integrator::Normalize(ybi::render::integrator::Vec3(
-            params.cameraU.x * ndcX + params.cameraV.x * ndcY + params.cameraW.x,
-            params.cameraU.y * ndcX + params.cameraV.y * ndcY + params.cameraW.y,
-            params.cameraU.z * ndcX + params.cameraV.z * ndcY + params.cameraW.z));
-    return dir;
-}
 
 static ybi::render::integrator::Vec3
 TransformPoint3x4RowMajor(const float transform[12], const ybi::render::integrator::Vec3 &p)
@@ -494,10 +479,11 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                     state.pixelX = x;
                     state.pixelY = y;
 
-                    const ybi::render::integrator::Vec3 origin = ybi::render::integrator::Vec3(
-                        params->cameraOrigin.x, params->cameraOrigin.y, params->cameraOrigin.z);
-                    const ybi::render::integrator::Vec3 direction =
-                        ComputeDirection(*params, x, y, width, height);
+                    const ybi::render::integrator::RayDifferential rayDiff =
+                        ybi::render::integrator::InitPerspectiveRayDifferential(
+                            *params, static_cast<float>(x), static_cast<float>(y), width, height);
+                    const ybi::render::integrator::Vec3 origin = rayDiff.origin;
+                    const ybi::render::integrator::Vec3 direction = rayDiff.dir;
 
                     ybi::render::integrator::HitInfo hit = {};
                     const bool hitFound = TracePrimary(*params,
