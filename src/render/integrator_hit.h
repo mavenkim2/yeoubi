@@ -138,6 +138,38 @@ static YBI_INTEGRATOR_HD bool TryGetTriangleTexcoords(
     return true;
 }
 
+static YBI_INTEGRATOR_HD bool TryBuildTriangleSurfacePartialFallback(
+    render::integrator::HitInfo *outHit)
+{
+    if (!outHit || !outHit->hasWorldTriangle)
+    {
+        return false;
+    }
+
+    Vec3 ng = Cross(outHit->worldTri2 - outHit->worldTri0, outHit->worldTri1 - outHit->worldTri0);
+    if (LengthSquared(ng) <= 0.0f)
+    {
+        const double e20x = double(outHit->worldTri2.x) - double(outHit->worldTri0.x);
+        const double e20y = double(outHit->worldTri2.y) - double(outHit->worldTri0.y);
+        const double e20z = double(outHit->worldTri2.z) - double(outHit->worldTri0.z);
+        const double e10x = double(outHit->worldTri1.x) - double(outHit->worldTri0.x);
+        const double e10y = double(outHit->worldTri1.y) - double(outHit->worldTri0.y);
+        const double e10z = double(outHit->worldTri1.z) - double(outHit->worldTri0.z);
+        ng = Vec3(float(e20y * e10z - e20z * e10y),
+                  float(e20z * e10x - e20x * e10z),
+                  float(e20x * e10y - e20y * e10x));
+        assert(LengthSquared(ng) > 0.0f);
+        if (LengthSquared(ng) <= 0.0f)
+        {
+            return false;
+        }
+    }
+
+    BuildOrthonormalBasis(Normalize(ng), outHit->dPds, outHit->dPdt);
+    outHit->hasSurfacePartials = true;
+    return true;
+}
+
 static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
     const LaunchParams &params, render::integrator::HitInfo *outHit)
 {
@@ -156,7 +188,7 @@ static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
     if (!TryGetTriangleTexcoords(
             params, outHit->instanceId, outHit->primitiveIndex, uv0, uv1, uv2))
     {
-        return false;
+        return TryBuildTriangleSurfacePartialFallback(outHit);
     }
 
     const Vec3 edge1 = outHit->worldTri1 - outHit->worldTri0;
@@ -166,14 +198,19 @@ static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
     const float du2 = uv2.x - uv0.x;
     const float dv2 = uv2.y - uv0.y;
     const float det = du1 * dv2 - dv1 * du2;
-    if (fabsf(det) <= 1.0e-8f)
+    const bool degenerateUV = fabsf(det) <= 1.0e-8f;
+    if (!degenerateUV)
     {
-        return false;
+        const float invDet = 1.0f / det;
+        outHit->dPds = (edge1 * dv2 - edge2 * dv1) * invDet;
+        outHit->dPdt = (edge2 * du1 - edge1 * du2) * invDet;
     }
 
-    const float invDet = 1.0f / det;
-    outHit->dPds = (edge1 * dv2 - edge2 * dv1) * invDet;
-    outHit->dPdt = (edge2 * du1 - edge1 * du2) * invDet;
+    if (degenerateUV || LengthSquared(Cross(outHit->dPds, outHit->dPdt)) <= 0.0f)
+    {
+        return TryBuildTriangleSurfacePartialFallback(outHit);
+    }
+
     outHit->hasSurfacePartials = true;
     return true;
 }
