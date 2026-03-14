@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/integrator_common.h"
 #include "render/launch_params.h"
 #include "util/math_common.h"
 #include "util/vec3.h"
@@ -88,6 +89,92 @@ static YBI_INTEGRATOR_HD bool ComputeTriangleShadingNormal(const LaunchParams &p
     }
 
     outNormal = localNormal;
+    return true;
+}
+
+static YBI_INTEGRATOR_HD bool TryGetTriangleTexcoords(
+    const LaunchParams &params,
+    int instanceId,
+    int primitiveIndex,
+    render::integrator::UV2 &outUv0,
+    render::integrator::UV2 &outUv1,
+    render::integrator::UV2 &outUv2)
+{
+    if (params.instanceGeomRefs == 0ull || instanceId < 0 ||
+        instanceId >= params.instanceGeomRefCount || primitiveIndex < 0)
+    {
+        return false;
+    }
+
+    const LaunchParams::InstanceGeomRef *refs =
+        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
+    const LaunchParams::InstanceGeomRef ref = refs[instanceId];
+    if (ref.texcoords == 0ull || ref.texcoordIndices == 0ull)
+    {
+        return false;
+    }
+
+    const int triCornerBase = primitiveIndex * 3;
+    if (triCornerBase + 2 >= ref.numTexcoordIndices)
+    {
+        return false;
+    }
+
+    const int *texcoordIndices = reinterpret_cast<const int *>(ref.texcoordIndices);
+    const int t0 = texcoordIndices[triCornerBase + 0];
+    const int t1 = texcoordIndices[triCornerBase + 1];
+    const int t2 = texcoordIndices[triCornerBase + 2];
+    if (t0 < 0 || t0 >= ref.numTexcoords || t1 < 0 || t1 >= ref.numTexcoords || t2 < 0 ||
+        t2 >= ref.numTexcoords)
+    {
+        return false;
+    }
+
+    const render::integrator::UV2 *texcoords =
+        reinterpret_cast<const render::integrator::UV2 *>(ref.texcoords);
+    outUv0 = texcoords[t0];
+    outUv1 = texcoords[t1];
+    outUv2 = texcoords[t2];
+    return true;
+}
+
+static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
+    const LaunchParams &params, render::integrator::HitInfo *outHit)
+{
+    if (!outHit || !outHit->hasWorldTriangle || outHit->instanceId < 0 || outHit->primitiveIndex < 0)
+    {
+        return false;
+    }
+
+    outHit->dPds = Vec3(0.0f, 0.0f, 0.0f);
+    outHit->dPdt = Vec3(0.0f, 0.0f, 0.0f);
+    outHit->hasSurfacePartials = false;
+
+    render::integrator::UV2 uv0 = {};
+    render::integrator::UV2 uv1 = {};
+    render::integrator::UV2 uv2 = {};
+    if (!TryGetTriangleTexcoords(
+            params, outHit->instanceId, outHit->primitiveIndex, uv0, uv1, uv2))
+    {
+        return false;
+    }
+
+    const Vec3 edge1 = outHit->worldTri1 - outHit->worldTri0;
+    const Vec3 edge2 = outHit->worldTri2 - outHit->worldTri0;
+    const float du1 = uv1.x - uv0.x;
+    const float dv1 = uv1.y - uv0.y;
+    const float du2 = uv2.x - uv0.x;
+    const float dv2 = uv2.y - uv0.y;
+    const float det = du1 * dv2 - dv1 * du2;
+    if (fabsf(det) <= 1.0e-8f)
+    {
+        return false;
+    }
+
+    const float invDet = 1.0f / det;
+    outHit->dPds = (edge1 * dv2 - edge2 * dv1) * invDet;
+    outHit->dPdt = (edge2 * du1 - edge1 * du2) * invDet;
+    outHit->hasSurfacePartials = true;
     return true;
 }
 

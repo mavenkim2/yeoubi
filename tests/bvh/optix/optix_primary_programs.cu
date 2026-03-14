@@ -375,6 +375,7 @@ extern "C" __global__ void __closesthit__primary()
         hit.instanceId = static_cast<int>(optixGetInstanceId());
         hit.primitiveIndex = static_cast<int>(optixGetPrimitiveIndex());
         (void)TryComputeTriangleWorldPositions(hit.instanceId, hit.primitiveIndex, &hit);
+        (void)ybi::TryComputeTriangleSurfacePartials(params, &hit);
     }
 
     if (params.integrator == 3)

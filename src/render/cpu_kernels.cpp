@@ -348,6 +348,7 @@ static bool TracePrimary(const LaunchParams &params,
             outHit->barycentrics = ybi::render::integrator::Vec3(1.0f - u - v, u, v);
             outHit->hasBarycentrics = true;
             (void)TryComputeTriangleWorldPositions(params, rayHit, outHit);
+            (void)ybi::TryComputeTriangleSurfacePartials(params, outHit);
             outHit->hasShadingNormal = ComputeTriangleShadingNormal(
                 params, u, v, rayHit.hit.primID, outHit->instanceId, outHit->shadingNormal);
 
