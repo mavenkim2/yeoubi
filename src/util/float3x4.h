@@ -10,11 +10,11 @@ struct Float3x4
 {
     float m[3][4];
 
-    YBI_INTEGRATOR_HD Float3x4()
+    YBI_DEVICE Float3x4()
         : m{{0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}}
     {
     }
-    YBI_INTEGRATOR_HD Float3x4(float m00,
+    YBI_DEVICE Float3x4(float m00,
                                float m01,
                                float m02,
                                float m03,
@@ -43,7 +43,7 @@ struct Float3x4
         m[2][3] = m23;
     }
 
-    YBI_INTEGRATOR_HD Float3x4(Vec4 r0, Vec4 r1, Vec4 r2)
+    YBI_DEVICE Float3x4(Vec4 r0, Vec4 r1, Vec4 r2)
     {
         for (int c = 0; c < 4; ++c)
         {
@@ -56,7 +56,7 @@ struct Float3x4
 
 using float3x4 = Float3x4;
 
-YBI_INTEGRATOR_HD Vec3 operator*(const Float3x4 &m, const Vec4 &p)
+YBI_DEVICE Vec3 operator*(const Float3x4 &m, const Vec4 &p)
 {
     return Vec3(Dot(Vec4(m.m[0][0], m.m[0][1], m.m[0][2], m.m[0][3]), p),
                 Dot(Vec4(m.m[1][0], m.m[1][1], m.m[1][2], m.m[1][3]), p),

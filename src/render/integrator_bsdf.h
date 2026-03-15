@@ -51,32 +51,32 @@ struct BsdfSample
     bool transmission = false;
 };
 
-YBI_INTEGRATOR_HD float MaxFloat(float a, float b)
+YBI_DEVICE float MaxFloat(float a, float b)
 {
     return a > b ? a : b;
 }
 
-YBI_INTEGRATOR_HD float MinFloat(float a, float b)
+YBI_DEVICE float MinFloat(float a, float b)
 {
     return a < b ? a : b;
 }
 
-YBI_INTEGRATOR_HD float SafeSqrt(float x)
+YBI_DEVICE float SafeSqrt(float x)
 {
     return sqrtf(MaxFloat(x, 0.0f));
 }
 
-YBI_INTEGRATOR_HD Vec3 ClampVec3(const Vec3 &v, float lo, float hi)
+YBI_DEVICE Vec3 ClampVec3(const Vec3 &v, float lo, float hi)
 {
     return Clamp(v, lo, hi);
 }
 
-YBI_INTEGRATOR_HD bool ShouldAlphaCutout(const PreparedMaterial &material)
+YBI_DEVICE bool ShouldAlphaCutout(const PreparedMaterial &material)
 {
     return material.opacityThreshold > 0.0f && material.opacity < material.opacityThreshold;
 }
 
-YBI_INTEGRATOR_HD OpenPBR_Basis MakeOpenPbrBasis(const ShadingFrame &frame)
+YBI_DEVICE OpenPBR_Basis MakeOpenPbrBasis(const ShadingFrame &frame)
 {
     OpenPBR_Basis basis = {};
     basis.t = frame.tangent;
@@ -85,7 +85,7 @@ YBI_INTEGRATOR_HD OpenPBR_Basis MakeOpenPbrBasis(const ShadingFrame &frame)
     return basis;
 }
 
-YBI_INTEGRATOR_HD void FillOpenPbrEmission(const Vec3 &emissiveColor,
+YBI_DEVICE void FillOpenPbrEmission(const Vec3 &emissiveColor,
                                            OpenPBR_ResolvedInputs *inputs)
 {
     if (!inputs)
@@ -99,7 +99,7 @@ YBI_INTEGRATOR_HD void FillOpenPbrEmission(const Vec3 &emissiveColor,
         luminance > 1.0e-6f ? emissiveColor / luminance : Vec3(1.0f, 1.0f, 1.0f);
 }
 
-YBI_INTEGRATOR_HD OpenPBR_ResolvedInputs BuildOpenPbrResolvedInputs(const EvaluatedMaterial &material,
+YBI_DEVICE OpenPBR_ResolvedInputs BuildOpenPbrResolvedInputs(const EvaluatedMaterial &material,
                                                                     const ShadingFrame &frame)
 {
     OpenPBR_ResolvedInputs inputs = openpbr_make_default_resolved_inputs();
@@ -124,7 +124,7 @@ YBI_INTEGRATOR_HD OpenPBR_ResolvedInputs BuildOpenPbrResolvedInputs(const Evalua
     return inputs;
 }
 
-YBI_INTEGRATOR_HD PreparedMaterial PrepareMaterialBsdf(const EvaluatedMaterial &material,
+YBI_DEVICE PreparedMaterial PrepareMaterialBsdf(const EvaluatedMaterial &material,
                                                        const ShadingFrame &frame,
                                                        const Vec3 &pathThroughput,
                                                        const Vec3 &viewDirection)
@@ -145,7 +145,7 @@ YBI_INTEGRATOR_HD PreparedMaterial PrepareMaterialBsdf(const EvaluatedMaterial &
     return out;
 }
 
-YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const PreparedMaterial &material,
+YBI_DEVICE Vec3 EvaluateBsdf(const PreparedMaterial &material,
                                     const Vec3 &wi,
                                     float *outPdf = nullptr)
 {
@@ -156,7 +156,7 @@ YBI_INTEGRATOR_HD Vec3 EvaluateBsdf(const PreparedMaterial &material,
     return OpenPbrCombinedWeight(openpbr_eval(material.prepared, wi));
 }
 
-YBI_INTEGRATOR_HD bool SampleBsdf(const PreparedMaterial &material,
+YBI_DEVICE bool SampleBsdf(const PreparedMaterial &material,
                                   unsigned int &rngState,
                                   BsdfSample *outSample)
 {

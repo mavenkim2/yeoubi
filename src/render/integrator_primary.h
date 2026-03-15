@@ -11,7 +11,7 @@ namespace integrator
 {
 
 template <typename State>
-YBI_INTEGRATOR_HD uint32_t IntegratorPrimaryDiffuse(State &state, const HitInfo &hit)
+YBI_DEVICE uint32_t IntegratorPrimaryDiffuse(State &state, const HitInfo &hit)
 {
     if (!hit.hasBarycentrics)
     {

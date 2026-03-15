@@ -58,7 +58,7 @@ struct UInt2
     unsigned int y;
 };
 
-YBI_INTEGRATOR_HD bool ShouldRenderLaunchPixel(
+YBI_DEVICE bool ShouldRenderLaunchPixel(
     int singlePixelEnabled, int singlePixelX, int singlePixelY, unsigned int x, unsigned int y)
 {
     if (singlePixelEnabled == 0)
@@ -109,7 +109,7 @@ struct HitInfo
     bool hasTextureDifferentials = false;
 };
 
-YBI_INTEGRATOR_HD float Clamp01(float v)
+YBI_DEVICE float Clamp01(float v)
 {
     if (v < 0.0f)
     {
@@ -122,17 +122,17 @@ YBI_INTEGRATOR_HD float Clamp01(float v)
     return v;
 }
 
-YBI_INTEGRATOR_HD int ClampInt(int v, int lo, int hi)
+YBI_DEVICE int ClampInt(int v, int lo, int hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-YBI_INTEGRATOR_HD int MaxInt(int a, int b)
+YBI_DEVICE int MaxInt(int a, int b)
 {
     return a > b ? a : b;
 }
 
-YBI_INTEGRATOR_HD int32_t FloatAsInt(float value)
+YBI_DEVICE int32_t FloatAsInt(float value)
 {
     union
     {
@@ -142,7 +142,7 @@ YBI_INTEGRATOR_HD int32_t FloatAsInt(float value)
     return bits.i;
 }
 
-YBI_INTEGRATOR_HD float IntAsFloat(int32_t value)
+YBI_DEVICE float IntAsFloat(int32_t value)
 {
     union
     {
@@ -152,7 +152,7 @@ YBI_INTEGRATOR_HD float IntAsFloat(int32_t value)
     return bits.f;
 }
 
-YBI_INTEGRATOR_HD Vec3 OffsetRayOrigin(const Vec3 &point, const Vec3 &normal)
+YBI_DEVICE Vec3 OffsetRayOrigin(const Vec3 &point, const Vec3 &normal)
 {
     constexpr float kOrigin = 1.0f / 32.0f;
     constexpr float kFloatScale = 1.0f / 65536.0f;
@@ -172,7 +172,7 @@ YBI_INTEGRATOR_HD Vec3 OffsetRayOrigin(const Vec3 &point, const Vec3 &normal)
                 fabsf(point.z) < kOrigin ? point.z + kFloatScale * normal.z : offsetPoint.z);
 }
 
-YBI_INTEGRATOR_HD Vec3 OffsetRayOrigin(const Vec3 &point,
+YBI_DEVICE Vec3 OffsetRayOrigin(const Vec3 &point,
                                        const Vec3 &geomNormal,
                                        const Vec3 &rayDirection)
 {
@@ -181,7 +181,7 @@ YBI_INTEGRATOR_HD Vec3 OffsetRayOrigin(const Vec3 &point,
     return OffsetRayOrigin(point, offsetNormal);
 }
 
-YBI_INTEGRATOR_HD unsigned int Hash32(unsigned int x)
+YBI_DEVICE unsigned int Hash32(unsigned int x)
 {
     x ^= x >> 16;
     x *= 0x7feb352du;
@@ -191,13 +191,13 @@ YBI_INTEGRATOR_HD unsigned int Hash32(unsigned int x)
     return x;
 }
 
-YBI_INTEGRATOR_HD float Random01(unsigned int &state)
+YBI_DEVICE float Random01(unsigned int &state)
 {
     state = Hash32(state + 0x9e3779b9u);
     return float(state & 0x00ffffffu) / float(0x01000000u);
 }
 
-YBI_INTEGRATOR_HD Vec3 SampleCosineHemisphere(float u1, float u2)
+YBI_DEVICE Vec3 SampleCosineHemisphere(float u1, float u2)
 {
     const float r = sqrtf(u1 < 0.0f ? 0.0f : u1);
     const float phi = ybi::kTwoPi * u2;
@@ -207,7 +207,7 @@ YBI_INTEGRATOR_HD Vec3 SampleCosineHemisphere(float u1, float u2)
     return Vec3(x, y, z);
 }
 
-YBI_INTEGRATOR_HD Vec3 SkyColor(const Vec3 &direction)
+YBI_DEVICE Vec3 SkyColor(const Vec3 &direction)
 {
     const float t = 0.5f * (direction.y + 1.0f);
     const Vec3 top(0.7f, 0.8f, 1.0f);
@@ -217,7 +217,7 @@ YBI_INTEGRATOR_HD Vec3 SkyColor(const Vec3 &direction)
                 (1.0f - t) * top.z + t * bottom.z);
 }
 
-YBI_INTEGRATOR_HD float ApplyWrapMode(float uv, int wrapMode, bool &outBlack)
+YBI_DEVICE float ApplyWrapMode(float uv, int wrapMode, bool &outBlack)
 {
     outBlack = false;
     switch (wrapMode)

@@ -9,7 +9,7 @@ namespace render
 namespace integrator
 {
 
-YBI_INTEGRATOR_HD int ComputeTextureMipCount(int width, int height)
+YBI_DEVICE int ComputeTextureMipCount(int width, int height)
 {
     int maxDim = MaxInt(width, height);
     maxDim = MaxInt(maxDim, 1);
@@ -22,7 +22,7 @@ YBI_INTEGRATOR_HD int ComputeTextureMipCount(int width, int height)
     return mipCount;
 }
 
-YBI_INTEGRATOR_HD bool TryComputeTextureMipLevel(const HitInfo &hit,
+YBI_DEVICE bool TryComputeTextureMipLevel(const HitInfo &hit,
                                                  int textureWidth,
                                                  int textureHeight,
                                                  unsigned int *outMip)

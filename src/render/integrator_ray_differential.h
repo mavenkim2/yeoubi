@@ -37,17 +37,17 @@ struct HitPlaneDifferentialResult
     bool valid = false;
 };
 
-YBI_INTEGRATOR_HD bool IsFiniteScalar(float value)
+YBI_DEVICE bool IsFiniteScalar(float value)
 {
     return value == value && fabsf(value) <= 1.0e30f;
 }
 
-YBI_INTEGRATOR_HD bool IsFiniteVec3(const Vec3 &value)
+YBI_DEVICE bool IsFiniteVec3(const Vec3 &value)
 {
     return IsFiniteScalar(value.x) && IsFiniteScalar(value.y) && IsFiniteScalar(value.z);
 }
 
-YBI_INTEGRATOR_HD Float4x4 RotateFromTo(const Vec3 &from, const Vec3 &to)
+YBI_DEVICE Float4x4 RotateFromTo(const Vec3 &from, const Vec3 &to)
 {
     if (!IsFiniteVec3(from) || !IsFiniteVec3(to) || LengthSquared(from) <= 1.0e-20f ||
         LengthSquared(to) <= 1.0e-20f)
@@ -97,7 +97,7 @@ YBI_INTEGRATOR_HD Float4x4 RotateFromTo(const Vec3 &from, const Vec3 &to)
     return r;
 }
 
-YBI_INTEGRATOR_HD void InvalidateRayDifferential(RayDifferential *rayDiff)
+YBI_DEVICE void InvalidateRayDifferential(RayDifferential *rayDiff)
 {
     if (!rayDiff)
     {
@@ -111,7 +111,7 @@ YBI_INTEGRATOR_HD void InvalidateRayDifferential(RayDifferential *rayDiff)
     rayDiff->valid = false;
 }
 
-YBI_INTEGRATOR_HD bool SolveLinear2x2(float a00,
+YBI_DEVICE bool SolveLinear2x2(float a00,
                                       float a01,
                                       float a10,
                                       float a11,
@@ -144,7 +144,7 @@ YBI_INTEGRATOR_HD bool SolveLinear2x2(float a00,
     return true;
 }
 
-YBI_INTEGRATOR_HD TextureDifferentialResult ComputeTextureDifferentials(const Vec3 &dpdx,
+YBI_DEVICE TextureDifferentialResult ComputeTextureDifferentials(const Vec3 &dpdx,
                                                                         const Vec3 &dpdy,
                                                                         const Vec3 &dPds,
                                                                         const Vec3 &dPdt,
@@ -246,7 +246,7 @@ YBI_INTEGRATOR_HD TextureDifferentialResult ComputeTextureDifferentials(const Ve
     return result;
 }
 
-YBI_INTEGRATOR_HD bool ApproximateDpDxy(const LaunchParams &params,
+YBI_DEVICE bool ApproximateDpDxy(const LaunchParams &params,
                                         const Vec3 &p,
                                         const Vec3 &n,
                                         int samplesPerPixel,
@@ -305,7 +305,7 @@ YBI_INTEGRATOR_HD bool ApproximateDpDxy(const LaunchParams &params,
     return IsFiniteVec3(*outDpdx) && IsFiniteVec3(*outDpdy);
 }
 
-YBI_INTEGRATOR_HD bool TransferRayDifferentialToHitPoint(const RayDifferential &rayDiff,
+YBI_DEVICE bool TransferRayDifferentialToHitPoint(const RayDifferential &rayDiff,
                                                          const Vec3 &hitPoint,
                                                          const Vec3 &geomNormal,
                                                          Vec3 *outPx,
@@ -338,7 +338,7 @@ YBI_INTEGRATOR_HD bool TransferRayDifferentialToHitPoint(const RayDifferential &
     return IsFiniteVec3(*outPx) && IsFiniteVec3(*outPy);
 }
 
-YBI_INTEGRATOR_HD HitPlaneDifferentialResult ComputeHitPlaneDifferentials(const LaunchParams &params,
+YBI_DEVICE HitPlaneDifferentialResult ComputeHitPlaneDifferentials(const LaunchParams &params,
                                                                           const RayDifferential &rayDiff,
                                                                           const Vec3 &hitPoint,
                                                                           const Vec3 &geomNormal,
@@ -367,7 +367,7 @@ YBI_INTEGRATOR_HD HitPlaneDifferentialResult ComputeHitPlaneDifferentials(const 
     return result;
 }
 
-YBI_INTEGRATOR_HD Vec3 ComputePerspectiveCameraDirection(const LaunchParams &params,
+YBI_DEVICE Vec3 ComputePerspectiveCameraDirection(const LaunchParams &params,
                                                          float rasterX,
                                                          float rasterY)
 {
@@ -385,7 +385,7 @@ YBI_INTEGRATOR_HD Vec3 ComputePerspectiveCameraDirection(const LaunchParams &par
     return Normalize(worldPoint - worldOrigin);
 }
 
-YBI_INTEGRATOR_HD RayDifferential InitPerspectiveRayDifferential(const LaunchParams &params,
+YBI_DEVICE RayDifferential InitPerspectiveRayDifferential(const LaunchParams &params,
                                                                  float pixelX,
                                                                  float pixelY,
                                                                  unsigned int width,

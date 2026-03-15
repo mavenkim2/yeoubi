@@ -13,7 +13,7 @@ namespace integrator
 {
 
 template <typename State>
-YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
+YBI_DEVICE void TryWriteTextureFeedback(State &state,
                                                const LaunchParams::InstanceGeomRef &geomRef,
                                                int semantic,
                                                unsigned int primitiveIndex,
@@ -25,7 +25,7 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
                                                unsigned int mip);
 
 template <typename State>
-YBI_INTEGRATOR_HD bool TryComputeTextureMipLevelProfiled(State &state,
+YBI_DEVICE bool TryComputeTextureMipLevelProfiled(State &state,
                                                          const HitInfo &hit,
                                                          int textureWidth,
                                                          int textureHeight,
@@ -38,7 +38,7 @@ YBI_INTEGRATOR_HD bool TryComputeTextureMipLevelProfiled(State &state,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD void TryWriteTextureFeedbackProfiled(State &state,
+YBI_DEVICE void TryWriteTextureFeedbackProfiled(State &state,
                                                        const LaunchParams::InstanceGeomRef &geomRef,
                                                        int semantic,
                                                        unsigned int primitiveIndex,
@@ -63,7 +63,7 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedbackProfiled(State &state,
     state.EndFeedbackWriteTiming(start);
 }
 
-YBI_INTEGRATOR_HD Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sample)
+YBI_DEVICE Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sample)
 {
     if (semantic == kSemanticRoughness || semantic == kSemanticMetallic ||
         semantic == kSemanticOcclusion || semantic == kSemanticIor || semantic == kSemanticOpacity ||
@@ -74,12 +74,12 @@ YBI_INTEGRATOR_HD Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4
     return Vec3(sample.x, sample.y, sample.z);
 }
 
-YBI_INTEGRATOR_HD Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4 &sample)
+YBI_DEVICE Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4 &sample)
 {
     return MaterialSampleToColorForSemantic(params.textureViewSemantic, sample);
 }
 
-YBI_INTEGRATOR_HD uint32_t PackVirtualTexturePageEntry(unsigned int pageX,
+YBI_DEVICE uint32_t PackVirtualTexturePageEntry(unsigned int pageX,
                                                        unsigned int pageY,
                                                        unsigned int pageType,
                                                        unsigned int flags)
@@ -88,7 +88,7 @@ YBI_INTEGRATOR_HD uint32_t PackVirtualTexturePageEntry(unsigned int pageX,
            ((flags & 0xfu) << 28u);
 }
 
-YBI_INTEGRATOR_HD void UnpackVirtualTexturePageEntry(uint32_t packed,
+YBI_DEVICE void UnpackVirtualTexturePageEntry(uint32_t packed,
                                                      unsigned int *outPageX,
                                                      unsigned int *outPageY,
                                                      unsigned int *outPageType,
@@ -125,12 +125,12 @@ struct MaterialTextureSampleInputs
     unsigned int rawUdimBits = 0u;
 };
 
-YBI_INTEGRATOR_HD bool IsUsableMaterialTextureRef(const LaunchParams::MaterialTextureRef &ref)
+YBI_DEVICE bool IsUsableMaterialTextureRef(const LaunchParams::MaterialTextureRef &ref)
 {
     return ref.width > 0 && ref.height > 0;
 }
 
-YBI_INTEGRATOR_HD bool ResolveMaterialTextureRefBase(
+YBI_DEVICE bool ResolveMaterialTextureRefBase(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
     int semantic,
@@ -155,7 +155,7 @@ YBI_INTEGRATOR_HD bool ResolveMaterialTextureRefBase(
     return true;
 }
 
-YBI_INTEGRATOR_HD bool ResolveMaterialTextureRefBase(
+YBI_DEVICE bool ResolveMaterialTextureRefBase(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
     const LaunchParams::MaterialTextureRef **outMaterialRefs,
@@ -166,7 +166,7 @@ YBI_INTEGRATOR_HD bool ResolveMaterialTextureRefBase(
         params, geomRef, params.textureViewSemantic, outMaterialRefs, outBase, outMaxSlots);
 }
 
-YBI_INTEGRATOR_HD bool FetchMaterialTextureRefForUdimSlot(
+YBI_DEVICE bool FetchMaterialTextureRefForUdimSlot(
     const LaunchParams::MaterialTextureRef *materialRefs,
     int base,
     int maxSlots,
@@ -188,7 +188,7 @@ YBI_INTEGRATOR_HD bool FetchMaterialTextureRefForUdimSlot(
     return true;
 }
 
-YBI_INTEGRATOR_HD bool FindFallbackMaterialTextureRef(
+YBI_DEVICE bool FindFallbackMaterialTextureRef(
     const LaunchParams &params,
     const LaunchParams::MaterialTextureRef *materialRefs,
     int base,
@@ -216,7 +216,7 @@ YBI_INTEGRATOR_HD bool FindFallbackMaterialTextureRef(
     return false;
 }
 
-YBI_INTEGRATOR_HD bool TryComputeMaterialTextureSampleInputs(
+YBI_DEVICE bool TryComputeMaterialTextureSampleInputs(
     const LaunchParams::InstanceGeomRef &geomRef,
     unsigned int primitiveIndex,
     const Vec3 &barycentrics,
@@ -258,7 +258,7 @@ YBI_INTEGRATOR_HD bool TryComputeMaterialTextureSampleInputs(
     return true;
 }
 
-YBI_INTEGRATOR_HD bool ResolveVirtualTextureTextureMeta(
+YBI_DEVICE bool ResolveVirtualTextureTextureMeta(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
     int semantic,
@@ -283,7 +283,7 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureTextureMeta(
     return true;
 }
 
-YBI_INTEGRATOR_HD bool TryResolveVirtualTextureLocalUdim(
+YBI_DEVICE bool TryResolveVirtualTextureLocalUdim(
     const LaunchParams::VirtualTextureTextureMeta &meta,
     unsigned int udimBits,
     unsigned int *outLocalUdim)
@@ -304,7 +304,7 @@ YBI_INTEGRATOR_HD bool TryResolveVirtualTextureLocalUdim(
     return true;
 }
 
-YBI_INTEGRATOR_HD bool ResolveVirtualTextureUdimBits(
+YBI_DEVICE bool ResolveVirtualTextureUdimBits(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef &geomRef,
     int semantic,
@@ -363,7 +363,7 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureUdimBits(
     return false;
 }
 
-YBI_INTEGRATOR_HD bool TryResolveVirtualTextureTailSample(
+YBI_DEVICE bool TryResolveVirtualTextureTailSample(
     const LaunchParams::VirtualTextureTextureMeta *meta,
     unsigned int localUdim,
     float wrappedU,
@@ -410,7 +410,7 @@ YBI_INTEGRATOR_HD bool TryResolveVirtualTextureTailSample(
     return true;
 }
 
-YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
+YBI_DEVICE bool ResolveVirtualTextureInfo(const LaunchParams &params,
                                                  const LaunchParams::InstanceGeomRef &geomRef,
                                                  int semantic,
                                                  unsigned int mip,
@@ -501,7 +501,7 @@ YBI_INTEGRATOR_HD bool ResolveVirtualTextureInfo(const LaunchParams &params,
     return true;
 }
 
-YBI_INTEGRATOR_HD bool ReadVirtualTexturePageEntry(const LaunchParams &params,
+YBI_DEVICE bool ReadVirtualTexturePageEntry(const LaunchParams &params,
                                                    unsigned int mip,
                                                    unsigned int vaX,
                                                    unsigned int vaY,
@@ -535,7 +535,7 @@ YBI_INTEGRATOR_HD bool ReadVirtualTexturePageEntry(const LaunchParams &params,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
+YBI_DEVICE void TryWriteTextureFeedback(State &state,
                                                const LaunchParams::InstanceGeomRef &geomRef,
                                                int semantic,
                                                unsigned int primitiveIndex,
@@ -587,7 +587,7 @@ YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
+YBI_DEVICE bool TrySampleVirtualTexture(State &state,
                                                const LaunchParams::InstanceGeomRef &geomRef,
                                                int semantic,
                                                const LaunchParams::MaterialTextureRef &textureRef,
@@ -718,7 +718,7 @@ YBI_INTEGRATOR_HD bool TrySampleVirtualTexture(State &state,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
+YBI_DEVICE bool TrySampleMaterialTexture(State &state,
                                                 const LaunchParams::InstanceGeomRef &geomRef,
                                                 const HitInfo &hit,
                                                 Vec3 &outColor)
@@ -871,7 +871,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
+YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
                                                         const LaunchParams::InstanceGeomRef &geomRef,
                                                         const HitInfo &hit,
                                                         int semantic,

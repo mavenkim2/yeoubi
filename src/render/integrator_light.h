@@ -32,39 +32,39 @@ struct LightRayHit
     bool isDeltaLight = false;
 };
 
-YBI_INTEGRATOR_HD float MaxF(float a, float b)
+YBI_DEVICE float MaxF(float a, float b)
 {
     return a > b ? a : b;
 }
 
-YBI_INTEGRATOR_HD float MinF(float a, float b)
+YBI_DEVICE float MinF(float a, float b)
 {
     return a < b ? a : b;
 }
 
-YBI_INTEGRATOR_HD Vec3 ToVec3(const ybi::Vec3 &value)
+YBI_DEVICE Vec3 ToVec3(const ybi::Vec3 &value)
 {
     return Vec3(value.x, value.y, value.z);
 }
 
-YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params);
-YBI_INTEGRATOR_HD const int *GetLightShadowExcludeRefs(const LaunchParams &params);
-YBI_INTEGRATOR_HD bool IsRefExcludedFromLightShadow(const LaunchParams &params,
+YBI_DEVICE const PackedLight *GetPackedLights(const LaunchParams &params);
+YBI_DEVICE const int *GetLightShadowExcludeRefs(const LaunchParams &params);
+YBI_DEVICE bool IsRefExcludedFromLightShadow(const LaunchParams &params,
                                                     int lightIndex,
                                                     int refIndex);
-YBI_INTEGRATOR_HD bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex);
+YBI_DEVICE bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex);
 
-YBI_INTEGRATOR_HD Vec3 LightEmission(const PackedLight &light)
+YBI_DEVICE Vec3 LightEmission(const PackedLight &light)
 {
     return ToVec3(light.color) * light.emissionScale;
 }
 
-YBI_INTEGRATOR_HD float LightSelectionWeight(const PackedLight &light)
+YBI_DEVICE float LightSelectionWeight(const PackedLight &light)
 {
     return light.selectionWeight > 0.0f ? light.selectionWeight : 0.0f;
 }
 
-YBI_INTEGRATOR_HD bool IsFiniteAreaLight(const PackedLight &light)
+YBI_DEVICE bool IsFiniteAreaLight(const PackedLight &light)
 {
     return light.type == static_cast<unsigned int>(LightType::Rect) ||
            light.type == static_cast<unsigned int>(LightType::Disk) ||
@@ -72,7 +72,7 @@ YBI_INTEGRATOR_HD bool IsFiniteAreaLight(const PackedLight &light)
            light.type == static_cast<unsigned int>(LightType::Cylinder);
 }
 
-YBI_INTEGRATOR_HD void GetLightBasis(const PackedLight &light, Vec3 *outT, Vec3 *outB, Vec3 *outN)
+YBI_DEVICE void GetLightBasis(const PackedLight &light, Vec3 *outT, Vec3 *outB, Vec3 *outN)
 {
     Vec3 n = Normalize(ToVec3(light.direction));
     Vec3 t = Normalize(ToVec3(light.tangent));
@@ -100,7 +100,7 @@ YBI_INTEGRATOR_HD void GetLightBasis(const PackedLight &light, Vec3 *outT, Vec3 
     }
 }
 
-YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec3 &direction)
+YBI_DEVICE Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec3 &direction)
 {
     Vec3 env = Vec3(0.0f, 0.0f, 0.0f);
     bool hasDome = false;
@@ -125,7 +125,7 @@ YBI_INTEGRATOR_HD Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec
     return env;
 }
 
-YBI_INTEGRATOR_HD int FindDomeLightIndex(const LaunchParams &params)
+YBI_DEVICE int FindDomeLightIndex(const LaunchParams &params)
 {
     const PackedLight *lights = GetPackedLights(params);
     if (!lights)
@@ -143,12 +143,12 @@ YBI_INTEGRATOR_HD int FindDomeLightIndex(const LaunchParams &params)
     return -1;
 }
 
-YBI_INTEGRATOR_HD float DomeDirectionPdf()
+YBI_DEVICE float DomeDirectionPdf()
 {
     return 0.25f * ybi::kInvPi;
 }
 
-YBI_INTEGRATOR_HD void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV)
+YBI_DEVICE void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV)
 {
     const Vec3 d = Normalize(direction);
     const float phi = atan2f(d.x, -d.z);
@@ -165,7 +165,7 @@ YBI_INTEGRATOR_HD void DirectionToLatLongUv(const Vec3 &direction, float *outU, 
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
+YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
 {
     const LaunchParams &params = state.Params();
     Vec3 env = EnvironmentRadiance(params, direction);
@@ -187,7 +187,7 @@ YBI_INTEGRATOR_HD Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &dir
     return Vec3(env.x * sample.x, env.y * sample.y, env.z * sample.z);
 }
 
-YBI_INTEGRATOR_HD int CountDirectLights(const LaunchParams &params)
+YBI_DEVICE int CountDirectLights(const LaunchParams &params)
 {
     const PackedLight *lights = GetPackedLights(params);
     if (!lights)
@@ -206,13 +206,13 @@ YBI_INTEGRATOR_HD int CountDirectLights(const LaunchParams &params)
     return count;
 }
 
-YBI_INTEGRATOR_HD float DirectLightPickPdf(const LaunchParams &params)
+YBI_DEVICE float DirectLightPickPdf(const LaunchParams &params)
 {
     const int count = CountDirectLights(params);
     return count > 0 ? 1.0f / float(count) : 0.0f;
 }
 
-YBI_INTEGRATOR_HD float TotalDirectLightSelectionWeight(const LaunchParams &params)
+YBI_DEVICE float TotalDirectLightSelectionWeight(const LaunchParams &params)
 {
     const PackedLight *lights = GetPackedLights(params);
     if (!lights)
@@ -232,7 +232,7 @@ YBI_INTEGRATOR_HD float TotalDirectLightSelectionWeight(const LaunchParams &para
     return total;
 }
 
-YBI_INTEGRATOR_HD float DirectLightPickPdf(const LaunchParams &params, int lightIndex)
+YBI_DEVICE float DirectLightPickPdf(const LaunchParams &params, int lightIndex)
 {
     const PackedLight *lights = GetPackedLights(params);
     if (!lights || lightIndex < 0 || lightIndex >= params.lightCount ||
@@ -249,7 +249,7 @@ YBI_INTEGRATOR_HD float DirectLightPickPdf(const LaunchParams &params, int light
     return DirectLightPickPdf(params);
 }
 
-YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params)
+YBI_DEVICE const PackedLight *GetPackedLights(const LaunchParams &params)
 {
     if (params.lights == 0ull || params.lightCount <= 0)
     {
@@ -258,7 +258,7 @@ YBI_INTEGRATOR_HD const PackedLight *GetPackedLights(const LaunchParams &params)
     return reinterpret_cast<const PackedLight *>(params.lights);
 }
 
-YBI_INTEGRATOR_HD const int *GetLightShadowExcludeRefs(const LaunchParams &params)
+YBI_DEVICE const int *GetLightShadowExcludeRefs(const LaunchParams &params)
 {
     if (params.lightShadowExcludeRefs == 0ull || params.lightShadowExcludeRefCount <= 0)
     {
@@ -267,7 +267,7 @@ YBI_INTEGRATOR_HD const int *GetLightShadowExcludeRefs(const LaunchParams &param
     return reinterpret_cast<const int *>(params.lightShadowExcludeRefs);
 }
 
-YBI_INTEGRATOR_HD bool IsRefExcludedFromLightShadow(const LaunchParams &params,
+YBI_DEVICE bool IsRefExcludedFromLightShadow(const LaunchParams &params,
                                                     int lightIndex,
                                                     int refIndex)
 {
@@ -301,14 +301,14 @@ YBI_INTEGRATOR_HD bool IsRefExcludedFromLightShadow(const LaunchParams &params,
     return false;
 }
 
-YBI_INTEGRATOR_HD bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex)
+YBI_DEVICE bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex)
 {
     const PackedLight *lights = GetPackedLights(params);
     return lights && lightIndex >= 0 && lightIndex < params.lightCount &&
            lights[lightIndex].shadowExcludeCount > 0u;
 }
 
-YBI_INTEGRATOR_HD bool PickDirectLightWeighted(const LaunchParams &params,
+YBI_DEVICE bool PickDirectLightWeighted(const LaunchParams &params,
                                                unsigned int &rngState,
                                                int *outLightIndex,
                                                float *outLightPickPdf)
@@ -389,7 +389,7 @@ YBI_INTEGRATOR_HD bool PickDirectLightWeighted(const LaunchParams &params,
     return false;
 }
 
-YBI_INTEGRATOR_HD float SolidAnglePdfFromArea(float pickPdf,
+YBI_DEVICE float SolidAnglePdfFromArea(float pickPdf,
                                               float area,
                                               float distanceSquared,
                                               float cosLight)
@@ -401,7 +401,7 @@ YBI_INTEGRATOR_HD float SolidAnglePdfFromArea(float pickPdf,
     return pickPdf * distanceSquared / (area * cosLight);
 }
 
-YBI_INTEGRATOR_HD bool FinalizeAreaLightSample(int lightIndex,
+YBI_DEVICE bool FinalizeAreaLightSample(int lightIndex,
                                                float pickPdf,
                                                const PackedLight &light,
                                                const Vec3 &surfacePoint,
@@ -440,7 +440,7 @@ YBI_INTEGRATOR_HD bool FinalizeAreaLightSample(int lightIndex,
     return outSample->pdf > 0.0f;
 }
 
-YBI_INTEGRATOR_HD bool SampleRectLight(int lightIndex,
+YBI_DEVICE bool SampleRectLight(int lightIndex,
                                        float pickPdf,
                                        const PackedLight &light,
                                        const Vec3 &surfacePoint,
@@ -459,7 +459,7 @@ YBI_INTEGRATOR_HD bool SampleRectLight(int lightIndex,
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
-YBI_INTEGRATOR_HD bool SampleDiskLight(int lightIndex,
+YBI_DEVICE bool SampleDiskLight(int lightIndex,
                                        float pickPdf,
                                        const PackedLight &light,
                                        const Vec3 &surfacePoint,
@@ -478,7 +478,7 @@ YBI_INTEGRATOR_HD bool SampleDiskLight(int lightIndex,
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
-YBI_INTEGRATOR_HD Vec3 SampleUniformSphereDirection(float u1, float u2)
+YBI_DEVICE Vec3 SampleUniformSphereDirection(float u1, float u2)
 {
     const float z = 1.0f - 2.0f * u1;
     const float r = SafeSqrt(1.0f - z * z);
@@ -486,7 +486,7 @@ YBI_INTEGRATOR_HD Vec3 SampleUniformSphereDirection(float u1, float u2)
     return Vec3(r * cosf(phi), r * sinf(phi), z);
 }
 
-YBI_INTEGRATOR_HD bool SampleSphereLight(int lightIndex,
+YBI_DEVICE bool SampleSphereLight(int lightIndex,
                                          float pickPdf,
                                          const PackedLight &light,
                                          const Vec3 &surfacePoint,
@@ -498,7 +498,7 @@ YBI_INTEGRATOR_HD bool SampleSphereLight(int lightIndex,
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
-YBI_INTEGRATOR_HD bool SampleCylinderLight(int lightIndex,
+YBI_DEVICE bool SampleCylinderLight(int lightIndex,
                                            float pickPdf,
                                            const PackedLight &light,
                                            const Vec3 &surfacePoint,
@@ -518,7 +518,7 @@ YBI_INTEGRATOR_HD bool SampleCylinderLight(int lightIndex,
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, radial, outSample);
 }
 
-YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
+YBI_DEVICE bool SampleDirectLight(const LaunchParams &params,
                                          const Vec3 &surfacePoint,
                                          unsigned int &rngState,
                                          DirectLightSample *outSample)
@@ -561,7 +561,7 @@ YBI_INTEGRATOR_HD bool SampleDirectLight(const LaunchParams &params,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD bool SampleDomeLight(State &state,
+YBI_DEVICE bool SampleDomeLight(State &state,
                                        unsigned int &rngState,
                                        DirectLightSample *outSample)
 {

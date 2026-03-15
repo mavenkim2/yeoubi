@@ -10,7 +10,7 @@
 namespace ybi
 {
 
-static YBI_INTEGRATOR_HD bool
+static YBI_DEVICE bool
 TryGetTriangleLocalPositions(const LaunchParams &params,
                              int instanceId,
                              int primitiveIndex,
@@ -55,7 +55,7 @@ TryGetTriangleLocalPositions(const LaunchParams &params,
     return true;
 }
 
-static YBI_INTEGRATOR_HD bool ComputeTriangleShadingNormal(const LaunchParams &params,
+static YBI_DEVICE bool ComputeTriangleShadingNormal(const LaunchParams &params,
                                                            float u,
                                                            float v,
                                                            int primitiveIndex,
@@ -93,7 +93,7 @@ static YBI_INTEGRATOR_HD bool ComputeTriangleShadingNormal(const LaunchParams &p
     return true;
 }
 
-static YBI_INTEGRATOR_HD bool TryGetTriangleTexcoords(
+static YBI_DEVICE bool TryGetTriangleTexcoords(
     const LaunchParams &params,
     int instanceId,
     int primitiveIndex,
@@ -139,7 +139,7 @@ static YBI_INTEGRATOR_HD bool TryGetTriangleTexcoords(
     return true;
 }
 
-static YBI_INTEGRATOR_HD bool TryBuildTriangleSurfacePartialFallback(
+static YBI_DEVICE bool TryBuildTriangleSurfacePartialFallback(
     render::integrator::HitInfo *outHit)
 {
     if (!outHit || !outHit->hasWorldTriangle)
@@ -171,7 +171,7 @@ static YBI_INTEGRATOR_HD bool TryBuildTriangleSurfacePartialFallback(
     return true;
 }
 
-static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
+static YBI_DEVICE bool TryComputeTriangleSurfacePartials(
     const LaunchParams &params, render::integrator::HitInfo *outHit)
 {
     if (!outHit || !outHit->hasWorldTriangle || outHit->instanceId < 0 || outHit->primitiveIndex < 0)
@@ -216,7 +216,7 @@ static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
     return true;
 }
 
-static YBI_INTEGRATOR_HD bool TryComputeTriangleHitDifferentials(
+static YBI_DEVICE bool TryComputeTriangleHitDifferentials(
     const LaunchParams &params,
     const render::integrator::RayDifferential *rayDiff,
     render::integrator::HitInfo *outHit)

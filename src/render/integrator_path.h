@@ -12,7 +12,7 @@ namespace render
 namespace integrator
 {
 
-YBI_INTEGRATOR_HD const LaunchParams::InstanceGeomRef *GetGeomRefs(const LaunchParams &params)
+YBI_DEVICE const LaunchParams::InstanceGeomRef *GetGeomRefs(const LaunchParams &params)
 {
     if (params.instanceGeomRefs == 0ull || params.instanceGeomRefCount <= 0)
     {
@@ -21,7 +21,7 @@ YBI_INTEGRATOR_HD const LaunchParams::InstanceGeomRef *GetGeomRefs(const LaunchP
     return reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
 }
 
-YBI_INTEGRATOR_HD const PackedMaterial *GetPackedMaterials(const LaunchParams &params)
+YBI_DEVICE const PackedMaterial *GetPackedMaterials(const LaunchParams &params)
 {
     if (params.materials == 0ull || params.materialCount <= 0)
     {
@@ -30,12 +30,12 @@ YBI_INTEGRATOR_HD const PackedMaterial *GetPackedMaterials(const LaunchParams &p
     return reinterpret_cast<const PackedMaterial *>(params.materials);
 }
 
-YBI_INTEGRATOR_HD EvaluatedMaterial DefaultMaterial()
+YBI_DEVICE EvaluatedMaterial DefaultMaterial()
 {
     return {};
 }
 
-YBI_INTEGRATOR_HD float LinearToSrgb(float value)
+YBI_DEVICE float LinearToSrgb(float value)
 {
     if (value <= 0.0f)
     {
@@ -48,14 +48,14 @@ YBI_INTEGRATOR_HD float LinearToSrgb(float value)
     return 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
 }
 
-YBI_INTEGRATOR_HD Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
+YBI_DEVICE Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
 {
     const Vec3 mapped =
         Vec3(1.0f - expf(-radiance.x), 1.0f - expf(-radiance.y), 1.0f - expf(-radiance.z));
     return Vec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
 }
 
-YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
+YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
                                                           int materialIndex)
 {
     EvaluatedMaterial material = DefaultMaterial();
@@ -84,7 +84,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &pa
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
+YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
                                                      const LaunchParams::InstanceGeomRef &geomRef,
                                                      const HitInfo &hit)
 {
@@ -147,7 +147,7 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     return material;
 }
 
-YBI_INTEGRATOR_HD LaunchParams::InstanceGeomRef ResolveGeomRef(
+YBI_DEVICE LaunchParams::InstanceGeomRef ResolveGeomRef(
     const LaunchParams &params,
     const LaunchParams::InstanceGeomRef *geomRefs,
     int instanceId)
@@ -161,19 +161,19 @@ YBI_INTEGRATOR_HD LaunchParams::InstanceGeomRef ResolveGeomRef(
     return geomRef;
 }
 
-YBI_INTEGRATOR_HD bool ShouldAlphaCutout(const EvaluatedMaterial &material)
+YBI_DEVICE bool ShouldAlphaCutout(const EvaluatedMaterial &material)
 {
     return material.opacityThreshold > 0.0f && material.opacity < material.opacityThreshold;
 }
 
-YBI_INTEGRATOR_HD Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
+YBI_DEVICE Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
 {
     const float transmission = Clamp01(1.0f - material.opacity);
     return Vec3(transmission, transmission, transmission);
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD Vec3 TraceShadowTransmittance(State &state,
+YBI_DEVICE Vec3 TraceShadowTransmittance(State &state,
                                                 const LaunchParams::InstanceGeomRef *geomRefs,
                                                 const Vec3 &origin,
                                                 const Vec3 &direction,
@@ -242,7 +242,7 @@ YBI_INTEGRATOR_HD Vec3 TraceShadowTransmittance(State &state,
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD uint32_t IntegratorPathTrace(State &state,
+YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
                                                const Vec3 &origin,
                                                const Vec3 &direction)
 {

@@ -11,7 +11,7 @@ namespace integrator
 {
 
 template <typename State>
-YBI_INTEGRATOR_HD uint32_t IntegratorAO(State &state, const HitInfo &hit)
+YBI_DEVICE uint32_t IntegratorAO(State &state, const HitInfo &hit)
 {
     const LaunchParams &params = state.Params();
     const int spp = params.spp > 0 ? params.spp : 1;

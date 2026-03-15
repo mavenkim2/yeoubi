@@ -39,19 +39,19 @@ namespace render
 namespace integrator
 {
 
-YBI_INTEGRATOR_HD Vec3 OpenPbrDefaultRgbWavelengthsNm()
+YBI_DEVICE Vec3 OpenPbrDefaultRgbWavelengthsNm()
 {
     return Vec3(700.0f, 546.1f, 435.8f);
 }
 
-YBI_INTEGRATOR_HD Vec3 OpenPbrCombinedWeight(const OpenPBR_DiffuseSpecular &weight)
+YBI_DEVICE Vec3 OpenPbrCombinedWeight(const OpenPBR_DiffuseSpecular &weight)
 {
     return Vec3(weight.diffuse.x + weight.specular.x,
                 weight.diffuse.y + weight.specular.y,
                 weight.diffuse.z + weight.specular.z);
 }
 
-YBI_INTEGRATOR_HD bool OpenPbrSampleIsDelta(const OpenPBR_BsdfLobeType sampledType)
+YBI_DEVICE bool OpenPbrSampleIsDelta(const OpenPBR_BsdfLobeType sampledType)
 {
     return (sampledType & OpenPBR_BsdfLobeTypeSpecular) != 0u;
 }

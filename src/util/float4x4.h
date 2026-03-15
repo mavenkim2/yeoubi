@@ -13,7 +13,7 @@ struct Float4x4
     float m[4][4];
 
     Float4x4() = default;
-    YBI_INTEGRATOR_HD constexpr Float4x4(float m00,
+    YBI_DEVICE constexpr Float4x4(float m00,
                                          float m01,
                                          float m02,
                                          float m03,
@@ -33,7 +33,7 @@ struct Float4x4
     {
     }
 
-    YBI_INTEGRATOR_HD Float4x4(Vec4 r0, Vec4 r1, Vec4 r2, Vec4 r3)
+    YBI_DEVICE Float4x4(Vec4 r0, Vec4 r1, Vec4 r2, Vec4 r3)
     {
         for (int c = 0; c < 4; ++c)
         {
@@ -44,7 +44,7 @@ struct Float4x4
         }
     }
 
-    YBI_INTEGRATOR_HD static constexpr Float4x4 Identity()
+    YBI_DEVICE static constexpr Float4x4 Identity()
     {
         return Float4x4(1.0f,
                         0.0f,
@@ -67,7 +67,7 @@ struct Float4x4
 
 using float4x4 = Float4x4;
 
-YBI_INTEGRATOR_HD Float4x4 operator*(const Float4x4 &a, const Float4x4 &b)
+YBI_DEVICE Float4x4 operator*(const Float4x4 &a, const Float4x4 &b)
 {
     Float4x4 c;
     for (int i = 0; i < 4; ++i)
@@ -81,7 +81,7 @@ YBI_INTEGRATOR_HD Float4x4 operator*(const Float4x4 &a, const Float4x4 &b)
     return c;
 }
 
-YBI_INTEGRATOR_HD Vec4 operator*(const Float4x4 &mat, const Vec4 &p)
+YBI_DEVICE Vec4 operator*(const Float4x4 &mat, const Vec4 &p)
 {
     return Vec4(Dot(Vec4(mat.m[0][0], mat.m[0][1], mat.m[0][2], mat.m[0][3]), p),
                 Dot(Vec4(mat.m[1][0], mat.m[1][1], mat.m[1][2], mat.m[1][3]), p),
@@ -89,20 +89,20 @@ YBI_INTEGRATOR_HD Vec4 operator*(const Float4x4 &mat, const Vec4 &p)
                 Dot(Vec4(mat.m[3][0], mat.m[3][1], mat.m[3][2], mat.m[3][3]), p));
 }
 
-YBI_INTEGRATOR_HD Vec3 TransformPointAffine(const Float4x4 &mat, const Vec3 &p)
+YBI_DEVICE Vec3 TransformPointAffine(const Float4x4 &mat, const Vec3 &p)
 {
     const Vec4 hp = mat * Vec4(p, 1.0f);
     return Vec3(hp.x, hp.y, hp.z);
 }
 
-YBI_INTEGRATOR_HD Vec3 TransformVectorAffine(const Float4x4 &mat, const Vec3 &v)
+YBI_DEVICE Vec3 TransformVectorAffine(const Float4x4 &mat, const Vec3 &v)
 {
     return Vec3(mat.m[0][0] * v.x + mat.m[0][1] * v.y + mat.m[0][2] * v.z,
                 mat.m[1][0] * v.x + mat.m[1][1] * v.y + mat.m[1][2] * v.z,
                 mat.m[2][0] * v.x + mat.m[2][1] * v.y + mat.m[2][2] * v.z);
 }
 
-YBI_INTEGRATOR_HD Vec3 TransformPointPerspective(const Float4x4 &mat, const Vec3 &p)
+YBI_DEVICE Vec3 TransformPointPerspective(const Float4x4 &mat, const Vec3 &p)
 {
     const Vec4 hp = mat * Vec4(p, 1.0f);
     if (fabsf(hp.w) <= 1.0e-20f)
@@ -114,7 +114,7 @@ YBI_INTEGRATOR_HD Vec3 TransformPointPerspective(const Float4x4 &mat, const Vec3
     return Vec3(hp.x * invW, hp.y * invW, hp.z * invW);
 }
 
-YBI_INTEGRATOR_HD bool Invert(const Float4x4 &mat, Float4x4 *out)
+YBI_DEVICE bool Invert(const Float4x4 &mat, Float4x4 *out)
 {
     if (!out)
     {
@@ -196,7 +196,7 @@ YBI_INTEGRATOR_HD bool Invert(const Float4x4 &mat, Float4x4 *out)
     return true;
 }
 
-YBI_INTEGRATOR_HD Float4x4 Transpose(const Float4x4 &mat)
+YBI_DEVICE Float4x4 Transpose(const Float4x4 &mat)
 {
     return Float4x4(mat.m[0][0],
                     mat.m[1][0],
@@ -216,7 +216,7 @@ YBI_INTEGRATOR_HD Float4x4 Transpose(const Float4x4 &mat)
                     mat.m[3][3]);
 }
 
-YBI_INTEGRATOR_HD Float4x4 BuildCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
+YBI_DEVICE Float4x4 BuildCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
 {
     Vec3 forward = Normalize(lookAt - eye);
     if (Length(forward) <= 1.0e-8f)
@@ -248,7 +248,7 @@ YBI_INTEGRATOR_HD Float4x4 BuildCameraFromWorld(const Vec3 &eye, const Vec3 &loo
                     1.0f);
 }
 
-YBI_INTEGRATOR_HD Float4x4 BuildPerspectiveClipFromCamera(float verticalFovDegrees,
+YBI_DEVICE Float4x4 BuildPerspectiveClipFromCamera(float verticalFovDegrees,
                                                           int viewportWidth,
                                                           int viewportHeight,
                                                           float nearPlane = 1.0f,

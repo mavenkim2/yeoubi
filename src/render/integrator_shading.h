@@ -19,12 +19,12 @@ struct ShadingFrame
     bool hasTangentFrame = false;
 };
 
-YBI_INTEGRATOR_HD Vec3 SafeNormalizeOrDefault(const Vec3 &value, const Vec3 &fallback)
+YBI_DEVICE Vec3 SafeNormalizeOrDefault(const Vec3 &value, const Vec3 &fallback)
 {
     return LengthSquared(value) > 1.0e-12f ? Normalize(value) : fallback;
 }
 
-YBI_INTEGRATOR_HD bool TryComputeTriangleTangentFrame(
+YBI_DEVICE bool TryComputeTriangleTangentFrame(
     const LaunchParams::InstanceGeomRef &geomRef,
     const HitInfo &hit,
     const Vec3 &baseNormal,
@@ -73,7 +73,7 @@ YBI_INTEGRATOR_HD bool TryComputeTriangleTangentFrame(
 }
 
 template <typename State>
-YBI_INTEGRATOR_HD ShadingFrame EvaluateShadingFrame(State &state,
+YBI_DEVICE ShadingFrame EvaluateShadingFrame(State &state,
                                                     const LaunchParams::InstanceGeomRef &geomRef,
                                                     const HitInfo &hit)
 {

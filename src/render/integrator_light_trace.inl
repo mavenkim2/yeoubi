@@ -1,4 +1,4 @@
-YBI_INTEGRATOR_HD bool IntersectRectLight(const PackedLight &light,
+YBI_DEVICE bool IntersectRectLight(const PackedLight &light,
                                           const Vec3 &rayOrigin,
                                           const Vec3 &rayDir,
                                           float tMax,
@@ -46,7 +46,7 @@ YBI_INTEGRATOR_HD bool IntersectRectLight(const PackedLight &light,
     return true;
 }
 
-YBI_INTEGRATOR_HD bool IntersectDiskLight(const PackedLight &light,
+YBI_DEVICE bool IntersectDiskLight(const PackedLight &light,
                                           const Vec3 &rayOrigin,
                                           const Vec3 &rayDir,
                                           float tMax,
@@ -94,7 +94,7 @@ YBI_INTEGRATOR_HD bool IntersectDiskLight(const PackedLight &light,
     return true;
 }
 
-YBI_INTEGRATOR_HD bool IntersectSphereLight(const PackedLight &light,
+YBI_DEVICE bool IntersectSphereLight(const PackedLight &light,
                                             const Vec3 &rayOrigin,
                                             const Vec3 &rayDir,
                                             float tMax,
@@ -140,7 +140,7 @@ YBI_INTEGRATOR_HD bool IntersectSphereLight(const PackedLight &light,
     return true;
 }
 
-YBI_INTEGRATOR_HD bool IntersectCylinderLight(const PackedLight &light,
+YBI_DEVICE bool IntersectCylinderLight(const PackedLight &light,
                                               const Vec3 &rayOrigin,
                                               const Vec3 &rayDir,
                                               float tMax,
@@ -209,7 +209,7 @@ YBI_INTEGRATOR_HD bool IntersectCylinderLight(const PackedLight &light,
     return false;
 }
 
-YBI_INTEGRATOR_HD bool TraceAnalyticLight(const LaunchParams &params,
+YBI_DEVICE bool TraceAnalyticLight(const LaunchParams &params,
                                           const Vec3 &rayOrigin,
                                           const Vec3 &rayDir,
                                           float tMax,
