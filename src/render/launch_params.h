@@ -86,6 +86,10 @@ struct LaunchParams
     ybi::Float4x4 worldFromCamera;
     ybi::Float4x4 cameraFromRaster;
     ybi::Float4x4 rasterFromCamera;
+    ybi::Vec3 minPosDifferentialX;
+    ybi::Vec3 minPosDifferentialY;
+    ybi::Vec3 minDirDifferentialX;
+    ybi::Vec3 minDirDifferentialY;
     ybi::Vec3 cameraU;
     ybi::Vec3 cameraV;
     ybi::Vec3 cameraW;

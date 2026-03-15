@@ -40,6 +40,56 @@ YBI_INTEGRATOR_HD bool IsFiniteVec3(const Vec3 &value)
     return IsFiniteScalar(value.x) && IsFiniteScalar(value.y) && IsFiniteScalar(value.z);
 }
 
+YBI_INTEGRATOR_HD Float4x4 RotateFromTo(const Vec3 &from, const Vec3 &to)
+{
+    if (!IsFiniteVec3(from) || !IsFiniteVec3(to) || LengthSquared(from) <= 1.0e-20f ||
+        LengthSquared(to) <= 1.0e-20f)
+    {
+        return Float4x4::Identity();
+    }
+
+    const Vec3 fromN = Normalize(from);
+    const Vec3 toN = Normalize(to);
+    if (Dot(fromN, toN) >= 1.0f - 1.0e-6f)
+    {
+        return Float4x4::Identity();
+    }
+
+    Vec3 refl = Vec3(0.0f, 0.0f, 1.0f);
+    if (fabsf(fromN.x) < 0.72f && fabsf(toN.x) < 0.72f)
+    {
+        refl = Vec3(1.0f, 0.0f, 0.0f);
+    }
+    else if (fabsf(fromN.y) < 0.72f && fabsf(toN.y) < 0.72f)
+    {
+        refl = Vec3(0.0f, 1.0f, 0.0f);
+    }
+
+    const Vec3 u = refl - fromN;
+    const Vec3 v = refl - toN;
+    const float uu = Dot(u, u);
+    const float vv = Dot(v, v);
+    if (uu <= 1.0e-20f || vv <= 1.0e-20f)
+    {
+        return Float4x4::Identity();
+    }
+
+    const float uv = Dot(u, v);
+    const float uuScale = 2.0f / uu;
+    const float vvScale = 2.0f / vv;
+    const float uvScale = 4.0f * uv / (uu * vv);
+    Float4x4 r = Float4x4::Identity();
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            r.m[i][j] = (i == j ? 1.0f : 0.0f) - uuScale * u[i] * u[j] - vvScale * v[i] * v[j] +
+                        uvScale * v[i] * u[j];
+        }
+    }
+    return r;
+}
+
 YBI_INTEGRATOR_HD bool SolveLinear2x2(float a00,
                                       float a01,
                                       float a10,
@@ -173,6 +223,65 @@ YBI_INTEGRATOR_HD TextureDifferentialResult ComputeTextureDifferentials(const Ve
         result.dTdy = 0.0f;
     }
     return result;
+}
+
+YBI_INTEGRATOR_HD bool ApproximateDpDxy(const LaunchParams &params,
+                                        const Vec3 &p,
+                                        const Vec3 &n,
+                                        int samplesPerPixel,
+                                        Vec3 *outDpdx,
+                                        Vec3 *outDpdy)
+{
+    if (!outDpdx || !outDpdy || !IsFiniteVec3(p) || !IsFiniteVec3(n) ||
+        !IsFiniteVec3(params.minPosDifferentialX) || !IsFiniteVec3(params.minPosDifferentialY) ||
+        !IsFiniteVec3(params.minDirDifferentialX) || !IsFiniteVec3(params.minDirDifferentialY))
+    {
+        return false;
+    }
+
+    *outDpdx = Vec3(0.0f);
+    *outDpdy = Vec3(0.0f);
+
+    const Vec3 pCamera = TransformPointAffine(params.cameraFromWorld, p);
+    const Vec3 nCamera = TransformVectorAffine(params.cameraFromWorld, n);
+    if (!IsFiniteVec3(pCamera) || !IsFiniteVec3(nCamera) || LengthSquared(pCamera) <= 1.0e-20f ||
+        LengthSquared(nCamera) <= 1.0e-20f)
+    {
+        return false;
+    }
+
+    const Float4x4 downZFromCamera = RotateFromTo(Normalize(pCamera), Vec3(0.0f, 0.0f, 1.0f));
+    const Vec3 pDownZ = TransformPointAffine(downZFromCamera, pCamera);
+    const Vec3 nDownZ = TransformVectorAffine(downZFromCamera, nCamera);
+    const float d = Dot(nDownZ, pDownZ);
+
+    const Vec3 xRayOrigin = params.minPosDifferentialX;
+    const Vec3 yRayOrigin = params.minPosDifferentialY;
+    const Vec3 xRayDir = Vec3(0.0f, 0.0f, 1.0f) + params.minDirDifferentialX;
+    const Vec3 yRayDir = Vec3(0.0f, 0.0f, 1.0f) + params.minDirDifferentialY;
+    const float xDenom = Dot(nDownZ, xRayDir);
+    const float yDenom = Dot(nDownZ, yRayDir);
+    if (fabsf(xDenom) <= 1.0e-8f || fabsf(yDenom) <= 1.0e-8f)
+    {
+        return false;
+    }
+
+    const float tx = -(Dot(nDownZ, xRayOrigin) - d) / xDenom;
+    const float ty = -(Dot(nDownZ, yRayOrigin) - d) / yDenom;
+    if (!IsFiniteScalar(tx) || !IsFiniteScalar(ty))
+    {
+        return false;
+    }
+
+    const Vec3 px = xRayOrigin + tx * xRayDir;
+    const Vec3 py = yRayOrigin + ty * yRayDir;
+    const Float4x4 cameraFromDownZ = Transpose(downZFromCamera);
+    const Vec3 dpdxCamera = TransformVectorAffine(cameraFromDownZ, px - pDownZ);
+    const Vec3 dpdyCamera = TransformVectorAffine(cameraFromDownZ, py - pDownZ);
+    const float sppScale = fmaxf(0.125f, 1.0f / sqrtf(float(MaxInt(samplesPerPixel, 1))));
+    *outDpdx = sppScale * TransformVectorAffine(params.worldFromCamera, dpdxCamera);
+    *outDpdy = sppScale * TransformVectorAffine(params.worldFromCamera, dpdyCamera);
+    return IsFiniteVec3(*outDpdx) && IsFiniteVec3(*outDpdy);
 }
 
 YBI_INTEGRATOR_HD Vec3 ComputePerspectiveCameraDirection(const LaunchParams &params,

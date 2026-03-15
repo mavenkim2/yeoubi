@@ -94,6 +94,13 @@ YBI_INTEGRATOR_HD Vec3 TransformPointAffine(const Float4x4 &mat, const Vec3 &p)
     return Vec3(hp.x, hp.y, hp.z);
 }
 
+YBI_INTEGRATOR_HD Vec3 TransformVectorAffine(const Float4x4 &mat, const Vec3 &v)
+{
+    return Vec3(mat.m[0][0] * v.x + mat.m[0][1] * v.y + mat.m[0][2] * v.z,
+                mat.m[1][0] * v.x + mat.m[1][1] * v.y + mat.m[1][2] * v.z,
+                mat.m[2][0] * v.x + mat.m[2][1] * v.y + mat.m[2][2] * v.z);
+}
+
 YBI_INTEGRATOR_HD Vec3 TransformPointPerspective(const Float4x4 &mat, const Vec3 &p)
 {
     const Vec4 hp = mat * Vec4(p, 1.0f);
@@ -186,6 +193,26 @@ YBI_INTEGRATOR_HD bool Invert(const Float4x4 &mat, Float4x4 *out)
         }
     }
     return true;
+}
+
+YBI_INTEGRATOR_HD Float4x4 Transpose(const Float4x4 &mat)
+{
+    return Float4x4(mat.m[0][0],
+                    mat.m[1][0],
+                    mat.m[2][0],
+                    mat.m[3][0],
+                    mat.m[0][1],
+                    mat.m[1][1],
+                    mat.m[2][1],
+                    mat.m[3][1],
+                    mat.m[0][2],
+                    mat.m[1][2],
+                    mat.m[2][2],
+                    mat.m[3][2],
+                    mat.m[0][3],
+                    mat.m[1][3],
+                    mat.m[2][3],
+                    mat.m[3][3]);
 }
 
 } // namespace ybi
