@@ -95,39 +95,39 @@ YBI_INTEGRATOR_HD EvaluatedMaterial EvaluateMaterial(State &state,
     Vec4 sample = {};
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticDiffuse, sample))
     {
-        material.baseColor = material.baseColor * Vec3(sample.x, sample.y, sample.z);
+        material.baseColor = Vec3(sample.x, sample.y, sample.z);
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticRoughness, sample))
     {
-        material.roughness *= sample.x;
+        material.roughness = sample.x;
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticMetallic, sample))
     {
-        material.metallic *= sample.x;
+        material.metallic = sample.x;
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticEmissive, sample))
     {
-        material.emissiveColor = material.emissiveColor * Vec3(sample.x, sample.y, sample.z);
+        material.emissiveColor = Vec3(sample.x, sample.y, sample.z);
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticSpecularColor, sample))
     {
-        material.specularColor = material.specularColor * Vec3(sample.x, sample.y, sample.z);
+        material.specularColor = Vec3(sample.x, sample.y, sample.z);
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticIor, sample))
     {
-        material.ior *= MaxFloat(sample.x, 0.0f);
+        material.ior = sample.x;
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticOpacity, sample))
     {
-        material.opacity *= sample.x;
+        material.opacity = sample.x;
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticClearcoat, sample))
     {
-        material.clearcoat *= sample.x;
+        material.clearcoat = sample.x;
     }
     if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticClearcoatRoughness, sample))
     {
-        material.clearcoatRoughness *= sample.x;
+        material.clearcoatRoughness = sample.x;
     }
 
     material.baseColor = ClampVec3(material.baseColor, 0.0f, 1.0f);
