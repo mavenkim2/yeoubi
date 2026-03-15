@@ -1,6 +1,7 @@
 #pragma once
 
 #include "render/integrator_common.h"
+#include "render/integrator_ray_differential.h"
 #include "render/launch_params.h"
 #include "util/math_common.h"
 #include "util/vec3.h"
@@ -212,6 +213,59 @@ static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
     }
 
     outHit->hasSurfacePartials = true;
+    return true;
+}
+
+static YBI_INTEGRATOR_HD bool TryComputeTriangleHitDifferentials(
+    const LaunchParams &params,
+    const render::integrator::RayDifferential &rayDiff,
+    render::integrator::HitInfo *outHit)
+{
+    if (!outHit)
+    {
+        return false;
+    }
+
+    outHit->dpdx = Vec3(0.0f);
+    outHit->dpdy = Vec3(0.0f);
+    outHit->dSdx = 0.0f;
+    outHit->dTdx = 0.0f;
+    outHit->dSdy = 0.0f;
+    outHit->dTdy = 0.0f;
+    outHit->hasPositionDifferentials = false;
+    outHit->hasTextureDifferentials = false;
+
+    if (!outHit->hasWorldTriangle || !outHit->hasSurfacePartials || !outHit->hasGeomNormal)
+    {
+        return false;
+    }
+
+    const Vec3 hitPoint = outHit->rayOrigin + outHit->rayDir * outHit->t;
+    const render::integrator::HitPlaneDifferentialResult planeDiff =
+        render::integrator::ComputeHitPlaneDifferentials(
+            params, rayDiff, hitPoint, outHit->geomNormal, params.spp);
+    if (!planeDiff.valid)
+    {
+        return false;
+    }
+
+    outHit->dpdx = planeDiff.dpdx;
+    outHit->dpdy = planeDiff.dpdy;
+    outHit->hasPositionDifferentials = true;
+
+    const render::integrator::TextureDifferentialResult texDiff =
+        render::integrator::ComputeTextureDifferentials(
+            outHit->dpdx, outHit->dpdy, outHit->dPds, outHit->dPdt, outHit->geomNormal);
+    if (!texDiff.valid)
+    {
+        return false;
+    }
+
+    outHit->dSdx = texDiff.dSdx;
+    outHit->dTdx = texDiff.dTdx;
+    outHit->dSdy = texDiff.dSdy;
+    outHit->dTdy = texDiff.dTdy;
+    outHit->hasTextureDifferentials = true;
     return true;
 }
 

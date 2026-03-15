@@ -376,6 +376,39 @@ extern "C" __global__ void __closesthit__primary()
         hit.primitiveIndex = static_cast<int>(optixGetPrimitiveIndex());
         (void)TryComputeTriangleWorldPositions(hit.instanceId, hit.primitiveIndex, &hit);
         (void)ybi::TryComputeTriangleSurfacePartials(params, &hit);
+
+        Vec3 geomNormal(-rayDirection.x, -rayDirection.y, -rayDirection.z);
+        if (TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal))
+        {
+            hit.geomNormal = geomNormal;
+            hit.hasGeomNormal = true;
+        }
+
+        hit.hasShadingNormal = ybi::ComputeTriangleShadingNormal(params,
+                                                                 hit.barycentrics.y,
+                                                                 hit.barycentrics.z,
+                                                                 hit.primitiveIndex,
+                                                                 hit.instanceId,
+                                                                 hit.shadingNormal);
+        if (hit.hasShadingNormal)
+        {
+            hit.shadingNormal = Normalize(ToVec3(
+                optixTransformNormalFromObjectToWorldSpace(
+                    {hit.shadingNormal.x, hit.shadingNormal.y, hit.shadingNormal.z})));
+        }
+
+        if (params.integrator != 3 && hit.hasGeomNormal)
+        {
+            const uint3 launchIndex = optixGetLaunchIndex();
+            const uint3 launchDims = optixGetLaunchDimensions();
+            const ybi::render::integrator::RayDifferential rayDiff =
+                ybi::render::integrator::InitPerspectiveRayDifferential(params,
+                                                                        static_cast<float>(launchIndex.x),
+                                                                        static_cast<float>(launchIndex.y),
+                                                                        launchDims.x,
+                                                                        launchDims.y);
+            (void)ybi::TryComputeTriangleHitDifferentials(params, rayDiff, &hit);
+        }
     }
 
     if (params.integrator == 3)
@@ -384,29 +417,6 @@ extern "C" __global__ void __closesthit__primary()
         if (outHit)
         {
             *outHit = hit;
-            if (isTriangle && hit.hasBarycentrics)
-            {
-                Vec3 geomNormal(-rayDirection.x, -rayDirection.y, -rayDirection.z);
-                bool hasGeom = false;
-                hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
-                outHit->geomNormal = geomNormal;
-                outHit->hasGeomNormal = hasGeom;
-                outHit->hasShadingNormal =
-                    ybi::ComputeTriangleShadingNormal(params,
-                                                      hit.barycentrics.y,
-                                                      hit.barycentrics.z,
-                                                      hit.primitiveIndex,
-                                                      hit.instanceId,
-                                                      outHit->shadingNormal);
-
-                if (outHit->hasShadingNormal)
-                {
-                    outHit->shadingNormal = Normalize(ToVec3(
-                        optixTransformNormalFromObjectToWorldSpace({outHit->shadingNormal.x,
-                                                                    outHit->shadingNormal.y,
-                                                                    outHit->shadingNormal.z})));
-                }
-            }
         }
         return;
     }
@@ -425,9 +435,16 @@ extern "C" __global__ void __closesthit__primary()
     {
         Vec3 geomNormal(-rayDirection.x, -rayDirection.y, -rayDirection.z);
         bool hasGeom = false;
-        if (isTriangle && hit.hasBarycentrics)
+        if (isTriangle && hit.hasBarycentrics && !hit.hasGeomNormal)
         {
             hasGeom = TryComputeTriangleNormal(hit.instanceId, hit.primitiveIndex, geomNormal);
+            hit.geomNormal = geomNormal;
+            hit.hasGeomNormal = hasGeom;
+        }
+        else
+        {
+            geomNormal = hit.geomNormal;
+            hasGeom = hit.hasGeomNormal;
         }
         hit.geomNormal = geomNormal;
         hit.hasGeomNormal = hasGeom;

@@ -272,6 +272,7 @@ static bool TracePrimary(const LaunchParams &params,
                          const ybi::render::integrator::Vec3 &direction,
                          float tMin,
                          float tMax,
+                         const ybi::render::integrator::RayDifferential *rayDiff,
                          ybi::render::integrator::HitInfo *outHit)
 {
     RTCRayHit rayHit = {};
@@ -357,6 +358,10 @@ static bool TracePrimary(const LaunchParams &params,
                 outHit->shadingNormal =
                     TransformNormal3x4RowMajor(transform, outHit->shadingNormal);
             }
+            if (rayDiff)
+            {
+                (void)ybi::TryComputeTriangleHitDifferentials(params, *rayDiff, outHit);
+            }
         }
     }
 
@@ -369,7 +374,7 @@ bool CPUIntegratorState::TraceClosest(const ybi::render::integrator::Vec3 &origi
                                       float tMax,
                                       ybi::render::integrator::HitInfo *outHit) const
 {
-    return TracePrimary(*params, origin, direction, tMin, tMax, outHit);
+    return TracePrimary(*params, origin, direction, tMin, tMax, nullptr, outHit);
 }
 
 bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3 &origin,
@@ -389,7 +394,7 @@ bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3
     for (int skip = 0; skip < kMaxShadowSkips; ++skip)
     {
         ybi::render::integrator::HitInfo hit = {};
-        if (!TracePrimary(*params, currentOrigin, direction, tMin, currentMax, &hit))
+        if (!TracePrimary(*params, currentOrigin, direction, tMin, currentMax, nullptr, &hit))
         {
             return false;
         }
@@ -492,6 +497,7 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                                                        direction,
                                                        0.001f,
                                                        std::numeric_limits<float>::infinity(),
+                                                       &rayDiff,
                                                        &hit);
 
                     unsigned int packed = 0u;
