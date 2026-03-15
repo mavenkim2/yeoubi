@@ -12,6 +12,57 @@ namespace render
 namespace integrator
 {
 
+template <typename State>
+YBI_INTEGRATOR_HD void TryWriteTextureFeedback(State &state,
+                                               const LaunchParams::InstanceGeomRef &geomRef,
+                                               int semantic,
+                                               unsigned int primitiveIndex,
+                                               float wrappedU,
+                                               float wrappedV,
+                                               int textureWidth,
+                                               int textureHeight,
+                                               unsigned int udimBits,
+                                               unsigned int mip);
+
+template <typename State>
+YBI_INTEGRATOR_HD bool TryComputeTextureMipLevelProfiled(State &state,
+                                                         const HitInfo &hit,
+                                                         int textureWidth,
+                                                         int textureHeight,
+                                                         unsigned int *outMip)
+{
+    const unsigned long long start = state.BeginTextureMipTiming();
+    const bool result = TryComputeTextureMipLevel(hit, textureWidth, textureHeight, outMip);
+    state.EndTextureMipTiming(start, result);
+    return result;
+}
+
+template <typename State>
+YBI_INTEGRATOR_HD void TryWriteTextureFeedbackProfiled(State &state,
+                                                       const LaunchParams::InstanceGeomRef &geomRef,
+                                                       int semantic,
+                                                       unsigned int primitiveIndex,
+                                                       float wrappedU,
+                                                       float wrappedV,
+                                                       int textureWidth,
+                                                       int textureHeight,
+                                                       unsigned int udimBits,
+                                                       unsigned int mip)
+{
+    const unsigned long long start = state.BeginFeedbackWriteTiming();
+    TryWriteTextureFeedback(state,
+                            geomRef,
+                            semantic,
+                            primitiveIndex,
+                            wrappedU,
+                            wrappedV,
+                            textureWidth,
+                            textureHeight,
+                            udimBits,
+                            mip);
+    state.EndFeedbackWriteTiming(start);
+}
+
 YBI_INTEGRATOR_HD Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sample)
 {
     if (semantic == kSemanticRoughness || semantic == kSemanticMetallic ||
@@ -753,12 +804,12 @@ TryWriteFeedbackOnly(State &state,
     }
 
     unsigned int mip = 0u;
-    if (!TryComputeTextureMipLevel(hit, feedbackRef.width, feedbackRef.height, &mip))
+    if (!TryComputeTextureMipLevelProfiled(state, hit, feedbackRef.width, feedbackRef.height, &mip))
     {
         return false;
     }
 
-    TryWriteTextureFeedback(
+    TryWriteTextureFeedbackProfiled(
         state,
         geomRef,
         params.textureViewSemantic,
@@ -853,7 +904,8 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
         }
 
         unsigned int sampleMip = 0u;
-        const bool haveMip = TryComputeTextureMipLevel(hit, vtRef.width, vtRef.height, &sampleMip);
+        const bool haveMip =
+            TryComputeTextureMipLevelProfiled(state, hit, vtRef.width, vtRef.height, &sampleMip);
         if (!haveMip)
         {
             sampleMip = static_cast<unsigned int>(
@@ -875,16 +927,16 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
         {
             if (haveMip)
             {
-                TryWriteTextureFeedback(state,
-                                        geomRef,
-                                        params.textureViewSemantic,
-                                        static_cast<unsigned int>(hit.primitiveIndex),
-                                        wrappedU,
-                                        wrappedV,
-                                        vtRef.width,
-                                        vtRef.height,
-                                        resolvedUdimBits,
-                                        sampleMip);
+                TryWriteTextureFeedbackProfiled(state,
+                                                geomRef,
+                                                params.textureViewSemantic,
+                                                static_cast<unsigned int>(hit.primitiveIndex),
+                                                wrappedU,
+                                                wrappedV,
+                                                vtRef.width,
+                                                vtRef.height,
+                                                resolvedUdimBits,
+                                                sampleMip);
             }
             return true;
         }
@@ -907,18 +959,18 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
     }
     outColor = MaterialSampleToViewColor(params, sample);
     unsigned int feedbackMip = 0u;
-    if (TryComputeTextureMipLevel(hit, rawRef.width, rawRef.height, &feedbackMip))
+    if (TryComputeTextureMipLevelProfiled(state, hit, rawRef.width, rawRef.height, &feedbackMip))
     {
-        TryWriteTextureFeedback(state,
-                                geomRef,
-                                params.textureViewSemantic,
-                                static_cast<unsigned int>(hit.primitiveIndex),
-                                inputs.unitU,
-                                inputs.unitV,
-                                rawRef.width,
-                                rawRef.height,
-                                inputs.rawUdimBits,
-                                feedbackMip);
+        TryWriteTextureFeedbackProfiled(state,
+                                        geomRef,
+                                        params.textureViewSemantic,
+                                        static_cast<unsigned int>(hit.primitiveIndex),
+                                        inputs.unitU,
+                                        inputs.unitV,
+                                        rawRef.width,
+                                        rawRef.height,
+                                        inputs.rawUdimBits,
+                                        feedbackMip);
     }
     state.MaybeLogSampleSuccess();
     return true;
@@ -999,7 +1051,8 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
                 IsUsableMaterialTextureRef(vtRef))
             {
                 unsigned int sampleMip = 0u;
-                const bool haveMip = TryComputeTextureMipLevel(hit, vtRef.width, vtRef.height, &sampleMip);
+                const bool haveMip = TryComputeTextureMipLevelProfiled(
+                    state, hit, vtRef.width, vtRef.height, &sampleMip);
                 if (!haveMip)
                 {
                     sampleMip = static_cast<unsigned int>(
@@ -1022,16 +1075,16 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
                     outSample = Vec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
                     if (haveMip)
                     {
-                        TryWriteTextureFeedback(state,
-                                                geomRef,
-                                                semantic,
-                                                static_cast<unsigned int>(hit.primitiveIndex),
-                                                wrappedU,
-                                                wrappedV,
-                                                vtRef.width,
-                                                vtRef.height,
-                                                resolvedUdimBits,
-                                                sampleMip);
+                        TryWriteTextureFeedbackProfiled(state,
+                                                        geomRef,
+                                                        semantic,
+                                                        static_cast<unsigned int>(hit.primitiveIndex),
+                                                        wrappedU,
+                                                        wrappedV,
+                                                        vtRef.width,
+                                                        vtRef.height,
+                                                        resolvedUdimBits,
+                                                        sampleMip);
                     }
                     return true;
                 }
@@ -1054,18 +1107,18 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
         return false;
     }
     unsigned int feedbackMip = 0u;
-    if (TryComputeTextureMipLevel(hit, rawRef.width, rawRef.height, &feedbackMip))
+    if (TryComputeTextureMipLevelProfiled(state, hit, rawRef.width, rawRef.height, &feedbackMip))
     {
-        TryWriteTextureFeedback(state,
-                                geomRef,
-                                semantic,
-                                static_cast<unsigned int>(hit.primitiveIndex),
-                                inputs.unitU,
-                                inputs.unitV,
-                                rawRef.width,
-                                rawRef.height,
-                                inputs.rawUdimBits,
-                                feedbackMip);
+        TryWriteTextureFeedbackProfiled(state,
+                                        geomRef,
+                                        semantic,
+                                        static_cast<unsigned int>(hit.primitiveIndex),
+                                        inputs.unitU,
+                                        inputs.unitV,
+                                        rawRef.width,
+                                        rawRef.height,
+                                        inputs.rawUdimBits,
+                                        feedbackMip);
     }
     return true;
 }

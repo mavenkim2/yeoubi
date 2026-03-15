@@ -101,6 +101,20 @@ struct OptixState
         }
     }
 
+    __device__ unsigned long long BeginTextureMipTiming() const
+    {
+        return 0ull;
+    }
+
+    __device__ void EndTextureMipTiming(unsigned long long, bool) const {}
+
+    __device__ unsigned long long BeginFeedbackWriteTiming() const
+    {
+        return 0ull;
+    }
+
+    __device__ void EndFeedbackWriteTiming(unsigned long long) const {}
+
     __device__ bool
     TraceOcclusion(const Vec3 &origin, const Vec3 &direction, float tMin, float tMax) const
     {

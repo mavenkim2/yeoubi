@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -33,6 +34,13 @@ struct FeedbackAccumulator
     std::vector<unsigned long long> keys;
     uint32_t sampled = 0;
     uint32_t overflow = 0;
+    uint64_t mipSolveCalls = 0;
+    uint64_t mipSolveSuccess = 0;
+    uint64_t mipSolveNanos = 0;
+    uint64_t feedbackWriteCalls = 0;
+    uint64_t feedbackWriteNanos = 0;
+    uint64_t recordFeedbackKeyCalls = 0;
+    uint64_t recordFeedbackKeyNanos = 0;
 };
 
 struct CPUIntegratorState
@@ -101,6 +109,7 @@ struct CPUIntegratorState
             return;
         }
 
+        const auto start = std::chrono::steady_clock::now();
         feedback->sampled++;
         if (feedback->sampled <= static_cast<uint32_t>(params->feedbackCapacity))
         {
@@ -110,6 +119,57 @@ struct CPUIntegratorState
         {
             feedback->overflow++;
         }
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
+                                                                 start)
+                .count();
+        feedback->recordFeedbackKeyCalls++;
+        feedback->recordFeedbackKeyNanos += static_cast<uint64_t>(elapsed);
+    }
+
+    uint64_t BeginTextureMipTiming() const
+    {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+
+    void EndTextureMipTiming(uint64_t startNs, bool success)
+    {
+        if (!feedback || startNs == 0)
+        {
+            return;
+        }
+        const uint64_t nowNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        feedback->mipSolveCalls++;
+        feedback->mipSolveSuccess += success ? 1u : 0u;
+        feedback->mipSolveNanos += nowNs - startNs;
+    }
+
+    uint64_t BeginFeedbackWriteTiming() const
+    {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+
+    void EndFeedbackWriteTiming(uint64_t startNs)
+    {
+        if (!feedback || startNs == 0)
+        {
+            return;
+        }
+        const uint64_t nowNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        feedback->feedbackWriteCalls++;
+        feedback->feedbackWriteNanos += nowNs - startNs;
     }
 
     bool TraceOcclusion(const ybi::render::integrator::Vec3 &origin,
@@ -546,10 +606,24 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
     {
         uint32_t totalSampled = 0;
         uint32_t totalOverflow = 0;
+        uint64_t totalMipSolveCalls = 0;
+        uint64_t totalMipSolveSuccess = 0;
+        uint64_t totalMipSolveNanos = 0;
+        uint64_t totalFeedbackWriteCalls = 0;
+        uint64_t totalFeedbackWriteNanos = 0;
+        uint64_t totalRecordFeedbackKeyCalls = 0;
+        uint64_t totalRecordFeedbackKeyNanos = 0;
         for (FeedbackAccumulator &accum : feedbackTLS)
         {
             totalSampled += accum.sampled;
             totalOverflow += accum.overflow;
+            totalMipSolveCalls += accum.mipSolveCalls;
+            totalMipSolveSuccess += accum.mipSolveSuccess;
+            totalMipSolveNanos += accum.mipSolveNanos;
+            totalFeedbackWriteCalls += accum.feedbackWriteCalls;
+            totalFeedbackWriteNanos += accum.feedbackWriteNanos;
+            totalRecordFeedbackKeyCalls += accum.recordFeedbackKeyCalls;
+            totalRecordFeedbackKeyNanos += accum.recordFeedbackKeyNanos;
         }
 
         unsigned long long *keys = reinterpret_cast<unsigned long long *>(params->feedbackKeys);
@@ -574,6 +648,19 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
         unsigned int *stats = reinterpret_cast<unsigned int *>(params->feedbackStats);
         stats[0] = totalSampled;
         stats[1] = totalOverflow;
+        if (totalMipSolveCalls > 0 || totalFeedbackWriteCalls > 0 || totalRecordFeedbackKeyCalls > 0)
+        {
+            std::printf(
+                "profile: cpu_texture_feedback mip_calls=%llu mip_success=%llu mip_ms=%.3f "
+                "write_calls=%llu write_ms=%.3f record_calls=%llu record_ms=%.3f\n",
+                static_cast<unsigned long long>(totalMipSolveCalls),
+                static_cast<unsigned long long>(totalMipSolveSuccess),
+                double(totalMipSolveNanos) / 1.0e6,
+                static_cast<unsigned long long>(totalFeedbackWriteCalls),
+                double(totalFeedbackWriteNanos) / 1.0e6,
+                static_cast<unsigned long long>(totalRecordFeedbackKeyCalls),
+                double(totalRecordFeedbackKeyNanos) / 1.0e6);
+        }
     }
 
     return true;
