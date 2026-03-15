@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/math_constants.h"
 #include "util/vec2.h"
 #include "util/vec3.h"
 #include "util/vec4.h"
@@ -199,7 +200,7 @@ YBI_INTEGRATOR_HD float Random01(unsigned int &state)
 YBI_INTEGRATOR_HD Vec3 SampleCosineHemisphere(float u1, float u2)
 {
     const float r = sqrtf(u1 < 0.0f ? 0.0f : u1);
-    const float phi = 6.28318530718f * u2;
+    const float phi = ybi::kTwoPi * u2;
     const float x = r * cosf(phi);
     const float y = r * sinf(phi);
     const float z = sqrtf((1.0f - u1) < 0.0f ? 0.0f : (1.0f - u1));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/math_constants.h"
 #include "util/float3x4.h"
 #include <cmath>
 
@@ -213,6 +214,71 @@ YBI_INTEGRATOR_HD Float4x4 Transpose(const Float4x4 &mat)
                     mat.m[1][3],
                     mat.m[2][3],
                     mat.m[3][3]);
+}
+
+YBI_INTEGRATOR_HD Float4x4 BuildCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
+{
+    Vec3 forward = Normalize(lookAt - eye);
+    if (Length(forward) <= 1.0e-8f)
+    {
+        forward = Vec3(0.0f, 0.0f, 1.0f);
+    }
+    Vec3 worldUp = Vec3(0.0f, 0.0f, 1.0f);
+    if (fabsf(Dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = Vec3(0.0f, 1.0f, 0.0f);
+    }
+    const Vec3 right = Normalize(Cross(forward, worldUp));
+    const Vec3 up = Normalize(Cross(right, forward));
+    return Float4x4(right.x,
+                    right.y,
+                    right.z,
+                    -Dot(right, eye),
+                    up.x,
+                    up.y,
+                    up.z,
+                    -Dot(up, eye),
+                    forward.x,
+                    forward.y,
+                    forward.z,
+                    -Dot(forward, eye),
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    1.0f);
+}
+
+YBI_INTEGRATOR_HD Float4x4 BuildPerspectiveClipFromCamera(float verticalFovDegrees,
+                                                          int viewportWidth,
+                                                          int viewportHeight,
+                                                          float nearPlane = 1.0f,
+                                                          float farPlane = 1.0e6f)
+{
+    const float fovY = verticalFovDegrees * kDegToRad;
+    const float tanHalfFovY = fmaxf(1.0e-8f, tanf(0.5f * fovY));
+    const float safeWidth = float(viewportWidth > 0 ? viewportWidth : 1);
+    const float safeHeight = float(viewportHeight > 0 ? viewportHeight : 1);
+    const float aspect = fmaxf(1.0e-8f, safeWidth / safeHeight);
+    const float m00 = 1.0f / (tanHalfFovY * aspect);
+    const float m11 = 1.0f / tanHalfFovY;
+    const float m22 = (farPlane + nearPlane) / (farPlane - nearPlane);
+    const float m23 = (-2.0f * farPlane * nearPlane) / (farPlane - nearPlane);
+    return Float4x4(m00,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    m11,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    m22,
+                    m23,
+                    0.0f,
+                    0.0f,
+                    1.0f,
+                    0.0f);
 }
 
 } // namespace ybi

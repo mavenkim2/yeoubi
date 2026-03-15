@@ -145,7 +145,7 @@ YBI_INTEGRATOR_HD int FindDomeLightIndex(const LaunchParams &params)
 
 YBI_INTEGRATOR_HD float DomeDirectionPdf()
 {
-    return 0.25f * 0.31830988618f;
+    return 0.25f * ybi::kInvPi;
 }
 
 YBI_INTEGRATOR_HD void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV)
@@ -156,11 +156,11 @@ YBI_INTEGRATOR_HD void DirectionToLatLongUv(const Vec3 &direction, float *outU, 
     const float theta = acosf(clampedY);
     if (outU)
     {
-        *outU = phi * (0.5f / 3.14159265358979323846f) + 0.5f;
+        *outU = phi * (0.5f * ybi::kInvPi) + 0.5f;
     }
     if (outV)
     {
-        *outV = theta * (1.0f / 3.14159265358979323846f);
+        *outV = theta * ybi::kInvPi;
     }
 }
 
@@ -472,7 +472,7 @@ YBI_INTEGRATOR_HD bool SampleDiskLight(int lightIndex,
     GetLightBasis(light, &tangent, &bitangent, &normal);
 
     const float r = light.radius * SafeSqrt(Random01(rngState));
-    const float phi = 6.28318530718f * Random01(rngState);
+    const float phi = ybi::kTwoPi * Random01(rngState);
     const Vec3 localPoint = tangent * (r * cosf(phi)) + bitangent * (r * sinf(phi));
     const Vec3 lightPoint = ToVec3(light.position) + localPoint;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
@@ -482,7 +482,7 @@ YBI_INTEGRATOR_HD Vec3 SampleUniformSphereDirection(float u1, float u2)
 {
     const float z = 1.0f - 2.0f * u1;
     const float r = SafeSqrt(1.0f - z * z);
-    const float phi = 6.28318530718f * u2;
+    const float phi = ybi::kTwoPi * u2;
     return Vec3(r * cosf(phi), r * sinf(phi), z);
 }
 
@@ -510,7 +510,7 @@ YBI_INTEGRATOR_HD bool SampleCylinderLight(int lightIndex,
     Vec3 axis = {};
     GetLightBasis(light, &tangent, &bitangent, &axis);
 
-    const float phi = 6.28318530718f * Random01(rngState);
+    const float phi = ybi::kTwoPi * Random01(rngState);
     const float z = (Random01(rngState) - 0.5f) * light.length;
     const Vec3 radial = tangent * cosf(phi) + bitangent * sinf(phi);
     const Vec3 center = ToVec3(light.position);

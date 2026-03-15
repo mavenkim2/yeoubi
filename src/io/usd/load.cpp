@@ -801,8 +801,6 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
     const pxr::Usd_PrimFlagsPredicate filterPredicate =
         pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
     pxr::UsdGeomXformCache xformCache(timeCode);
-    constexpr float kPi = 3.14159265358979323846f;
-
     for (const pxr::UsdPrim &prim : pxr::UsdPrimRange(stage->GetPseudoRoot(), filterPredicate))
     {
         if (!prim || !IsVisibilityAllowed(prim))
@@ -882,7 +880,8 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             const float worldScaleY = ybi::Length(axisY);
             info.packed.radius = std::max(localRadius, 0.0f) * 0.5f * (worldScaleX + worldScaleY);
             info.packed.areaScale =
-                std::max(kPi * std::max(localRadius, 0.0f) * worldScaleX * std::max(localRadius, 0.0f) *
+                std::max(ybi::kPi * std::max(localRadius, 0.0f) * worldScaleX *
+                             std::max(localRadius, 0.0f) *
                              worldScaleY,
                          1.0e-4f);
             const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
@@ -906,7 +905,7 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             const float worldScale = (worldScaleX + worldScaleY + worldScaleZ) / 3.0f;
             info.packed.radius = std::max(localRadius, 0.0f) * worldScale;
             info.packed.areaScale =
-                std::max(4.0f * kPi * info.packed.radius * info.packed.radius, 1.0e-4f);
+                std::max(4.0f * ybi::kPi * info.packed.radius * info.packed.radius, 1.0e-4f);
             const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
             info.packed.emissionScale =
                 ComputeAreaEmissionScale(info.packed.emissionScale, info.packed.areaScale, normalized);
@@ -933,7 +932,7 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.radius = std::max(localRadius, 0.0f) * worldRadiusScale;
             info.packed.length = std::max(localLength, 0.0f) * ybi::Length(axisZ);
             info.packed.areaScale =
-                std::max(2.0f * kPi * info.packed.radius * info.packed.length, 1.0e-4f);
+                std::max(ybi::kTwoPi * info.packed.radius * info.packed.length, 1.0e-4f);
             const bool normalized = (info.packed.flags & LIGHT_FLAG_NORMALIZED) != 0u;
             info.packed.emissionScale =
                 ComputeAreaEmissionScale(info.packed.emissionScale, info.packed.areaScale, normalized);

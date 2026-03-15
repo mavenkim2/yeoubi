@@ -179,70 +179,6 @@ static ybi::Float4x4 BuildRasterFromNdc(int width, int height)
         sx, 0.0f, 0.0f, sx, 0.0f, -sy, 0.0f, sy, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
 }
 
-static ybi::Float4x4 BuildFallbackCameraFromWorld(const ybi::Vec3 &eye, const ybi::Vec3 &lookAt)
-{
-    ybi::Vec3 forward = ybi::Normalize(lookAt - eye);
-    if (ybi::Length(forward) <= 1.0e-8f)
-    {
-        forward = ybi::Vec3(0.0f, 0.0f, 1.0f);
-    }
-    ybi::Vec3 worldUp = ybi::Vec3(0.0f, 0.0f, 1.0f);
-    if (std::abs(ybi::Dot(forward, worldUp)) > 0.999f)
-    {
-        worldUp = ybi::Vec3(0.0f, 1.0f, 0.0f);
-    }
-    const ybi::Vec3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
-    const ybi::Vec3 up = ybi::Normalize(ybi::Cross(right, forward));
-    return ybi::Float4x4(right.x,
-                         right.y,
-                         right.z,
-                         -ybi::Dot(right, eye),
-                         up.x,
-                         up.y,
-                         up.z,
-                         -ybi::Dot(up, eye),
-                         forward.x,
-                         forward.y,
-                         forward.z,
-                         -ybi::Dot(forward, eye),
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         1.0f);
-}
-
-static ybi::Float4x4 BuildFallbackClipFromCamera(float verticalFovDegrees,
-                                                 int viewportWidth,
-                                                 int viewportHeight)
-{
-    const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
-    const float tanHalfFovY = std::max(1.0e-8f, std::tan(0.5f * fovY));
-    const float aspect =
-        std::max(1.0e-8f, float(viewportWidth) / float(std::max(viewportHeight, 1)));
-    const float nearPlane = 1.0f;
-    const float farPlane = 1.0e6f;
-    const float m00 = 1.0f / (tanHalfFovY * aspect);
-    const float m11 = 1.0f / tanHalfFovY;
-    const float m22 = (farPlane + nearPlane) / (farPlane - nearPlane);
-    const float m23 = (-2.0f * farPlane * nearPlane) / (farPlane - nearPlane);
-    return ybi::Float4x4(m00,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         m11,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         0.0f,
-                         m22,
-                         m23,
-                         0.0f,
-                         0.0f,
-                         1.0f,
-                         0.0f);
-}
-
 static bool ComputeMinimumCameraDifferentials(RenderCameraOverride *camera)
 {
     if (!camera || camera->width <= 0 || camera->height <= 0)
@@ -385,14 +321,14 @@ BuildFallbackRenderCameraOverride(const ybi::Vec3 &eye, const ybi::Vec3 &lookAt,
     const ybi::Vec3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
     const ybi::Vec3 up = ybi::Normalize(ybi::Cross(right, forward));
     const float aspect = static_cast<float>(width) / static_cast<float>(std::max(height, 1));
-    const float fovY = 45.0f * 3.14159265358979323846f / 180.0f;
+    const float fovY = 45.0f * ybi::kDegToRad;
     const float tanHalfFov = std::tan(fovY * 0.5f);
 
     RenderCameraOverride camera = {};
     camera.width = width;
     camera.height = height;
-    camera.cameraFromWorld = BuildFallbackCameraFromWorld(eye, lookAt);
-    camera.clipFromCamera = BuildFallbackClipFromCamera(45.0f, width, height);
+    camera.cameraFromWorld = ybi::BuildCameraFromWorld(eye, lookAt);
+    camera.clipFromCamera = ybi::BuildPerspectiveClipFromCamera(45.0f, width, height);
     camera.U = right * (aspect * tanHalfFov);
     camera.V = up * tanHalfFov;
     camera.W = forward;
@@ -446,7 +382,7 @@ static std::optional<RenderCameraOverride> BuildUsdRenderCamera(const Camera &ca
 
     const float m00 = camera.clipFromCamera.m[0][0];
     const float m11 = camera.clipFromCamera.m[1][1];
-    float tanHalfFov = std::tan(45.0f * 0.5f * 3.14159265358979323846f / 180.0f);
+    float tanHalfFov = std::tan(45.0f * 0.5f * ybi::kDegToRad);
     float aspect =
         static_cast<float>(camera.viewportWidth) / static_cast<float>(camera.viewportHeight);
     if (std::abs(m00) > 1e-6f && std::abs(m11) > 1e-6f)
