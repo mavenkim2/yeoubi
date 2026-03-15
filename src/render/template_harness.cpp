@@ -24,6 +24,7 @@
 #include "util/vec4.h"
 #include "util/float4x4.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -35,12 +36,12 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <tbb/parallel_for.h>
 
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
 #include "../../tests/bvh/optix/optix_ntc_runtime.h"
@@ -496,23 +497,39 @@ static bool TessellateRootSubdivisionMeshes(Scene *rootScene, const Camera &came
     options.verticalFovDegrees = camera.verticalFovDegrees;
 
     const size_t srcCount = rootScene->subdivisionMeshes.size();
-    rootScene->meshes.reserve(rootScene->meshes.size() + srcCount);
-    for (size_t i = 0; i < srcCount; ++i)
-    {
+    const size_t dstBase = rootScene->meshes.size();
+    rootScene->meshes.resize(dstBase + srcCount);
+    std::atomic<size_t> failureIndex(srcCount);
+    tbb::parallel_for(size_t(0), srcCount, [&](size_t i) {
+        if (failureIndex.load(std::memory_order_relaxed) != srcCount)
+        {
+            return;
+        }
+
         const SubdivisionMesh &subdivMesh = rootScene->subdivisionMeshes[i];
         SubdivisionRunResult result = {};
         if (!SubdivideAdaptive(subdivMesh, options, &result))
         {
-            fprintf(stderr,
-                    "Subdivision failed for rootScene->subdivisionMeshes[%zu] prim=%s\n",
-                    i,
-                    subdivMesh.primPath.c_str());
-            return false;
+            size_t expected = srcCount;
+            (void)failureIndex.compare_exchange_strong(
+                expected, i, std::memory_order_relaxed, std::memory_order_relaxed);
+            return;
         }
 
         result.mesh.materialIndex = subdivMesh.materialIndex;
         result.mesh.parentFromLocal = subdivMesh.parentFromLocal;
-        rootScene->meshes.push_back(std::move(result.mesh));
+        rootScene->meshes[dstBase + i] = std::move(result.mesh);
+    });
+
+    const size_t failedIndex = failureIndex.load(std::memory_order_relaxed);
+    if (failedIndex != srcCount)
+    {
+        rootScene->meshes.resize(dstBase);
+        fprintf(stderr,
+                "Subdivision failed for rootScene->subdivisionMeshes[%zu] prim=%s\n",
+                failedIndex,
+                rootScene->subdivisionMeshes[failedIndex].primPath.c_str());
+        return false;
     }
     rootScene->subdivisionMeshes.clear();
     return true;

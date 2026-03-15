@@ -64,6 +64,7 @@ struct Mesh
     Mesh() = default;
     ~Mesh() = default;
     Mesh(Mesh &&other) = default;
+    Mesh &operator=(Mesh &&other) = default;
 
     Mesh(Array<Vec3> &&pos, Array<int> &&idx);
     Mesh(Array<Vec3> &&pos, Array<int> &&idx, const Float3x4 &parentFromLocal);
