@@ -30,6 +30,13 @@ struct TextureDifferentialResult
     bool valid = false;
 };
 
+struct HitPlaneDifferentialResult
+{
+    Vec3 dpdx = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 dpdy = Vec3(0.0f, 0.0f, 0.0f);
+    bool valid = false;
+};
+
 YBI_INTEGRATOR_HD bool IsFiniteScalar(float value)
 {
     return value == value && fabsf(value) <= 1.0e30f;
@@ -88,6 +95,20 @@ YBI_INTEGRATOR_HD Float4x4 RotateFromTo(const Vec3 &from, const Vec3 &to)
         }
     }
     return r;
+}
+
+YBI_INTEGRATOR_HD void InvalidateRayDifferential(RayDifferential *rayDiff)
+{
+    if (!rayDiff)
+    {
+        return;
+    }
+
+    rayDiff->originX = rayDiff->origin;
+    rayDiff->originY = rayDiff->origin;
+    rayDiff->dirX = rayDiff->dir;
+    rayDiff->dirY = rayDiff->dir;
+    rayDiff->valid = false;
 }
 
 YBI_INTEGRATOR_HD bool SolveLinear2x2(float a00,
@@ -282,6 +303,68 @@ YBI_INTEGRATOR_HD bool ApproximateDpDxy(const LaunchParams &params,
     *outDpdx = sppScale * TransformVectorAffine(params.worldFromCamera, dpdxCamera);
     *outDpdy = sppScale * TransformVectorAffine(params.worldFromCamera, dpdyCamera);
     return IsFiniteVec3(*outDpdx) && IsFiniteVec3(*outDpdy);
+}
+
+YBI_INTEGRATOR_HD bool TransferRayDifferentialToHitPoint(const RayDifferential &rayDiff,
+                                                         const Vec3 &hitPoint,
+                                                         const Vec3 &geomNormal,
+                                                         Vec3 *outPx,
+                                                         Vec3 *outPy)
+{
+    if (!rayDiff.valid || !outPx || !outPy || !IsFiniteVec3(hitPoint) || !IsFiniteVec3(geomNormal) ||
+        !IsFiniteVec3(rayDiff.originX) || !IsFiniteVec3(rayDiff.originY) ||
+        !IsFiniteVec3(rayDiff.dirX) || !IsFiniteVec3(rayDiff.dirY) ||
+        LengthSquared(geomNormal) <= 1.0e-20f)
+    {
+        return false;
+    }
+
+    const float dxDenom = Dot(geomNormal, rayDiff.dirX);
+    const float dyDenom = Dot(geomNormal, rayDiff.dirY);
+    if (fabsf(dxDenom) <= 1.0e-8f || fabsf(dyDenom) <= 1.0e-8f)
+    {
+        return false;
+    }
+
+    const float tx = Dot(geomNormal, hitPoint - rayDiff.originX) / dxDenom;
+    const float ty = Dot(geomNormal, hitPoint - rayDiff.originY) / dyDenom;
+    if (!IsFiniteScalar(tx) || !IsFiniteScalar(ty))
+    {
+        return false;
+    }
+
+    *outPx = rayDiff.originX + rayDiff.dirX * tx;
+    *outPy = rayDiff.originY + rayDiff.dirY * ty;
+    return IsFiniteVec3(*outPx) && IsFiniteVec3(*outPy);
+}
+
+YBI_INTEGRATOR_HD HitPlaneDifferentialResult ComputeHitPlaneDifferentials(const LaunchParams &params,
+                                                                          const RayDifferential &rayDiff,
+                                                                          const Vec3 &hitPoint,
+                                                                          const Vec3 &geomNormal,
+                                                                          int samplesPerPixel)
+{
+    HitPlaneDifferentialResult result = {};
+    if (!IsFiniteVec3(hitPoint) || !IsFiniteVec3(geomNormal))
+    {
+        return result;
+    }
+
+    Vec3 px = Vec3(0.0f);
+    Vec3 py = Vec3(0.0f);
+    if (TransferRayDifferentialToHitPoint(rayDiff, hitPoint, geomNormal, &px, &py))
+    {
+        result.dpdx = px - hitPoint;
+        result.dpdy = py - hitPoint;
+        result.valid = IsFiniteVec3(result.dpdx) && IsFiniteVec3(result.dpdy);
+        return result;
+    }
+
+    if (ApproximateDpDxy(params, hitPoint, geomNormal, samplesPerPixel, &result.dpdx, &result.dpdy))
+    {
+        result.valid = IsFiniteVec3(result.dpdx) && IsFiniteVec3(result.dpdy);
+    }
+    return result;
 }
 
 YBI_INTEGRATOR_HD Vec3 ComputePerspectiveCameraDirection(const LaunchParams &params,
