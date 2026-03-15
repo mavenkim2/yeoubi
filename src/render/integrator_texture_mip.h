@@ -1,7 +1,6 @@
 #pragma once
 
 #include "render/integrator_common.h"
-#include "render/launch_params.h"
 
 namespace ybi
 {
@@ -23,75 +22,20 @@ YBI_INTEGRATOR_HD int ComputeTextureMipCount(int width, int height)
     return mipCount;
 }
 
-YBI_INTEGRATOR_HD bool
-ProjectWorldToRaster(const LaunchParams &params, const Vec3 &worldPoint, Vec2 *outRaster)
-{
-    if (!outRaster || params.width <= 0 || params.height <= 0)
-    {
-        return false;
-    }
-
-    const Vec3 cameraPoint = TransformPointAffine(params.cameraFromWorld, worldPoint);
-    const Vec3 rasterPoint = TransformPointPerspective(params.rasterFromCamera, cameraPoint);
-    if (!(rasterPoint.x == rasterPoint.x && rasterPoint.y == rasterPoint.y &&
-          rasterPoint.z == rasterPoint.z))
-    {
-        return false;
-    }
-
-    outRaster->x = rasterPoint.x;
-    outRaster->y = rasterPoint.y;
-    return true;
-}
-
-YBI_INTEGRATOR_HD bool TryComputeTextureMipLevel(const LaunchParams &params,
-                                                 const HitInfo &hit,
-                                                 const UV2 &uv0,
-                                                 const UV2 &uv1,
-                                                 const UV2 &uv2,
+YBI_INTEGRATOR_HD bool TryComputeTextureMipLevel(const HitInfo &hit,
                                                  int textureWidth,
                                                  int textureHeight,
                                                  unsigned int *outMip)
 {
-    if (!outMip || textureWidth <= 0 || textureHeight <= 0 || !hit.hasWorldTriangle)
+    if (!outMip || textureWidth <= 0 || textureHeight <= 0 || !hit.hasTextureDifferentials)
     {
         return false;
     }
 
-    Vec2 p0 = {};
-    Vec2 p1 = {};
-    Vec2 p2 = {};
-    if (!ProjectWorldToRaster(params, hit.worldTri0, &p0) ||
-        !ProjectWorldToRaster(params, hit.worldTri1, &p1) ||
-        !ProjectWorldToRaster(params, hit.worldTri2, &p2))
-    {
-        return false;
-    }
-
-    const float dx1 = p1.x - p0.x;
-    const float dy1 = p1.y - p0.y;
-    const float dx2 = p2.x - p0.x;
-    const float dy2 = p2.y - p0.y;
-    const float det = dx1 * dy2 - dy1 * dx2;
-    if (fabsf(det) <= 1e-8f)
-    {
-        return false;
-    }
-
-    const float invDet = 1.0f / det;
-    const float du1 = uv1.x - uv0.x;
-    const float dv1 = uv1.y - uv0.y;
-    const float du2 = uv2.x - uv0.x;
-    const float dv2 = uv2.y - uv0.y;
-    const float dudx = (du1 * dy2 - du2 * dy1) * invDet;
-    const float dudy = (du2 * dx1 - du1 * dx2) * invDet;
-    const float dvdx = (dv1 * dy2 - dv2 * dy1) * invDet;
-    const float dvdy = (dv2 * dx1 - dv1 * dx2) * invDet;
-
-    const float rhoX = sqrtf((dudx * float(textureWidth)) * (dudx * float(textureWidth)) +
-                             (dvdx * float(textureHeight)) * (dvdx * float(textureHeight)));
-    const float rhoY = sqrtf((dudy * float(textureWidth)) * (dudy * float(textureWidth)) +
-                             (dvdy * float(textureHeight)) * (dvdy * float(textureHeight)));
+    const float rhoX = sqrtf((hit.dSdx * float(textureWidth)) * (hit.dSdx * float(textureWidth)) +
+                             (hit.dTdx * float(textureHeight)) * (hit.dTdx * float(textureHeight)));
+    const float rhoY = sqrtf((hit.dSdy * float(textureWidth)) * (hit.dSdy * float(textureWidth)) +
+                             (hit.dTdy * float(textureHeight)) * (hit.dTdy * float(textureHeight)));
     const float rho = rhoX > rhoY ? rhoX : rhoY;
     if (!(rho >= 0.0f) || rho > 1.0e30f)
     {

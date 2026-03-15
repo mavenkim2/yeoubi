@@ -753,8 +753,7 @@ TryWriteFeedbackOnly(State &state,
     }
 
     unsigned int mip = 0u;
-    if (!TryComputeTextureMipLevel(
-            params, hit, inputs.uv0, inputs.uv1, inputs.uv2, feedbackRef.width, feedbackRef.height, &mip))
+    if (!TryComputeTextureMipLevel(hit, feedbackRef.width, feedbackRef.height, &mip))
     {
         return false;
     }
@@ -854,8 +853,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
         }
 
         unsigned int sampleMip = 0u;
-        const bool haveMip = TryComputeTextureMipLevel(
-            params, hit, inputs.uv0, inputs.uv1, inputs.uv2, vtRef.width, vtRef.height, &sampleMip);
+        const bool haveMip = TryComputeTextureMipLevel(hit, vtRef.width, vtRef.height, &sampleMip);
         if (!haveMip)
         {
             sampleMip = static_cast<unsigned int>(
@@ -909,8 +907,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTexture(State &state,
     }
     outColor = MaterialSampleToViewColor(params, sample);
     unsigned int feedbackMip = 0u;
-    if (TryComputeTextureMipLevel(
-            params, hit, inputs.uv0, inputs.uv1, inputs.uv2, rawRef.width, rawRef.height, &feedbackMip))
+    if (TryComputeTextureMipLevel(hit, rawRef.width, rawRef.height, &feedbackMip))
     {
         TryWriteTextureFeedback(state,
                                 geomRef,
@@ -1002,8 +999,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
                 IsUsableMaterialTextureRef(vtRef))
             {
                 unsigned int sampleMip = 0u;
-                const bool haveMip = TryComputeTextureMipLevel(
-                    params, hit, inputs.uv0, inputs.uv1, inputs.uv2, vtRef.width, vtRef.height, &sampleMip);
+                const bool haveMip = TryComputeTextureMipLevel(hit, vtRef.width, vtRef.height, &sampleMip);
                 if (!haveMip)
                 {
                     sampleMip = static_cast<unsigned int>(
@@ -1058,8 +1054,7 @@ YBI_INTEGRATOR_HD bool TrySampleMaterialTextureSemantic(State &state,
         return false;
     }
     unsigned int feedbackMip = 0u;
-    if (TryComputeTextureMipLevel(
-            params, hit, inputs.uv0, inputs.uv1, inputs.uv2, rawRef.width, rawRef.height, &feedbackMip))
+    if (TryComputeTextureMipLevel(hit, rawRef.width, rawRef.height, &feedbackMip))
     {
         TryWriteTextureFeedback(state,
                                 geomRef,
