@@ -3,6 +3,8 @@
 #include "texture/virtual_texture/feedback.h"
 #include "texture/virtual_texture/key.h"
 
+#include <tbb/parallel_for.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -19,10 +21,20 @@ static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1128u;
 
 using Clock = std::chrono::steady_clock;
+static constexpr size_t kParallelLoadBatchSize = 512u;
 
 double ElapsedMs(Clock::time_point start, Clock::time_point end)
 {
     return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+void RecordFirstError(std::string *dst, const std::string &src)
+{
+    if (!dst || dst->empty() == false || src.empty())
+    {
+        return;
+    }
+    *dst = src;
 }
 } // namespace
 
@@ -275,6 +287,26 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
                                             VirtualTextureUpdateStats *outStats,
                                             std::string *outError)
 {
+    struct PendingStreamLoad
+    {
+        unsigned long long key = 0ull;
+        KeyVirtualInfo info = {};
+        uint32_t slotIndex = 0u;
+    };
+
+    struct CompletedStreamLoad
+    {
+        unsigned long long key = 0ull;
+        KeyVirtualInfo info = {};
+        uint32_t slotIndex = 0u;
+        bool success = false;
+        uint32_t width = 0u;
+        uint32_t height = 0u;
+        std::vector<unsigned char> rgba8;
+        std::string error;
+        double loadMs = 0.0;
+    };
+
     const Clock::time_point processStart = Clock::now();
     if (outStats)
     {
@@ -296,109 +328,167 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
     stats.uniqueCount = static_cast<uint32_t>(histogram.size());
     stats.histogramMs = ElapsedMs(histogramStart, histogramEnd);
 
+    std::string firstError;
     uint32_t uploadsBudget =
         (config_.maxUploadsPerPass == 0u) ? UINT32_MAX : config_.maxUploadsPerPass;
-    for (const VirtualTextureFeedbackEntry &entry : histogram)
+    size_t histogramIndex = 0u;
+    while (histogramIndex < histogram.size() && uploadsBudget > 0u)
     {
-        const unsigned long long key = entry.key;
-        KeyVirtualInfo info = {};
-        const Clock::time_point resolveStart = Clock::now();
-        const bool resolved = ResolveKey(key, &info);
-        stats.resolveKeyMs += ElapsedMs(resolveStart, Clock::now());
-        if (!resolved || !info.valid)
+        const size_t remainingHistogram = histogram.size() - histogramIndex;
+        const size_t remainingBudget =
+            uploadsBudget == UINT32_MAX ? kParallelLoadBatchSize : size_t(uploadsBudget);
+        const size_t batchLimit = std::min(remainingHistogram, std::min(kParallelLoadBatchSize, remainingBudget));
+        if (batchLimit == 0u)
         {
-            stats.failed++;
-            continue;
-        }
-        if (info.isTail)
-        {
-            stats.hits++;
-            continue;
-        }
-        const Clock::time_point touchStart = Clock::now();
-        const bool resident = TouchResidentKey(key);
-        stats.touchResidentMs += ElapsedMs(touchStart, Clock::now());
-        if (resident)
-        {
-            stats.hits++;
-            continue;
+            break;
         }
 
-        stats.misses++;
-        if (uploadsBudget == 0u)
+        std::vector<PendingStreamLoad> pending;
+        pending.reserve(batchLimit);
+        while (histogramIndex < histogram.size() && pending.size() < batchLimit)
         {
-            continue;
-        }
+            const VirtualTextureFeedbackEntry &entry = histogram[histogramIndex++];
+            const unsigned long long key = entry.key;
+            KeyVirtualInfo info = {};
+            const Clock::time_point resolveStart = Clock::now();
+            const bool resolved = ResolveKey(key, &info);
+            stats.resolveKeyMs += ElapsedMs(resolveStart, Clock::now());
+            if (!resolved || !info.valid)
+            {
+                stats.failed++;
+                continue;
+            }
+            if (info.isTail)
+            {
+                stats.hits++;
+                continue;
+            }
+            const Clock::time_point touchStart = Clock::now();
+            const bool resident = TouchResidentKey(key);
+            stats.touchResidentMs += ElapsedMs(touchStart, Clock::now());
+            if (resident)
+            {
+                stats.hits++;
+                continue;
+            }
 
-        uint32_t slotIndex = 0u;
-        bool evicted = false;
-        stats.allocateStreamSlotCalls++;
-        const Clock::time_point allocateStart = Clock::now();
-        if (!AllocateStreamSlot(&slotIndex, &evicted, outError))
-        {
+            stats.misses++;
+
+            uint32_t slotIndex = 0u;
+            bool evicted = false;
+            stats.allocateStreamSlotCalls++;
+            const Clock::time_point allocateStart = Clock::now();
+            if (!AllocateStreamSlot(&slotIndex, &evicted, outError))
+            {
+                stats.allocateStreamSlotMs += ElapsedMs(allocateStart, Clock::now());
+                stats.failed++;
+                RecordFirstError(&firstError, outError ? *outError : std::string());
+                continue;
+            }
             stats.allocateStreamSlotMs += ElapsedMs(allocateStart, Clock::now());
-            stats.failed++;
-            continue;
-        }
-        stats.allocateStreamSlotMs += ElapsedMs(allocateStart, Clock::now());
-        if (evicted)
-        {
-            stats.evictions++;
+            if (evicted)
+            {
+                stats.evictions++;
+            }
+
+            TextureState &texture = textures_[info.textureIndex];
+            if (!OpenTileFileIfNeeded(&texture, outError))
+            {
+                stats.failed++;
+                freeSlots_.push_back(slotIndex);
+                RecordFirstError(&firstError, outError ? *outError : std::string());
+                continue;
+            }
+
+            PendingStreamLoad load = {};
+            load.key = key;
+            load.info = info;
+            load.slotIndex = slotIndex;
+            pending.push_back(std::move(load));
         }
 
-        std::vector<unsigned char> rgba8;
-        uint32_t width = 0u;
-        uint32_t height = 0u;
-        stats.loadStreamPageCalls++;
-        const Clock::time_point loadStart = Clock::now();
-        if (!LoadStreamPageForKey(info, &rgba8, &width, &height, outError))
+        if (pending.empty())
         {
-            stats.loadStreamPageMs += ElapsedMs(loadStart, Clock::now());
-            stats.failed++;
-            freeSlots_.push_back(slotIndex);
             continue;
         }
-        stats.loadStreamPageMs += ElapsedMs(loadStart, Clock::now());
-        stats.uploadStreamPageCalls++;
-        const Clock::time_point uploadStart = Clock::now();
-        if (!UploadStreamPage(slotIndex, rgba8, width, height, outError))
+
+        std::vector<CompletedStreamLoad> completed(pending.size());
+        tbb::parallel_for(size_t(0), pending.size(), [&](size_t i) {
+            const PendingStreamLoad &load = pending[i];
+            CompletedStreamLoad result = {};
+            result.key = load.key;
+            result.info = load.info;
+            result.slotIndex = load.slotIndex;
+
+            const Clock::time_point loadStart = Clock::now();
+            result.success = LoadStreamPageForKey(
+                load.info, &result.rgba8, &result.width, &result.height, &result.error);
+            result.loadMs = ElapsedMs(loadStart, Clock::now());
+            completed[i] = std::move(result);
+        });
+
+        for (const CompletedStreamLoad &result : completed)
         {
+            stats.loadStreamPageCalls++;
+            stats.loadStreamPageMs += result.loadMs;
+            if (!result.success)
+            {
+                stats.failed++;
+                freeSlots_.push_back(result.slotIndex);
+                RecordFirstError(&firstError, result.error);
+                continue;
+            }
+
+            stats.uploadStreamPageCalls++;
+            const Clock::time_point uploadStart = Clock::now();
+            if (!UploadStreamPage(result.slotIndex, result.rgba8, result.width, result.height, outError))
+            {
+                stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
+                stats.failed++;
+                freeSlots_.push_back(result.slotIndex);
+                RecordFirstError(&firstError, outError ? *outError : std::string());
+                continue;
+            }
             stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
-            stats.failed++;
-            freeSlots_.push_back(slotIndex);
-            continue;
-        }
-        stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
 
-        const uint32_t pageX = slotIndex % streamPageCountX_;
-        const uint32_t pageY = slotIndex / streamPageCountX_;
-        const uint32_t packed = PackPageTableEntry(pageX, pageY, kPageTypeStream, 1u);
-        stats.updatePageTableCalls++;
-        const Clock::time_point pageTableStart = Clock::now();
-        if (!UpdatePageTableTexel(info.mip, info.vaX, info.vaY, packed, outError))
-        {
+            const uint32_t pageX = result.slotIndex % streamPageCountX_;
+            const uint32_t pageY = result.slotIndex / streamPageCountX_;
+            const uint32_t packed = PackPageTableEntry(pageX, pageY, kPageTypeStream, 1u);
+            stats.updatePageTableCalls++;
+            const Clock::time_point pageTableStart = Clock::now();
+            if (!UpdatePageTableTexel(result.info.mip, result.info.vaX, result.info.vaY, packed, outError))
+            {
+                stats.updatePageTableMs += ElapsedMs(pageTableStart, Clock::now());
+                stats.failed++;
+                freeSlots_.push_back(result.slotIndex);
+                RecordFirstError(&firstError, outError ? *outError : std::string());
+                continue;
+            }
             stats.updatePageTableMs += ElapsedMs(pageTableStart, Clock::now());
-            stats.failed++;
-            freeSlots_.push_back(slotIndex);
-            continue;
+
+            StreamSlotState &slot = streamSlots_[result.slotIndex];
+            slot.occupied = true;
+            slot.key = result.key;
+            lruSlots_.push_front(result.slotIndex);
+            slot.lruIt = lruSlots_.begin();
+            keyToStreamSlot_[result.key] = result.slotIndex;
+
+            stats.uploads++;
+            if (uploadsBudget != UINT32_MAX)
+            {
+                uploadsBudget--;
+            }
         }
-        stats.updatePageTableMs += ElapsedMs(pageTableStart, Clock::now());
-
-        StreamSlotState &slot = streamSlots_[slotIndex];
-        slot.occupied = true;
-        slot.key = key;
-        lruSlots_.push_front(slotIndex);
-        slot.lruIt = lruSlots_.begin();
-        keyToStreamSlot_[key] = slotIndex;
-
-        stats.uploads++;
-        uploadsBudget--;
     }
 
     stats.totalMs = ElapsedMs(processStart, Clock::now());
     if (outStats)
     {
         *outStats = stats;
+    }
+    if (outError)
+    {
+        RecordFirstError(outError, firstError);
     }
     return true;
 }

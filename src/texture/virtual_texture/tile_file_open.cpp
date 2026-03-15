@@ -453,21 +453,22 @@ bool OpenVirtualTextureTileFile(const std::string &path,
         return false;
     }
 
+    bool opened = false;
     if (std::memcmp(header.magic, "YBITILE4", 8) == 0 && header.version == 4)
     {
-        return OpenTileFileV4(header, outFile, outError);
+        opened = OpenTileFileV4(header, outFile, outError);
     }
-
-    if (std::memcmp(header.magic, "YBITILE3", 8) == 0 && header.version == 3)
+    else if (std::memcmp(header.magic, "YBITILE3", 8) == 0 && header.version == 3)
     {
-        return OpenTileFileV3(header, outFile, outError);
+        opened = OpenTileFileV3(header, outFile, outError);
     }
-
-    if (outError)
+    else if (outError)
     {
         *outError = "unsupported tile file version: " + path;
     }
-    return false;
+
+    outFile->stream.close();
+    return opened;
 }
 
 } // namespace texture

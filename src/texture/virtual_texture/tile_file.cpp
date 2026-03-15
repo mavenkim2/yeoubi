@@ -68,10 +68,19 @@ bool ReadPayloadAsFloats(VirtualTextureTileFile *file,
         return false;
     }
 
+    std::ifstream stream(file->path, std::ios::binary);
+    if (!stream.is_open())
+    {
+        if (outError)
+        {
+            *outError = "failed opening tile file for payload read: " + file->path;
+        }
+        return false;
+    }
+
     std::vector<unsigned char> stored(static_cast<size_t>(storedByteSize));
-    file->stream.clear();
-    file->stream.seekg(static_cast<std::streamoff>(byteOffset), std::ios::beg);
-    if (!ReadBytes(&file->stream, stored.data(), stored.size()))
+    stream.seekg(static_cast<std::streamoff>(byteOffset), std::ios::beg);
+    if (!ReadBytes(&stream, stored.data(), stored.size()))
     {
         if (outError)
         {
