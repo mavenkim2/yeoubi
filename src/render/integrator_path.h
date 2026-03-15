@@ -50,10 +50,8 @@ YBI_INTEGRATOR_HD float LinearToSrgb(float value)
 
 YBI_INTEGRATOR_HD Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
 {
-    constexpr float kDisplayExposure = 16.0f;
-    const Vec3 exposed = radiance * kDisplayExposure;
     const Vec3 mapped =
-        Vec3(1.0f - expf(-exposed.x), 1.0f - expf(-exposed.y), 1.0f - expf(-exposed.z));
+        Vec3(1.0f - expf(-radiance.x), 1.0f - expf(-radiance.y), 1.0f - expf(-radiance.z));
     return Vec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
 }
 
