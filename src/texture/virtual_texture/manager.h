@@ -21,7 +21,7 @@ struct VirtualTextureManagerConfig
     uint32_t pageSize = 128u;
     uint64_t cacheBytes = 1ull << 30u;
     uint32_t tailMaxDim = 32u;
-    uint32_t maxUploadsPerPass = 5000u;
+    uint32_t maxUploadsPerPass = 0u;
 };
 
 struct VirtualTextureUdimExtent

@@ -93,7 +93,7 @@ struct CliOptions
     std::string virtualTextureTilesDir;
     uint64_t virtualTextureCacheBytes = 1ull << 30u;
     int virtualTextureTailMaxDim = 32;
-    int virtualTextureMaxPageUploads = 5000;
+    int virtualTextureMaxPageUploads = 0;
     bool singlePixelMode = false;
     int singlePixelX = 0;
     int singlePixelY = 0;
@@ -739,7 +739,7 @@ static void PrintUsage(const char *exeName)
     printf("  --vt-tiles-dir path to *.tiles.bin directory for --virtual-texture\n");
     printf("  --vt-cache-bytes byte budget for stream-page physical cache\n");
     printf("  --vt-tail-max-dim pin mips where max(width,height)<=N into tail cache\n");
-    printf("  --vt-max-page-uploads max new stream pages uploaded after each feedback pass\n");
+    printf("  --vt-max-page-uploads max new stream pages uploaded after each feedback pass (0=unlimited)\n");
     printf("  --pixel x y render only image-space pixel (x right, y down)\n");
     printf("  --write-feedback dump feedback text files next to output PNG\n");
     printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity|specular|clearcoat|clearcoatroughness\n");
@@ -936,7 +936,7 @@ static CliOptions ParseCli(int argc, char **argv)
                 PrintUsage(argv[0]);
                 std::abort();
             }
-            options.virtualTextureMaxPageUploads = std::max(1, std::stoi(argv[++i]));
+            options.virtualTextureMaxPageUploads = std::max(0, std::stoi(argv[++i]));
             continue;
         }
         if (arg == "--pixel")
@@ -2051,7 +2051,7 @@ RenderTraversable(Device *device,
         vtConfig.pageSize = 128u;
         vtConfig.cacheBytes = virtualTextureCacheBytes;
         vtConfig.tailMaxDim = static_cast<uint32_t>(std::max(1, virtualTextureTailMaxDim));
-        vtConfig.maxUploadsPerPass = static_cast<uint32_t>(std::max(1, virtualTextureMaxPageUploads));
+        vtConfig.maxUploadsPerPass = static_cast<uint32_t>(std::max(0, virtualTextureMaxPageUploads));
         std::string vtError;
         if (!virtualTextureManager.Initialize(device, vtConfig, &vtError))
         {

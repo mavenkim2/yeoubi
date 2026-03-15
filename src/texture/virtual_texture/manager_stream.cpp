@@ -296,7 +296,8 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
     stats.uniqueCount = static_cast<uint32_t>(histogram.size());
     stats.histogramMs = ElapsedMs(histogramStart, histogramEnd);
 
-    uint32_t uploadsBudget = config_.maxUploadsPerPass;
+    uint32_t uploadsBudget =
+        (config_.maxUploadsPerPass == 0u) ? UINT32_MAX : config_.maxUploadsPerPass;
     for (const VirtualTextureFeedbackEntry &entry : histogram)
     {
         const unsigned long long key = entry.key;

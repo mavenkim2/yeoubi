@@ -104,10 +104,6 @@ bool VirtualTextureManager::Initialize(Device *device,
     {
         config_.tailMaxDim = 32u;
     }
-    if (config_.maxUploadsPerPass == 0u)
-    {
-        config_.maxUploadsPerPass = 5000u;
-    }
     finalized_ = false;
     return true;
 }
