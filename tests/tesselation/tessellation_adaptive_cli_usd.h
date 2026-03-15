@@ -340,6 +340,11 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.subdivisionScheme = "catmullClark";
         options.generateTriangleMetadata = config.writeMetadata;
         options.patchQuadObjPath = patchQuadPath;
+        if (!ybi::FinalizeSubdivisionRunCamera(&options))
+        {
+            std::fprintf(stderr, "Failed to finalize subdivision camera for mesh %zu\n", i);
+            return false;
+        }
 
         std::printf("  begin mesh[%zu] prim=%s\n",
                     i,

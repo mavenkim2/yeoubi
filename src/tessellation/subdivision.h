@@ -64,6 +64,8 @@ struct SubdivisionRunResult
     int controlCageEdgesWithOver2Faces = 0;
 };
 
+bool FinalizeSubdivisionRunCamera(SubdivisionRunOptions *options);
+
 bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                       const SubdivisionRunOptions &options,
                       SubdivisionRunResult *outResult);

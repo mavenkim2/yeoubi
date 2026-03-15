@@ -27,6 +27,74 @@ using namespace OpenSubdiv;
 namespace ybi
 {
 
+namespace
+{
+
+static Float4x4 BuildSubdivisionCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
+{
+    Vec3 forward = Normalize(lookAt - eye);
+    if (Length(forward) <= 1e-8f)
+    {
+        forward = Vec3(0.0f, 0.0f, 1.0f);
+    }
+    Vec3 worldUp = Vec3(0.0f, 0.0f, 1.0f);
+    if (std::abs(Dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = Vec3(0.0f, 1.0f, 0.0f);
+    }
+    const Vec3 right = Normalize(Cross(forward, worldUp));
+    const Vec3 up = Normalize(Cross(right, forward));
+    return Float4x4(right.x,
+                    right.y,
+                    right.z,
+                    -Dot(right, eye),
+                    up.x,
+                    up.y,
+                    up.z,
+                    -Dot(up, eye),
+                    forward.x,
+                    forward.y,
+                    forward.z,
+                    -Dot(forward, eye),
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    1.0f);
+}
+
+static Float4x4 BuildSubdivisionClipFromCamera(float verticalFovDegrees,
+                                               int viewportWidth,
+                                               int viewportHeight)
+{
+    const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
+    const float tanHalfFovY = std::max(1e-8f, std::tan(0.5f * fovY));
+    const float aspect = std::max(1e-8f, float(viewportWidth) / float(viewportHeight));
+    const float nearPlane = 1.0f;
+    const float farPlane = 1.0e6f;
+    const float m00 = 1.0f / (tanHalfFovY * aspect);
+    const float m11 = 1.0f / tanHalfFovY;
+    const float m22 = (farPlane + nearPlane) / (farPlane - nearPlane);
+    const float m23 = (-2.0f * farPlane * nearPlane) / (farPlane - nearPlane);
+    return Float4x4(m00,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    m11,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    0.0f,
+                    m22,
+                    m23,
+                    0.0f,
+                    0.0f,
+                    1.0f,
+                    0.0f);
+}
+
+} // namespace
+
 template <typename T> struct LimitEvalValueTraits;
 
 template <> struct LimitEvalValueTraits<float>
@@ -117,9 +185,28 @@ template <typename T> static Array<T> BytesToArray(const Array<uint8_t> &bytes)
 #include "tessellation/tessellation_adaptive_mesh_build.h"
 // clang-format on
 
+bool FinalizeSubdivisionRunCamera(SubdivisionRunOptions *options)
+{
+    if (!options)
+    {
+        return false;
+    }
+
+    options->viewportWidth = std::max(1, options->viewportWidth);
+    options->viewportHeight = std::max(1, options->viewportHeight);
+    if (!options->useCameraMatrices)
+    {
+        options->cameraFromWorld = BuildSubdivisionCameraFromWorld(options->eye, options->lookAt);
+        options->clipFromCamera = BuildSubdivisionClipFromCamera(
+            options->verticalFovDegrees, options->viewportWidth, options->viewportHeight);
+        options->useCameraMatrices = true;
+    }
+    return true;
+}
+
 bool SubdivideAdaptive(const SubdivisionMesh &mesh,
-                      const SubdivisionRunOptions &options,
-                      SubdivisionRunResult *outResult)
+                       const SubdivisionRunOptions &options,
+                       SubdivisionRunResult *outResult)
 {
     if (!outResult)
     {
@@ -353,8 +440,13 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         }
     }
 
-    const Vec3 eye = options.eye;
-    const Vec3 lookAt = options.lookAt;
+    if (!options.useCameraMatrices)
+    {
+        std::fprintf(stderr, "Subdivision requires finalized camera matrices.\n");
+        delete patchTable;
+        delete refiner;
+        return false;
+    }
 
     int tmaxComputedEdges = 0;
     const std::vector<SubdivisionPatch> splitPatches =
@@ -368,12 +460,8 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                          options.sampleSteps,
                          options.pixelSpacing,
                          options.splitThreshold,
-                         eye,
-                         lookAt,
                          options.viewportWidth,
                          options.viewportHeight,
-                         options.verticalFovDegrees,
-                         options.useCameraMatrices,
                          options.cameraFromWorld,
                          options.clipFromCamera,
                          &tmaxComputedEdges);

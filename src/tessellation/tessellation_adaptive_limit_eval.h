@@ -237,67 +237,6 @@ static bool EvaluateLimitFVar2(const Far::PatchMap &patchMap,
         patchMap, patchTable, limitValues, ptexFaceId, uv, interpolation, outUV, channel);
 }
 
-static Float4x4 BuildFallbackCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
-{
-    Vec3 forward = Normalize(lookAt - eye);
-    if (Length(forward) <= 1e-8f)
-    {
-        forward = Vec3(0.0f, 0.0f, 1.0f);
-    }
-    Vec3 worldUp = Vec3(0.0f, 0.0f, 1.0f);
-    if (std::abs(Dot(forward, worldUp)) > 0.999f)
-    {
-        worldUp = Vec3(0.0f, 1.0f, 0.0f);
-    }
-    const Vec3 right = Normalize(Cross(forward, worldUp));
-    const Vec3 up = Normalize(Cross(right, forward));
-    return Float4x4(right.x,
-                    right.y,
-                    right.z,
-                    -Dot(right, eye),
-                    up.x,
-                    up.y,
-                    up.z,
-                    -Dot(up, eye),
-                    forward.x,
-                    forward.y,
-                    forward.z,
-                    -Dot(forward, eye),
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    1.0f);
-}
-
-static Float4x4 BuildFallbackClipFromCamera(float verticalFovDegrees, int viewportWidth, int viewportHeight)
-{
-    const float fovY = verticalFovDegrees * 3.14159265358979323846f / 180.0f;
-    const float tanHalfFovY = std::max(1e-8f, std::tan(0.5f * fovY));
-    const float aspect = std::max(1e-8f, float(viewportWidth) / float(viewportHeight));
-    const float nearPlane = 1.0f;
-    const float farPlane = 1.0e6f;
-    const float m00 = 1.0f / (tanHalfFovY * aspect);
-    const float m11 = 1.0f / tanHalfFovY;
-    const float m22 = (farPlane + nearPlane) / (farPlane - nearPlane);
-    const float m23 = (-2.0f * farPlane * nearPlane) / (farPlane - nearPlane);
-    return Float4x4(m00,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    m11,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    0.0f,
-                    m22,
-                    m23,
-                    0.0f,
-                    0.0f,
-                    1.0f,
-                    0.0f);
-}
-
 static float EvaluateFrustumPlane(const Vec4 &p, int planeIndex)
 {
     switch (planeIndex)
@@ -398,12 +337,8 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
                                            int sampleStepsN,
                                            float targetPixelSpacing,
                                            int splitThreshold,
-                                           const Vec3 &eye,
-                                           const Vec3 &lookAt,
                                            int viewportWidth,
                                            int viewportHeight,
-                                           float verticalFovDegrees,
-                                           bool useCameraMatrices,
                                            const Float4x4 &cameraFromWorld,
                                            const Float4x4 &clipFromCamera,
                                            DiagSplitNonUniformReason *nonUniformReasonOut)
@@ -421,13 +356,7 @@ static int ComputeDiagSplitPatchEdgeFactor(const Far::PatchMap &patchMap,
     {
         return 1;
     }
-    const Float4x4 usedCameraFromWorld =
-        useCameraMatrices ? cameraFromWorld : BuildFallbackCameraFromWorld(eye, lookAt);
-    const Float4x4 usedClipFromCamera =
-        useCameraMatrices
-            ? clipFromCamera
-            : BuildFallbackClipFromCamera(verticalFovDegrees, viewportWidth, viewportHeight);
-    const Float4x4 clipFromWorld = usedClipFromCamera * usedCameraFromWorld;
+    const Float4x4 clipFromWorld = clipFromCamera * cameraFromWorld;
 
     float maxLi = 0.0f;
     float sumLi = 0.0f;

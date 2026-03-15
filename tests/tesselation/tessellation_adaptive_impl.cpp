@@ -243,6 +243,11 @@ int main(int argc, char **argv)
         options.subdivisionScheme = subdivisionScheme;
         options.generateTriangleMetadata = cli.writeMetadata;
         options.patchQuadObjPath = cli.patchQuadObjPath;
+        if (!ybi::FinalizeSubdivisionRunCamera(&options))
+        {
+            std::fprintf(stderr, "Failed to finalize subdivision camera\n");
+            return 1;
+        }
 
         ybi::SubdivisionRunResult result = {};
         if (!ybi::SubdivideAdaptive(mesh, options, &result))
