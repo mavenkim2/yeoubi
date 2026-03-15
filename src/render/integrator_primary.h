@@ -39,26 +39,6 @@ YBI_INTEGRATOR_HD uint32_t IntegratorPrimaryDiffuse(State &state, const HitInfo 
     return ybi::render::PackRGB8(outR, outG, outB);
 }
 
-template <typename State>
-YBI_INTEGRATOR_HD void IntegratorFeedbackOnly(State &state, const HitInfo &hit)
-{
-    if (!hit.hasBarycentrics)
-    {
-        return;
-    }
-
-    const LaunchParams &params = state.Params();
-    const LaunchParams::InstanceGeomRef *refs =
-        reinterpret_cast<const LaunchParams::InstanceGeomRef *>(params.instanceGeomRefs);
-    if (!refs || hit.instanceId < 0 || hit.instanceId >= params.instanceGeomRefCount)
-    {
-        return;
-    }
-
-    const LaunchParams::InstanceGeomRef geomRef = refs[hit.instanceId];
-    TryWriteFeedbackOnly(state, geomRef, hit);
-}
-
 } // namespace integrator
 } // namespace render
 } // namespace ybi

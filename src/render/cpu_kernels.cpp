@@ -571,14 +571,6 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                             ybi::render::integrator::SkyColor(direction);
                         packed = ybi::render::PackRGB8(sky.x, sky.y, sky.z);
                     }
-                    else if (params->integrator == 2)
-                    {
-                        if (hit.hasBarycentrics)
-                        {
-                            ybi::render::integrator::IntegratorFeedbackOnly(state, hit);
-                        }
-                        packed = ybi::render::PackRGB8(0.0f, 0.0f, 0.0f);
-                    }
                     else if (kernelId == RenderKernelId::AO)
                     {
                         packed = ybi::render::integrator::IntegratorAO(state, hit);

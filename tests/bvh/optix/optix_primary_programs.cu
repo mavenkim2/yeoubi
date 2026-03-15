@@ -441,16 +441,6 @@ extern "C" __global__ void __closesthit__primary()
         return;
     }
 
-    if (params.integrator == 2)
-    {
-        if (hit.hasBarycentrics)
-        {
-            ybi::render::integrator::IntegratorFeedbackOnly(state, hit);
-        }
-        optixSetPayload_0(0u);
-        return;
-    }
-
     if (params.integrator == 1)
     {
         Vec3 geomNormal(-rayDirection.x, -rayDirection.y, -rayDirection.z);

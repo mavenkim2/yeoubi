@@ -2077,7 +2077,7 @@ RenderTraversable(Device *device,
         }
         virtualTextureManager.BindLaunchParams(&params);
 
-        params.integrator = 2;
+        params.integrator = 0;
         params.spp = 1;
         params.currentSpp = 0;
         params.feedbackSamplePercent = 100;
