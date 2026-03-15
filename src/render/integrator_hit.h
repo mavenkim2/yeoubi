@@ -218,7 +218,7 @@ static YBI_INTEGRATOR_HD bool TryComputeTriangleSurfacePartials(
 
 static YBI_INTEGRATOR_HD bool TryComputeTriangleHitDifferentials(
     const LaunchParams &params,
-    const render::integrator::RayDifferential &rayDiff,
+    const render::integrator::RayDifferential *rayDiff,
     render::integrator::HitInfo *outHit)
 {
     if (!outHit)
@@ -241,9 +241,11 @@ static YBI_INTEGRATOR_HD bool TryComputeTriangleHitDifferentials(
     }
 
     const Vec3 hitPoint = outHit->rayOrigin + outHit->rayDir * outHit->t;
+    render::integrator::RayDifferential fallbackRayDiff = {};
+    const render::integrator::RayDifferential &effectiveRayDiff = rayDiff ? *rayDiff : fallbackRayDiff;
     const render::integrator::HitPlaneDifferentialResult planeDiff =
         render::integrator::ComputeHitPlaneDifferentials(
-            params, rayDiff, hitPoint, outHit->geomNormal, params.spp);
+            params, effectiveRayDiff, hitPoint, outHit->geomNormal, params.spp);
     if (!planeDiff.valid)
     {
         return false;

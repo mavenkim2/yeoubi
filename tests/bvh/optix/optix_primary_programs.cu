@@ -397,16 +397,22 @@ extern "C" __global__ void __closesthit__primary()
                     {hit.shadingNormal.x, hit.shadingNormal.y, hit.shadingNormal.z})));
         }
 
-        if (params.integrator != 3 && hit.hasGeomNormal)
+        if (hit.hasGeomNormal)
         {
-            const uint3 launchIndex = optixGetLaunchIndex();
-            const uint3 launchDims = optixGetLaunchDimensions();
-            const ybi::render::integrator::RayDifferential rayDiff =
-                ybi::render::integrator::InitPerspectiveRayDifferential(params,
-                                                                        static_cast<float>(launchIndex.x),
-                                                                        static_cast<float>(launchIndex.y),
-                                                                        launchDims.x,
-                                                                        launchDims.y);
+            const ybi::render::integrator::RayDifferential *rayDiff = nullptr;
+            ybi::render::integrator::RayDifferential primaryRayDiff = {};
+            if (params.integrator != 3)
+            {
+                const uint3 launchIndex = optixGetLaunchIndex();
+                const uint3 launchDims = optixGetLaunchDimensions();
+                primaryRayDiff = ybi::render::integrator::InitPerspectiveRayDifferential(
+                    params,
+                    static_cast<float>(launchIndex.x),
+                    static_cast<float>(launchIndex.y),
+                    launchDims.x,
+                    launchDims.y);
+                rayDiff = &primaryRayDiff;
+            }
             (void)ybi::TryComputeTriangleHitDifferentials(params, rayDiff, &hit);
         }
     }

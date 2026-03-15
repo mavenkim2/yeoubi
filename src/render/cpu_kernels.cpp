@@ -360,7 +360,11 @@ static bool TracePrimary(const LaunchParams &params,
             }
             if (rayDiff)
             {
-                (void)ybi::TryComputeTriangleHitDifferentials(params, *rayDiff, outHit);
+                (void)ybi::TryComputeTriangleHitDifferentials(params, rayDiff, outHit);
+            }
+            else
+            {
+                (void)ybi::TryComputeTriangleHitDifferentials(params, nullptr, outHit);
             }
         }
     }
