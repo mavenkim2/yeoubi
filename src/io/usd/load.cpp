@@ -544,10 +544,16 @@ static bool ReadInputBool(const pxr::UsdShadeInput &input, bool fallback)
 static void FinalizePackedMaterial(PackedMaterial *packed)
 {
     YBI_ASSERT(packed);
-    packed->baseColor = ClampFiniteColor(packed->baseColor, 0.0f, 1.0f);
-    packed->emissiveColor = ClampFiniteColor(packed->emissiveColor, 0.0f, 65504.0f);
-    packed->specularColor = ClampFiniteColor(packed->specularColor, 0.0f, 1.0f);
-    packed->roughness = ClampFinite(packed->roughness, 0.0f, 1.0f, 1.0f);
+    packed->baseColor = ybi::Vec3(ClampFinite(packed->baseColor.x, 0.0f, 1.0f, 0.18f),
+                                  ClampFinite(packed->baseColor.y, 0.0f, 1.0f, 0.18f),
+                                  ClampFinite(packed->baseColor.z, 0.0f, 1.0f, 0.18f));
+    packed->emissiveColor = ybi::Vec3(ClampFinite(packed->emissiveColor.x, 0.0f, 65504.0f, 0.0f),
+                                      ClampFinite(packed->emissiveColor.y, 0.0f, 65504.0f, 0.0f),
+                                      ClampFinite(packed->emissiveColor.z, 0.0f, 65504.0f, 0.0f));
+    packed->specularColor = ybi::Vec3(ClampFinite(packed->specularColor.x, 0.0f, 1.0f, 0.0f),
+                                      ClampFinite(packed->specularColor.y, 0.0f, 1.0f, 0.0f),
+                                      ClampFinite(packed->specularColor.z, 0.0f, 1.0f, 0.0f));
+    packed->roughness = ClampFinite(packed->roughness, 0.0f, 1.0f, 0.5f);
     packed->metallic = ClampFinite(packed->metallic, 0.0f, 1.0f, 0.0f);
     packed->ior = ClampFinite(packed->ior, 1.0f, 4.0f, 1.5f);
     packed->opacity = ClampFinite(packed->opacity, 0.0f, 1.0f, 1.0f);
@@ -580,7 +586,7 @@ static void ReadPreviewSurfaceMaterial(const pxr::UsdShadeShader &shader, Materi
         ReadInputFloat(shader.GetInput(pxr::TfToken("metallic")), 0.0f);
     outInfo->packed.specularColor = ReadInputColor3f(
         shader.GetInput(pxr::TfToken("specularColor")),
-        ybi::Vec3(1.0f, 1.0f, 1.0f));
+        ybi::Vec3(0.0f, 0.0f, 0.0f));
     outInfo->packed.ior = ReadInputFloat(shader.GetInput(pxr::TfToken("ior")), 1.5f);
     outInfo->packed.opacity =
         ReadInputFloat(shader.GetInput(pxr::TfToken("opacity")), 1.0f);

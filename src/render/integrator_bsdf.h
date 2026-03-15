@@ -15,10 +15,10 @@ namespace integrator
 
 struct EvaluatedMaterial
 {
-    Vec3 baseColor = Vec3(0.7f, 0.7f, 0.7f);
+    Vec3 baseColor = Vec3(0.18f, 0.18f, 0.18f);
     Vec3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
-    Vec3 specularColor = Vec3(1.0f, 1.0f, 1.0f);
-    float roughness = 1.0f;
+    Vec3 specularColor = Vec3(0.0f, 0.0f, 0.0f);
+    float roughness = 0.5f;
     float metallic = 0.0f;
     float ior = 1.5f;
     float opacity = 1.0f;

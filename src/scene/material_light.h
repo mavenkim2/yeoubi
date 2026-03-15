@@ -16,11 +16,11 @@ enum MaterialFlags : uint32_t
 
 struct PackedMaterial
 {
-    Vec3 baseColor = Vec3(0.7f, 0.7f, 0.7f);
-    float roughness = 1.0f;
+    Vec3 baseColor = Vec3(0.18f, 0.18f, 0.18f);
+    float roughness = 0.5f;
     Vec3 emissiveColor = Vec3(0.0f, 0.0f, 0.0f);
     float metallic = 0.0f;
-    Vec3 specularColor = Vec3(1.0f, 1.0f, 1.0f);
+    Vec3 specularColor = Vec3(0.0f, 0.0f, 0.0f);
     float ior = 1.5f;
     float opacity = 1.0f;
     float clearcoat = 0.0f;
