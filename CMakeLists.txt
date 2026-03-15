@@ -239,13 +239,6 @@ if (YBI_HAS_CUDA)
 endif()
 # Hardware Specific End
 
-add_executable(yeoubi ${YBI_SOURCE})
-
-target_compile_definitions(yeoubi PRIVATE ${YBI_COMPILE_DEFINITIONS})
-target_include_directories(yeoubi PRIVATE ${YBI_INCLUDE_DIRECTORIES})
-target_include_directories(yeoubi SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
-target_link_libraries(yeoubi PRIVATE ${YBI_DEPENDENCIES})
-
 if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
     list(GET CUDAToolkit_INCLUDE_DIRS 0 YBI_CUDA_INCLUDE_DIR)
     set(YBI_OPTIX_PTX_GPU_ARCH "compute_89")
