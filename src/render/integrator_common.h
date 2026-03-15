@@ -93,11 +93,19 @@ struct HitInfo
     Vec3 worldTri2 = Vec3(0.0f, 0.0f, 0.0f);
     Vec3 dPds = Vec3(0.0f, 0.0f, 0.0f);
     Vec3 dPdt = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 dpdx = Vec3(0.0f, 0.0f, 0.0f);
+    Vec3 dpdy = Vec3(0.0f, 0.0f, 0.0f);
+    float dSdx = 0.0f;
+    float dTdx = 0.0f;
+    float dSdy = 0.0f;
+    float dTdy = 0.0f;
     bool hasBarycentrics = false;
     bool hasGeomNormal = false;
     bool hasShadingNormal = false;
     bool hasWorldTriangle = false;
     bool hasSurfacePartials = false;
+    bool hasPositionDifferentials = false;
+    bool hasTextureDifferentials = false;
 };
 
 YBI_INTEGRATOR_HD float Clamp01(float v)
