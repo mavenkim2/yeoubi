@@ -20,6 +20,7 @@ struct SubdivisionRunOptions
 
     Vec3 eye = Vec3(0.0f, 0.0f, 5.0f);
     Vec3 lookAt = Vec3(0.0f, 0.0f, 0.0f);
+    UpAxis upAxis = UpAxis::Z;
     int viewportWidth = 1920;
     int viewportHeight = 1080;
     float verticalFovDegrees = 45.0f;

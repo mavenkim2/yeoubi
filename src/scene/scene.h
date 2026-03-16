@@ -10,6 +10,7 @@
 #include "util/float3x4.h"
 #include "util/float4x4.h"
 #include "util/host_memory_arena.h"
+#include "util/up_axis.h"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -160,6 +161,7 @@ struct Camera
     Vec3 forward = Vec3(0.0f, 0.0f, -1.0f);
     float verticalFovDegrees = 45.0f;
     float nearPlane = 1.0f;
+    UpAxis upAxis = UpAxis::Z;
     bool hasValidCamera = false;
     std::string path;
 };

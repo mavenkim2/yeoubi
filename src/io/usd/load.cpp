@@ -1960,9 +1960,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         return;
     }
 
-    if (pxr::UsdGeomGetStageUpAxis(stage) != pxr::UsdGeomTokens->z)
-    {
-    }
+    const pxr::TfToken stageUpAxis = pxr::UsdGeomGetStageUpAxis(stage);
+    scenePool->camera.upAxis = stageUpAxis == pxr::UsdGeomTokens->y ? UpAxis::Y : UpAxis::Z;
 
     double startTimeCode = stage->GetStartTimeCode();
     double endTimeCode = stage->GetEndTimeCode();

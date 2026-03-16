@@ -2,6 +2,7 @@
 
 #include "util/math_constants.h"
 #include "util/float3x4.h"
+#include "util/up_axis.h"
 #include <cmath>
 
 namespace ybi
@@ -216,18 +217,24 @@ YBI_DEVICE Float4x4 Transpose(const Float4x4 &mat)
                     mat.m[3][3]);
 }
 
-YBI_DEVICE Float4x4 BuildCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt)
+YBI_DEVICE Vec3 ResolveCameraWorldUp(const Vec3 &forward, UpAxis upAxis)
+{
+    Vec3 worldUp = UpAxisVector(upAxis);
+    if (fabsf(Dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = upAxis == UpAxis::Y ? Vec3(0.0f, 0.0f, 1.0f) : Vec3(0.0f, 1.0f, 0.0f);
+    }
+    return worldUp;
+}
+
+YBI_DEVICE Float4x4 BuildCameraFromWorld(const Vec3 &eye, const Vec3 &lookAt, UpAxis upAxis = UpAxis::Z)
 {
     Vec3 forward = Normalize(lookAt - eye);
     if (Length(forward) <= 1.0e-8f)
     {
         forward = Vec3(0.0f, 0.0f, 1.0f);
     }
-    Vec3 worldUp = Vec3(0.0f, 0.0f, 1.0f);
-    if (fabsf(Dot(forward, worldUp)) > 0.999f)
-    {
-        worldUp = Vec3(0.0f, 1.0f, 0.0f);
-    }
+    const Vec3 worldUp = ResolveCameraWorldUp(forward, upAxis);
     const Vec3 right = Normalize(Cross(forward, worldUp));
     const Vec3 up = Normalize(Cross(right, forward));
     return Float4x4(right.x,

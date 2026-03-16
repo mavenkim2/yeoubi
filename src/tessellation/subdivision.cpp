@@ -128,7 +128,7 @@ bool FinalizeSubdivisionRunCamera(SubdivisionRunOptions *options)
     options->viewportHeight = std::max(1, options->viewportHeight);
     if (!options->useCameraMatrices)
     {
-        options->cameraFromWorld = BuildCameraFromWorld(options->eye, options->lookAt);
+        options->cameraFromWorld = BuildCameraFromWorld(options->eye, options->lookAt, options->upAxis);
         options->clipFromCamera = BuildPerspectiveClipFromCamera(
             options->verticalFovDegrees, options->viewportWidth, options->viewportHeight);
         options->useCameraMatrices = true;

@@ -307,18 +307,18 @@ static bool FinalizeRenderCameraOverride(RenderCameraOverride *camera)
 }
 
 static std::optional<RenderCameraOverride>
-BuildFallbackRenderCameraOverride(const ybi::Vec3 &eye, const ybi::Vec3 &lookAt, int width, int height)
+BuildFallbackRenderCameraOverride(const ybi::Vec3 &eye,
+                                  const ybi::Vec3 &lookAt,
+                                  int width,
+                                  int height,
+                                  ybi::UpAxis upAxis)
 {
     ybi::Vec3 forward = ybi::Normalize(lookAt - eye);
     if (ybi::Length(forward) <= 1.0e-8f)
     {
         forward = ybi::Vec3(0.0f, 0.0f, 1.0f);
     }
-    ybi::Vec3 worldUp = ybi::Vec3(0.0f, 0.0f, 1.0f);
-    if (std::abs(ybi::Dot(forward, worldUp)) > 0.999f)
-    {
-        worldUp = ybi::Vec3(0.0f, 1.0f, 0.0f);
-    }
+    const ybi::Vec3 worldUp = ybi::ResolveCameraWorldUp(forward, upAxis);
     const ybi::Vec3 right = ybi::Normalize(ybi::Cross(forward, worldUp));
     const ybi::Vec3 up = ybi::Normalize(ybi::Cross(right, forward));
     const float aspect = static_cast<float>(width) / static_cast<float>(std::max(height, 1));
@@ -328,7 +328,7 @@ BuildFallbackRenderCameraOverride(const ybi::Vec3 &eye, const ybi::Vec3 &lookAt,
     RenderCameraOverride camera = {};
     camera.width = width;
     camera.height = height;
-    camera.cameraFromWorld = ybi::BuildCameraFromWorld(eye, lookAt);
+    camera.cameraFromWorld = ybi::BuildCameraFromWorld(eye, lookAt, upAxis);
     camera.clipFromCamera = ybi::BuildPerspectiveClipFromCamera(45.0f, width, height);
     camera.U = right * (aspect * tanHalfFov);
     camera.V = up * tanHalfFov;
@@ -427,6 +427,7 @@ static bool TessellateRootSubdivisionMeshes(Scene *rootScene, const Camera &came
     SubdivisionRunOptions options = {};
     options.level = 3;
     options.useCameraMatrices = true;
+    options.upAxis = camera.upAxis;
     options.cameraFromWorld = camera.cameraFromWorld;
     options.clipFromCamera = camera.clipFromCamera;
     options.viewportWidth = std::max(1, camera.viewportWidth);
@@ -1817,6 +1818,7 @@ RenderTraversable(Device *device,
                   int singlePixelX,
                   int singlePixelY,
                   bool writeFeedbackFiles,
+                  ybi::UpAxis fallbackCameraUpAxis,
                   const std::optional<RenderCameraOverride> &cameraOverride,
                   const std::optional<ybi::Vec3> &cameraPositionOverride,
                   const std::optional<ybi::Vec3> &lookAtOverride)
@@ -1911,12 +1913,13 @@ RenderTraversable(Device *device,
     }
     else
     {
+        const ybi::UpAxis upAxis = fallbackCameraUpAxis;
         const ybi::Vec3 eye = cameraPositionOverride.has_value()
                                     ? cameraPositionOverride.value()
-                                    : center + ybi::Vec3(0.0f, 0.0f, 1.25f * diagonal);
+                                    : center + ybi::UpAxisVector(upAxis) * (1.25f * diagonal);
         const ybi::Vec3 lookAt = lookAtOverride.has_value() ? lookAtOverride.value() : center;
         const std::optional<RenderCameraOverride> fallbackCamera =
-            BuildFallbackRenderCameraOverride(eye, lookAt, width, height);
+            BuildFallbackRenderCameraOverride(eye, lookAt, width, height, upAxis);
         if (!fallbackCamera.has_value())
         {
             std::fprintf(stderr, "Failed to build fallback camera.\n");
@@ -2696,6 +2699,7 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       options.singlePixelX,
                       options.singlePixelY,
                       options.writeFeedbackFiles,
+                      state.scenePool.camera.upAxis,
                       state.usdCamera,
                       options.cameraPosition,
                       options.lookAt);
