@@ -72,32 +72,74 @@ YBI_DEVICE bool IsFiniteAreaLight(const PackedLight &light)
            light.type == static_cast<unsigned int>(LightType::Cylinder);
 }
 
-YBI_DEVICE void GetLightBasis(const PackedLight &light, Vec3 *outT, Vec3 *outB, Vec3 *outN)
+YBI_DEVICE Vec3 GetLightPosition(const PackedLight &light)
 {
-    Vec3 n = Normalize(ToVec3(light.direction));
-    Vec3 t = Normalize(ToVec3(light.tangent));
-    Vec3 b = Normalize(ToVec3(light.bitangent));
-    if (fabsf(Dot(n, t)) > 0.999f || fabsf(Dot(n, b)) > 0.999f)
+    return ybi::TransformPointAffine(light.worldFromLocal, Vec3(0.0f));
+}
+
+YBI_DEVICE Vec3 GetLightAxisXRaw(const PackedLight &light)
+{
+    return ybi::TransformVectorAffine(light.worldFromLocal, Vec3(1.0f, 0.0f, 0.0f));
+}
+
+YBI_DEVICE Vec3 GetLightAxisYRaw(const PackedLight &light)
+{
+    return ybi::TransformVectorAffine(light.worldFromLocal, Vec3(0.0f, 1.0f, 0.0f));
+}
+
+YBI_DEVICE Vec3 GetLightAxisZRaw(const PackedLight &light)
+{
+    return ybi::TransformVectorAffine(light.worldFromLocal, Vec3(0.0f, 0.0f, 1.0f));
+}
+
+YBI_DEVICE Vec3 SafeNormalizeAxis(const Vec3 &axis, const Vec3 &fallback)
+{
+    return LengthSquared(axis) > 1.0e-20f ? Normalize(axis) : fallback;
+}
+
+YBI_DEVICE void GetLightFrame(const PackedLight &light, Vec3 *outX, Vec3 *outY, Vec3 *outZ)
+{
+    const Vec3 z = SafeNormalizeAxis(GetLightAxisZRaw(light), Vec3(0.0f, 0.0f, 1.0f));
+    Vec3 x = GetLightAxisXRaw(light);
+    if (LengthSquared(x) <= 1.0e-20f)
     {
-        BuildOrthonormalBasis(n, t, b);
+        x = Vec3(1.0f, 0.0f, 0.0f);
+    }
+    x = x - z * Dot(x, z);
+    Vec3 y = Vec3(0.0f);
+    if (LengthSquared(x) <= 1.0e-20f)
+    {
+        BuildOrthonormalBasis(z, x, y);
     }
     else
     {
-        b = Normalize(Cross(n, t));
-        t = Normalize(Cross(b, n));
+        x = Normalize(x);
+        y = Normalize(Cross(z, x));
+        x = Normalize(Cross(y, z));
     }
-    if (outT)
+
+    if (outX)
     {
-        *outT = t;
+        *outX = x;
     }
-    if (outB)
+    if (outY)
     {
-        *outB = b;
+        *outY = y;
     }
-    if (outN)
+    if (outZ)
     {
-        *outN = n;
+        *outZ = z;
     }
+}
+
+YBI_DEVICE Vec3 WorldDirectionToLightLocal(const PackedLight &light, const Vec3 &worldDirection)
+{
+    Vec3 x = {};
+    Vec3 y = {};
+    Vec3 z = {};
+    GetLightFrame(light, &x, &y, &z);
+    const Vec3 d = Normalize(worldDirection);
+    return Vec3(Dot(d, x), Dot(d, y), Dot(d, z));
 }
 
 YBI_DEVICE Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec3 &direction)
@@ -151,16 +193,16 @@ YBI_DEVICE float DomeDirectionPdf()
 YBI_DEVICE void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV)
 {
     const Vec3 d = Normalize(direction);
-    const float phi = atan2f(d.x, -d.z);
+    const float lon = atan2f(d.x, d.z);
     const float clampedY = MaxF(-1.0f, MinF(1.0f, d.y));
-    const float theta = acosf(clampedY);
     if (outU)
     {
-        *outU = phi * (0.5f * ybi::kInvPi) + 0.5f;
+        const float u = 0.5f - lon * (0.5f * ybi::kInvPi);
+        *outU = u - floorf(u);
     }
     if (outV)
     {
-        *outV = theta * ybi::kInvPi;
+        *outV = acosf(clampedY) * ybi::kInvPi;
     }
 }
 
@@ -178,7 +220,17 @@ YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
 
     float u = 0.5f;
     float v = 0.5f;
-    DirectionToLatLongUv(direction, &u, &v);
+    const int domeLightIndex = FindDomeLightIndex(params);
+    Vec3 localDirection = direction;
+    if (domeLightIndex >= 0)
+    {
+        const PackedLight *lights = GetPackedLights(params);
+        if (lights)
+        {
+            localDirection = WorldDirectionToLightLocal(lights[domeLightIndex], direction);
+        }
+    }
+    DirectionToLatLongUv(localDirection, &u, &v);
     Vec4 sample = {};
     if (!state.SampleTexture2D(textureRef, u, v, sample))
     {
@@ -450,11 +502,12 @@ YBI_DEVICE bool SampleRectLight(int lightIndex,
     Vec3 tangent = {};
     Vec3 bitangent = {};
     Vec3 normal = {};
-    GetLightBasis(light, &tangent, &bitangent, &normal);
+    GetLightFrame(light, &tangent, &bitangent, &normal);
+    normal = -normal;
 
     const float x = (Random01(rngState) - 0.5f) * light.width;
     const float y = (Random01(rngState) - 0.5f) * light.height;
-    const Vec3 center = ToVec3(light.position);
+    const Vec3 center = GetLightPosition(light);
     const Vec3 lightPoint = center + tangent * x + bitangent * y;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
@@ -469,12 +522,13 @@ YBI_DEVICE bool SampleDiskLight(int lightIndex,
     Vec3 tangent = {};
     Vec3 bitangent = {};
     Vec3 normal = {};
-    GetLightBasis(light, &tangent, &bitangent, &normal);
+    GetLightFrame(light, &tangent, &bitangent, &normal);
+    normal = -normal;
 
     const float r = light.radius * SafeSqrt(Random01(rngState));
     const float phi = ybi::kTwoPi * Random01(rngState);
     const Vec3 localPoint = tangent * (r * cosf(phi)) + bitangent * (r * sinf(phi));
-    const Vec3 lightPoint = ToVec3(light.position) + localPoint;
+    const Vec3 lightPoint = GetLightPosition(light) + localPoint;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
@@ -494,7 +548,7 @@ YBI_DEVICE bool SampleSphereLight(int lightIndex,
                                          DirectLightSample *outSample)
 {
     const Vec3 normal = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
-    const Vec3 lightPoint = ToVec3(light.position) + normal * light.radius;
+    const Vec3 lightPoint = GetLightPosition(light) + normal * light.radius;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
@@ -508,12 +562,12 @@ YBI_DEVICE bool SampleCylinderLight(int lightIndex,
     Vec3 tangent = {};
     Vec3 bitangent = {};
     Vec3 axis = {};
-    GetLightBasis(light, &tangent, &bitangent, &axis);
+    GetLightFrame(light, &tangent, &bitangent, &axis);
 
     const float phi = ybi::kTwoPi * Random01(rngState);
     const float z = (Random01(rngState) - 0.5f) * light.length;
     const Vec3 radial = tangent * cosf(phi) + bitangent * sinf(phi);
-    const Vec3 center = ToVec3(light.position);
+    const Vec3 center = GetLightPosition(light);
     const Vec3 lightPoint = center + radial * light.radius + axis * z;
     return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, radial, outSample);
 }
@@ -540,13 +594,19 @@ YBI_DEVICE bool SampleDirectLight(const LaunchParams &params,
     switch (light.type)
     {
         case static_cast<unsigned int>(LightType::Distant):
+        {
+            Vec3 axisX = {};
+            Vec3 axisY = {};
+            Vec3 axisZ = {};
+            GetLightFrame(light, &axisX, &axisY, &axisZ);
             outSample->lightIndex = lightIndex;
-            outSample->wi = Normalize(-ToVec3(light.direction));
+            outSample->wi = axisZ;
             outSample->radiance = LightEmission(light);
             outSample->distance = 1.0e20f;
             outSample->pdf = lightPickPdf;
             outSample->isDeltaLight = true;
             return true;
+        }
         case static_cast<unsigned int>(LightType::Rect):
             return SampleRectLight(lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
         case static_cast<unsigned int>(LightType::Disk):

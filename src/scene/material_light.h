@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/float3x4.h"
 #include "util/vec3.h"
 
 #include <cstdint>
@@ -52,13 +53,7 @@ struct PackedLight
 {
     uint32_t type = 0u;
     uint32_t flags = 0u;
-    Vec3 position = Vec3(0.0f, 0.0f, 0.0f);
-    float _padding0 = 0.0f;
-    Vec3 direction = Vec3(0.0f, 0.0f, -1.0f);
-    float _padding1 = 0.0f;
-    Vec3 tangent = Vec3(1.0f, 0.0f, 0.0f);
-    float _padding2 = 0.0f;
-    Vec3 bitangent = Vec3(0.0f, 1.0f, 0.0f);
+    Float3x4 worldFromLocal = Float3x4::Identity();
     float emissionScale = 0.0f;
     Vec3 color = Vec3(0.0f, 0.0f, 0.0f);
     float width = 0.0f;

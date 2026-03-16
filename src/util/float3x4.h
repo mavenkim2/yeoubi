@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/vec3.h"
 #include "util/vec4.h"
 
 namespace ybi
@@ -52,6 +53,11 @@ struct Float3x4
             m[2][c] = r2[c];
         }
     }
+
+    YBI_DEVICE static Float3x4 Identity()
+    {
+        return Float3x4(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    }
 };
 
 using float3x4 = Float3x4;
@@ -61,6 +67,18 @@ YBI_DEVICE Vec3 operator*(const Float3x4 &m, const Vec4 &p)
     return Vec3(Dot(Vec4(m.m[0][0], m.m[0][1], m.m[0][2], m.m[0][3]), p),
                 Dot(Vec4(m.m[1][0], m.m[1][1], m.m[1][2], m.m[1][3]), p),
                 Dot(Vec4(m.m[2][0], m.m[2][1], m.m[2][2], m.m[2][3]), p));
+}
+
+YBI_DEVICE Vec3 TransformPointAffine(const Float3x4 &mat, const Vec3 &p)
+{
+    return mat * Vec4(p, 1.0f);
+}
+
+YBI_DEVICE Vec3 TransformVectorAffine(const Float3x4 &mat, const Vec3 &v)
+{
+    return Vec3(mat.m[0][0] * v.x + mat.m[0][1] * v.y + mat.m[0][2] * v.z,
+                mat.m[1][0] * v.x + mat.m[1][1] * v.y + mat.m[1][2] * v.z,
+                mat.m[2][0] * v.x + mat.m[2][1] * v.y + mat.m[2][2] * v.z);
 }
 
 } // namespace ybi

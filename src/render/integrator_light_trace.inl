@@ -8,7 +8,8 @@ YBI_DEVICE bool IntersectRectLight(const PackedLight &light,
     Vec3 tangent = {};
     Vec3 bitangent = {};
     Vec3 normal = {};
-    GetLightBasis(light, &tangent, &bitangent, &normal);
+    GetLightFrame(light, &tangent, &bitangent, &normal);
+    normal = -normal;
 
     const float denom = Dot(rayDir, normal);
     if (fabsf(denom) <= 1.0e-8f)
@@ -16,7 +17,7 @@ YBI_DEVICE bool IntersectRectLight(const PackedLight &light,
         return false;
     }
 
-    const Vec3 center = ToVec3(light.position);
+    const Vec3 center = GetLightPosition(light);
     const float t = Dot(center - rayOrigin, normal) / denom;
     if (t <= 1.0e-4f || t >= tMax)
     {
@@ -56,7 +57,8 @@ YBI_DEVICE bool IntersectDiskLight(const PackedLight &light,
     Vec3 tangent = {};
     Vec3 bitangent = {};
     Vec3 normal = {};
-    GetLightBasis(light, &tangent, &bitangent, &normal);
+    GetLightFrame(light, &tangent, &bitangent, &normal);
+    normal = -normal;
 
     const float denom = Dot(rayDir, normal);
     if (fabsf(denom) <= 1.0e-8f)
@@ -64,7 +66,7 @@ YBI_DEVICE bool IntersectDiskLight(const PackedLight &light,
         return false;
     }
 
-    const Vec3 center = ToVec3(light.position);
+    const Vec3 center = GetLightPosition(light);
     const float t = Dot(center - rayOrigin, normal) / denom;
     if (t <= 1.0e-4f || t >= tMax)
     {
@@ -101,7 +103,7 @@ YBI_DEVICE bool IntersectSphereLight(const PackedLight &light,
                                             float pickPdf,
                                             LightRayHit *outHit)
 {
-    const Vec3 center = ToVec3(light.position);
+    const Vec3 center = GetLightPosition(light);
     const Vec3 oc = rayOrigin - center;
     const float a = Dot(rayDir, rayDir);
     const float b = 2.0f * Dot(oc, rayDir);
@@ -150,9 +152,9 @@ YBI_DEVICE bool IntersectCylinderLight(const PackedLight &light,
     Vec3 tangent = {};
     Vec3 bitangent = {};
     Vec3 axis = {};
-    GetLightBasis(light, &tangent, &bitangent, &axis);
+    GetLightFrame(light, &tangent, &bitangent, &axis);
 
-    const Vec3 localOrigin = rayOrigin - ToVec3(light.position);
+    const Vec3 localOrigin = rayOrigin - GetLightPosition(light);
     const float ox = Dot(localOrigin, tangent);
     const float oy = Dot(localOrigin, bitangent);
     const float oz = Dot(localOrigin, axis);
