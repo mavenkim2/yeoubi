@@ -42,6 +42,11 @@ YBI_DEVICE float MinF(float a, float b)
     return a < b ? a : b;
 }
 
+YBI_DEVICE float SafeSqrtF(float x)
+{
+    return sqrtf(MaxF(x, 0.0f));
+}
+
 YBI_DEVICE Vec3 ToVec3(const ybi::Vec3 &value)
 {
     return Vec3(value.x, value.y, value.z);
@@ -525,7 +530,7 @@ YBI_DEVICE bool SampleDiskLight(int lightIndex,
     GetLightFrame(light, &tangent, &bitangent, &normal);
     normal = -normal;
 
-    const float r = light.radius * SafeSqrt(Random01(rngState));
+    const float r = light.radius * SafeSqrtF(Random01(rngState));
     const float phi = ybi::kTwoPi * Random01(rngState);
     const Vec3 localPoint = tangent * (r * cosf(phi)) + bitangent * (r * sinf(phi));
     const Vec3 lightPoint = GetLightPosition(light) + localPoint;
@@ -535,7 +540,7 @@ YBI_DEVICE bool SampleDiskLight(int lightIndex,
 YBI_DEVICE Vec3 SampleUniformSphereDirection(float u1, float u2)
 {
     const float z = 1.0f - 2.0f * u1;
-    const float r = SafeSqrt(1.0f - z * z);
+    const float r = SafeSqrtF(1.0f - z * z);
     const float phi = ybi::kTwoPi * u2;
     return Vec3(r * cosf(phi), r * sinf(phi), z);
 }
