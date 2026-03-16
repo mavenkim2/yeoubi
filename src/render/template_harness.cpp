@@ -93,7 +93,7 @@ struct CliOptions
     bool useNtc = false;
     bool virtualTexture = false;
     std::string virtualTextureTilesDir;
-    uint64_t virtualTextureCacheBytes = 1ull << 30u;
+    uint64_t virtualTextureCacheBytes = 0u;
     int virtualTextureTailMaxDim = 32;
     int virtualTextureMaxPageUploads = 0;
     bool singlePixelMode = false;
@@ -712,6 +712,7 @@ static CliOptions ParseCli(int argc, char **argv)
 {
     CliOptions options = {};
     bool purposeOverrideSet = false;
+    bool virtualTextureCacheBytesExplicit = false;
     for (int i = 1; i < argc; i++)
     {
         const std::string arg = argv[i];
@@ -888,6 +889,7 @@ static CliOptions ParseCli(int argc, char **argv)
                 std::abort();
             }
             options.virtualTextureCacheBytes = static_cast<uint64_t>(std::stoull(argv[++i]));
+            virtualTextureCacheBytesExplicit = true;
             continue;
         }
         if (arg == "--vt-tail-max-dim")
@@ -978,6 +980,12 @@ static CliOptions ParseCli(int argc, char **argv)
     {
         PrintUsage(argv[0]);
         std::abort();
+    }
+
+    if (!virtualTextureCacheBytesExplicit)
+    {
+        options.virtualTextureCacheBytes =
+            options.deviceKind == DeviceKind::CPU ? (8ull << 30u) : (1ull << 30u);
     }
 
     return options;
