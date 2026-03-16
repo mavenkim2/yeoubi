@@ -426,18 +426,10 @@ static bool TessellateRootSubdivisionMeshes(Scene *rootScene, const Camera &came
 
     SubdivisionRunOptions options = {};
     options.level = 3;
-    options.useCameraMatrices = true;
-    options.upAxis = camera.upAxis;
-    options.cameraFromWorld = camera.cameraFromWorld;
-    options.clipFromCamera = camera.clipFromCamera;
     options.viewportWidth = std::max(1, camera.viewportWidth);
     options.viewportHeight = std::max(1, camera.viewportHeight);
-    options.verticalFovDegrees = camera.verticalFovDegrees;
-    if (!FinalizeSubdivisionRunCamera(&options))
-    {
-        fprintf(stderr, "Failed to finalize subdivision camera.\n");
-        return false;
-    }
+    options.cameraFromWorld = camera.cameraFromWorld;
+    options.clipFromCamera = camera.clipFromCamera;
 
     const size_t srcCount = rootScene->subdivisionMeshes.size();
     const size_t dstBase = rootScene->meshes.size();

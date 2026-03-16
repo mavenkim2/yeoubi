@@ -232,22 +232,22 @@ int main(int argc, char **argv)
         options.pixelSpacing = cli.pixelSpacing;
         options.splitThreshold = cli.splitThreshold;
         options.sampleSteps = cli.sampleSteps;
-        options.eye = camera.found
-                          ? ybi::Vec3(camera.worldPosition[0],
-                                             camera.worldPosition[1],
-                                             camera.worldPosition[2])
-                          : (meshCenter + ybi::Vec3(0.0f, 0.0f, 5.0f));
-        options.lookAt =
+        const ybi::Vec3 eye = camera.found
+                                  ? ybi::Vec3(camera.worldPosition[0],
+                                              camera.worldPosition[1],
+                                              camera.worldPosition[2])
+                                  : (meshCenter + ybi::Vec3(0.0f, 0.0f, 5.0f));
+        const ybi::Vec3 lookAt =
             camera.found ? ybi::Vec3(camera.meshCenter[0], camera.meshCenter[1], camera.meshCenter[2])
                          : meshCenter;
+        options.viewportWidth = std::max(1, options.viewportWidth);
+        options.viewportHeight = std::max(1, options.viewportHeight);
+        options.cameraFromWorld = ybi::BuildCameraFromWorld(eye, lookAt);
+        options.clipFromCamera =
+            ybi::BuildPerspectiveClipFromCamera(45.0f, options.viewportWidth, options.viewportHeight);
         options.subdivisionScheme = subdivisionScheme;
         options.generateTriangleMetadata = cli.writeMetadata;
         options.patchQuadObjPath = cli.patchQuadObjPath;
-        if (!ybi::FinalizeSubdivisionRunCamera(&options))
-        {
-            std::fprintf(stderr, "Failed to finalize subdivision camera\n");
-            return 1;
-        }
 
         ybi::SubdivisionRunResult result = {};
         if (!ybi::SubdivideAdaptive(mesh, options, &result))

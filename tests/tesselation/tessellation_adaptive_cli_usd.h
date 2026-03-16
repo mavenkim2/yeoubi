@@ -329,22 +329,13 @@ static bool RunUsdTessellationInput(const std::string &inPath,
         options.pixelSpacing = config.pixelSpacing;
         options.splitThreshold = config.splitThreshold;
         options.sampleSteps = config.sampleSteps;
-        options.eye = cameraWorldPos;
-        options.lookAt = cameraWorldPos + cameraForward;
-        options.verticalFovDegrees = cameraVerticalFovDegrees;
-        options.viewportWidth = camera.viewportWidth;
-        options.viewportHeight = camera.viewportHeight;
-        options.useCameraMatrices = true;
+        options.viewportWidth = std::max(1, camera.viewportWidth);
+        options.viewportHeight = std::max(1, camera.viewportHeight);
         options.cameraFromWorld = camera.cameraFromWorld;
         options.clipFromCamera = camera.clipFromCamera;
         options.subdivisionScheme = "catmullClark";
         options.generateTriangleMetadata = config.writeMetadata;
         options.patchQuadObjPath = patchQuadPath;
-        if (!ybi::FinalizeSubdivisionRunCamera(&options))
-        {
-            std::fprintf(stderr, "Failed to finalize subdivision camera for mesh %zu\n", i);
-            return false;
-        }
 
         std::printf("  begin mesh[%zu] prim=%s\n",
                     i,

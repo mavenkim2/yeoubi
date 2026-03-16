@@ -12,7 +12,6 @@
 #include <opensubdiv/far/topologyRefinerFactory.h>
 #include <pxr/base/gf/vec2f.h>
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -116,25 +115,6 @@ template <typename T> static Array<T> BytesToArray(const Array<uint8_t> &bytes)
 #include "tessellation/tessellation_adaptive_patch_quad_write.h"
 #include "tessellation/tessellation_adaptive_mesh_build.h"
 // clang-format on
-
-bool FinalizeSubdivisionRunCamera(SubdivisionRunOptions *options)
-{
-    if (!options)
-    {
-        return false;
-    }
-
-    options->viewportWidth = std::max(1, options->viewportWidth);
-    options->viewportHeight = std::max(1, options->viewportHeight);
-    if (!options->useCameraMatrices)
-    {
-        options->cameraFromWorld = BuildCameraFromWorld(options->eye, options->lookAt, options->upAxis);
-        options->clipFromCamera = BuildPerspectiveClipFromCamera(
-            options->verticalFovDegrees, options->viewportWidth, options->viewportHeight);
-        options->useCameraMatrices = true;
-    }
-    return true;
-}
 
 bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                        const SubdivisionRunOptions &options,
@@ -372,9 +352,9 @@ bool SubdivideAdaptive(const SubdivisionMesh &mesh,
         }
     }
 
-    if (!options.useCameraMatrices)
+    if (options.viewportWidth <= 0 || options.viewportHeight <= 0)
     {
-        std::fprintf(stderr, "Subdivision requires finalized camera matrices.\n");
+        std::fprintf(stderr, "Subdivision requires a positive viewport size.\n");
         delete patchTable;
         delete refiner;
         return false;

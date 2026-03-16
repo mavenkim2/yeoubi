@@ -18,13 +18,8 @@ struct SubdivisionRunOptions
     int splitThreshold = 1;
     int sampleSteps = 8;
 
-    Vec3 eye = Vec3(0.0f, 0.0f, 5.0f);
-    Vec3 lookAt = Vec3(0.0f, 0.0f, 0.0f);
-    UpAxis upAxis = UpAxis::Z;
     int viewportWidth = 1920;
     int viewportHeight = 1080;
-    float verticalFovDegrees = 45.0f;
-    bool useCameraMatrices = false;
     Float4x4 cameraFromWorld = Float4x4::Identity();
     Float4x4 clipFromCamera = Float4x4::Identity();
 
@@ -64,8 +59,6 @@ struct SubdivisionRunResult
     int boundaryEdges = 0;
     int controlCageEdgesWithOver2Faces = 0;
 };
-
-bool FinalizeSubdivisionRunCamera(SubdivisionRunOptions *options);
 
 bool SubdivideAdaptive(const SubdivisionMesh &mesh,
                       const SubdivisionRunOptions &options,
