@@ -1106,7 +1106,8 @@ static bool LoadExrRgba8(const std::string &path,
                          int *outWidth,
                          int *outHeight,
                          std::vector<unsigned char> *outRgba8,
-                         std::string *outReason)
+                         std::string *outReason,
+                         bool flipVertical)
 {
     YBI_ASSERT(outWidth);
     YBI_ASSERT(outHeight);
@@ -1117,7 +1118,7 @@ static bool LoadExrRgba8(const std::string &path,
     outRgba8->clear();
 
     std::vector<float> rgba;
-    if (!ybi::texture::LoadExrRgba(path, outWidth, outHeight, &rgba, outReason, true))
+    if (!ybi::texture::LoadExrRgba(path, outWidth, outHeight, &rgba, outReason, flipVertical))
     {
         return false;
     }
@@ -1136,7 +1137,8 @@ static bool LoadImageRgba8(const std::string &path,
                            int *outWidth,
                            int *outHeight,
                            std::vector<unsigned char> *outRgba8,
-                           std::string *outReason)
+                           std::string *outReason,
+                           bool flipVertical)
 {
     YBI_ASSERT(outWidth);
     YBI_ASSERT(outHeight);
@@ -1148,11 +1150,11 @@ static bool LoadImageRgba8(const std::string &path,
 
     if (ybi::texture::LowerExt(path) == ".exr")
     {
-        return LoadExrRgba8(path, outWidth, outHeight, outRgba8, outReason);
+        return LoadExrRgba8(path, outWidth, outHeight, outRgba8, outReason, flipVertical);
     }
 
     int channels = 0;
-    stbi_set_flip_vertically_on_load(1);
+    stbi_set_flip_vertically_on_load(flipVertical ? 1 : 0);
     stbi_uc *pixels = stbi_load(path.c_str(), outWidth, outHeight, &channels, 4);
     stbi_set_flip_vertically_on_load(0);
     if (!pixels || *outWidth <= 0 || *outHeight <= 0)
@@ -1258,8 +1260,12 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
 
                 std::string reason;
                 const auto loadStart = Clock::now();
-                if (!LoadImageRgba8(
-                        tilePath, &texture.width, &texture.height, &texture.rgba8, &reason))
+                if (!LoadImageRgba8(tilePath,
+                                    &texture.width,
+                                    &texture.height,
+                                    &texture.rgba8,
+                                    &reason,
+                                    true))
                 {
                     std::printf(
                         "Image runtime: failed to load material %zu input %s tile %u (%s): %s\n",
@@ -2539,7 +2545,8 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
                             &state->domeTexture.width,
                             &state->domeTexture.height,
                             &state->domeTexture.rgba8,
-                            &domeReason))
+                            &domeReason,
+                            false))
         {
             std::fprintf(stderr, "Dome texture load failed (%s): %s\n", domeTexturePath.c_str(), domeReason.c_str());
             return false;
