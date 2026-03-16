@@ -147,31 +147,6 @@ YBI_DEVICE Vec3 WorldDirectionToLightLocal(const PackedLight &light, const Vec3 
     return Vec3(Dot(d, x), Dot(d, y), Dot(d, z));
 }
 
-YBI_DEVICE Vec3 EnvironmentRadiance(const LaunchParams &params, const Vec3 &direction)
-{
-    Vec3 env = Vec3(0.0f, 0.0f, 0.0f);
-    bool hasDome = false;
-    const PackedLight *lights = GetPackedLights(params);
-    if (lights)
-    {
-        for (int i = 0; i < params.lightCount; ++i)
-        {
-            const PackedLight &light = lights[i];
-            if (light.type != static_cast<unsigned int>(LightType::Dome))
-            {
-                continue;
-            }
-            env = env + LightEmission(light);
-            hasDome = true;
-        }
-    }
-    if (!hasDome)
-    {
-        return SkyColor(direction);
-    }
-    return env;
-}
-
 YBI_DEVICE int FindDomeLightIndex(const LaunchParams &params)
 {
     const PackedLight *lights = GetPackedLights(params);
@@ -215,33 +190,31 @@ template <typename State>
 YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
 {
     const LaunchParams &params = state.Params();
-    Vec3 env = EnvironmentRadiance(params, direction);
+    const int domeLightIndex = FindDomeLightIndex(params);
+    const PackedLight *lights = GetPackedLights(params);
     const LaunchParams::MaterialTextureRef &textureRef = params.domeTextureRef;
+    if (domeLightIndex < 0 || !lights)
+    {
+        return SkyColor(direction);
+    }
+    const Vec3 domeEmission = LightEmission(lights[domeLightIndex]);
     if (textureRef.textureObject == 0ull || textureRef.valid == 0 || textureRef.width <= 0 ||
         textureRef.height <= 0)
     {
-        return env;
+        return domeEmission;
     }
 
     float u = 0.5f;
     float v = 0.5f;
-    const int domeLightIndex = FindDomeLightIndex(params);
     Vec3 localDirection = direction;
-    if (domeLightIndex >= 0)
-    {
-        const PackedLight *lights = GetPackedLights(params);
-        if (lights)
-        {
-            localDirection = WorldDirectionToLightLocal(lights[domeLightIndex], direction);
-        }
-    }
+    localDirection = WorldDirectionToLightLocal(lights[domeLightIndex], direction);
     DirectionToLatLongUv(localDirection, &u, &v);
     Vec4 sample = {};
     if (!state.SampleTexture2D(textureRef, u, v, sample))
     {
-        return env;
+        return domeEmission;
     }
-    return Vec3(env.x * sample.x, env.y * sample.y, env.z * sample.z);
+    return Vec3(sample.x, sample.y, sample.z);
 }
 
 YBI_DEVICE int CountDirectLights(const LaunchParams &params)

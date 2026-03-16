@@ -555,34 +555,36 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                     const ybi::render::integrator::Vec3 origin = rayDiff.origin;
                     const ybi::render::integrator::Vec3 direction = rayDiff.dir;
 
-                    ybi::render::integrator::HitInfo hit = {};
-                    const bool hitFound = TracePrimary(*params,
-                                                       origin,
-                                                       direction,
-                                                       0.001f,
-                                                       std::numeric_limits<float>::infinity(),
-                                                       &rayDiff,
-                                                       &hit);
-
                     unsigned int packed = 0u;
-                    if (!hitFound)
-                    {
-                        const ybi::render::integrator::Vec3 sky =
-                            ybi::render::integrator::SkyColor(direction);
-                        packed = ybi::render::PackRGB8(sky.x, sky.y, sky.z);
-                    }
-                    else if (kernelId == RenderKernelId::AO)
-                    {
-                        packed = ybi::render::integrator::IntegratorAO(state, hit);
-                    }
-                    else if (kernelId == RenderKernelId::PathTrace)
+                    if (kernelId == RenderKernelId::PathTrace)
                     {
                         packed =
                             ybi::render::integrator::IntegratorPathTrace(state, origin, direction);
                     }
                     else
                     {
-                        packed = ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
+                        ybi::render::integrator::HitInfo hit = {};
+                        const bool hitFound = TracePrimary(*params,
+                                                           origin,
+                                                           direction,
+                                                           0.001f,
+                                                           std::numeric_limits<float>::infinity(),
+                                                           &rayDiff,
+                                                           &hit);
+                        if (!hitFound)
+                        {
+                            const ybi::render::integrator::Vec3 sky =
+                                ybi::render::integrator::SkyColor(direction);
+                            packed = ybi::render::PackRGB8(sky.x, sky.y, sky.z);
+                        }
+                        else if (kernelId == RenderKernelId::AO)
+                        {
+                            packed = ybi::render::integrator::IntegratorAO(state, hit);
+                        }
+                        else
+                        {
+                            packed = ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
+                        }
                     }
 
                     dst[pixelIndex + 0] = static_cast<uint8_t>(packed & 0xffu);
