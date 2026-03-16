@@ -87,6 +87,7 @@ struct CliOptions
     std::string outputPath = "optix_usd_scene.png";
     std::optional<ybi::Vec3> cameraPosition;
     std::optional<ybi::Vec3> lookAt;
+    std::string usdCamera;
     int spp = 1;
     int maxDepth = 4;
     bool useNtc = false;
@@ -681,7 +682,8 @@ static void PrintUsage(const char *exeName)
 {
     printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao|path] [--spp N] [--max-depth N] "
-           "[--device gpu|cpu] [--cam-pos x y z] [--look-at x y z] [--ntc] [--view name] "
+           "[--device gpu|cpu] [--cam-pos x y z] [--look-at x y z] [--camera path-or-name] "
+           "[--ntc] [--view name] "
            "[--purposes csv] [--purpose name]\n",
            exeName);
     printf("  --file USDA/USD path\n");
@@ -692,6 +694,7 @@ static void PrintUsage(const char *exeName)
     printf("  --device gpu|cpu (cpu requires Embree)\n");
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
+    printf("  --camera optional USD camera prim path or unique suffix/name\n");
     printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
     printf("  --virtual-texture run feedback prepass raygen before beauty\n");
     printf("  --vt-tiles-dir path to *.tiles.bin directory for --virtual-texture\n");
@@ -824,6 +827,16 @@ static CliOptions ParseCli(int argc, char **argv)
             }
             options.lookAt = value;
             i += 3;
+            continue;
+        }
+        if (arg == "--camera")
+        {
+            if (i + 1 >= argc)
+            {
+                PrintUsage(argv[0]);
+                std::abort();
+            }
+            options.usdCamera = argv[++i];
             continue;
         }
         if (arg == "--help" || arg == "-h")
@@ -2268,6 +2281,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
 
     USDLoadOptions loadOptions = {};
     loadOptions.purposes = options.purposes;
+    loadOptions.camera = options.usdCamera;
     LoadUSDScene(&state->scenePool, options.inputPath, loadOptions);
     auto tLoad = LogPhase("usd_load", phaseStart);
     if (state->scenePool.scenes.empty() ||
@@ -2600,7 +2614,8 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
             fprintf(stderr, "USD camera missing/invalid: %s\n", options.inputPath.c_str());
             return false;
         }
-        printf("template_harness: using usd camera viewport=%dx%d\n",
+        printf("template_harness: using usd camera %s viewport=%dx%d\n",
+               state->flattenedScenePool.camera.path.c_str(),
                state->usdCamera->width,
                state->usdCamera->height);
         fflush(stdout);

@@ -166,6 +166,90 @@ static void CollectUSDCameras(const pxr::UsdPrim &root, std::vector<pxr::UsdGeom
     }
 }
 
+static std::string GetCameraPrimPath(const pxr::UsdGeomCamera &camera)
+{
+    return camera.GetPrim().GetPath().GetString();
+}
+
+static std::string GetCameraPrimName(const pxr::UsdGeomCamera &camera)
+{
+    return camera.GetPrim().GetName().GetString();
+}
+
+static bool CameraPathMatchesSelector(const std::string &path, const std::string &name, const std::string &selector)
+{
+    if (selector.empty())
+    {
+        return true;
+    }
+    if (path == selector || name == selector)
+    {
+        return true;
+    }
+    const std::string suffix = "/" + selector;
+    return path.size() > suffix.size() &&
+           path.compare(path.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+static int FindSelectedCameraIndex(const std::vector<pxr::UsdGeomCamera> &cameras,
+                                   const std::string &selector,
+                                   std::string *outError)
+{
+    if (cameras.empty())
+    {
+        if (outError)
+        {
+            *outError = "no USD cameras found";
+        }
+        return -1;
+    }
+    if (selector.empty())
+    {
+        return 0;
+    }
+
+    int matchedIndex = -1;
+    std::vector<std::string> matches;
+    matches.reserve(cameras.size());
+    for (size_t i = 0; i < cameras.size(); ++i)
+    {
+        const std::string path = GetCameraPrimPath(cameras[i]);
+        const std::string name = GetCameraPrimName(cameras[i]);
+        if (!CameraPathMatchesSelector(path, name, selector))
+        {
+            continue;
+        }
+        if (matchedIndex < 0)
+        {
+            matchedIndex = static_cast<int>(i);
+        }
+        matches.push_back(path);
+    }
+
+    if (matches.size() == 1u)
+    {
+        return matchedIndex;
+    }
+
+    if (outError)
+    {
+        if (matches.empty())
+        {
+            *outError = "USD camera not found for selector '" + selector + "'";
+        }
+        else
+        {
+            *outError = "USD camera selector '" + selector + "' is ambiguous";
+        }
+        *outError += "\navailable cameras:";
+        for (const pxr::UsdGeomCamera &camera : cameras)
+        {
+            *outError += "\n  " + GetCameraPrimPath(camera);
+        }
+    }
+    return -1;
+}
+
 static std::string NormalizePurposeName(const std::string &input)
 {
     std::string out = input;
@@ -1992,9 +2076,11 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         return;
     }
 
-    if (cameras.size())
+    const int selectedCameraIndex =
+        FindSelectedCameraIndex(cameras, options.camera, &createScenesError);
+    if (selectedCameraIndex >= 0)
     {
-        pxr::UsdGeomCamera &camera = cameras[0];
+        pxr::UsdGeomCamera &camera = cameras[static_cast<size_t>(selectedCameraIndex)];
         const pxr::UsdTimeCode timeCode(0.0);
         pxr::GfCamera gfCam = camera.GetCamera(timeCode);
         pxr::GfFrustum frustum = gfCam.GetFrustum();
@@ -2056,6 +2142,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
         camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
         printf("open: %f close: %f\n", shutterOpen, shutterClose);
+    }
+    else if (!cameras.empty() || !options.camera.empty())
+    {
+        printf("camera selection failed: %s\n", createScenesError.c_str());
     }
 
     ResetTextureGatherLogStats();

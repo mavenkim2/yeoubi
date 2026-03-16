@@ -11,6 +11,7 @@ struct ScenePool;
 struct USDLoadOptions
 {
     std::vector<std::string> purposes = {"default", "render"};
+    std::string camera;
 };
 
 void LoadUSDScene(ScenePool *scenePool, const std::string &filePath);
