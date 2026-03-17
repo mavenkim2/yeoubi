@@ -292,20 +292,6 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state, const Vec3 &origin, const 
     {
         HitInfo hit = {};
         const bool hasSceneHit = state.TraceClosest(rayOrigin, rayDir, rayBias, 1.0e20f, &hit);
-        const float sceneDistance = hasSceneHit ? hit.t : 1.0e20f;
-
-        const Vec3 lightRadiance = AccumulateAnalyticLightRadiance(params,
-                                                                   rayOrigin,
-                                                                   rayDir,
-                                                                   rayBias,
-                                                                   sceneDistance,
-                                                                   currentRayHasBsdfContext,
-                                                                   currentRaySkipNeeMis,
-                                                                   currentRayBsdfPdf);
-        if (MaxComponent(lightRadiance) > 0.0f)
-        {
-            radiance = radiance + throughput * lightRadiance;
-        }
 
         if (!hasSceneHit)
         {
