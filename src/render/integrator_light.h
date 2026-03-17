@@ -54,9 +54,8 @@ YBI_DEVICE Vec3 ToVec3(const ybi::Vec3 &value)
 
 YBI_DEVICE const PackedLight *GetPackedLights(const LaunchParams &params);
 YBI_DEVICE const int *GetLightShadowExcludeRefs(const LaunchParams &params);
-YBI_DEVICE bool IsRefExcludedFromLightShadow(const LaunchParams &params,
-                                                    int lightIndex,
-                                                    int refIndex);
+YBI_DEVICE bool
+IsRefExcludedFromLightShadow(const LaunchParams &params, int lightIndex, int refIndex);
 YBI_DEVICE bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex);
 
 YBI_DEVICE Vec3 LightEmission(const PackedLight &light)
@@ -210,11 +209,9 @@ YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
     localDirection = WorldDirectionToLightLocal(lights[domeLightIndex], direction);
     DirectionToLatLongUv(localDirection, &u, &v);
     Vec4 sample = {};
-    if (!state.SampleTexture2D(textureRef, u, v, sample))
-    {
-        return domeEmission;
-    }
-    return Vec3(sample.x, sample.y, sample.z);
+    bool success = state.SampleTexture2D(textureRef, u, v, sample);
+    assert(success);
+    return Vec3(sample.x, sample.y, sample.z) * lights[domeLightIndex].emissionScale;
 }
 
 YBI_DEVICE int CountDirectLights(const LaunchParams &params)
@@ -297,13 +294,13 @@ YBI_DEVICE const int *GetLightShadowExcludeRefs(const LaunchParams &params)
     return reinterpret_cast<const int *>(params.lightShadowExcludeRefs);
 }
 
-YBI_DEVICE bool IsRefExcludedFromLightShadow(const LaunchParams &params,
-                                                    int lightIndex,
-                                                    int refIndex)
+YBI_DEVICE bool
+IsRefExcludedFromLightShadow(const LaunchParams &params, int lightIndex, int refIndex)
 {
     const PackedLight *lights = GetPackedLights(params);
     const int *excludeRefs = GetLightShadowExcludeRefs(params);
-    if (!lights || !excludeRefs || lightIndex < 0 || lightIndex >= params.lightCount || refIndex < 0)
+    if (!lights || !excludeRefs || lightIndex < 0 || lightIndex >= params.lightCount ||
+        refIndex < 0)
     {
         return false;
     }
@@ -339,9 +336,9 @@ YBI_DEVICE bool LightHasShadowExcludes(const LaunchParams &params, int lightInde
 }
 
 YBI_DEVICE bool PickDirectLightWeighted(const LaunchParams &params,
-                                               unsigned int &rngState,
-                                               int *outLightIndex,
-                                               float *outLightPickPdf)
+                                        unsigned int &rngState,
+                                        int *outLightIndex,
+                                        float *outLightPickPdf)
 {
     if (!outLightIndex || !outLightPickPdf || params.lights == 0ull || params.lightCount <= 0)
     {
@@ -419,10 +416,8 @@ YBI_DEVICE bool PickDirectLightWeighted(const LaunchParams &params,
     return false;
 }
 
-YBI_DEVICE float SolidAnglePdfFromArea(float pickPdf,
-                                              float area,
-                                              float distanceSquared,
-                                              float cosLight)
+YBI_DEVICE float
+SolidAnglePdfFromArea(float pickPdf, float area, float distanceSquared, float cosLight)
 {
     if (pickPdf <= 0.0f || area <= 1.0e-8f || distanceSquared <= 1.0e-8f || cosLight <= 1.0e-8f)
     {
@@ -432,12 +427,12 @@ YBI_DEVICE float SolidAnglePdfFromArea(float pickPdf,
 }
 
 YBI_DEVICE bool FinalizeAreaLightSample(int lightIndex,
-                                               float pickPdf,
-                                               const PackedLight &light,
-                                               const Vec3 &surfacePoint,
-                                               const Vec3 &lightPoint,
-                                               const Vec3 &lightNormal,
-                                               DirectLightSample *outSample)
+                                        float pickPdf,
+                                        const PackedLight &light,
+                                        const Vec3 &surfacePoint,
+                                        const Vec3 &lightPoint,
+                                        const Vec3 &lightNormal,
+                                        DirectLightSample *outSample)
 {
     if (!outSample)
     {
@@ -471,11 +466,11 @@ YBI_DEVICE bool FinalizeAreaLightSample(int lightIndex,
 }
 
 YBI_DEVICE bool SampleRectLight(int lightIndex,
-                                       float pickPdf,
-                                       const PackedLight &light,
-                                       const Vec3 &surfacePoint,
-                                       unsigned int &rngState,
-                                       DirectLightSample *outSample)
+                                float pickPdf,
+                                const PackedLight &light,
+                                const Vec3 &surfacePoint,
+                                unsigned int &rngState,
+                                DirectLightSample *outSample)
 {
     Vec3 tangent = {};
     Vec3 bitangent = {};
@@ -487,15 +482,16 @@ YBI_DEVICE bool SampleRectLight(int lightIndex,
     const float y = (Random01(rngState) - 0.5f) * light.height;
     const Vec3 center = GetLightPosition(light);
     const Vec3 lightPoint = center + tangent * x + bitangent * y;
-    return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
+    return FinalizeAreaLightSample(
+        lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
 YBI_DEVICE bool SampleDiskLight(int lightIndex,
-                                       float pickPdf,
-                                       const PackedLight &light,
-                                       const Vec3 &surfacePoint,
-                                       unsigned int &rngState,
-                                       DirectLightSample *outSample)
+                                float pickPdf,
+                                const PackedLight &light,
+                                const Vec3 &surfacePoint,
+                                unsigned int &rngState,
+                                DirectLightSample *outSample)
 {
     Vec3 tangent = {};
     Vec3 bitangent = {};
@@ -507,7 +503,8 @@ YBI_DEVICE bool SampleDiskLight(int lightIndex,
     const float phi = ybi::kTwoPi * Random01(rngState);
     const Vec3 localPoint = tangent * (r * cosf(phi)) + bitangent * (r * sinf(phi));
     const Vec3 lightPoint = GetLightPosition(light) + localPoint;
-    return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
+    return FinalizeAreaLightSample(
+        lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
 YBI_DEVICE Vec3 SampleUniformSphereDirection(float u1, float u2)
@@ -519,23 +516,24 @@ YBI_DEVICE Vec3 SampleUniformSphereDirection(float u1, float u2)
 }
 
 YBI_DEVICE bool SampleSphereLight(int lightIndex,
-                                         float pickPdf,
-                                         const PackedLight &light,
-                                         const Vec3 &surfacePoint,
-                                         unsigned int &rngState,
-                                         DirectLightSample *outSample)
+                                  float pickPdf,
+                                  const PackedLight &light,
+                                  const Vec3 &surfacePoint,
+                                  unsigned int &rngState,
+                                  DirectLightSample *outSample)
 {
     const Vec3 normal = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
     const Vec3 lightPoint = GetLightPosition(light) + normal * light.radius;
-    return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
+    return FinalizeAreaLightSample(
+        lightIndex, pickPdf, light, surfacePoint, lightPoint, normal, outSample);
 }
 
 YBI_DEVICE bool SampleCylinderLight(int lightIndex,
-                                           float pickPdf,
-                                           const PackedLight &light,
-                                           const Vec3 &surfacePoint,
-                                           unsigned int &rngState,
-                                           DirectLightSample *outSample)
+                                    float pickPdf,
+                                    const PackedLight &light,
+                                    const Vec3 &surfacePoint,
+                                    unsigned int &rngState,
+                                    DirectLightSample *outSample)
 {
     Vec3 tangent = {};
     Vec3 bitangent = {};
@@ -547,13 +545,14 @@ YBI_DEVICE bool SampleCylinderLight(int lightIndex,
     const Vec3 radial = tangent * cosf(phi) + bitangent * sinf(phi);
     const Vec3 center = GetLightPosition(light);
     const Vec3 lightPoint = center + radial * light.radius + axis * z;
-    return FinalizeAreaLightSample(lightIndex, pickPdf, light, surfacePoint, lightPoint, radial, outSample);
+    return FinalizeAreaLightSample(
+        lightIndex, pickPdf, light, surfacePoint, lightPoint, radial, outSample);
 }
 
 YBI_DEVICE bool SampleDirectLight(const LaunchParams &params,
-                                         const Vec3 &surfacePoint,
-                                         unsigned int &rngState,
-                                         DirectLightSample *outSample)
+                                  const Vec3 &surfacePoint,
+                                  unsigned int &rngState,
+                                  DirectLightSample *outSample)
 {
     if (!outSample || params.lights == 0ull || params.lightCount <= 0)
     {
@@ -586,22 +585,24 @@ YBI_DEVICE bool SampleDirectLight(const LaunchParams &params,
             return true;
         }
         case static_cast<unsigned int>(LightType::Rect):
-            return SampleRectLight(lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
+            return SampleRectLight(
+                lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
         case static_cast<unsigned int>(LightType::Disk):
-            return SampleDiskLight(lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
+            return SampleDiskLight(
+                lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
         case static_cast<unsigned int>(LightType::Sphere):
-            return SampleSphereLight(lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
+            return SampleSphereLight(
+                lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
         case static_cast<unsigned int>(LightType::Cylinder):
-            return SampleCylinderLight(lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
+            return SampleCylinderLight(
+                lightIndex, lightPickPdf, light, surfacePoint, rngState, outSample);
         default:
             return false;
     }
 }
 
 template <typename State>
-YBI_DEVICE bool SampleDomeLight(State &state,
-                                       unsigned int &rngState,
-                                       DirectLightSample *outSample)
+YBI_DEVICE bool SampleDomeLight(State &state, unsigned int &rngState, DirectLightSample *outSample)
 {
     if (!outSample)
     {

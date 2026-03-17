@@ -55,8 +55,7 @@ YBI_DEVICE Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
     return Vec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
 }
 
-YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
-                                                          int materialIndex)
+YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params, int materialIndex)
 {
     EvaluatedMaterial material = DefaultMaterial();
     const PackedMaterial *materials = GetPackedMaterials(params);
@@ -67,10 +66,8 @@ YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
 
     const PackedMaterial &src = materials[materialIndex];
     material.baseColor = Vec3(src.baseColor.x, src.baseColor.y, src.baseColor.z);
-    material.emissiveColor =
-        Vec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
-    material.specularColor =
-        Vec3(src.specularColor.x, src.specularColor.y, src.specularColor.z);
+    material.emissiveColor = Vec3(src.emissiveColor.x, src.emissiveColor.y, src.emissiveColor.z);
+    material.specularColor = Vec3(src.specularColor.x, src.specularColor.y, src.specularColor.z);
     material.roughness = src.roughness;
     material.metallic = src.metallic;
     material.ior = src.ior;
@@ -85,8 +82,8 @@ YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params,
 
 template <typename State>
 YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
-                                                     const LaunchParams::InstanceGeomRef &geomRef,
-                                                     const HitInfo &hit)
+                                              const LaunchParams::InstanceGeomRef &geomRef,
+                                              const HitInfo &hit)
 {
     EvaluatedMaterial material = LoadEvaluatedMaterial(state.Params(), geomRef.materialIndex);
 
@@ -148,9 +145,7 @@ YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
 }
 
 YBI_DEVICE LaunchParams::InstanceGeomRef ResolveGeomRef(
-    const LaunchParams &params,
-    const LaunchParams::InstanceGeomRef *geomRefs,
-    int instanceId)
+    const LaunchParams &params, const LaunchParams::InstanceGeomRef *geomRefs, int instanceId)
 {
     LaunchParams::InstanceGeomRef geomRef = {};
     geomRef.materialIndex = -1;
@@ -174,12 +169,12 @@ YBI_DEVICE Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
 
 template <typename State>
 YBI_DEVICE Vec3 TraceShadowTransmittance(State &state,
-                                                const LaunchParams::InstanceGeomRef *geomRefs,
-                                                const Vec3 &origin,
-                                                const Vec3 &direction,
-                                                float tMin,
-                                                float tMax,
-                                                int lightIndex)
+                                         const LaunchParams::InstanceGeomRef *geomRefs,
+                                         const Vec3 &origin,
+                                         const Vec3 &direction,
+                                         float tMin,
+                                         float tMax,
+                                         int lightIndex)
 {
     const LaunchParams &params = state.Params();
     Vec3 transmittance = Vec3(1.0f, 1.0f, 1.0f);
@@ -241,10 +236,41 @@ YBI_DEVICE Vec3 TraceShadowTransmittance(State &state,
     return Vec3(0.0f, 0.0f, 0.0f);
 }
 
+YBI_DEVICE Vec3 AccumulateAnalyticLightRadiance(const LaunchParams &params,
+                                                const Vec3 &rayOrigin,
+                                                const Vec3 &rayDir,
+                                                float rayBias,
+                                                float tMax,
+                                                bool hasBsdfContext,
+                                                bool skipNeeMis,
+                                                float bsdfPdf)
+{
+    Vec3 lightRadiance = Vec3(0.0f, 0.0f, 0.0f);
+    float tMin = rayBias;
+
+    // Analytic lights are visible along the segment but do not block it.
+    while (tMin < tMax)
+    {
+        LightRayHit lightHit = {};
+        if (!TraceAnalyticLight(params, rayOrigin, rayDir, tMin, tMax, &lightHit))
+        {
+            break;
+        }
+
+        float misWeight = 1.0f;
+        if (hasBsdfContext && !skipNeeMis && !lightHit.isDeltaLight)
+        {
+            misWeight = bsdfPdf / MaxFloat(bsdfPdf + lightHit.pdf, 1.0e-6f);
+        }
+        lightRadiance = lightRadiance + lightHit.radiance * misWeight;
+        tMin = MaxFloat(lightHit.distance + rayBias, tMin + rayBias);
+    }
+
+    return lightRadiance;
+}
+
 template <typename State>
-YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
-                                               const Vec3 &origin,
-                                               const Vec3 &direction)
+YBI_DEVICE uint32_t IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3 &direction)
 {
     const LaunchParams &params = state.Params();
     const LaunchParams::InstanceGeomRef *geomRefs = GetGeomRefs(params);
@@ -268,17 +294,17 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
         const bool hasSceneHit = state.TraceClosest(rayOrigin, rayDir, rayBias, 1.0e20f, &hit);
         const float sceneDistance = hasSceneHit ? hit.t : 1.0e20f;
 
-        LightRayHit lightHit = {};
-        if (TraceAnalyticLight(params, rayOrigin, rayDir, sceneDistance, &lightHit))
+        const Vec3 lightRadiance = AccumulateAnalyticLightRadiance(params,
+                                                                   rayOrigin,
+                                                                   rayDir,
+                                                                   rayBias,
+                                                                   sceneDistance,
+                                                                   currentRayHasBsdfContext,
+                                                                   currentRaySkipNeeMis,
+                                                                   currentRayBsdfPdf);
+        if (MaxComponent(lightRadiance) > 0.0f)
         {
-            float misWeight = 1.0f;
-            if (currentRayHasBsdfContext && !currentRaySkipNeeMis && !lightHit.isDeltaLight)
-            {
-                misWeight =
-                    currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + lightHit.pdf, 1.0e-6f);
-            }
-            radiance = radiance + throughput * (lightHit.radiance * misWeight);
-            break;
+            radiance = radiance + throughput * lightRadiance;
         }
 
         if (!hasSceneHit)
@@ -290,13 +316,15 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
                 const float domePdf = DomeDirectionPdf();
                 misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
             }
-            radiance = radiance + throughput * (EvaluateEnvironmentRadiance(state, rayDir) * misWeight);
+            radiance =
+                radiance + throughput * (EvaluateEnvironmentRadiance(state, rayDir) * misWeight);
             break;
         }
 
         const Vec3 hitPoint = hit.rayOrigin + hit.rayDir * hit.t;
 
-        const LaunchParams::InstanceGeomRef geomRef = ResolveGeomRef(params, geomRefs, hit.instanceId);
+        const LaunchParams::InstanceGeomRef geomRef =
+            ResolveGeomRef(params, geomRefs, hit.instanceId);
 
         const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
         const ShadingFrame shadingFrame = EvaluateShadingFrame(state, geomRef, hit);
@@ -321,12 +349,16 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
         {
             const Vec3 shadowOrigin =
                 OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, lightSample.wi);
-            const float shadowMax =
-                lightSample.distance >= 1.0e19f
-                    ? 1.0e20f
-                    : MaxFloat(lightSample.distance - rayBias, rayBias);
-            const Vec3 shadowTr = TraceShadowTransmittance(
-                state, geomRefs, shadowOrigin, lightSample.wi, rayBias, shadowMax, lightSample.lightIndex);
+            const float shadowMax = lightSample.distance >= 1.0e19f
+                                        ? 1.0e20f
+                                        : MaxFloat(lightSample.distance - rayBias, rayBias);
+            const Vec3 shadowTr = TraceShadowTransmittance(state,
+                                                           geomRefs,
+                                                           shadowOrigin,
+                                                           lightSample.wi,
+                                                           rayBias,
+                                                           shadowMax,
+                                                           lightSample.lightIndex);
             if (MaxComponent(shadowTr) > 0.0f)
             {
                 float bsdfPdf = 0.0f;
@@ -337,9 +369,8 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
                         lightSample.isDeltaLight
                             ? 1.0f
                             : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
-                    radiance = radiance +
-                               throughput * f * shadowTr * lightSample.radiance *
-                                   (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
+                    radiance = radiance + throughput * f * shadowTr * lightSample.radiance *
+                                              (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
                 }
             }
         }
@@ -349,8 +380,13 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
         {
             const Vec3 shadowOrigin =
                 OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, domeSample.wi);
-            const Vec3 shadowTr = TraceShadowTransmittance(
-                state, geomRefs, shadowOrigin, domeSample.wi, rayBias, 1.0e20f, domeSample.lightIndex);
+            const Vec3 shadowTr = TraceShadowTransmittance(state,
+                                                           geomRefs,
+                                                           shadowOrigin,
+                                                           domeSample.wi,
+                                                           rayBias,
+                                                           1.0e20f,
+                                                           domeSample.lightIndex);
             if (MaxComponent(shadowTr) > 0.0f)
             {
                 float bsdfPdf = 0.0f;
@@ -359,9 +395,8 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state,
                 {
                     const float misWeight =
                         domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
-                    radiance = radiance +
-                               throughput * f * shadowTr * domeSample.radiance *
-                                   (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
+                    radiance = radiance + throughput * f * shadowTr * domeSample.radiance *
+                                              (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
                 }
             }
         }

@@ -1,9 +1,10 @@
 YBI_DEVICE bool IntersectRectLight(const PackedLight &light,
-                                          const Vec3 &rayOrigin,
-                                          const Vec3 &rayDir,
-                                          float tMax,
-                                          float pickPdf,
-                                          LightRayHit *outHit)
+                                   const Vec3 &rayOrigin,
+                                   const Vec3 &rayDir,
+                                   float tMin,
+                                   float tMax,
+                                   float pickPdf,
+                                   LightRayHit *outHit)
 {
     Vec3 tangent = {};
     Vec3 bitangent = {};
@@ -19,7 +20,7 @@ YBI_DEVICE bool IntersectRectLight(const PackedLight &light,
 
     const Vec3 center = GetLightPosition(light);
     const float t = Dot(center - rayOrigin, normal) / denom;
-    if (t <= 1.0e-4f || t >= tMax)
+    if (t <= tMin || t >= tMax)
     {
         return false;
     }
@@ -48,11 +49,12 @@ YBI_DEVICE bool IntersectRectLight(const PackedLight &light,
 }
 
 YBI_DEVICE bool IntersectDiskLight(const PackedLight &light,
-                                          const Vec3 &rayOrigin,
-                                          const Vec3 &rayDir,
-                                          float tMax,
-                                          float pickPdf,
-                                          LightRayHit *outHit)
+                                   const Vec3 &rayOrigin,
+                                   const Vec3 &rayDir,
+                                   float tMin,
+                                   float tMax,
+                                   float pickPdf,
+                                   LightRayHit *outHit)
 {
     Vec3 tangent = {};
     Vec3 bitangent = {};
@@ -68,7 +70,7 @@ YBI_DEVICE bool IntersectDiskLight(const PackedLight &light,
 
     const Vec3 center = GetLightPosition(light);
     const float t = Dot(center - rayOrigin, normal) / denom;
-    if (t <= 1.0e-4f || t >= tMax)
+    if (t <= tMin || t >= tMax)
     {
         return false;
     }
@@ -97,11 +99,12 @@ YBI_DEVICE bool IntersectDiskLight(const PackedLight &light,
 }
 
 YBI_DEVICE bool IntersectSphereLight(const PackedLight &light,
-                                            const Vec3 &rayOrigin,
-                                            const Vec3 &rayDir,
-                                            float tMax,
-                                            float pickPdf,
-                                            LightRayHit *outHit)
+                                     const Vec3 &rayOrigin,
+                                     const Vec3 &rayDir,
+                                     float tMin,
+                                     float tMax,
+                                     float pickPdf,
+                                     LightRayHit *outHit)
 {
     const Vec3 center = GetLightPosition(light);
     const Vec3 oc = rayOrigin - center;
@@ -117,11 +120,11 @@ YBI_DEVICE bool IntersectSphereLight(const PackedLight &light,
     const float sqrtDiscriminant = sqrtf(discriminant);
     const float invDenom = 0.5f / MaxF(a, 1.0e-8f);
     float t = (-b - sqrtDiscriminant) * invDenom;
-    if (t <= 1.0e-4f || t >= tMax)
+    if (t <= tMin || t >= tMax)
     {
         t = (-b + sqrtDiscriminant) * invDenom;
     }
-    if (t <= 1.0e-4f || t >= tMax)
+    if (t <= tMin || t >= tMax)
     {
         return false;
     }
@@ -143,11 +146,12 @@ YBI_DEVICE bool IntersectSphereLight(const PackedLight &light,
 }
 
 YBI_DEVICE bool IntersectCylinderLight(const PackedLight &light,
-                                              const Vec3 &rayOrigin,
-                                              const Vec3 &rayDir,
-                                              float tMax,
-                                              float pickPdf,
-                                              LightRayHit *outHit)
+                                       const Vec3 &rayOrigin,
+                                       const Vec3 &rayDir,
+                                       float tMin,
+                                       float tMax,
+                                       float pickPdf,
+                                       LightRayHit *outHit)
 {
     Vec3 tangent = {};
     Vec3 bitangent = {};
@@ -181,7 +185,7 @@ YBI_DEVICE bool IntersectCylinderLight(const PackedLight &light,
     float t = (-b - sqrtDiscriminant) * invDenom;
     for (int candidate = 0; candidate < 2; ++candidate)
     {
-        if (t > 1.0e-4f && t < tMax)
+        if (t > tMin && t < tMax)
         {
             const float z = oz + t * dz;
             if (fabsf(z) <= light.length * 0.5f)
@@ -212,10 +216,11 @@ YBI_DEVICE bool IntersectCylinderLight(const PackedLight &light,
 }
 
 YBI_DEVICE bool TraceAnalyticLight(const LaunchParams &params,
-                                          const Vec3 &rayOrigin,
-                                          const Vec3 &rayDir,
-                                          float tMax,
-                                          LightRayHit *outHit)
+                                   const Vec3 &rayOrigin,
+                                   const Vec3 &rayDir,
+                                   float tMin,
+                                   float tMax,
+                                   LightRayHit *outHit)
 {
     if (!outHit || params.lights == 0ull || params.lightCount <= 0)
     {
@@ -245,16 +250,20 @@ YBI_DEVICE bool TraceAnalyticLight(const LaunchParams &params,
         switch (light.type)
         {
             case static_cast<unsigned int>(LightType::Rect):
-                hit = IntersectRectLight(light, rayOrigin, rayDir, bestDistance, pickPdf, &candidate);
+                hit = IntersectRectLight(
+                    light, rayOrigin, rayDir, tMin, bestDistance, pickPdf, &candidate);
                 break;
             case static_cast<unsigned int>(LightType::Disk):
-                hit = IntersectDiskLight(light, rayOrigin, rayDir, bestDistance, pickPdf, &candidate);
+                hit = IntersectDiskLight(
+                    light, rayOrigin, rayDir, tMin, bestDistance, pickPdf, &candidate);
                 break;
             case static_cast<unsigned int>(LightType::Sphere):
-                hit = IntersectSphereLight(light, rayOrigin, rayDir, bestDistance, pickPdf, &candidate);
+                hit = IntersectSphereLight(
+                    light, rayOrigin, rayDir, tMin, bestDistance, pickPdf, &candidate);
                 break;
             case static_cast<unsigned int>(LightType::Cylinder):
-                hit = IntersectCylinderLight(light, rayOrigin, rayDir, bestDistance, pickPdf, &candidate);
+                hit = IntersectCylinderLight(
+                    light, rayOrigin, rayDir, tMin, bestDistance, pickPdf, &candidate);
                 break;
             default:
                 break;
@@ -271,4 +280,13 @@ YBI_DEVICE bool TraceAnalyticLight(const LaunchParams &params,
     }
 
     return found;
+}
+
+YBI_DEVICE bool TraceAnalyticLight(const LaunchParams &params,
+                                   const Vec3 &rayOrigin,
+                                   const Vec3 &rayDir,
+                                   float tMax,
+                                   LightRayHit *outHit)
+{
+    return TraceAnalyticLight(params, rayOrigin, rayDir, 1.0e-4f, tMax, outHit);
 }
