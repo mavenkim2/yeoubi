@@ -103,7 +103,8 @@ bool CPUDevice::CreateTexture(const DeviceTextureCreateInfo &info,
     }
     *outTexture = {};
 
-    if (info.format != DeviceTextureFormat::RGBA8_UNORM)
+    const size_t pixelBytes = DeviceTextureFormatPixelBytes(info.format);
+    if (pixelBytes == 0u)
     {
         if (outError)
         {
@@ -120,7 +121,7 @@ bool CPUDevice::CreateTexture(const DeviceTextureCreateInfo &info,
         return false;
     }
 
-    const size_t expectedBytes = size_t(info.width) * size_t(info.height) * 4u;
+    const size_t expectedBytes = size_t(info.width) * size_t(info.height) * pixelBytes;
     if (info.pixelBytes < expectedBytes)
     {
         if (outError)

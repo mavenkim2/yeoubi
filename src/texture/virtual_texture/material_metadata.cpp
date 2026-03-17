@@ -151,8 +151,7 @@ bool BuildVirtualTextureMaterialMetadata(
             ref.valid = 1;
             ref.wrapS = static_cast<int>(source.wrapS);
             ref.wrapT = static_cast<int>(source.wrapT);
-            ref._padding0 = 0;
-            ref._padding1 = 0;
+            ref.format = DeviceTextureFormat::RGBA8_UNORM;
 
             reg.activeUdims.push_back(udim);
             VirtualTextureUdimExtent extent = {};

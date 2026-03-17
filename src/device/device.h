@@ -41,7 +41,21 @@ enum class DeviceTextureFilterMode : uint8_t
 enum class DeviceTextureFormat : uint8_t
 {
     RGBA8_UNORM = 0,
+    RGBA16_FLOAT = 1,
 };
+
+inline size_t DeviceTextureFormatPixelBytes(DeviceTextureFormat format)
+{
+    switch (format)
+    {
+        case DeviceTextureFormat::RGBA8_UNORM:
+            return 4u;
+        case DeviceTextureFormat::RGBA16_FLOAT:
+            return 8u;
+        default:
+            return 0u;
+    }
+}
 
 struct DeviceTextureCreateInfo
 {

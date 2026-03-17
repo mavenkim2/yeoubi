@@ -19,6 +19,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
 #include "util/array.h"
+#include "util/half_float.h"
 #include "util/vec3.h"
 #include "util/float3x4.h"
 #include "util/vec4.h"
@@ -996,7 +997,8 @@ struct DecodedMaterialTexture
     uint32_t udim = 1001u;
     int width = 0;
     int height = 0;
-    std::vector<unsigned char> rgba8;
+    DeviceTextureFormat format = DeviceTextureFormat::RGBA8_UNORM;
+    std::vector<uint8_t> pixels;
     std::string sourcePath;
     TextureWrapMode wrapS = TEXTURE_WRAP_MODE_REPEAT;
     TextureWrapMode wrapT = TEXTURE_WRAP_MODE_REPEAT;
@@ -1097,7 +1099,7 @@ static const MaterialTextureInput *FindTextureInputBySemantic(const MaterialInfo
 static bool LoadExrRgba8(const std::string &path,
                          int *outWidth,
                          int *outHeight,
-                         std::vector<unsigned char> *outRgba8,
+                         std::vector<uint8_t> *outRgba8,
                          std::string *outReason,
                          bool flipVertical)
 {
@@ -1125,10 +1127,50 @@ static bool LoadExrRgba8(const std::string &path,
     return true;
 }
 
+static float ClampFiniteDomeHdrValue(float value)
+{
+    if (!(value == value) || value <= 0.0f)
+    {
+        return 0.0f;
+    }
+    return std::min(value, 65504.0f);
+}
+
+static bool LoadExrRgba16Float(const std::string &path,
+                               int *outWidth,
+                               int *outHeight,
+                               std::vector<uint8_t> *outPixels,
+                               std::string *outReason,
+                               bool flipVertical)
+{
+    YBI_ASSERT(outWidth);
+    YBI_ASSERT(outHeight);
+    YBI_ASSERT(outPixels);
+
+    *outWidth = 0;
+    *outHeight = 0;
+    outPixels->clear();
+
+    std::vector<float> rgba;
+    if (!ybi::texture::LoadExrRgba(path, outWidth, outHeight, &rgba, outReason, flipVertical))
+    {
+        return false;
+    }
+
+    const size_t sampleCount = static_cast<size_t>(*outWidth) * static_cast<size_t>(*outHeight) * 4u;
+    outPixels->resize(sampleCount * sizeof(uint16_t));
+    for (size_t i = 0; i < sampleCount; ++i)
+    {
+        const uint16_t halfBits = ybi::util::FloatToHalfBits(ClampFiniteDomeHdrValue(rgba[i]));
+        std::memcpy(outPixels->data() + i * sizeof(uint16_t), &halfBits, sizeof(halfBits));
+    }
+    return true;
+}
+
 static bool LoadImageRgba8(const std::string &path,
                            int *outWidth,
                            int *outHeight,
-                           std::vector<unsigned char> *outRgba8,
+                           std::vector<uint8_t> *outRgba8,
                            std::string *outReason,
                            bool flipVertical)
 {
@@ -1255,7 +1297,7 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                 if (!LoadImageRgba8(tilePath,
                                     &texture.width,
                                     &texture.height,
-                                    &texture.rgba8,
+                                    &texture.pixels,
                                     &reason,
                                     true))
                 {
@@ -1280,7 +1322,7 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
                     stats.stbiLoadMs += loadMs;
                     stats.stbiTiles++;
                 }
-                stats.decodedBytes += texture.rgba8.size();
+                stats.decodedBytes += texture.pixels.size();
                 stats.decodedTiles++;
                 RecordSlowTile(&stats, loadMs, tilePath);
 
@@ -1384,20 +1426,20 @@ static bool UploadDecodedTextures(Device *device,
     for (size_t i = 0; i < decodedTextures.size(); ++i)
     {
         const DecodedMaterialTexture &src = decodedTextures[i];
-        if (!src.valid || src.width <= 0 || src.height <= 0 || src.rgba8.empty())
+        if (!src.valid || src.width <= 0 || src.height <= 0 || src.pixels.empty())
         {
             continue;
         }
 
         DeviceTextureCreateInfo createInfo = {};
-        createInfo.pixels = src.rgba8.data();
-        createInfo.pixelBytes = src.rgba8.size();
+        createInfo.pixels = src.pixels.data();
+        createInfo.pixelBytes = src.pixels.size();
         createInfo.width = static_cast<uint32_t>(src.width);
         createInfo.height = static_cast<uint32_t>(src.height);
         createInfo.wrapS = ToDeviceTextureWrapMode(src.wrapS);
         createInfo.wrapT = ToDeviceTextureWrapMode(src.wrapT);
         createInfo.filter = DeviceTextureFilterMode::Nearest;
-        createInfo.format = DeviceTextureFormat::RGBA8_UNORM;
+        createInfo.format = src.format;
 
         DeviceTexture texture = {};
         if (!device->CreateTexture(createInfo, &texture, outError))
@@ -1406,15 +1448,14 @@ static bool UploadDecodedTextures(Device *device,
         }
 
         outTextures->textures.push_back(texture);
-        outTextures->deviceBytes += static_cast<uint64_t>(src.width) * static_cast<uint64_t>(src.height) * 4u;
+        outTextures->deviceBytes += static_cast<uint64_t>(src.pixels.size());
         outTextures->refs[i].textureObject = texture.handle;
         outTextures->refs[i].width = src.width;
         outTextures->refs[i].height = src.height;
         outTextures->refs[i].valid = 1;
         outTextures->refs[i].wrapS = static_cast<int>(src.wrapS);
         outTextures->refs[i].wrapT = static_cast<int>(src.wrapT);
-        outTextures->refs[i]._padding0 = 0;
-        outTextures->refs[i]._padding1 = 0;
+        outTextures->refs[i].format = src.format;
     }
 
     return true;
@@ -1452,34 +1493,34 @@ static bool UploadDecodedTexture(Device *device,
     outTexture->deviceBytes = 0u;
 
     if (!decodedTexture.valid || decodedTexture.width <= 0 || decodedTexture.height <= 0 ||
-        decodedTexture.rgba8.empty())
+        decodedTexture.pixels.empty())
     {
         return true;
     }
 
     DeviceTextureCreateInfo createInfo = {};
-    createInfo.pixels = decodedTexture.rgba8.data();
-    createInfo.pixelBytes = decodedTexture.rgba8.size();
+    createInfo.pixels = decodedTexture.pixels.data();
+    createInfo.pixelBytes = decodedTexture.pixels.size();
     createInfo.width = static_cast<uint32_t>(decodedTexture.width);
     createInfo.height = static_cast<uint32_t>(decodedTexture.height);
     createInfo.wrapS = ToDeviceTextureWrapMode(decodedTexture.wrapS);
     createInfo.wrapT = ToDeviceTextureWrapMode(decodedTexture.wrapT);
     createInfo.filter = DeviceTextureFilterMode::Linear;
-    createInfo.format = DeviceTextureFormat::RGBA8_UNORM;
+    createInfo.format = decodedTexture.format;
 
     if (!device->CreateTexture(createInfo, &outTexture->texture, outError))
     {
         return false;
     }
 
-    outTexture->deviceBytes =
-        static_cast<uint64_t>(decodedTexture.width) * static_cast<uint64_t>(decodedTexture.height) * 4u;
+    outTexture->deviceBytes = static_cast<uint64_t>(decodedTexture.pixels.size());
     outTexture->ref.textureObject = outTexture->texture.handle;
     outTexture->ref.width = decodedTexture.width;
     outTexture->ref.height = decodedTexture.height;
     outTexture->ref.valid = 1;
     outTexture->ref.wrapS = static_cast<int>(decodedTexture.wrapS);
     outTexture->ref.wrapT = static_cast<int>(decodedTexture.wrapT);
+    outTexture->ref.format = decodedTexture.format;
     return true;
 }
 
@@ -2464,7 +2505,8 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
                     dst.udim = kUdimMin;
                     dst.width = ntcTextures[i].width;
                     dst.height = ntcTextures[i].height;
-                    dst.rgba8 = std::move(ntcTextures[i].rgba8);
+                    dst.format = DeviceTextureFormat::RGBA8_UNORM;
+                    dst.pixels = std::move(ntcTextures[i].rgba8);
                     dst.sourcePath = ntcTextures[i].ntcPath;
                     const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
                         state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
@@ -2492,7 +2534,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         state->memoryStats.hostDecodedTextureBytes = 0u;
         for (const DecodedMaterialTexture &texture : state->decodedTextures)
         {
-            state->memoryStats.hostDecodedTextureBytes += static_cast<uint64_t>(texture.rgba8.size());
+            state->memoryStats.hostDecodedTextureBytes += static_cast<uint64_t>(texture.pixels.size());
         }
 
         tTextureReady = LogPhase("decode_image_textures", tTess);
@@ -2508,8 +2550,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         for (size_t i = 0; i < state->uploadedMaterialTextures.refs.size(); ++i)
         {
             const LaunchParams::MaterialTextureRef &src = state->uploadedMaterialTextures.refs[i];
-            launchRefs[i] = {
-                src.textureObject, src.width, src.height, src.valid, src.wrapS, src.wrapT, 0, 0};
+            launchRefs[i] = src;
         }
     }
 
@@ -2533,19 +2574,31 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         state->domeTexture.wrapS = TEXTURE_WRAP_MODE_REPEAT;
         state->domeTexture.wrapT = TEXTURE_WRAP_MODE_CLAMP;
         std::string domeReason;
-        if (!LoadImageRgba8(domeTexturePath,
-                            &state->domeTexture.width,
-                            &state->domeTexture.height,
-                            &state->domeTexture.rgba8,
-                            &domeReason,
-                            false))
+        const bool domeIsExr = ybi::texture::LowerExt(domeTexturePath) == ".exr";
+        state->domeTexture.format =
+            domeIsExr ? DeviceTextureFormat::RGBA16_FLOAT : DeviceTextureFormat::RGBA8_UNORM;
+        const bool domeLoaded =
+            domeIsExr
+                ? LoadExrRgba16Float(domeTexturePath,
+                                     &state->domeTexture.width,
+                                     &state->domeTexture.height,
+                                     &state->domeTexture.pixels,
+                                     &domeReason,
+                                     false)
+                : LoadImageRgba8(domeTexturePath,
+                                 &state->domeTexture.width,
+                                 &state->domeTexture.height,
+                                 &state->domeTexture.pixels,
+                                 &domeReason,
+                                 false);
+        if (!domeLoaded)
         {
             std::fprintf(stderr, "Dome texture load failed (%s): %s\n", domeTexturePath.c_str(), domeReason.c_str());
             return false;
         }
 
         state->memoryStats.hostDecodedTextureBytes +=
-            static_cast<uint64_t>(state->domeTexture.rgba8.size());
+            static_cast<uint64_t>(state->domeTexture.pixels.size());
         std::string domeUploadError;
         if (!UploadDecodedTexture(
                 device, state->domeTexture, &state->uploadedDomeTexture, &domeUploadError))

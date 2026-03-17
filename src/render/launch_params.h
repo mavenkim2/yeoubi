@@ -44,8 +44,10 @@ struct LaunchParams
         int valid;
         int wrapS;
         int wrapT;
-        int _padding0;
-        int _padding1;
+        DeviceTextureFormat format;
+        uint8_t _padding0;
+        uint8_t _padding1;
+        uint8_t _padding2;
     };
 
     struct VirtualTextureMipInfo

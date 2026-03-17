@@ -302,7 +302,8 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
     }
     *outTexture = {};
 
-    if (info.format != DeviceTextureFormat::RGBA8_UNORM)
+    const size_t pixelBytes = DeviceTextureFormatPixelBytes(info.format);
+    if (pixelBytes == 0u)
     {
         if (outError)
         {
@@ -319,7 +320,7 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
         return false;
     }
 
-    const size_t rowBytes = size_t(info.width) * 4u;
+    const size_t rowBytes = size_t(info.width) * pixelBytes;
     const size_t expectedBytes = rowBytes * size_t(info.height);
     if (info.pixelBytes < expectedBytes)
     {
@@ -330,8 +331,25 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
         return false;
     }
 
-    cudaChannelFormatDesc channelDesc =
-        cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
+    cudaChannelFormatDesc channelDesc = {};
+    cudaTextureReadMode readMode = cudaReadModeElementType;
+    switch (info.format)
+    {
+        case DeviceTextureFormat::RGBA8_UNORM:
+            channelDesc = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
+            readMode = cudaReadModeNormalizedFloat;
+            break;
+        case DeviceTextureFormat::RGBA16_FLOAT:
+            channelDesc = cudaCreateChannelDesc(16, 16, 16, 16, cudaChannelFormatKindFloat);
+            readMode = cudaReadModeElementType;
+            break;
+        default:
+            if (outError)
+            {
+                *outError = "CreateTexture: unsupported format";
+            }
+            return false;
+    }
     cudaArray_t array = nullptr;
     if (!CheckCudaRuntime(cudaMallocArray(&array, &channelDesc, info.width, info.height),
                           outError,
@@ -365,7 +383,7 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
     textureDesc.filterMode =
         (info.filter == DeviceTextureFilterMode::Linear) ? cudaFilterModeLinear
                                                          : cudaFilterModePoint;
-    textureDesc.readMode = cudaReadModeNormalizedFloat;
+    textureDesc.readMode = readMode;
     textureDesc.normalizedCoords = 1;
 
     cudaTextureObject_t textureObject = 0;

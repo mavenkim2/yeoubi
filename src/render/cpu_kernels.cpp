@@ -11,6 +11,7 @@
 #include "render/launch_params.h"
 #include "render/shading_core.h"
 #include "texture/virtual_texture/key.h"
+#include "util/half_float.h"
 
 #include <algorithm>
 #include <atomic>
@@ -90,16 +91,34 @@ struct CPUIntegratorState
         const int safeY =
             texelY < 0 ? 0 : (texelY >= textureRef.height ? textureRef.height - 1 : texelY);
 
-        const unsigned char *pixels =
-            reinterpret_cast<const unsigned char *>(textureRef.textureObject);
         const size_t index = (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
                               static_cast<size_t>(safeX)) *
                              4u;
-        outSample = {pixels[index + 0] * (1.0f / 255.0f),
-                     pixels[index + 1] * (1.0f / 255.0f),
-                     pixels[index + 2] * (1.0f / 255.0f),
-                     pixels[index + 3] * (1.0f / 255.0f)};
-        return true;
+        switch (textureRef.format)
+        {
+            case DeviceTextureFormat::RGBA8_UNORM:
+            {
+                const uint8_t *pixels =
+                    reinterpret_cast<const uint8_t *>(textureRef.textureObject);
+                outSample = {pixels[index + 0] * (1.0f / 255.0f),
+                             pixels[index + 1] * (1.0f / 255.0f),
+                             pixels[index + 2] * (1.0f / 255.0f),
+                             pixels[index + 3] * (1.0f / 255.0f)};
+                return true;
+            }
+            case DeviceTextureFormat::RGBA16_FLOAT:
+            {
+                const uint16_t *pixels =
+                    reinterpret_cast<const uint16_t *>(textureRef.textureObject);
+                outSample = {ybi::util::HalfBitsToFloat(pixels[index + 0]),
+                             ybi::util::HalfBitsToFloat(pixels[index + 1]),
+                             ybi::util::HalfBitsToFloat(pixels[index + 2]),
+                             ybi::util::HalfBitsToFloat(pixels[index + 3])};
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     void RecordFeedbackKey(unsigned long long key)
