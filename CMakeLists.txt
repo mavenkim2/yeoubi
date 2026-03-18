@@ -58,6 +58,15 @@ endif()
 target_include_directories(yeoubi_dome_light_uv_test PRIVATE ${YBI_INCLUDE_DIRECTORIES})
 target_include_directories(yeoubi_dome_light_uv_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
 
+add_executable(yeoubi_color_transform_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/render/color_transform_test.cpp)
+target_compile_definitions(yeoubi_color_transform_test PRIVATE ${YBI_COMPILE_DEFINITIONS})
+if (WIN32)
+    target_compile_definitions(yeoubi_color_transform_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+target_include_directories(yeoubi_color_transform_test PRIVATE ${YBI_INCLUDE_DIRECTORIES})
+target_include_directories(yeoubi_color_transform_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+
 if (OPENPBR_BSDF_FOUND)
     list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${OPENPBR_BSDF_INCLUDE_DIR})
 endif()

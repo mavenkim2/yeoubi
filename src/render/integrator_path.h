@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/color_transform.h"
 #include "render/integrator_bsdf.h"
 #include "render/integrator_light.h"
 #include "render/integrator_texture.h"
@@ -33,26 +34,6 @@ YBI_DEVICE const PackedMaterial *GetPackedMaterials(const LaunchParams &params)
 YBI_DEVICE EvaluatedMaterial DefaultMaterial()
 {
     return {};
-}
-
-YBI_DEVICE float LinearToSrgb(float value)
-{
-    if (value <= 0.0f)
-    {
-        return 0.0f;
-    }
-    if (value <= 0.0031308f)
-    {
-        return value * 12.92f;
-    }
-    return 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
-}
-
-YBI_DEVICE Vec3 DisplayMapPathRadiance(const Vec3 &radiance)
-{
-    const Vec3 mapped =
-        Vec3(1.0f - expf(-radiance.x), 1.0f - expf(-radiance.y), 1.0f - expf(-radiance.z));
-    return Vec3(LinearToSrgb(mapped.x), LinearToSrgb(mapped.y), LinearToSrgb(mapped.z));
 }
 
 YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params, int materialIndex)
@@ -270,7 +251,7 @@ YBI_DEVICE Vec3 AccumulateAnalyticLightRadiance(const LaunchParams &params,
 }
 
 template <typename State>
-YBI_DEVICE uint32_t IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3 &direction)
+YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3 &direction)
 {
     const LaunchParams &params = state.Params();
     const LaunchParams::InstanceGeomRef *geomRefs = GetGeomRefs(params);
@@ -428,8 +409,7 @@ YBI_DEVICE uint32_t IntegratorPathTrace(State &state, const Vec3 &origin, const 
         currentRayBsdfPdf = bsdf.pdf;
     }
 
-    const Vec3 display = DisplayMapPathRadiance(radiance);
-    return ybi::render::PackRGB8(display.x, display.y, display.z);
+    return radiance;
 }
 
 } // namespace integrator

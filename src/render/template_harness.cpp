@@ -1,5 +1,6 @@
 #include "device/device.h"
 #include "io/usd/load.h"
+#include "render/color_transform.h"
 #include "render/dispatch_types.h"
 #include "render/integrator_ray_differential.h"
 #include "render/launch_params.h"
@@ -1910,8 +1911,14 @@ RenderTraversable(Device *device,
                     width,
                     height);
     }
-    const size_t imageSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+    const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+    const size_t imageSize = pixelCount * 4u;
     DeviceMemoryView<uint8_t> imageBuffer = device->AllocBytes(imageSize);
+    DeviceMemoryView<float> pathPassLinearRgbBuffer = {};
+    if (integrator == IntegratorType::Path)
+    {
+        pathPassLinearRgbBuffer = device->Alloc<float>(pixelCount * 3u);
+    }
     printf("render: image buffer allocated\n");
     fflush(stdout);
 
@@ -2022,15 +2029,19 @@ RenderTraversable(Device *device,
     printf("render: params buffer allocated\n");
     fflush(stdout);
 
-    std::vector<uint8_t> hostPassImage(imageSize, 0);
-    std::vector<float> accumRgb(static_cast<size_t>(width) * static_cast<size_t>(height) * 3u,
-                                0.0f);
+    std::vector<uint8_t> hostPassImage(integrator == IntegratorType::Path ? 0u : imageSize, 0);
+    std::vector<float> hostPathPassLinearRgb(integrator == IntegratorType::Path ? pixelCount * 3u : 0u,
+                                             0.0f);
+    std::vector<float> accumRgb(pixelCount * 3u, 0.0f);
     std::vector<unsigned long long> feedbackKeysHost(feedbackCapacity, 0ull);
     unsigned int feedbackStatsHost[2] = {0u, 0u};
     unsigned int feedbackStatsZero[2] = {0u, 0u};
-    const uint64_t renderDeviceBytes = imageBuffer.numBytes() + feedbackKeysBuffer.numBytes() +
+    const uint64_t renderDeviceBytes = imageBuffer.numBytes() + pathPassLinearRgbBuffer.numBytes() +
+                                       feedbackKeysBuffer.numBytes() +
                                        feedbackStatsBuffer.numBytes() + paramsBuffer.numBytes();
     const uint64_t renderHostBytes = static_cast<uint64_t>(hostPassImage.size()) +
+                                     static_cast<uint64_t>(hostPathPassLinearRgb.size()) *
+                                         sizeof(float) +
                                      static_cast<uint64_t>(accumRgb.size()) * sizeof(float) +
                                      static_cast<uint64_t>(feedbackKeysHost.size()) *
                                          sizeof(unsigned long long) +
@@ -2102,6 +2113,7 @@ RenderTraversable(Device *device,
         params.spp = 1;
         params.currentSpp = 0;
         params.feedbackSamplePercent = 100;
+        params.image = reinterpret_cast<DevicePtr>(imageBuffer.data());
         device->CopyBytesToDevice(paramsBuffer, &params, sizeof(LaunchParams));
         device->CopyBytesToDevice(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
@@ -2169,8 +2181,17 @@ RenderTraversable(Device *device,
     for (int sppIndex = 0; sppIndex < sppPassCount; ++sppIndex)
     {
         const Clock::time_point passStart = Clock::now();
+        const bool pathTracePass = integrator == IntegratorType::Path;
         params.spp = integrator == IntegratorType::AO ? 1 : 1;
         params.currentSpp = sppIndex;
+        if (pathTracePass)
+        {
+            params.image = reinterpret_cast<DevicePtr>(pathPassLinearRgbBuffer.data());
+        }
+        else
+        {
+            params.image = reinterpret_cast<DevicePtr>(imageBuffer.data());
+        }
         device->CopyBytesToDevice(paramsBuffer, &params, sizeof(LaunchParams));
         device->CopyBytesToDevice(feedbackStatsBuffer, feedbackStatsZero, feedbackStatsBytes);
 
@@ -2180,7 +2201,14 @@ RenderTraversable(Device *device,
         dispatchParams.spp = static_cast<uint32_t>(params.spp);
         dispatchParams.launchParamsDevice = reinterpret_cast<uint64_t>(paramsBuffer.data());
         dispatchParams.launchParamsSize = sizeof(LaunchParams);
-        dispatchParams.outputRGBA8 = imageBuffer;
+        if (pathTracePass)
+        {
+            dispatchParams.outputLinearRgb = pathPassLinearRgbBuffer;
+        }
+        else
+        {
+            dispatchParams.outputRGBA8 = imageBuffer;
+        }
 
         const RenderKernelId kernelId =
             integrator == IntegratorType::AO
@@ -2193,13 +2221,30 @@ RenderTraversable(Device *device,
             std::abort();
         }
 
-        device->CopyBytesToHost(hostPassImage.data(), {imageBuffer.data(), imageBuffer.size()}, imageSize);
-        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-        for (size_t i = 0; i < pixelCount; ++i)
+        if (pathTracePass)
         {
-            accumRgb[i * 3 + 0] += hostPassImage[i * 4 + 0] / 255.0f;
-            accumRgb[i * 3 + 1] += hostPassImage[i * 4 + 1] / 255.0f;
-            accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
+            device->CopyBytesToHost(hostPathPassLinearRgb.data(),
+                                    {reinterpret_cast<const uint8_t *>(
+                                         pathPassLinearRgbBuffer.data()),
+                                     pathPassLinearRgbBuffer.numBytes()},
+                                    pathPassLinearRgbBuffer.numBytes());
+            for (size_t i = 0; i < pixelCount; ++i)
+            {
+                accumRgb[i * 3 + 0] += hostPathPassLinearRgb[i * 3 + 0];
+                accumRgb[i * 3 + 1] += hostPathPassLinearRgb[i * 3 + 1];
+                accumRgb[i * 3 + 2] += hostPathPassLinearRgb[i * 3 + 2];
+            }
+        }
+        else
+        {
+            device->CopyBytesToHost(
+                hostPassImage.data(), {imageBuffer.data(), imageBuffer.size()}, imageSize);
+            for (size_t i = 0; i < pixelCount; ++i)
+            {
+                accumRgb[i * 3 + 0] += hostPassImage[i * 4 + 0] / 255.0f;
+                accumRgb[i * 3 + 1] += hostPassImage[i * 4 + 1] / 255.0f;
+                accumRgb[i * 3 + 2] += hostPassImage[i * 4 + 2] / 255.0f;
+            }
         }
 
         device->CopyBytesToHost(
@@ -2253,9 +2298,17 @@ RenderTraversable(Device *device,
          i < pixelCount;
          ++i)
     {
-        const float r = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 0] * invSpp));
-        const float g = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 1] * invSpp));
-        const float b = std::min(1.0f, std::max(0.0f, accumRgb[i * 3 + 2] * invSpp));
+        const ybi::Vec3 avgLinear(
+            accumRgb[i * 3 + 0] * invSpp, accumRgb[i * 3 + 1] * invSpp, accumRgb[i * 3 + 2] * invSpp);
+        const ybi::Vec3 display =
+            integrator == IntegratorType::Path
+                ? ybi::render::DisplayMapPathRadiance(avgLinear)
+                : ybi::Vec3(std::min(1.0f, std::max(0.0f, avgLinear.x)),
+                            std::min(1.0f, std::max(0.0f, avgLinear.y)),
+                            std::min(1.0f, std::max(0.0f, avgLinear.z)));
+        const float r = std::min(1.0f, std::max(0.0f, display.x));
+        const float g = std::min(1.0f, std::max(0.0f, display.y));
+        const float b = std::min(1.0f, std::max(0.0f, display.z));
         hostImage[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f + 0.5f);
         hostImage[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f + 0.5f);
         hostImage[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f + 0.5f);
@@ -2274,6 +2327,7 @@ RenderTraversable(Device *device,
     virtualTextureManager.Shutdown();
     device->FreeBytes(feedbackStatsBuffer);
     device->FreeBytes(feedbackKeysBuffer);
+    device->Free(pathPassLinearRgbBuffer);
     device->FreeBytes(imageBuffer);
     printf("render: end\n");
     fflush(stdout);

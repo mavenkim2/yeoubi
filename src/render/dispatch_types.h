@@ -31,6 +31,7 @@ struct DispatchParams
     uint64_t launchParamsSize = 0;
 
     DeviceMemoryView<uint8_t> outputRGBA8 = {};
+    DeviceMemoryView<float> outputLinearRgb = {};
     DeviceMemoryView<uint8_t> feedbackBytes = {};
 
     uint32_t frameIndex = 0;

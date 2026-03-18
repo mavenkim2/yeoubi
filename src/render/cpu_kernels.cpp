@@ -525,9 +525,20 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
         return false;
     }
 
-    if (!dispatchParams.outputRGBA8.data() ||
-        dispatchParams.outputRGBA8.numBytes() <
-            static_cast<size_t>(width) * static_cast<size_t>(height) * 4u)
+    const bool pathTraceKernel = kernelId == RenderKernelId::PathTrace;
+    if (pathTraceKernel)
+    {
+        if (!dispatchParams.outputLinearRgb.data() ||
+            dispatchParams.outputLinearRgb.numBytes() <
+                static_cast<size_t>(width) * static_cast<size_t>(height) * 3u * sizeof(float))
+        {
+            std::fprintf(stderr, "CPU kernel dispatch: linear output buffer missing.\n");
+            return false;
+        }
+    }
+    else if (!dispatchParams.outputRGBA8.data() ||
+             dispatchParams.outputRGBA8.numBytes() <
+                 static_cast<size_t>(width) * static_cast<size_t>(height) * 4u)
     {
         std::fprintf(stderr, "CPU kernel dispatch: output buffer missing.\n");
         return false;
@@ -546,11 +557,16 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
             {
                 for (uint32_t x = 0; x < width; ++x)
                 {
-                    const size_t pixelIndex =
+                    const size_t pixelIndexRGBA8 =
                         (static_cast<size_t>(y) * static_cast<size_t>(width) +
                          static_cast<size_t>(x)) *
                         4u;
-                    uint8_t *dst = dispatchParams.outputRGBA8.data();
+                    const size_t pixelIndexLinear =
+                        (static_cast<size_t>(y) * static_cast<size_t>(width) +
+                         static_cast<size_t>(x)) *
+                        3u;
+                    uint8_t *dstRGBA8 = dispatchParams.outputRGBA8.data();
+                    float *dstLinear = dispatchParams.outputLinearRgb.data();
                     if (!ybi::render::integrator::ShouldRenderLaunchPixel(
                             params->singlePixelEnabled,
                             params->singlePixelX,
@@ -558,10 +574,19 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                             x,
                             y))
                     {
-                        dst[pixelIndex + 0] = 0u;
-                        dst[pixelIndex + 1] = 0u;
-                        dst[pixelIndex + 2] = 0u;
-                        dst[pixelIndex + 3] = 255u;
+                        if (pathTraceKernel)
+                        {
+                            dstLinear[pixelIndexLinear + 0] = 0.0f;
+                            dstLinear[pixelIndexLinear + 1] = 0.0f;
+                            dstLinear[pixelIndexLinear + 2] = 0.0f;
+                        }
+                        else
+                        {
+                            dstRGBA8[pixelIndexRGBA8 + 0] = 0u;
+                            dstRGBA8[pixelIndexRGBA8 + 1] = 0u;
+                            dstRGBA8[pixelIndexRGBA8 + 2] = 0u;
+                            dstRGBA8[pixelIndexRGBA8 + 3] = 255u;
+                        }
                         continue;
                     }
 
@@ -574,14 +599,18 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                     const ybi::render::integrator::Vec3 origin = rayDiff.origin;
                     const ybi::render::integrator::Vec3 direction = rayDiff.dir;
 
-                    unsigned int packed = 0u;
-                    if (kernelId == RenderKernelId::PathTrace)
+                    if (pathTraceKernel)
                     {
-                        packed =
-                            ybi::render::integrator::IntegratorPathTrace(state, origin, direction);
+                        const ybi::render::integrator::Vec3 radiance =
+                            ybi::render::integrator::IntegratorPathTrace(
+                                state, origin, direction);
+                        dstLinear[pixelIndexLinear + 0] = radiance.x;
+                        dstLinear[pixelIndexLinear + 1] = radiance.y;
+                        dstLinear[pixelIndexLinear + 2] = radiance.z;
                     }
                     else
                     {
+                        unsigned int packed = 0u;
                         ybi::render::integrator::HitInfo hit = {};
                         const bool hitFound = TracePrimary(*params,
                                                            origin,
@@ -604,12 +633,14 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                         {
                             packed = ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
                         }
-                    }
 
-                    dst[pixelIndex + 0] = static_cast<uint8_t>(packed & 0xffu);
-                    dst[pixelIndex + 1] = static_cast<uint8_t>((packed >> 8) & 0xffu);
-                    dst[pixelIndex + 2] = static_cast<uint8_t>((packed >> 16) & 0xffu);
-                    dst[pixelIndex + 3] = 255u;
+                        dstRGBA8[pixelIndexRGBA8 + 0] = static_cast<uint8_t>(packed & 0xffu);
+                        dstRGBA8[pixelIndexRGBA8 + 1] =
+                            static_cast<uint8_t>((packed >> 8) & 0xffu);
+                        dstRGBA8[pixelIndexRGBA8 + 2] =
+                            static_cast<uint8_t>((packed >> 16) & 0xffu);
+                        dstRGBA8[pixelIndexRGBA8 + 3] = 255u;
+                    }
                 }
             }
         });

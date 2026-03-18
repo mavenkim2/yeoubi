@@ -4,6 +4,8 @@
 #include "render/launch_params.h"
 #include "scene/material_light.h"
 
+#include <cassert>
+
 namespace ybi
 {
 namespace render

@@ -276,14 +276,26 @@ extern "C" __global__ void __raygen__primary()
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDims = optixGetLaunchDimensions();
     const unsigned int pixelIndex = launchIndex.y * launchDims.x + launchIndex.x;
-    uchar4 *image = reinterpret_cast<uchar4 *>(params.image);
+    const bool pathTraceIntegrator = params.integrator == 3;
     if (!ybi::render::integrator::ShouldRenderLaunchPixel(params.singlePixelEnabled,
                                                           params.singlePixelX,
                                                           params.singlePixelY,
                                                           launchIndex.x,
                                                           launchIndex.y))
     {
-        image[pixelIndex] = make_uchar4(0u, 0u, 0u, 255u);
+        if (pathTraceIntegrator)
+        {
+            float *image = reinterpret_cast<float *>(params.image);
+            const unsigned int rgbIndex = pixelIndex * 3u;
+            image[rgbIndex + 0] = 0.0f;
+            image[rgbIndex + 1] = 0.0f;
+            image[rgbIndex + 2] = 0.0f;
+        }
+        else
+        {
+            uchar4 *image = reinterpret_cast<uchar4 *>(params.image);
+            image[pixelIndex] = make_uchar4(0u, 0u, 0u, 255u);
+        }
         return;
     }
     const ybi::render::integrator::RayDifferential rayDiff =
@@ -295,17 +307,19 @@ extern "C" __global__ void __raygen__primary()
             launchDims.y);
     const float3 centerDirection = ToFloat3(rayDiff.dir);
     const float3 origin = ToFloat3(rayDiff.origin);
-    if (params.integrator == 3)
+    if (pathTraceIntegrator)
     {
+        float *image = reinterpret_cast<float *>(params.image);
         OptixState state = {};
-        const unsigned int packedColor = ybi::render::integrator::IntegratorPathTrace(
+        const Vec3 radiance = ybi::render::integrator::IntegratorPathTrace(
             state, ToVec3(origin), ToVec3(centerDirection));
-        image[pixelIndex] = make_uchar4((unsigned char)(packedColor & 255u),
-                                        (unsigned char)((packedColor >> 8) & 255u),
-                                        (unsigned char)((packedColor >> 16) & 255u),
-                                        255u);
+        const unsigned int rgbIndex = pixelIndex * 3u;
+        image[rgbIndex + 0] = radiance.x;
+        image[rgbIndex + 1] = radiance.y;
+        image[rgbIndex + 2] = radiance.z;
         return;
     }
+    uchar4 *image = reinterpret_cast<uchar4 *>(params.image);
     const unsigned int packedColor = TraceColor(origin, centerDirection);
     image[pixelIndex] = make_uchar4((unsigned char)(packedColor & 255u),
                                     (unsigned char)((packedColor >> 8) & 255u),
