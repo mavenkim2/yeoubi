@@ -56,6 +56,7 @@ YBI_DEVICE Vec3 ToVec3(const ybi::Vec3 &value)
 
 YBI_DEVICE const PackedLight *GetPackedLights(const LaunchParams &params);
 YBI_DEVICE const int *GetLightShadowExcludeRefs(const LaunchParams &params);
+YBI_DEVICE float DirectLightPickPdf(const LaunchParams &params, int lightIndex);
 YBI_DEVICE bool
 IsRefExcludedFromLightShadow(const LaunchParams &params, int lightIndex, int refIndex);
 YBI_DEVICE bool LightHasShadowExcludes(const LaunchParams &params, int lightIndex);
@@ -171,6 +172,74 @@ YBI_DEVICE float DomeDirectionPdf()
     return 0.25f * ybi::kInvPi;
 }
 
+YBI_DEVICE bool IsDistantLight(const PackedLight &light)
+{
+    return light.type == static_cast<unsigned int>(LightType::Distant);
+}
+
+YBI_DEVICE bool IsFiniteAngleDistantLight(const PackedLight &light)
+{
+    return IsDistantLight(light) && light.solidAngle > 1.0e-8f;
+}
+
+YBI_DEVICE Vec3 LightLocalDirectionToWorld(const PackedLight &light, const Vec3 &localDirection)
+{
+    Vec3 x = {};
+    Vec3 y = {};
+    Vec3 z = {};
+    GetLightFrame(light, &x, &y, &z);
+    return Normalize(x * localDirection.x + y * localDirection.y + z * localDirection.z);
+}
+
+YBI_DEVICE Vec3 GetDistantLightDirection(const PackedLight &light)
+{
+    Vec3 axisX = {};
+    Vec3 axisY = {};
+    Vec3 axisZ = {};
+    GetLightFrame(light, &axisX, &axisY, &axisZ);
+    return axisZ;
+}
+
+YBI_DEVICE float DistantLightDirectionalPdf(const PackedLight &light)
+{
+    if (!IsFiniteAngleDistantLight(light))
+    {
+        return 0.0f;
+    }
+    return 1.0f / MaxF(light.solidAngle, 1.0e-8f);
+}
+
+YBI_DEVICE bool DirectionInsideDistantLightCap(const PackedLight &light, const Vec3 &worldDirection)
+{
+    if (!IsFiniteAngleDistantLight(light))
+    {
+        return false;
+    }
+    const Vec3 d = Normalize(worldDirection);
+    return Dot(d, GetDistantLightDirection(light)) >= light.cosThetaMax;
+}
+
+YBI_DEVICE Vec3 EvaluateDistantLightRadiance(const PackedLight &light, const Vec3 &worldDirection)
+{
+    return DirectionInsideDistantLightCap(light, worldDirection) ? LightEmission(light)
+                                                                 : Vec3(0.0f, 0.0f, 0.0f);
+}
+
+YBI_DEVICE Vec3 SampleUniformSphericalCapDirection(float cosThetaMax, float u1, float u2)
+{
+    const float z = Lerp(cosThetaMax, 1.0f, u1);
+    const float r = SafeSqrtF(1.0f - z * z);
+    const float phi = ybi::kTwoPi * u2;
+    return Vec3(r * cosf(phi), r * sinf(phi), z);
+}
+
+YBI_DEVICE Vec3 SampleDistantLightDirection(const PackedLight &light, unsigned int &rngState)
+{
+    const Vec3 localDirection =
+        SampleUniformSphericalCapDirection(light.cosThetaMax, Random01(rngState), Random01(rngState));
+    return LightLocalDirectionToWorld(light, localDirection);
+}
+
 YBI_DEVICE void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV)
 {
     const Vec3 d = Normalize(direction);
@@ -188,7 +257,7 @@ YBI_DEVICE void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *
 }
 
 template <typename State>
-YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
+YBI_DEVICE Vec3 EvaluateDomeLightRadiance(State &state, const Vec3 &direction)
 {
     const LaunchParams &params = state.Params();
     const int domeLightIndex = FindDomeLightIndex(params);
@@ -196,7 +265,7 @@ YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
     const LaunchParams::MaterialTextureRef &textureRef = params.domeTextureRef;
     if (domeLightIndex < 0 || !lights)
     {
-        return SkyColor(direction);
+        return Vec3(0.0f, 0.0f, 0.0f);
     }
     const Vec3 domeEmission = LightEmission(lights[domeLightIndex]);
     if (textureRef.textureObject == 0ull || textureRef.valid == 0 || textureRef.width <= 0 ||
@@ -214,6 +283,64 @@ YBI_DEVICE Vec3 EvaluateEnvironmentRadiance(State &state, const Vec3 &direction)
     bool success = state.SampleTexture2D(textureRef, u, v, sample);
     assert(success);
     return Vec3(sample.x, sample.y, sample.z) * lights[domeLightIndex].emissionScale;
+}
+
+template <typename State>
+YBI_DEVICE Vec3 EvaluateBackgroundRadiance(State &state, const Vec3 &direction)
+{
+    const LaunchParams &params = state.Params();
+    return FindDomeLightIndex(params) >= 0 ? EvaluateDomeLightRadiance(state, direction)
+                                           : SkyColor(direction);
+}
+
+template <typename State>
+YBI_DEVICE Vec3 EvaluateMissInfiniteLightRadiance(State &state,
+                                                  const Vec3 &direction,
+                                                  bool hasBsdfContext,
+                                                  bool skipNeeMis,
+                                                  float bsdfPdf)
+{
+    const LaunchParams &params = state.Params();
+    const PackedLight *lights = GetPackedLights(params);
+    Vec3 radiance = EvaluateBackgroundRadiance(state, direction);
+
+    const int domeLightIndex = FindDomeLightIndex(params);
+    if (domeLightIndex >= 0 && hasBsdfContext && !skipNeeMis)
+    {
+        const float domePdf = DomeDirectionPdf();
+        const float domeMis = bsdfPdf / MaxF(bsdfPdf + domePdf, 1.0e-6f);
+        radiance *= domeMis;
+    }
+
+    if (!lights)
+    {
+        return radiance;
+    }
+
+    for (int i = 0; i < params.lightCount; ++i)
+    {
+        const PackedLight &light = lights[i];
+        if (!IsFiniteAngleDistantLight(light))
+        {
+            continue;
+        }
+
+        const Vec3 lightRadiance = EvaluateDistantLightRadiance(light, direction);
+        if (MaxComponent(lightRadiance) <= 0.0f)
+        {
+            continue;
+        }
+
+        float misWeight = 1.0f;
+        if (hasBsdfContext && !skipNeeMis)
+        {
+            const float lightPdf = DirectLightPickPdf(params, i) * DistantLightDirectionalPdf(light);
+            misWeight = bsdfPdf / MaxF(bsdfPdf + lightPdf, 1.0e-6f);
+        }
+        radiance += lightRadiance * misWeight;
+    }
+
+    return radiance;
 }
 
 YBI_DEVICE int CountDirectLights(const LaunchParams &params)
@@ -574,14 +701,18 @@ YBI_DEVICE bool SampleDirectLight(const LaunchParams &params,
     {
         case static_cast<unsigned int>(LightType::Distant):
         {
-            Vec3 axisX = {};
-            Vec3 axisY = {};
-            Vec3 axisZ = {};
-            GetLightFrame(light, &axisX, &axisY, &axisZ);
             outSample->lightIndex = lightIndex;
-            outSample->wi = axisZ;
             outSample->radiance = LightEmission(light);
             outSample->distance = 1.0e20f;
+            if (IsFiniteAngleDistantLight(light))
+            {
+                outSample->wi = SampleDistantLightDirection(light, rngState);
+                outSample->pdf = lightPickPdf * DistantLightDirectionalPdf(light);
+                outSample->isDeltaLight = false;
+                return outSample->pdf > 0.0f;
+            }
+
+            outSample->wi = GetDistantLightDirection(light);
             outSample->pdf = lightPickPdf;
             outSample->isDeltaLight = true;
             return true;
@@ -620,7 +751,7 @@ YBI_DEVICE bool SampleDomeLight(State &state, unsigned int &rngState, DirectLigh
 
     outSample->lightIndex = domeLightIndex;
     outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
-    outSample->radiance = EvaluateEnvironmentRadiance(state, outSample->wi);
+    outSample->radiance = EvaluateDomeLightRadiance(state, outSample->wi);
     outSample->lightPoint = Vec3(0.0f, 0.0f, 0.0f);
     outSample->lightNormal = -outSample->wi;
     outSample->distance = 1.0e20f;

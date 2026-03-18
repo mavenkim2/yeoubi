@@ -729,6 +729,29 @@ static void ReadCommonLightParams(const LightSchemaT &light, PackedLight *outLig
     outLight->flags = preserveFlags | (normalize ? LIGHT_FLAG_NORMALIZED : 0u);
 }
 
+static void ReadDistantLightAngle(const pxr::UsdLuxDistantLight &light, PackedLight *outLight)
+{
+    YBI_ASSERT(outLight);
+
+    float angleDegrees = 0.53f;
+    light.GetAngleAttr().Get(&angleDegrees);
+    const float clampedAngleDegrees = std::max(0.0f, std::min(angleDegrees, 360.0f));
+    const float angleRadians = clampedAngleDegrees * (ybi::kPi / 180.0f);
+    outLight->angleRadians = angleRadians;
+
+    if (angleRadians <= 1.0e-6f)
+    {
+        outLight->cosThetaMax = 1.0f;
+        outLight->solidAngle = 0.0f;
+        return;
+    }
+
+    const float thetaMax = 0.5f * angleRadians;
+    const float cosThetaMax = cosf(thetaMax);
+    outLight->cosThetaMax = cosThetaMax;
+    outLight->solidAngle = std::max(0.0f, ybi::kTwoPi * (1.0f - cosThetaMax));
+}
+
 static Float3x4 ConvertAffineTransform(const pxr::GfMatrix4d &m)
 {
     const pxr::GfMatrix4d t = m.GetTranspose();
@@ -768,7 +791,7 @@ static float ComputeLightSelectionWeight(const PackedLight &light)
             weight *= std::max(light.areaScale, 1.0f);
             break;
         case LightType::Distant:
-            weight *= 1024.0f;
+            weight *= light.solidAngle > 0.0f ? std::max(light.solidAngle, 1.0e-4f) : 1024.0f;
             break;
         default:
             break;
@@ -882,6 +905,7 @@ static void CollectUsdLights(const pxr::UsdStageRefPtr &stage,
             info.packed.type = static_cast<uint32_t>(LightType::Distant);
             info.packed.worldFromLocal = worldFromLocal;
             ReadCommonLightParams(light, &info.packed);
+            ReadDistantLightAngle(light, &info.packed);
         }
         else if (prim.IsA<pxr::UsdLuxRectLight>())
         {

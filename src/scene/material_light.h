@@ -56,11 +56,14 @@ struct PackedLight
     Float3x4 worldFromLocal = Float3x4::Identity();
     float emissionScale = 0.0f;
     Vec3 color = Vec3(0.0f, 0.0f, 0.0f);
+    float angleRadians = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
     float radius = 0.0f;
     float length = 0.0f;
+    float cosThetaMax = 1.0f;
     float areaScale = 0.0f;
+    float solidAngle = 0.0f;
     float selectionWeight = 1.0f;
     uint32_t shadowExcludeOffset = 0u;
     uint32_t shadowExcludeCount = 0u;

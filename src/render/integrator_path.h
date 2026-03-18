@@ -293,15 +293,12 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if (!hasSceneHit)
         {
-            float misWeight = 1.0f;
-            if (currentRayHasBsdfContext && !currentRaySkipNeeMis &&
-                FindDomeLightIndex(params) >= 0)
-            {
-                const float domePdf = DomeDirectionPdf();
-                misWeight = currentRayBsdfPdf / MaxFloat(currentRayBsdfPdf + domePdf, 1.0e-6f);
-            }
-            radiance =
-                radiance + throughput * (EvaluateEnvironmentRadiance(state, rayDir) * misWeight);
+            radiance = radiance +
+                       throughput * EvaluateMissInfiniteLightRadiance(state,
+                                                                     rayDir,
+                                                                     currentRayHasBsdfContext,
+                                                                     currentRaySkipNeeMis,
+                                                                     currentRayBsdfPdf);
             break;
         }
 
