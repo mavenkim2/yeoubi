@@ -1,8 +1,6 @@
 #include "shared.h"
+#include "io/usd/asset_path_resolve.h"
 
-#include <pxr/usd/sdf/assetPath.h>
-#include <pxr/usd/sdf/layer.h>
-#include <pxr/usd/sdf/layerUtils.h>
 #include <pxr/usd/sdf/valueTypeName.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
@@ -85,48 +83,6 @@ std::string OutputNameToSwizzle(const pxr::TfToken &sourceName)
     return "";
 }
 
-std::string ResolveAssetPath(const pxr::UsdShadeInput &fileInput, const pxr::SdfAssetPath &assetPath)
-{
-    if (!assetPath.GetResolvedPath().empty())
-    {
-        return assetPath.GetResolvedPath();
-    }
-
-    const std::string raw = assetPath.GetAssetPath();
-    if (raw.empty())
-    {
-        return {};
-    }
-
-    const auto stack = fileInput.GetAttr().GetPropertyStack();
-    for (const auto &spec : stack)
-    {
-        if (!spec)
-        {
-            continue;
-        }
-        pxr::SdfLayerHandle layer = spec->GetLayer();
-        if (!layer)
-        {
-            continue;
-        }
-
-        std::string resolved = pxr::SdfResolveAssetPathRelativeToLayer(layer, raw);
-        if (!resolved.empty())
-        {
-            return resolved;
-        }
-
-        std::string anchored = pxr::SdfComputeAssetPathRelativeToLayer(layer, raw);
-        if (!anchored.empty())
-        {
-            return anchored;
-        }
-    }
-
-    return raw;
-}
-
 bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
                          ChannelTexture &out,
                          std::string &reasonOut)
@@ -164,21 +120,11 @@ bool TryGetUVTextureFile(const pxr::UsdShadeInput &input,
         return false;
     }
 
-    pxr::SdfAssetPath fileAsset;
-    if (!fileInput.Get(&fileAsset))
+    if (!ybi::ResolveUsdShadeInputAssetPath(fileInput, &out.texturePath))
     {
         reasonOut = "input:file has no readable SdfAssetPath";
         return false;
     }
-
-    const std::string path = ResolveAssetPath(fileInput, fileAsset);
-    if (path.empty())
-    {
-        reasonOut = "empty texture path";
-        return false;
-    }
-
-    out.texturePath = path;
     out.swizzle = OutputNameToSwizzle(sources[0].sourceName);
     return true;
 }

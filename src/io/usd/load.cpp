@@ -1033,18 +1033,10 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
         return false;
     }
 
-    pxr::SdfAssetPath assetPath;
-    if (!fileInput.Get(&assetPath))
+    if (!ResolveUsdShadeInputAssetPath(fileInput, &outPath))
     {
-        // TODO: support connected/indirected file inputs.
+        // TODO: support additional non-input indirections for file-bearing texture nodes.
         g_textureGatherLogStats.unreadableFileValue++;
-        return false;
-    }
-
-    outPath = ResolveUsdAssetPath(fileInput.GetAttr(), assetPath);
-    if (outPath.empty())
-    {
-        g_textureGatherLogStats.emptyTextureFilePath++;
         return false;
     }
 
