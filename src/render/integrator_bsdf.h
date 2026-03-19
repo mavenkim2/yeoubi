@@ -27,6 +27,7 @@ struct EvaluatedMaterial
     float opacityThreshold = 0.0f;
     unsigned int flags = 0u;
     unsigned int useSpecularWorkflow = 0u;
+    unsigned int hasAuthoredUseSpecularWorkflow = 0u;
 };
 
 struct PreparedMaterial
@@ -103,10 +104,15 @@ YBI_DEVICE OpenPBR_ResolvedInputs BuildOpenPbrResolvedInputs(const EvaluatedMate
                                                                     const ShadingFrame &frame)
 {
     OpenPBR_ResolvedInputs inputs = openpbr_make_default_resolved_inputs();
+    const bool useSpecularWorkflow = material.useSpecularWorkflow != 0u;
+    const bool hasAuthoredUseSpecularWorkflow =
+        material.hasAuthoredUseSpecularWorkflow != 0u;
     inputs.base_color = material.baseColor;
-    inputs.base_metalness = material.useSpecularWorkflow != 0u ? 0.0f : material.metallic;
-    inputs.specular_color =
-        material.useSpecularWorkflow != 0u ? material.specularColor : Vec3(1.0f, 1.0f, 1.0f);
+    inputs.base_metalness = useSpecularWorkflow ? 0.0f : material.metallic;
+    inputs.specular_color = useSpecularWorkflow
+                                ? material.specularColor
+                                : (hasAuthoredUseSpecularWorkflow ? Vec3(1.0f, 1.0f, 1.0f)
+                                                                  : material.baseColor);
     inputs.specular_roughness = material.roughness;
     inputs.specular_ior = material.ior;
     inputs.coat_weight = material.clearcoat;

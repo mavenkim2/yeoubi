@@ -58,6 +58,7 @@ YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params, i
     material.opacityThreshold = src.opacityThreshold;
     material.flags = src.flags;
     material.useSpecularWorkflow = src.useSpecularWorkflow;
+    material.hasAuthoredUseSpecularWorkflow = src.hasAuthoredUseSpecularWorkflow;
     return material;
 }
 

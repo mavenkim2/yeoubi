@@ -29,7 +29,7 @@ struct PackedMaterial
     float opacityThreshold = 0.0f;
     uint32_t flags = 0u;
     uint32_t useSpecularWorkflow = 0u;
-    uint32_t _padding0 = 0u;
+    uint32_t hasAuthoredUseSpecularWorkflow = 0u;
     uint32_t _padding1 = 0u;
 };
 

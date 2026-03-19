@@ -645,6 +645,8 @@ static void FinalizePackedMaterial(PackedMaterial *packed)
     packed->clearcoatRoughness = ClampFinite(packed->clearcoatRoughness, 0.0f, 1.0f, 0.01f);
     packed->opacityThreshold = ClampFinite(packed->opacityThreshold, 0.0f, 1.0f, 0.0f);
     packed->useSpecularWorkflow = packed->useSpecularWorkflow != 0u ? 1u : 0u;
+    packed->hasAuthoredUseSpecularWorkflow =
+        packed->hasAuthoredUseSpecularWorkflow != 0u ? 1u : 0u;
 
     packed->flags = 0u;
     if (packed->emissiveColor.x > 0.0f || packed->emissiveColor.y > 0.0f ||
@@ -652,6 +654,12 @@ static void FinalizePackedMaterial(PackedMaterial *packed)
     {
         packed->flags |= MATERIAL_FLAG_HAS_EMISSION;
     }
+}
+
+static bool HasAuthoredInputValueOrConnection(const pxr::UsdShadeInput &input)
+{
+    const pxr::UsdAttribute attr = input.GetAttr();
+    return attr && (attr.HasAuthoredValueOpinion() || input.HasConnectedSource());
 }
 
 static void ReadPreviewSurfaceMaterial(const pxr::UsdShadeShader &shader, MaterialInfo *outInfo)
@@ -682,6 +690,10 @@ static void ReadPreviewSurfaceMaterial(const pxr::UsdShadeShader &shader, Materi
         ReadInputFloat(shader.GetInput(pxr::TfToken("opacityThreshold")), 0.0f);
     outInfo->packed.useSpecularWorkflow =
         ReadInputBool(shader.GetInput(pxr::TfToken("useSpecularWorkflow")), false) ? 1u : 0u;
+    outInfo->packed.hasAuthoredUseSpecularWorkflow =
+        HasAuthoredInputValueOrConnection(shader.GetInput(pxr::TfToken("useSpecularWorkflow")))
+            ? 1u
+            : 0u;
 
     for (const pxr::UsdShadeInput &input : shader.GetInputs())
     {
