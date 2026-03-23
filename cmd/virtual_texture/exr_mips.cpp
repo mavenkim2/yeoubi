@@ -2,6 +2,9 @@
 #include "texture/exr_io.h"
 #include "third_party/tinyexr/tinyexr.h"
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <string>
@@ -66,17 +69,26 @@ void Downsample2x2(const std::vector<float> &src,
             const uint32_t sy0 = std::min(srcH - 1u, y * 2u + 0u);
             const uint32_t sy1 = std::min(srcH - 1u, y * 2u + 1u);
             const size_t outBase =
-                (static_cast<size_t>(y) * static_cast<size_t>(*dstW) + static_cast<size_t>(x)) * 4u;
+                (static_cast<size_t>(y) * static_cast<size_t>(*dstW) + static_cast<size_t>(x)) *
+                4u;
             for (uint32_t c = 0; c < 4u; ++c)
             {
-                const size_t i00 =
-                    (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) + static_cast<size_t>(sx0)) * 4u + c;
-                const size_t i10 =
-                    (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) + static_cast<size_t>(sx1)) * 4u + c;
-                const size_t i01 =
-                    (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) + static_cast<size_t>(sx0)) * 4u + c;
-                const size_t i11 =
-                    (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) + static_cast<size_t>(sx1)) * 4u + c;
+                const size_t i00 = (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) +
+                                    static_cast<size_t>(sx0)) *
+                                       4u +
+                                   c;
+                const size_t i10 = (static_cast<size_t>(sy0) * static_cast<size_t>(srcW) +
+                                    static_cast<size_t>(sx1)) *
+                                       4u +
+                                   c;
+                const size_t i01 = (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) +
+                                    static_cast<size_t>(sx0)) *
+                                       4u +
+                                   c;
+                const size_t i11 = (static_cast<size_t>(sy1) * static_cast<size_t>(srcW) +
+                                    static_cast<size_t>(sx1)) *
+                                       4u +
+                                   c;
                 (*dst)[outBase + c] = 0.25f * (src[i00] + src[i10] + src[i01] + src[i11]);
             }
         }
@@ -107,17 +119,14 @@ void BuildManualMipChain(const std::vector<float> &base,
         outMips->push_back(std::move(next));
     }
 }
-bool FindRgbaChannels(const EXRHeader &header,
-                      int *outR,
-                      int *outG,
-                      int *outB,
-                      int *outA,
-                      std::string *outError)
+bool FindRgbaChannels(
+    const EXRHeader &header, int *outR, int *outG, int *outB, int *outA, std::string *outError)
 {
     std::map<std::string, LayerChannels> layers;
     for (int i = 0; i < header.num_channels; ++i)
     {
         const auto split = SplitChannelName(header.channels[i].name);
+        printf("%s name: %s index: %i\n", header.name, header.channels[i].name, i);
         LayerChannels &layer = layers[split.first];
         if (layer.first < 0)
         {
@@ -141,7 +150,8 @@ bool FindRgbaChannels(const EXRHeader &header,
         }
     }
     auto choose = layers.find("");
-    if (choose == layers.end() || choose->second.r < 0 || choose->second.g < 0 || choose->second.b < 0)
+    if (choose == layers.end() || choose->second.r < 0 || choose->second.g < 0 ||
+        choose->second.b < 0)
     {
         choose = layers.end();
         for (auto it = layers.begin(); it != layers.end(); ++it)
@@ -236,13 +246,17 @@ bool ReadLevelRgba(const EXRHeader &header,
                     // TinyEXR stores each tile row at the header tile stride, even
                     // when edge tiles are clipped smaller at this mip level.
                     const size_t srcIndex =
-                        static_cast<size_t>(y) * static_cast<size_t>(tileSizeX) + static_cast<size_t>(x);
+                        static_cast<size_t>(y) * static_cast<size_t>(tileSizeX) +
+                        static_cast<size_t>(x);
                     const size_t dstBase =
-                        (static_cast<size_t>(dstY) * static_cast<size_t>(width) + static_cast<size_t>(dstX)) * 4u;
+                        (static_cast<size_t>(dstY) * static_cast<size_t>(width) +
+                         static_cast<size_t>(dstX)) *
+                        4u;
                     (*outRgba)[dstBase + 0u] = channels[idxR][srcIndex];
                     (*outRgba)[dstBase + 1u] = channels[idxG][srcIndex];
                     (*outRgba)[dstBase + 2u] = channels[idxB][srcIndex];
-                    (*outRgba)[dstBase + 3u] = (idxA >= 0 && channels[idxA]) ? channels[idxA][srcIndex] : 1.0f;
+                    (*outRgba)[dstBase + 3u] =
+                        (idxA >= 0 && channels[idxA]) ? channels[idxA][srcIndex] : 1.0f;
                 }
             }
         }
@@ -317,6 +331,7 @@ bool LoadStoredMipChain(const std::string &path,
     int idxG = -1;
     int idxB = -1;
     int idxA = -1;
+
     if (!FindRgbaChannels(*header, &idxR, &idxG, &idxB, &idxA, outError))
     {
         FreeEXRImage(&image);
@@ -386,8 +401,7 @@ bool LoadStoredMipChain(const std::string &path,
         {
             ++nextLoadedIndex;
         }
-        if (nextLoadedIndex < loaded.size() &&
-            loaded[nextLoadedIndex].level == nextLevel &&
+        if (nextLoadedIndex < loaded.size() && loaded[nextLoadedIndex].level == nextLevel &&
             loaded[nextLoadedIndex].width == expectedW &&
             loaded[nextLoadedIndex].height == expectedH)
         {
