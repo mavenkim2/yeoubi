@@ -1,6 +1,7 @@
 #include "exr_mips.h"
 #include "texture/exr_io.h"
 #include "third_party/tinyexr/tinyexr.h"
+#include "util/assert.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -119,14 +120,12 @@ void BuildManualMipChain(const std::vector<float> &base,
         outMips->push_back(std::move(next));
     }
 }
-bool FindRgbaChannels(
-    const EXRHeader &header, int *outR, int *outG, int *outB, int *outA, std::string *outError)
+bool FindRgbaChannels(const EXRHeader &header, std::array<int, 4> &channels, std::string *outError)
 {
     std::map<std::string, LayerChannels> layers;
     for (int i = 0; i < header.num_channels; ++i)
     {
         const auto split = SplitChannelName(header.channels[i].name);
-        printf("%s name: %s index: %i\n", header.name, header.channels[i].name, i);
         LayerChannels &layer = layers[split.first];
         if (layer.first < 0)
         {
@@ -183,21 +182,20 @@ bool FindRgbaChannels(
         }
         return false;
     }
-    *outR = (choose->second.r >= 0) ? choose->second.r : choose->second.first;
-    *outG = (choose->second.g >= 0) ? choose->second.g : choose->second.first;
-    *outB = (choose->second.b >= 0) ? choose->second.b : choose->second.first;
-    *outA = choose->second.a;
+
+    channels[0] = (choose->second.r >= 0) ? choose->second.r : choose->second.first;
+    channels[1] = (choose->second.g >= 0) ? choose->second.g : choose->second.first;
+    channels[2] = (choose->second.b >= 0) ? choose->second.b : choose->second.first;
+    channels[3] = choose->second.a;
     return true;
 }
 bool ReadLevelRgba(const EXRHeader &header,
                    const EXRImage &level,
-                   int idxR,
-                   int idxG,
-                   int idxB,
-                   int idxA,
-                   std::vector<float> *outRgba,
+                   const std::array<int, 4> &channelIndices,
+                   std::vector<float> *outValues,
                    std::string *outError)
 {
+    int numChannels = header.num_channels;
     if (level.width <= 0 || level.height <= 0)
     {
         if (outError)
@@ -208,7 +206,7 @@ bool ReadLevelRgba(const EXRHeader &header,
     }
     const uint32_t width = static_cast<uint32_t>(level.width);
     const uint32_t height = static_cast<uint32_t>(level.height);
-    outRgba->assign(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u, 1.0f);
+    outValues->assign(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u, 1.0f);
     if (level.tiles && level.num_tiles > 0)
     {
         const int tileSizeX = std::max(1, header.tile_size_x);
@@ -221,9 +219,16 @@ bool ReadLevelRgba(const EXRHeader &header,
                 continue;
             }
             float **channels = reinterpret_cast<float **>(tile.images);
-            if (!channels[idxR] || !channels[idxG] || !channels[idxB])
+            for (int channel = 0; channel < numChannels; channel++)
             {
-                continue;
+                if (!channels[channelIndices[channel]])
+                {
+                    if (outError)
+                    {
+                        *outError = "EXR RGB channels are null";
+                    }
+                    return false;
+                }
             }
             const int tw = std::max(1, tile.width > 0 ? tile.width : tileSizeX);
             const int th = std::max(1, tile.height > 0 ? tile.height : tileSizeY);
@@ -251,12 +256,12 @@ bool ReadLevelRgba(const EXRHeader &header,
                     const size_t dstBase =
                         (static_cast<size_t>(dstY) * static_cast<size_t>(width) +
                          static_cast<size_t>(dstX)) *
-                        4u;
-                    (*outRgba)[dstBase + 0u] = channels[idxR][srcIndex];
-                    (*outRgba)[dstBase + 1u] = channels[idxG][srcIndex];
-                    (*outRgba)[dstBase + 2u] = channels[idxB][srcIndex];
-                    (*outRgba)[dstBase + 3u] =
-                        (idxA >= 0 && channels[idxA]) ? channels[idxA][srcIndex] : 1.0f;
+                        numChannels;
+                    for (int channel = 0; channel < numChannels; channel++)
+                    {
+                        (*outValues)[dstBase + channel] =
+                            channels[channelIndices[channel]][srcIndex];
+                    }
                 }
             }
         }
@@ -271,7 +276,7 @@ bool ReadLevelRgba(const EXRHeader &header,
         return false;
     }
     float **channels = reinterpret_cast<float **>(level.images);
-    if (!channels[idxR] || !channels[idxG] || !channels[idxB])
+    for (int channel = 0; channel < numChannels; channel++)
     {
         if (outError)
         {
@@ -282,11 +287,11 @@ bool ReadLevelRgba(const EXRHeader &header,
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
     for (size_t i = 0; i < pixelCount; ++i)
     {
-        const size_t dstBase = i * 4u;
-        (*outRgba)[dstBase + 0u] = channels[idxR][i];
-        (*outRgba)[dstBase + 1u] = channels[idxG][i];
-        (*outRgba)[dstBase + 2u] = channels[idxB][i];
-        (*outRgba)[dstBase + 3u] = (idxA >= 0 && channels[idxA]) ? channels[idxA][i] : 1.0f;
+        const size_t dstBase = i * numChannels;
+        for (int channel = 0; channel < numChannels; channel++)
+        {
+            (*outValues)[dstBase + channel] = channels[channelIndices[channel]][i];
+        }
     }
     return true;
 }
@@ -296,6 +301,7 @@ bool LoadStoredMipChain(const std::string &path,
                         std::vector<tilebin::UdimMipImage> *outMips,
                         std::string *outError)
 {
+    YBI_ERROR(header->num_channels <= 4, "multi layer exrs not supported yet");
     for (int i = 0; i < header->num_channels; ++i)
     {
         if (header->pixel_types[i] == TINYEXR_PIXELTYPE_HALF ||
@@ -327,27 +333,24 @@ bool LoadStoredMipChain(const std::string &path,
         FreeEXRImage(&image);
         return false;
     }
-    int idxR = -1;
-    int idxG = -1;
-    int idxB = -1;
-    int idxA = -1;
+    std::array<int, 4> channels;
 
-    if (!FindRgbaChannels(*header, &idxR, &idxG, &idxB, &idxA, outError))
+    if (!FindRgbaChannels(*header, channels, outError))
     {
         FreeEXRImage(&image);
         return false;
     }
-    if (header->requested_pixel_types[idxR] != TINYEXR_PIXELTYPE_FLOAT ||
-        header->requested_pixel_types[idxG] != TINYEXR_PIXELTYPE_FLOAT ||
-        header->requested_pixel_types[idxB] != TINYEXR_PIXELTYPE_FLOAT ||
-        (idxA >= 0 && header->requested_pixel_types[idxA] != TINYEXR_PIXELTYPE_FLOAT))
+    for (int channel = 0; channel < header->num_channels; channel++)
     {
-        if (outError)
+        if (header->requested_pixel_types[channel] != TINYEXR_PIXELTYPE_FLOAT)
         {
-            *outError = "EXR RGB(A) channels are not float-convertible";
+            if (outError)
+            {
+                *outError = "EXR RGB(A) channels are not float-convertible";
+            }
+            FreeEXRImage(&image);
+            return false;
         }
-        FreeEXRImage(&image);
-        return false;
     }
     std::vector<tilebin::UdimMipImage> loaded;
     const EXRImage *level = &image;
@@ -357,7 +360,7 @@ bool LoadStoredMipChain(const std::string &path,
         mip.level = static_cast<uint32_t>(std::max(level->level_x, 0));
         mip.width = static_cast<uint32_t>(std::max(level->width, 1));
         mip.height = static_cast<uint32_t>(std::max(level->height, 1));
-        if (!ReadLevelRgba(*header, *level, idxR, idxG, idxB, idxA, &mip.rgba, outError))
+        if (!ReadLevelRgba(*header, *level, channels, &mip.rgba, outError))
         {
             FreeEXRImage(&image);
             return false;
