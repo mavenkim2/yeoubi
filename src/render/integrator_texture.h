@@ -209,6 +209,49 @@ YBI_DEVICE bool FindFallbackMaterialTextureRef(
     return false;
 }
 
+template <typename State>
+YBI_DEVICE bool SampleVirtualTexturePage(State &state,
+                                         unsigned int physicalTextureID,
+                                         unsigned int page,
+                                         int localX,
+                                         int localY,
+                                         Vec4 &outSample)
+{
+    const LaunchParams &params = state.Params();
+    if (params.virtualTexturePhysicalTextures == 0ull || params.virtualTexturePhysicalTextureCount <= 0 ||
+        params.virtualTexturePhysicalPagesPerTexture <= 0 ||
+        physicalTextureID >= static_cast<unsigned int>(params.virtualTexturePhysicalTextureCount) ||
+        page >= static_cast<unsigned int>(params.virtualTexturePhysicalPagesPerTexture))
+    {
+        return false;
+    }
+
+    const unsigned long long *handles =
+        reinterpret_cast<const unsigned long long *>(params.virtualTexturePhysicalTextures);
+    const unsigned long long handle = handles[physicalTextureID];
+    if (handle == 0ull)
+    {
+        return false;
+    }
+
+    LaunchParams::MaterialTextureRef textureRef = {};
+    textureRef.textureObject = handle;
+    textureRef.width = params.virtualTexturePageSize * params.virtualTexturePhysicalPagesPerTexture;
+    textureRef.height = params.virtualTexturePageSize;
+    textureRef.valid = 1;
+    textureRef.wrapS = static_cast<int>(DeviceTextureWrapMode::Clamp);
+    textureRef.wrapT = static_cast<int>(DeviceTextureWrapMode::Clamp);
+    textureRef.format = static_cast<DeviceTextureFormat>(params.virtualTexturePhysicalTextureFormat);
+
+    const float u =
+        (float(page * static_cast<unsigned int>(params.virtualTexturePageSize) +
+               static_cast<unsigned int>(localX)) +
+         0.5f) /
+        float(textureRef.width);
+    const float v = (float(localY) + 0.5f) / float(textureRef.height);
+    return state.SampleTexture2D(textureRef, u, v, outSample);
+}
+
 YBI_DEVICE bool TryComputeMaterialTextureSampleInputs(
     const LaunchParams::InstanceGeomRef &geomRef,
     unsigned int primitiveIndex,
@@ -662,7 +705,7 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
                 physicalTextureID <
                     static_cast<unsigned int>(MaxInt(params.virtualTexturePhysicalTextureCount, 0)))
             {
-                haveSample = state.SampleVirtualTexturePage(physicalTextureID, page, localX, localY, sample);
+                haveSample = SampleVirtualTexturePage(state, physicalTextureID, page, localX, localY, sample);
             }
             else if (pageType == kVirtualTexturePageTypeTail && meta->tailPixels != 0ull &&
                      page < meta->tailPageCountX)
