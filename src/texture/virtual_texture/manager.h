@@ -13,6 +13,8 @@
 
 namespace ybi
 {
+namespace texture
+{
 
 struct VirtualTextureManagerConfig
 {
@@ -157,12 +159,11 @@ private:
     bool OpenTileFileIfNeeded(TextureState *texture, std::string *outError);
     bool ResolveKey(unsigned long long key, KeyVirtualInfo *outInfo) const;
     uint32_t
-    PackPageTableEntry(uint32_t pageX, uint32_t pageY, uint32_t pageType, uint32_t flags) const;
+    PackPageTableEntry(uint32_t page, uint32_t physicalTextureID, uint32_t pageType) const;
     void UnpackPageTableEntry(uint32_t packed,
-                              uint32_t *outPageX,
-                              uint32_t *outPageY,
-                              uint32_t *outPageType,
-                              uint32_t *outFlags) const;
+                              uint32_t *outPage,
+                              uint32_t *outPhysicalTextureID,
+                              uint32_t *outPageType) const;
     bool UpdatePageTableTexel(
         uint32_t mip, uint32_t x, uint32_t y, uint32_t entry, std::string *outError);
     bool UploadStreamPage(uint32_t slotIndex,
@@ -214,4 +215,5 @@ private:
     std::vector<uint32_t> freeSlots_;
 };
 
+} // namespace texture
 } // namespace ybi

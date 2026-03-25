@@ -15,7 +15,7 @@ namespace texture
 namespace
 {
 static constexpr uint32_t kPageTypeStream = 1u;
-static constexpr uint32_t kPageTypeTail = 2u;
+static constexpr uint32_t kPageTypeTail = 0u;
 static constexpr uint32_t kUdimMin = 1001u;
 static constexpr uint32_t kUdimMax = 1128u;
 
@@ -475,15 +475,15 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
                     continue;
                 }
                 const LaunchParams::VirtualTextureUdimInfo &udimInfo = udimInfosHost_[udimInfoIndex];
-                const uint32_t pageX = tailPageIndex;
-                const uint32_t pageY = 0u;
+                const uint32_t page = tailPageIndex;
+                const uint32_t physicalTextureID = 0u;
                 for (uint32_t ty = 0u; ty < udimInfo.pageCountY; ++ty)
                 {
                     for (uint32_t tx = 0u; tx < udimInfo.pageCountX; ++tx)
                     {
                         const uint32_t vaX = udimInfo.basePageX + tx;
                         const uint32_t vaY = udimInfo.basePageY + ty;
-                        const uint32_t packed = PackPageTableEntry(pageX, pageY, kPageTypeTail, 1u);
+                        const uint32_t packed = PackPageTableEntry(page, physicalTextureID, kPageTypeTail);
                         if (level >= pageTableMipOffsets_.size() || level >= pageTableMipWidths_.size() ||
                             level >= pageTableMipHeights_.size() || vaX >= pageTableMipWidths_[level] ||
                             vaY >= pageTableMipHeights_[level])

@@ -97,7 +97,7 @@ bool VirtualTextureManager::AllocateDeviceState(std::string *outError)
         desiredPages = 1u;
     }
     uint32_t pageCountX = static_cast<uint32_t>(std::ceil(std::sqrt(double(desiredPages))));
-    pageCountX = std::max(1u, std::min(pageCountX, 4095u));
+    pageCountX = std::max(1u, std::min(pageCountX, 256u));
     uint32_t pageCountY = static_cast<uint32_t>((desiredPages + pageCountX - 1u) / pageCountX);
     pageCountY = std::max(1u, std::min(pageCountY, 4095u));
     streamPageCountX_ = pageCountX;
@@ -222,36 +222,29 @@ void VirtualTextureManager::BindLaunchParams(LaunchParams *params) const
 
 }
 
-uint32_t VirtualTextureManager::PackPageTableEntry(uint32_t pageX,
-                                                   uint32_t pageY,
-                                                   uint32_t pageType,
-                                                   uint32_t flags) const
+uint32_t VirtualTextureManager::PackPageTableEntry(uint32_t page,
+                                                   uint32_t physicalTextureID,
+                                                   uint32_t pageType) const
 {
-    return ((pageX & 0xfffu) << 0u) | ((pageY & 0xfffu) << 12u) | ((pageType & 0xfu) << 24u) |
-           ((flags & 0xfu) << 28u);
+    return ((page & 0xffu) << 0u) | ((physicalTextureID & 0x7fffffu) << 8u) | ((pageType & 0x1u) << 31u);
 }
 
 void VirtualTextureManager::UnpackPageTableEntry(uint32_t packed,
-                                                 uint32_t *outPageX,
-                                                 uint32_t *outPageY,
-                                                 uint32_t *outPageType,
-                                                 uint32_t *outFlags) const
+                                                 uint32_t *outPage,
+                                                 uint32_t *outPhysicalTextureID,
+                                                 uint32_t *outPageType) const
 {
-    if (outPageX)
+    if (outPage)
     {
-        *outPageX = (packed >> 0u) & 0xfffu;
+        *outPage = (packed >> 0u) & 0xffu;
     }
-    if (outPageY)
+    if (outPhysicalTextureID)
     {
-        *outPageY = (packed >> 12u) & 0xfffu;
+        *outPhysicalTextureID = (packed >> 8u) & 0x7fffffu;
     }
     if (outPageType)
     {
-        *outPageType = (packed >> 24u) & 0xfu;
-    }
-    if (outFlags)
-    {
-        *outFlags = (packed >> 28u) & 0xfu;
+        *outPageType = (packed >> 31u) & 0x1u;
     }
 }
 

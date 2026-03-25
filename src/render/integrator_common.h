@@ -50,7 +50,7 @@ static constexpr int kWrapModeBlack = 4;
 static constexpr int kWrapModeUseMetadata = 5;
 
 static constexpr unsigned int kVirtualTexturePageTypeStream = 1u;
-static constexpr unsigned int kVirtualTexturePageTypeTail = 2u;
+static constexpr unsigned int kVirtualTexturePageTypeTail = 0u;
 
 struct UInt2
 {

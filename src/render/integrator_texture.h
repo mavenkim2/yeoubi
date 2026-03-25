@@ -79,36 +79,29 @@ YBI_DEVICE Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4
     return MaterialSampleToColorForSemantic(params.textureViewSemantic, sample);
 }
 
-YBI_DEVICE uint32_t PackVirtualTexturePageEntry(unsigned int pageX,
-                                                       unsigned int pageY,
-                                                       unsigned int pageType,
-                                                       unsigned int flags)
+YBI_DEVICE uint32_t PackVirtualTexturePageEntry(unsigned int page,
+                                                       unsigned int physicalTextureID,
+                                                       unsigned int pageType)
 {
-    return ((pageX & 0xfffu) << 0u) | ((pageY & 0xfffu) << 12u) | ((pageType & 0xfu) << 24u) |
-           ((flags & 0xfu) << 28u);
+    return ((page & 0xffu) << 0u) | ((physicalTextureID & 0x7fffffu) << 8u) | ((pageType & 0x1u) << 31u);
 }
 
 YBI_DEVICE void UnpackVirtualTexturePageEntry(uint32_t packed,
-                                                     unsigned int *outPageX,
-                                                     unsigned int *outPageY,
-                                                     unsigned int *outPageType,
-                                                     unsigned int *outFlags)
+                                                     unsigned int *outPage,
+                                                     unsigned int *outPhysicalTextureID,
+                                                     unsigned int *outPageType)
 {
-    if (outPageX)
+    if (outPage)
     {
-        *outPageX = (packed >> 0u) & 0xfffu;
+        *outPage = (packed >> 0u) & 0xffu;
     }
-    if (outPageY)
+    if (outPhysicalTextureID)
     {
-        *outPageY = (packed >> 12u) & 0xfffu;
+        *outPhysicalTextureID = (packed >> 8u) & 0x7fffffu;
     }
     if (outPageType)
     {
-        *outPageType = (packed >> 24u) & 0xfu;
-    }
-    if (outFlags)
-    {
-        *outFlags = (packed >> 28u) & 0xfu;
+        *outPageType = (packed >> 31u) & 0x1u;
     }
 }
 
@@ -655,22 +648,21 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
         }
         else
         {
-            unsigned int pageX = 0u;
-            unsigned int pageY = 0u;
+            unsigned int page = 0u;
+            unsigned int physicalTextureID = 0u;
             unsigned int pageType = 0u;
-            unsigned int flags = 0u;
-            UnpackVirtualTexturePageEntry(packedEntry, &pageX, &pageY, &pageType, &flags);
+            UnpackVirtualTexturePageEntry(packedEntry, &page, &physicalTextureID, &pageType);
 
             const int localX = ClampInt(texelX - int(tileX) * tileSize, 0, tileSize - 1);
             const int localY = ClampInt(texelY - int(tileY) * tileSize, 0, tileSize - 1);
             if (pageType == kVirtualTexturePageTypeStream &&
-                pageX < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountX, 0)) &&
-                pageY < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountY, 0)))
+                page < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountX, 0)) &&
+                physicalTextureID < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountY, 0)))
             {
                 const unsigned long long pageIndex =
-                    static_cast<unsigned long long>(pageY) *
+                    static_cast<unsigned long long>(physicalTextureID) *
                         static_cast<unsigned long long>(params.virtualTextureStreamPageCountX) +
-                    static_cast<unsigned long long>(pageX);
+                    static_cast<unsigned long long>(page);
                 const unsigned long long pageBytes =
                     static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
                 sampleOffset = pageIndex * pageBytes +
@@ -680,13 +672,12 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
                 samplePixels = reinterpret_cast<const unsigned char *>(params.virtualTextureStreamPixels);
             }
             else if (pageType == kVirtualTexturePageTypeTail && meta->tailPixels != 0ull &&
-                     pageX < meta->tailPageCountX && pageY < meta->tailPageCountY)
+                     page < meta->tailPageCountX)
             {
                 const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, tileSize);
                 const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, tileSize);
                 const unsigned long long pageIndex =
-                    static_cast<unsigned long long>(pageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
-                    static_cast<unsigned long long>(pageX);
+                    static_cast<unsigned long long>(page);
                 const unsigned long long pageBytes =
                     static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
                 sampleOffset = pageIndex * pageBytes +

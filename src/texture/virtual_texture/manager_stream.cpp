@@ -451,9 +451,9 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
             }
             stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
 
-            const uint32_t pageX = result.slotIndex % streamPageCountX_;
-            const uint32_t pageY = result.slotIndex / streamPageCountX_;
-            const uint32_t packed = PackPageTableEntry(pageX, pageY, kPageTypeStream, 1u);
+            const uint32_t page = result.slotIndex % streamPageCountX_;
+            const uint32_t physicalTextureID = result.slotIndex / streamPageCountX_;
+            const uint32_t packed = PackPageTableEntry(page, physicalTextureID, kPageTypeStream);
             stats.updatePageTableCalls++;
             const Clock::time_point pageTableStart = Clock::now();
             if (!UpdatePageTableTexel(result.info.mip, result.info.vaX, result.info.vaY, packed, outError))
