@@ -596,8 +596,8 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
         return false;
     }
 
-    if (params.virtualTexturePageTableEntries == 0ull || params.virtualTextureStreamPixels == 0ull ||
-        params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull)
+    if (params.virtualTexturePageTableEntries == 0ull || params.virtualTextureTextureMeta == 0ull ||
+        params.virtualTextureMipInfos == 0ull)
     {
         outColor = Vec3(0.0f, 0.0f, 0.0f);
         return true;
@@ -622,6 +622,8 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
     const LaunchParams::VirtualTextureMipInfo *mipInfo = nullptr;
     unsigned int vaX = 0u;
     unsigned int vaY = 0u;
+    Vec4 sample = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    bool haveSample = false;
     const unsigned char *samplePixels = nullptr;
     unsigned long long sampleOffset = 0ull;
     if (!ResolveVirtualTextureInfo(
@@ -656,20 +658,11 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
             const int localX = ClampInt(texelX - int(tileX) * tileSize, 0, tileSize - 1);
             const int localY = ClampInt(texelY - int(tileY) * tileSize, 0, tileSize - 1);
             if (pageType == kVirtualTexturePageTypeStream &&
-                page < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountX, 0)) &&
-                physicalTextureID < static_cast<unsigned int>(MaxInt(params.virtualTextureStreamPageCountY, 0)))
+                page < static_cast<unsigned int>(MaxInt(params.virtualTexturePhysicalPagesPerTexture, 0)) &&
+                physicalTextureID <
+                    static_cast<unsigned int>(MaxInt(params.virtualTexturePhysicalTextureCount, 0)))
             {
-                const unsigned long long pageIndex =
-                    static_cast<unsigned long long>(physicalTextureID) *
-                        static_cast<unsigned long long>(params.virtualTextureStreamPageCountX) +
-                    static_cast<unsigned long long>(page);
-                const unsigned long long pageBytes =
-                    static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
-                sampleOffset = pageIndex * pageBytes +
-                               (static_cast<unsigned long long>(localY) * static_cast<unsigned long long>(tileSize) +
-                                static_cast<unsigned long long>(localX)) *
-                                   4ull;
-                samplePixels = reinterpret_cast<const unsigned char *>(params.virtualTextureStreamPixels);
+                haveSample = state.SampleVirtualTexturePage(physicalTextureID, page, localX, localY, sample);
             }
             else if (pageType == kVirtualTexturePageTypeTail && meta->tailPixels != 0ull &&
                      page < meta->tailPageCountX)
@@ -696,14 +689,20 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
 
     if (!samplePixels)
     {
-        outColor = Vec3(0.0f, 0.0f, 0.0f);
-        return true;
+        if (!haveSample)
+        {
+            outColor = Vec3(0.0f, 0.0f, 0.0f);
+            return true;
+        }
     }
 
-    const Vec4 sample = Vec4(float(samplePixels[sampleOffset + 0]) * (1.0f / 255.0f),
-                                 float(samplePixels[sampleOffset + 1]) * (1.0f / 255.0f),
-                                 float(samplePixels[sampleOffset + 2]) * (1.0f / 255.0f),
-                                 float(samplePixels[sampleOffset + 3]) * (1.0f / 255.0f));
+    if (!haveSample)
+    {
+        sample = Vec4(float(samplePixels[sampleOffset + 0]) * (1.0f / 255.0f),
+                      float(samplePixels[sampleOffset + 1]) * (1.0f / 255.0f),
+                      float(samplePixels[sampleOffset + 2]) * (1.0f / 255.0f),
+                      float(samplePixels[sampleOffset + 3]) * (1.0f / 255.0f));
+    }
     outColor = MaterialSampleToViewColor(params, sample);
     return true;
 }

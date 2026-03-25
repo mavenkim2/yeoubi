@@ -135,6 +135,10 @@ struct LaunchParams
     unsigned long long virtualTextureStreamPixels;
     int virtualTextureStreamPageCountX;
     int virtualTextureStreamPageCountY;
+    unsigned long long virtualTexturePhysicalTextures;
+    int virtualTexturePhysicalTextureCount;
+    int virtualTexturePhysicalPagesPerTexture;
+    int virtualTexturePhysicalTextureFormat;
     int virtualTextureSampleMip;
     unsigned long long virtualTextureTextureMeta;
     int virtualTextureTextureMetaCount;

@@ -408,6 +408,62 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
     return true;
 }
 
+bool CUDADevice::UpdateTextureRegion(const DeviceTexture &texture,
+                                     uint32_t x,
+                                     uint32_t y,
+                                     uint32_t width,
+                                     uint32_t height,
+                                     const void *pixels,
+                                     size_t pixelBytes,
+                                     std::string *outError)
+{
+    if (!texture.valid || texture.allocation == 0 || pixels == nullptr)
+    {
+        if (outError)
+        {
+            *outError = "UpdateTextureRegion: invalid texture input";
+        }
+        return false;
+    }
+
+    const size_t texelBytes = DeviceTextureFormatPixelBytes(texture.format);
+    if (texelBytes == 0u || width == 0u || height == 0u || x + width > texture.width ||
+        y + height > texture.height)
+    {
+        if (outError)
+        {
+            *outError = "UpdateTextureRegion: invalid region";
+        }
+        return false;
+    }
+
+    const size_t rowBytes = static_cast<size_t>(width) * texelBytes;
+    const size_t expectedBytes = rowBytes * static_cast<size_t>(height);
+    if (pixelBytes < expectedBytes)
+    {
+        if (outError)
+        {
+            *outError = "UpdateTextureRegion: pixelBytes too small";
+        }
+        return false;
+    }
+
+    if (!CheckCudaRuntime(cudaMemcpy2DToArray(reinterpret_cast<cudaArray_t>(texture.allocation),
+                                              static_cast<size_t>(x) * texelBytes,
+                                              y,
+                                              pixels,
+                                              rowBytes,
+                                              rowBytes,
+                                              height,
+                                              cudaMemcpyHostToDevice),
+                          outError,
+                          "cudaMemcpy2DToArray"))
+    {
+        return false;
+    }
+    return true;
+}
+
 void CUDADevice::DestroyTexture(DeviceTexture &texture)
 {
     if (texture.handle != 0)

@@ -166,6 +166,7 @@ private:
                               uint32_t *outPageType) const;
     bool UpdatePageTableTexel(
         uint32_t mip, uint32_t x, uint32_t y, uint32_t entry, std::string *outError);
+    bool AllocateStreamTexture(std::string *outError);
     bool UploadStreamPage(uint32_t slotIndex,
                           const std::vector<unsigned char> &rgba8,
                           uint32_t width,
@@ -206,8 +207,11 @@ private:
     uint32_t streamPageCountX_ = 0u;
     uint32_t streamPageCountY_ = 0u;
     uint32_t streamPageCount_ = 0u;
-    std::vector<uint8_t> streamPixelsHost_;
-    DeviceMemoryView<uint8_t> streamPixelsDevice_ = {};
+    uint32_t maxStreamTextureCount_ = 0u;
+    size_t streamTextureBytes_ = 0u;
+    std::vector<DeviceTexture> streamTextures_;
+    std::vector<unsigned long long> streamTextureHandlesHost_;
+    DeviceMemoryView<uint8_t> streamTextureHandlesDevice_ = {};
 
     std::vector<StreamSlotState> streamSlots_;
     std::unordered_map<unsigned long long, uint32_t> keyToStreamSlot_;

@@ -150,18 +150,32 @@ bool VirtualTextureManager::UploadStreamPage(uint32_t slotIndex,
     const uint32_t copyH = std::min(height, config_.pageSize);
     const size_t pageBytes =
         static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) * 4u;
-    const size_t pageOffset = static_cast<size_t>(slotIndex) * pageBytes;
-    std::memset(streamPixelsHost_.data() + pageOffset, 0, pageBytes);
+    const uint32_t physicalTextureID = slotIndex / streamPageCountX_;
+    const uint32_t page = slotIndex % streamPageCountX_;
+    if (physicalTextureID >= streamTextures_.size() || !streamTextures_[physicalTextureID].valid)
+    {
+        if (outError)
+        {
+            *outError = "VirtualTextureManager: stream texture out of range";
+        }
+        return false;
+    }
+
+    std::vector<uint8_t> pagePixels(pageBytes, 0u);
     for (uint32_t y = 0u; y < copyH; ++y)
     {
         const size_t srcRow = static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
-        const size_t dstRow = pageOffset + static_cast<size_t>(y) * static_cast<size_t>(config_.pageSize) * 4u;
-        std::memcpy(streamPixelsHost_.data() + dstRow, rgba8.data() + srcRow, static_cast<size_t>(copyW) * 4u);
+        const size_t dstRow = static_cast<size_t>(y) * static_cast<size_t>(config_.pageSize) * 4u;
+        std::memcpy(pagePixels.data() + dstRow, rgba8.data() + srcRow, static_cast<size_t>(copyW) * 4u);
     }
-
-    DeviceMemoryView<uint8_t> dst = {streamPixelsDevice_.data() + pageOffset, pageBytes};
-    device_->CopyBytesToDevice(dst, streamPixelsHost_.data() + pageOffset, pageBytes);
-    return true;
+    return device_->UpdateTextureRegion(streamTextures_[physicalTextureID],
+                                        page * config_.pageSize,
+                                        0u,
+                                        config_.pageSize,
+                                        config_.pageSize,
+                                        pagePixels.data(),
+                                        pagePixels.size(),
+                                        outError);
 }
 
 bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
@@ -273,6 +287,21 @@ bool VirtualTextureManager::AllocateStreamSlot(uint32_t *outSlotIndex,
         *outSlotIndex = slot;
         *outEvicted = false;
         return true;
+    }
+    if (streamTextures_.size() < maxStreamTextureCount_)
+    {
+        if (!AllocateStreamTexture(outError))
+        {
+            return false;
+        }
+        if (!freeSlots_.empty())
+        {
+            const uint32_t slot = freeSlots_.back();
+            freeSlots_.pop_back();
+            *outSlotIndex = slot;
+            *outEvicted = false;
+            return true;
+        }
     }
     if (EvictOne(outSlotIndex, outError))
     {

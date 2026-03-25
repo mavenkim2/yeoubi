@@ -10,6 +10,7 @@ namespace texture
 
 namespace
 {
+static constexpr uint32_t kStreamPagesPerTexture = 256u;
 
 uint64_t ComputeTileFileHostBytes(const VirtualTextureTileFile &file)
 {
@@ -91,32 +92,27 @@ bool VirtualTextureManager::AllocateDeviceState(std::string *outError)
 
     const size_t pageBytes =
         static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) * 4u;
-    uint64_t desiredPages = config_.cacheBytes / std::max<size_t>(1u, pageBytes);
-    if (desiredPages == 0u)
+    streamPageCountX_ = kStreamPagesPerTexture;
+    streamPageCountY_ = 0u;
+    streamPageCount_ = 0u;
+    streamTextureBytes_ = static_cast<size_t>(streamPageCountX_) * pageBytes;
+    maxStreamTextureCount_ =
+        static_cast<uint32_t>(config_.cacheBytes / std::max<size_t>(1u, streamTextureBytes_));
+
+    streamTextures_.clear();
+    streamTextureHandlesHost_.assign(maxStreamTextureCount_, 0ull);
+    if (!streamTextureHandlesHost_.empty())
     {
-        desiredPages = 1u;
+        const size_t bytes = streamTextureHandlesHost_.size() * sizeof(unsigned long long);
+        streamTextureHandlesDevice_ = device_->AllocBytes(bytes);
+        device_->CopyBytesToDevice(
+            streamTextureHandlesDevice_, streamTextureHandlesHost_.data(), bytes);
     }
-    uint32_t pageCountX = static_cast<uint32_t>(std::ceil(std::sqrt(double(desiredPages))));
-    pageCountX = std::max(1u, std::min(pageCountX, 256u));
-    uint32_t pageCountY = static_cast<uint32_t>((desiredPages + pageCountX - 1u) / pageCountX);
-    pageCountY = std::max(1u, std::min(pageCountY, 4095u));
-    streamPageCountX_ = pageCountX;
-    streamPageCountY_ = pageCountY;
-    streamPageCount_ = streamPageCountX_ * streamPageCountY_;
-
-    streamPixelsHost_.assign(static_cast<size_t>(streamPageCount_) * pageBytes, 0u);
-    streamPixelsDevice_ = device_->AllocBytes(streamPixelsHost_.size());
-    device_->CopyBytesToDevice(streamPixelsDevice_, streamPixelsHost_.data(), streamPixelsHost_.size());
-
-    streamSlots_.assign(streamPageCount_, StreamSlotState{});
+    streamSlots_.clear();
     keyToStreamSlot_.clear();
     lruSlots_.clear();
     freeSlots_.clear();
-    freeSlots_.reserve(streamPageCount_);
-    for (uint32_t slot = 0u; slot < streamPageCount_; ++slot)
-    {
-        freeSlots_.push_back(slot);
-    }
+    freeSlots_.reserve(static_cast<size_t>(maxStreamTextureCount_) * static_cast<size_t>(streamPageCountX_));
     (void)outError;
     return true;
 }
@@ -135,8 +131,6 @@ VirtualTextureMemoryStats VirtualTextureManager::GetMemoryStats() const
                            sizeof(LaunchParams::VirtualTextureUdimInfo);
     stats.hostMetaBytes += static_cast<uint64_t>(textureMetaHost_.size()) *
                            sizeof(LaunchParams::VirtualTextureTextureMeta);
-    stats.hostStreamBytes += static_cast<uint64_t>(streamPixelsHost_.size());
-
     stats.devicePageTableBytes += pageTableEntriesDevice_.numBytes();
     stats.devicePageTableBytes += pageTableMipOffsetsDevice_.numBytes();
     stats.devicePageTableBytes += pageTableMipWidthsDevice_.numBytes();
@@ -144,7 +138,11 @@ VirtualTextureMemoryStats VirtualTextureManager::GetMemoryStats() const
     stats.deviceMetaBytes += mipInfosDevice_.numBytes();
     stats.deviceMetaBytes += udimInfosDevice_.numBytes();
     stats.deviceMetaBytes += textureMetaDevice_.numBytes();
-    stats.deviceStreamBytes += streamPixelsDevice_.numBytes();
+    stats.hostMetaBytes +=
+        static_cast<uint64_t>(streamTextureHandlesHost_.size()) * sizeof(unsigned long long);
+    stats.deviceMetaBytes += streamTextureHandlesDevice_.numBytes();
+    stats.deviceStreamBytes +=
+        static_cast<uint64_t>(streamTextures_.size()) * static_cast<uint64_t>(streamTextureBytes_);
 
     for (const TextureState &texture : textures_)
     {
@@ -205,10 +203,16 @@ void VirtualTextureManager::BindLaunchParams(LaunchParams *params) const
         finalized_ ? reinterpret_cast<unsigned long long>(pageTableMipHeightsDevice_.data()) : 0ull;
     params->virtualTexturePageTableMipCount = finalized_ ? static_cast<int>(pageTableMipOffsets_.size()) : 0;
     params->virtualTexturePageSize = static_cast<int>(config_.pageSize);
-    params->virtualTextureStreamPixels =
-        finalized_ ? reinterpret_cast<unsigned long long>(streamPixelsDevice_.data()) : 0ull;
+    params->virtualTextureStreamPixels = 0ull;
     params->virtualTextureStreamPageCountX = finalized_ ? static_cast<int>(streamPageCountX_) : 0;
     params->virtualTextureStreamPageCountY = finalized_ ? static_cast<int>(streamPageCountY_) : 0;
+    params->virtualTexturePhysicalTextures =
+        finalized_ ? reinterpret_cast<unsigned long long>(streamTextureHandlesDevice_.data()) : 0ull;
+    params->virtualTexturePhysicalTextureCount = finalized_ ? static_cast<int>(streamPageCountY_) : 0;
+    params->virtualTexturePhysicalPagesPerTexture =
+        finalized_ ? static_cast<int>(streamPageCountX_) : 0;
+    params->virtualTexturePhysicalTextureFormat =
+        finalized_ ? static_cast<int>(DeviceTextureFormat::RGBA8_UNORM) : 0;
     params->virtualTextureSampleMip = 0;
     params->virtualTextureTextureMeta =
         finalized_ ? reinterpret_cast<unsigned long long>(textureMetaDevice_.data()) : 0ull;
@@ -278,6 +282,69 @@ bool VirtualTextureManager::UpdatePageTableTexel(uint32_t mip,
     return true;
 }
 
+bool VirtualTextureManager::AllocateStreamTexture(std::string *outError)
+{
+    if (!device_)
+    {
+        if (outError)
+        {
+            *outError = "VirtualTextureManager: device not initialized";
+        }
+        return false;
+    }
+    if (streamTextures_.size() >= maxStreamTextureCount_)
+    {
+        if (outError)
+        {
+            *outError = "VirtualTextureManager: stream texture pool exhausted";
+        }
+        return false;
+    }
+
+    const uint32_t physicalTextureID = static_cast<uint32_t>(streamTextures_.size());
+    const uint32_t textureWidth = config_.pageSize * streamPageCountX_;
+    const uint32_t textureHeight = config_.pageSize;
+    std::vector<uint8_t> zeros(streamTextureBytes_, 0u);
+    DeviceTextureCreateInfo createInfo = {};
+    createInfo.pixels = zeros.data();
+    createInfo.pixelBytes = zeros.size();
+    createInfo.width = textureWidth;
+    createInfo.height = textureHeight;
+    createInfo.wrapS = DeviceTextureWrapMode::Clamp;
+    createInfo.wrapT = DeviceTextureWrapMode::Clamp;
+    createInfo.filter = DeviceTextureFilterMode::Nearest;
+    createInfo.format = DeviceTextureFormat::RGBA8_UNORM;
+
+    DeviceTexture texture = {};
+    if (!device_->CreateTexture(createInfo, &texture, outError))
+    {
+        return false;
+    }
+
+    streamTextures_.push_back(texture);
+    if (physicalTextureID < streamTextureHandlesHost_.size())
+    {
+        streamTextureHandlesHost_[physicalTextureID] = texture.handle;
+        if (streamTextureHandlesDevice_.data() != nullptr)
+        {
+            const size_t byteOffset = static_cast<size_t>(physicalTextureID) * sizeof(unsigned long long);
+            DeviceMemoryView<uint8_t> dst = {
+                streamTextureHandlesDevice_.data() + byteOffset, sizeof(unsigned long long)};
+            device_->CopyBytesToDevice(dst, &streamTextureHandlesHost_[physicalTextureID], sizeof(unsigned long long));
+        }
+    }
+    streamPageCountY_ = static_cast<uint32_t>(streamTextures_.size());
+
+    const uint32_t slotBase = physicalTextureID * streamPageCountX_;
+    streamSlots_.resize(static_cast<size_t>(slotBase) + static_cast<size_t>(streamPageCountX_));
+    for (uint32_t page = 0u; page < streamPageCountX_; ++page)
+    {
+        freeSlots_.push_back(slotBase + page);
+    }
+    streamPageCount_ = static_cast<uint32_t>(streamSlots_.size());
+    return true;
+}
+
 void VirtualTextureManager::Shutdown()
 {
     if (device_)
@@ -289,9 +356,16 @@ void VirtualTextureManager::Shutdown()
                 device_->FreeBytes(texture.tailPixelsDevice);
             }
         }
-        if (streamPixelsDevice_.data() != nullptr)
+        for (DeviceTexture &texture : streamTextures_)
         {
-            device_->FreeBytes(streamPixelsDevice_);
+            if (texture.valid)
+            {
+                device_->DestroyTexture(texture);
+            }
+        }
+        if (streamTextureHandlesDevice_.data() != nullptr)
+        {
+            device_->FreeBytes(streamTextureHandlesDevice_);
         }
         if (textureMetaDevice_.data() != nullptr)
         {
@@ -334,7 +408,8 @@ void VirtualTextureManager::Shutdown()
     mipInfosHost_.clear();
     udimInfosHost_.clear();
     textureMetaHost_.clear();
-    streamPixelsHost_.clear();
+    streamTextures_.clear();
+    streamTextureHandlesHost_.clear();
     streamSlots_.clear();
     keyToStreamSlot_.clear();
     lruSlots_.clear();
@@ -342,6 +417,9 @@ void VirtualTextureManager::Shutdown()
     streamPageCountX_ = 0u;
     streamPageCountY_ = 0u;
     streamPageCount_ = 0u;
+    maxStreamTextureCount_ = 0u;
+    streamTextureBytes_ = 0u;
+    streamTextureHandlesDevice_ = {};
 }
 
 } // namespace texture

@@ -97,6 +97,14 @@ struct CUDADevice : Device
     bool CreateTexture(const DeviceTextureCreateInfo &info,
                        DeviceTexture *outTexture,
                        std::string *outError) override;
+    bool UpdateTextureRegion(const DeviceTexture &texture,
+                             uint32_t x,
+                             uint32_t y,
+                             uint32_t width,
+                             uint32_t height,
+                             const void *pixels,
+                             size_t pixelBytes,
+                             std::string *outError) override;
     void DestroyTexture(DeviceTexture &texture) override;
     size_t GetBVHAllocatedBytes() const override;
 

@@ -106,6 +106,14 @@ struct Device
     virtual bool CreateTexture(const DeviceTextureCreateInfo &info,
                                DeviceTexture *outTexture,
                                std::string *outError) = 0;
+    virtual bool UpdateTextureRegion(const DeviceTexture &texture,
+                                     uint32_t x,
+                                     uint32_t y,
+                                     uint32_t width,
+                                     uint32_t height,
+                                     const void *pixels,
+                                     size_t pixelBytes,
+                                     std::string *outError) = 0;
     virtual void DestroyTexture(DeviceTexture &texture) = 0;
     virtual size_t GetBVHAllocatedBytes() const = 0;
 

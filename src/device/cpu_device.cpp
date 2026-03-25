@@ -156,6 +156,61 @@ bool CPUDevice::CreateTexture(const DeviceTextureCreateInfo &info,
     return true;
 }
 
+bool CPUDevice::UpdateTextureRegion(const DeviceTexture &texture,
+                                    uint32_t x,
+                                    uint32_t y,
+                                    uint32_t width,
+                                    uint32_t height,
+                                    const void *pixels,
+                                    size_t pixelBytes,
+                                    std::string *outError)
+{
+    if (!texture.valid || texture.handle == 0 || pixels == nullptr)
+    {
+        if (outError)
+        {
+            *outError = "UpdateTextureRegion: invalid texture input";
+        }
+        return false;
+    }
+
+    const size_t texelBytes = DeviceTextureFormatPixelBytes(texture.format);
+    if (texelBytes == 0u || width == 0u || height == 0u || x + width > texture.width ||
+        y + height > texture.height)
+    {
+        if (outError)
+        {
+            *outError = "UpdateTextureRegion: invalid region";
+        }
+        return false;
+    }
+
+    const size_t srcRowBytes = static_cast<size_t>(width) * texelBytes;
+    const size_t expectedBytes = srcRowBytes * static_cast<size_t>(height);
+    if (pixelBytes < expectedBytes)
+    {
+        if (outError)
+        {
+            *outError = "UpdateTextureRegion: pixelBytes too small";
+        }
+        return false;
+    }
+
+    uint8_t *dstPixels = reinterpret_cast<uint8_t *>(texture.handle);
+    const size_t dstRowBytes = static_cast<size_t>(texture.width) * texelBytes;
+    const size_t dstBase =
+        (static_cast<size_t>(y) * static_cast<size_t>(texture.width) + static_cast<size_t>(x)) *
+        texelBytes;
+    const uint8_t *srcPixels = reinterpret_cast<const uint8_t *>(pixels);
+    for (uint32_t row = 0u; row < height; ++row)
+    {
+        std::memcpy(dstPixels + dstBase + static_cast<size_t>(row) * dstRowBytes,
+                    srcPixels + static_cast<size_t>(row) * srcRowBytes,
+                    srcRowBytes);
+    }
+    return true;
+}
+
 void CPUDevice::DestroyTexture(DeviceTexture &texture)
 {
     if (texture.allocation != 0)

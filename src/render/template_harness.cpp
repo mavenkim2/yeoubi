@@ -2017,6 +2017,10 @@ RenderTraversable(Device *device,
     params.virtualTextureStreamPixels = 0ull;
     params.virtualTextureStreamPageCountX = 0;
     params.virtualTextureStreamPageCountY = 0;
+    params.virtualTexturePhysicalTextures = 0ull;
+    params.virtualTexturePhysicalTextureCount = 0;
+    params.virtualTexturePhysicalPagesPerTexture = 0;
+    params.virtualTexturePhysicalTextureFormat = 0;
     params.virtualTextureSampleMip = 0;
     params.virtualTextureTextureMeta = 0ull;
     params.virtualTextureTextureMetaCount = 0;
