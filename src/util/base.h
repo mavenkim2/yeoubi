@@ -14,6 +14,11 @@ __forceinline size_t AlignUp(size_t val, size_t align)
     return (val + align - 1) & ~(align - 1);
 }
 
+__forceinline bool IsPow2(size_t val)
+{
+    return (val & (val - 1)) == 0;
+}
+
 } // namespace util
 
 } // namespace ybi

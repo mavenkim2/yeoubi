@@ -34,18 +34,21 @@ std::pair<std::string, std::string> SplitChannelName(const char *name)
     }
     return {full.substr(0, dot), full.substr(dot + 1)};
 }
-void FlipVerticalRgba(std::vector<float> *rgba, uint32_t width, uint32_t height)
+void FlipImageVertical(std::vector<float> *values,
+                       uint32_t width,
+                       uint32_t height,
+                       int numChannels)
 {
-    if (!rgba || width == 0u || height <= 1u)
+    if (!values || width == 0u || height <= 1u)
     {
         return;
     }
-    const size_t rowFloats = static_cast<size_t>(width) * 4u;
+    const size_t rowFloats = static_cast<size_t>(width) * numChannels;
     std::vector<float> tmp(rowFloats);
     for (uint32_t y = 0u; y < height / 2u; ++y)
     {
-        float *rowA = rgba->data() + static_cast<size_t>(y) * rowFloats;
-        float *rowB = rgba->data() + static_cast<size_t>(height - 1u - y) * rowFloats;
+        float *rowA = values->data() + static_cast<size_t>(y) * rowFloats;
+        float *rowB = values->data() + static_cast<size_t>(height - 1u - y) * rowFloats;
         std::memcpy(tmp.data(), rowA, rowFloats * sizeof(float));
         std::memcpy(rowA, rowB, rowFloats * sizeof(float));
         std::memcpy(rowB, tmp.data(), rowFloats * sizeof(float));
@@ -367,7 +370,7 @@ bool LoadStoredMipChain(const std::string &path,
         }
         if (flipVertical)
         {
-            FlipVerticalRgba(&mip.rgba, mip.width, mip.height);
+            FlipImageVertical(&mip.rgba, mip.width, mip.height, header->num_channels);
         }
         loaded.push_back(std::move(mip));
         level = level->next_level;
@@ -395,6 +398,7 @@ bool LoadStoredMipChain(const std::string &path,
     size_t nextLoadedIndex = 1u;
     while (outMips->back().width > 1u || outMips->back().height > 1u)
     {
+        YBI_LOGFATAL("error\n");
         const uint32_t nextLevel = static_cast<uint32_t>(outMips->size());
         const uint32_t expectedW = std::max(1u, outMips->back().width >> 1u);
         const uint32_t expectedH = std::max(1u, outMips->back().height >> 1u);

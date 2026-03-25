@@ -1,6 +1,7 @@
 ## Response Style
 
 - Style: telegraph; drop filler/grammar; min tokens in all replies.
+- Don't use nested namespaces unless necessary
 - Command sequencing: after any build command, serialize follow-up commands in separate calls; never chain build+run.
 - Keep files <~500 LOC; split/refactor as needed.
 - Prefer end-to-end verify; if blocked, say what’s missing.

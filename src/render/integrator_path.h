@@ -6,6 +6,8 @@
 #include "render/integrator_texture.h"
 #include "render/shading_core.h"
 
+#include <stdio.h>
+
 namespace ybi
 {
 namespace render
@@ -124,6 +126,53 @@ YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
         material.flags |= MATERIAL_FLAG_HAS_EMISSION;
     }
     return material;
+}
+
+template <typename State>
+YBI_DEVICE void DebugPrintEvaluatedMaterial(const State &state,
+                                            const LaunchParams::InstanceGeomRef &geomRef,
+                                            const HitInfo &hit,
+                                            const EvaluatedMaterial &material,
+                                            int depth)
+{
+    const LaunchParams &params = state.Params();
+    const UInt2 launchIndex = state.LaunchIndex();
+    if (params.currentSpp != 0 || depth != 0 || launchIndex.x != 283u || launchIndex.y != 812u)
+    {
+        return;
+    }
+
+    printf("debug material pixel=(%u,%u) spp=%d depth=%d instance=%d prim=%d material=%d t=%.6f\n",
+           launchIndex.x,
+           launchIndex.y,
+           params.currentSpp,
+           depth,
+           hit.instanceId,
+           hit.primitiveIndex,
+           geomRef.materialIndex,
+           hit.t);
+    printf("  baseColor=(%.6f %.6f %.6f) emissiveColor=(%.6f %.6f %.6f) specularColor=(%.6f %.6f %.6f)\n",
+           material.baseColor.x,
+           material.baseColor.y,
+           material.baseColor.z,
+           material.emissiveColor.x,
+           material.emissiveColor.y,
+           material.emissiveColor.z,
+           material.specularColor.x,
+           material.specularColor.y,
+           material.specularColor.z);
+    printf("  roughness=%.6f metallic=%.6f ior=%.6f opacity=%.6f opacityThreshold=%.6f\n",
+           material.roughness,
+           material.metallic,
+           material.ior,
+           material.opacity,
+           material.opacityThreshold);
+    printf("  clearcoat=%.6f clearcoatRoughness=%.6f flags=%u useSpecularWorkflow=%u hasAuthoredUseSpecularWorkflow=%u\n",
+           material.clearcoat,
+           material.clearcoatRoughness,
+           material.flags,
+           material.useSpecularWorkflow,
+           material.hasAuthoredUseSpecularWorkflow);
 }
 
 YBI_DEVICE LaunchParams::InstanceGeomRef ResolveGeomRef(
@@ -320,6 +369,8 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
             depth--;
             continue;
         }
+
+        DebugPrintEvaluatedMaterial(state, geomRef, hit, material, depth);
 
         if ((preparedMaterial.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {

@@ -42,8 +42,8 @@ src/third_party/install
 out/
 *.deb
 *.vcxproj
-*.cmake
 *.sln
 
 .cache
 assets/
+*.usda

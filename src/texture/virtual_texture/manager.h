@@ -13,8 +13,6 @@
 
 namespace ybi
 {
-namespace texture
-{
 
 struct VirtualTextureManagerConfig
 {
@@ -82,7 +80,8 @@ public:
     VirtualTextureManager() = default;
     ~VirtualTextureManager();
 
-    bool Initialize(Device *device, const VirtualTextureManagerConfig &config, std::string *outError);
+    bool
+    Initialize(Device *device, const VirtualTextureManagerConfig &config, std::string *outError);
     bool RegisterTexture(const VirtualTextureRegisterInput &input, std::string *outError);
     bool Finalize(std::string *outError);
     void BindLaunchParams(LaunchParams *params) const;
@@ -157,13 +156,15 @@ private:
     bool AllocateDeviceState(std::string *outError);
     bool OpenTileFileIfNeeded(TextureState *texture, std::string *outError);
     bool ResolveKey(unsigned long long key, KeyVirtualInfo *outInfo) const;
-    uint32_t PackPageTableEntry(uint32_t pageX, uint32_t pageY, uint32_t pageType, uint32_t flags) const;
+    uint32_t
+    PackPageTableEntry(uint32_t pageX, uint32_t pageY, uint32_t pageType, uint32_t flags) const;
     void UnpackPageTableEntry(uint32_t packed,
                               uint32_t *outPageX,
                               uint32_t *outPageY,
                               uint32_t *outPageType,
                               uint32_t *outFlags) const;
-    bool UpdatePageTableTexel(uint32_t mip, uint32_t x, uint32_t y, uint32_t entry, std::string *outError);
+    bool UpdatePageTableTexel(
+        uint32_t mip, uint32_t x, uint32_t y, uint32_t entry, std::string *outError);
     bool UploadStreamPage(uint32_t slotIndex,
                           const std::vector<unsigned char> &rgba8,
                           uint32_t width,
@@ -213,5 +214,4 @@ private:
     std::vector<uint32_t> freeSlots_;
 };
 
-} // namespace texture
 } // namespace ybi
