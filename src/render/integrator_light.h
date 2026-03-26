@@ -2,6 +2,7 @@
 
 #include "render/integrator_common.h"
 #include "render/launch_params.h"
+#include "render/sampling/cdf_lookup.h"
 #include "scene/material_light.h"
 
 #include <cassert>
@@ -172,6 +173,64 @@ YBI_DEVICE float DomeDirectionPdf()
     return 0.25f * ybi::kInvPi;
 }
 
+YBI_DEVICE void DirectionToLatLongUv(const Vec3 &direction, float *outU, float *outV);
+
+YBI_DEVICE bool HasDomeCdf(const LaunchParams &params)
+{
+    return params.domeConditionalCdf != 0ull && params.domeMarginalCdf != 0ull &&
+           params.domeCdfWidth > 0 && params.domeCdfHeight > 0;
+}
+
+YBI_DEVICE Vec3 LatLongUvToDirection(float u, float v)
+{
+    const float theta = ybi::kPi * Clamp(v, 0.0f, 1.0f);
+    const float lon = (0.5f - u) * ybi::kTwoPi;
+    const float sinTheta = sinf(theta);
+    return Vec3(sinTheta * sinf(lon), cosf(theta), sinTheta * cosf(lon));
+}
+
+YBI_DEVICE float DomeTexelSolidAngle(int width, int height, int y)
+{
+    if (width <= 0 || height <= 0)
+    {
+        return 0.0f;
+    }
+
+    const int row = ClampInt(y, 0, height - 1);
+    const float phiStep = ybi::kTwoPi / float(width);
+    const float theta0 = ybi::kPi * (float(row) / float(height));
+    const float theta1 = ybi::kPi * (float(row + 1) / float(height));
+    return MaxF(phiStep * MaxF(cosf(theta0) - cosf(theta1), 0.0f), 0.0f);
+}
+
+YBI_DEVICE float DomeDirectionPdf(const LaunchParams &params,
+                                  const PackedLight &domeLight,
+                                  const Vec3 &worldDirection)
+{
+    if (!HasDomeCdf(params))
+    {
+        return DomeDirectionPdf();
+    }
+
+    const float *conditional = sampling::CdfPtr(params.domeConditionalCdf);
+    const float *marginal = sampling::CdfPtr(params.domeMarginalCdf);
+    if (!conditional || !marginal)
+    {
+        return DomeDirectionPdf();
+    }
+
+    float u = 0.5f;
+    float v = 0.5f;
+    const Vec3 localDirection = WorldDirectionToLightLocal(domeLight, worldDirection);
+    DirectionToLatLongUv(localDirection, &u, &v);
+    const int x = ClampInt(int(u * float(params.domeCdfWidth)), 0, params.domeCdfWidth - 1);
+    const int y = ClampInt(int(v * float(params.domeCdfHeight)), 0, params.domeCdfHeight - 1);
+    const float pmf = sampling::EvaluateCdf2DPmf(
+        conditional, marginal, params.domeCdfWidth, params.domeCdfHeight, x, y);
+    const float solidAngle = DomeTexelSolidAngle(params.domeCdfWidth, params.domeCdfHeight, y);
+    return solidAngle > 0.0f ? pmf / solidAngle : 0.0f;
+}
+
 YBI_DEVICE bool IsDistantLight(const PackedLight &light)
 {
     return light.type == static_cast<unsigned int>(LightType::Distant);
@@ -307,7 +366,7 @@ YBI_DEVICE Vec3 EvaluateMissInfiniteLightRadiance(State &state,
     const int domeLightIndex = FindDomeLightIndex(params);
     if (domeLightIndex >= 0 && hasBsdfContext && !skipNeeMis)
     {
-        const float domePdf = DomeDirectionPdf();
+        const float domePdf = DomeDirectionPdf(params, lights[domeLightIndex], direction);
         const float domeMis = bsdfPdf / MaxF(bsdfPdf + domePdf, 1.0e-6f);
         radiance *= domeMis;
     }
@@ -750,14 +809,43 @@ YBI_DEVICE bool SampleDomeLight(State &state, unsigned int &rngState, DirectLigh
     }
 
     outSample->lightIndex = domeLightIndex;
-    outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
+    if (HasDomeCdf(params))
+    {
+        const float *conditional = sampling::CdfPtr(params.domeConditionalCdf);
+        const float *marginal = sampling::CdfPtr(params.domeMarginalCdf);
+        sampling::CdfSample2D cdfSample = {};
+        if (conditional && marginal &&
+            sampling::SampleCdf2D(conditional,
+                                  marginal,
+                                  params.domeCdfWidth,
+                                  params.domeCdfHeight,
+                                  Random01(rngState),
+                                  Random01(rngState),
+                                  &cdfSample))
+        {
+            const Vec3 localDirection = LatLongUvToDirection(cdfSample.u, cdfSample.v);
+            outSample->wi = LightLocalDirectionToWorld(GetPackedLights(params)[domeLightIndex], localDirection);
+            const float solidAngle =
+                DomeTexelSolidAngle(params.domeCdfWidth, params.domeCdfHeight, cdfSample.y);
+            outSample->pdf = solidAngle > 0.0f ? cdfSample.pmf / solidAngle : 0.0f;
+        }
+        else
+        {
+            outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
+            outSample->pdf = DomeDirectionPdf();
+        }
+    }
+    else
+    {
+        outSample->wi = SampleUniformSphereDirection(Random01(rngState), Random01(rngState));
+        outSample->pdf = DomeDirectionPdf();
+    }
     outSample->radiance = EvaluateDomeLightRadiance(state, outSample->wi);
     outSample->lightPoint = Vec3(0.0f, 0.0f, 0.0f);
     outSample->lightNormal = -outSample->wi;
     outSample->distance = 1.0e20f;
-    outSample->pdf = DomeDirectionPdf();
     outSample->isDeltaLight = false;
-    return MaxComponent(outSample->radiance) > 0.0f;
+    return outSample->pdf > 0.0f && MaxComponent(outSample->radiance) > 0.0f;
 }
 
 #include "render/integrator_light_trace.inl"
