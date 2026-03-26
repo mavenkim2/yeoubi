@@ -215,7 +215,9 @@ bool OpenTileFileV3(const TileFileHeader &header,
             if (dstMip.isTail)
             {
                 const uint64_t expectedBytes = static_cast<uint64_t>(dstMip.width) *
-                                               static_cast<uint64_t>(dstMip.height) * 4u * sizeof(float);
+                                               static_cast<uint64_t>(dstMip.height) *
+                                               static_cast<uint64_t>(
+                                                   TextureFormatPixelBytes(table.pixelFormat));
                 if (dstMip.tailRawByteSize != expectedBytes)
                 {
                     if (outError)
@@ -361,7 +363,9 @@ bool OpenTileFileV4(const TileFileHeader &header,
             if (dstMip.isTail)
             {
                 const uint64_t expectedBytes = static_cast<uint64_t>(dstMip.width) *
-                                               static_cast<uint64_t>(dstMip.height) * 4u * sizeof(float);
+                                               static_cast<uint64_t>(dstMip.height) *
+                                               static_cast<uint64_t>(
+                                                   TextureFormatPixelBytes(table.pixelFormat));
                 if (dstMip.tailRawByteSize != expectedBytes)
                 {
                     if (outError)
