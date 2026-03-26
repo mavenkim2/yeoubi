@@ -20,7 +20,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
 #include "util/array.h"
+#include "util/cdf.h"
 #include "util/half_float.h"
+#include "util/math_constants.h"
 #include "util/vec3.h"
 #include "util/float3x4.h"
 #include "util/vec4.h"
@@ -1541,6 +1543,101 @@ static void DestroyUploadedTexture(Device *device, UploadedStandaloneTexture *te
     texture->deviceBytes = 0u;
 }
 
+static Vec3 ReadDecodedTextureRgb(const DecodedMaterialTexture &texture, int x, int y)
+{
+    if (!texture.valid || texture.width <= 0 || texture.height <= 0 || texture.pixels.empty())
+    {
+        return Vec3(0.0f);
+    }
+
+    x = Clamp(x, 0, texture.width - 1);
+    y = Clamp(y, 0, texture.height - 1);
+    const size_t pixelIndex =
+        static_cast<size_t>(y) * static_cast<size_t>(texture.width) + static_cast<size_t>(x);
+
+    switch (texture.format)
+    {
+        case TextureFormat::RGBA8_UNORM:
+        {
+            const size_t offset = pixelIndex * 4u;
+            if (offset + 3u >= texture.pixels.size())
+            {
+                return Vec3(0.0f);
+            }
+            return Vec3(float(texture.pixels[offset + 0u]) * (1.0f / 255.0f),
+                        float(texture.pixels[offset + 1u]) * (1.0f / 255.0f),
+                        float(texture.pixels[offset + 2u]) * (1.0f / 255.0f));
+        }
+        case TextureFormat::RGBA16_FLOAT:
+        {
+            const size_t byteOffset = pixelIndex * 4u * sizeof(uint16_t);
+            if (byteOffset + 4u * sizeof(uint16_t) > texture.pixels.size())
+            {
+                return Vec3(0.0f);
+            }
+
+            uint16_t rBits = 0u;
+            uint16_t gBits = 0u;
+            uint16_t bBits = 0u;
+            std::memcpy(&rBits, texture.pixels.data() + byteOffset + 0u * sizeof(uint16_t), sizeof(uint16_t));
+            std::memcpy(&gBits, texture.pixels.data() + byteOffset + 1u * sizeof(uint16_t), sizeof(uint16_t));
+            std::memcpy(&bBits, texture.pixels.data() + byteOffset + 2u * sizeof(uint16_t), sizeof(uint16_t));
+            return Vec3(ybi::util::HalfBitsToFloat(rBits),
+                        ybi::util::HalfBitsToFloat(gBits),
+                        ybi::util::HalfBitsToFloat(bBits));
+        }
+        default:
+            return Vec3(0.0f);
+    }
+}
+
+static bool BuildDomeTextureCdf(const DecodedMaterialTexture &domeTexture,
+                                std::vector<float> *outConditional,
+                                std::vector<float> *outMarginal,
+                                std::string *outError)
+{
+    YBI_ASSERT(outConditional);
+    YBI_ASSERT(outMarginal);
+    outConditional->clear();
+    outMarginal->clear();
+
+    if (!domeTexture.valid || domeTexture.width <= 0 || domeTexture.height <= 0)
+    {
+        return true;
+    }
+
+    if (domeTexture.format != TextureFormat::RGBA8_UNORM &&
+        domeTexture.format != TextureFormat::RGBA16_FLOAT)
+    {
+        if (outError)
+        {
+            *outError = "unsupported dome texture format for CDF";
+        }
+        return false;
+    }
+
+    outConditional->resize(static_cast<size_t>(domeTexture.height) *
+                           static_cast<size_t>(domeTexture.width + 1));
+    outMarginal->resize(static_cast<size_t>(domeTexture.height + 1));
+
+    InitializeCDF2D(
+        [&](float u, float v) {
+            const int x = Clamp(int(u * float(domeTexture.width)), 0, domeTexture.width - 1);
+            const int y = Clamp(int(v * float(domeTexture.height)), 0, domeTexture.height - 1);
+            const Vec3 rgb = ReadDecodedTextureRgb(domeTexture, x, y);
+            const float theta = kPi * ((float(y) + 0.5f) / float(domeTexture.height));
+            return MaxComponent(rgb) > 0.0f ? Luminance(rgb) * std::max(sinf(theta), 0.0f) : 0.0f;
+        },
+        Vec2(0.0f),
+        Vec2(1.0f),
+        domeTexture.width,
+        domeTexture.height,
+        outConditional->data(),
+        outMarginal->data());
+
+    return true;
+}
+
 struct UploadedMeshRefs
 {
     std::vector<LaunchParams::InstanceGeomRef> refs;
@@ -1847,6 +1944,10 @@ RenderTraversable(Device *device,
                   int materialTextureRefStride,
                   int materialTextureRefSemanticCount,
                   const LaunchParams::MaterialTextureRef &domeTextureRef,
+                  DevicePtr domeConditionalCdf,
+                  DevicePtr domeMarginalCdf,
+                  int domeCdfWidth,
+                  int domeCdfHeight,
                   MaterialTextureSemantic textureViewSemantic,
                   bool virtualTexture,
                   const std::vector<ybi::texture::VirtualTextureRegisterInput> &virtualTextureRegistrations,
@@ -1997,6 +2098,10 @@ RenderTraversable(Device *device,
     params.materialTextureRefStride = materialTextureRefStride;
     params.materialTextureRefSemanticCount = materialTextureRefSemanticCount;
     params.domeTextureRef = domeTextureRef;
+    params.domeConditionalCdf = static_cast<unsigned long long>(domeConditionalCdf);
+    params.domeMarginalCdf = static_cast<unsigned long long>(domeMarginalCdf);
+    params.domeCdfWidth = domeCdfWidth;
+    params.domeCdfHeight = domeCdfHeight;
     params.textureViewSemantic = static_cast<int>(textureViewSemantic);
     params.feedbackKeys = (unsigned long long)feedbackKeysBuffer.data();
     params.feedbackStats = (unsigned long long)feedbackStatsBuffer.data();
@@ -2359,6 +2464,10 @@ struct HarnessState
     UploadedMaterialTextures uploadedMaterialTextures = {};
     DecodedMaterialTexture domeTexture = {};
     UploadedStandaloneTexture uploadedDomeTexture = {};
+    DeviceMemoryView<float> domeConditionalCdfBuffer = {};
+    DeviceMemoryView<float> domeMarginalCdfBuffer = {};
+    int domeCdfWidth = 0;
+    int domeCdfHeight = 0;
     std::vector<ybi::texture::VirtualTextureRegisterInput> virtualTextureRegistrations;
 
     std::vector<SceneMeshUploadRef> meshUploadRefs;
@@ -2430,8 +2539,18 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
     state->memoryStats.hostTessellatedMeshBytes = ComputeMeshVectorHostBytes(state->rootScene->meshes);
 
     DestroyUploadedTexture(device, &state->uploadedDomeTexture);
+    if (state->domeConditionalCdfBuffer.data())
+    {
+        device->Free(state->domeConditionalCdfBuffer);
+    }
+    if (state->domeMarginalCdfBuffer.data())
+    {
+        device->Free(state->domeMarginalCdfBuffer);
+    }
     state->decodedTextures.clear();
     state->domeTexture = {};
+    state->domeCdfWidth = 0;
+    state->domeCdfHeight = 0;
     state->packedMaterials.clear();
     state->packedLights.clear();
     state->lightShadowExcludeRefs.clear();
@@ -2665,6 +2784,33 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
             return false;
         }
         state->memoryStats.deviceUploadedTextureBytes += state->uploadedDomeTexture.deviceBytes;
+
+        std::vector<float> domeConditionalCdf;
+        std::vector<float> domeMarginalCdf;
+        std::string domeCdfError;
+        if (!BuildDomeTextureCdf(
+                state->domeTexture, &domeConditionalCdf, &domeMarginalCdf, &domeCdfError))
+        {
+            std::fprintf(stderr, "Dome texture CDF build failed: %s\n", domeCdfError.c_str());
+            return false;
+        }
+
+        if (!domeConditionalCdf.empty())
+        {
+            state->domeConditionalCdfBuffer = device->Alloc<float>(domeConditionalCdf.size());
+            device->CopyBytesToDevice(Device::ByteView(state->domeConditionalCdfBuffer),
+                                      domeConditionalCdf.data(),
+                                      domeConditionalCdf.size() * sizeof(float));
+        }
+        if (!domeMarginalCdf.empty())
+        {
+            state->domeMarginalCdfBuffer = device->Alloc<float>(domeMarginalCdf.size());
+            device->CopyBytesToDevice(Device::ByteView(state->domeMarginalCdfBuffer),
+                                      domeMarginalCdf.data(),
+                                      domeMarginalCdf.size() * sizeof(float));
+        }
+        state->domeCdfWidth = state->domeTexture.width;
+        state->domeCdfHeight = state->domeTexture.height;
     }
     auto tTexRefs = LogPhase("upload_texture_refs", tTextureReady);
 
@@ -2798,6 +2944,10 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       state.materialTextureRefStride,
                       state.materialTextureRefSemanticCount,
                       state.uploadedDomeTexture.ref,
+                      reinterpret_cast<DevicePtr>(state.domeConditionalCdfBuffer.data()),
+                      reinterpret_cast<DevicePtr>(state.domeMarginalCdfBuffer.data()),
+                      state.domeCdfWidth,
+                      state.domeCdfHeight,
                       options.textureView,
                       options.virtualTexture,
                       state.virtualTextureRegistrations,
@@ -2842,6 +2992,14 @@ static void DeinitPhase(Device *device, HostMemoryArena *hostArena, HarnessState
     if (state->materialTextureRefsBuffer.data())
     {
         device->FreeBytes(state->materialTextureRefsBuffer);
+    }
+    if (state->domeConditionalCdfBuffer.data())
+    {
+        device->Free(state->domeConditionalCdfBuffer);
+    }
+    if (state->domeMarginalCdfBuffer.data())
+    {
+        device->Free(state->domeMarginalCdfBuffer);
     }
     DestroyUploadedTexture(device, &state->uploadedDomeTexture);
     DestroyUploadedTextures(device, &state->uploadedMaterialTextures);

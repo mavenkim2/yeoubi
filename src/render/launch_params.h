@@ -109,6 +109,10 @@ struct LaunchParams
     int materialTextureRefStride;
     int materialTextureRefSemanticCount;
     MaterialTextureRef domeTextureRef;
+    unsigned long long domeConditionalCdf;
+    unsigned long long domeMarginalCdf;
+    int domeCdfWidth;
+    int domeCdfHeight;
     unsigned long long materials;
     int materialCount;
     unsigned long long lights;
