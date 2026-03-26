@@ -2,6 +2,10 @@
 
 #include "device/util.h"
 
+#if defined(__CUDACC__)
+#include <cuda_fp16.h>
+#endif
+
 #include <cstdint>
 
 namespace ybi
@@ -31,6 +35,9 @@ YBI_DEVICE float BitsToFloat(uint32_t bits)
 
 YBI_DEVICE uint16_t FloatToHalfBits(float value)
 {
+#if defined(__CUDA_ARCH__)
+    return __half_as_ushort(__float2half(value));
+#else
     const uint32_t bits = FloatToBits(value);
     const uint32_t sign = (bits >> 16u) & 0x8000u;
     const uint32_t exponent = (bits >> 23u) & 0xffu;
@@ -88,10 +95,14 @@ YBI_DEVICE uint16_t FloatToHalfBits(float value)
 
     return static_cast<uint16_t>(sign | (static_cast<uint32_t>(halfExponent) << 10u) |
                                  (halfMantissa & 0x03ffu));
+#endif
 }
 
 YBI_DEVICE float HalfBitsToFloat(uint16_t bits)
 {
+#if defined(__CUDA_ARCH__)
+    return __half2float(__ushort_as_half(bits));
+#else
     const uint32_t sign = (static_cast<uint32_t>(bits & 0x8000u)) << 16u;
     const uint32_t exponent = (bits >> 10u) & 0x1fu;
     uint32_t mantissa = bits & 0x03ffu;
@@ -123,6 +134,7 @@ YBI_DEVICE float HalfBitsToFloat(uint16_t bits)
     }
 
     return BitsToFloat(floatBits);
+#endif
 }
 
 } // namespace util
