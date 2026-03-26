@@ -144,7 +144,7 @@ void ExpandToRgba(const std::vector<unsigned char> &src,
 
 bool DecodeOneMaterial(ntc::IContext *context,
                        const fs::path &ntcPath,
-                       DecodedMaterialTexture &outTexture,
+                       ybi::DecodedMaterialTexture &outTexture,
                        std::string &outError)
 {
     ntc::TextureSetFeatures features = {};
@@ -222,17 +222,18 @@ bool DecodeOneMaterial(ntc::IContext *context,
     outTexture.valid = true;
     outTexture.width = desc.width;
     outTexture.height = desc.height;
-    outTexture.ntcPath = ntcPath.string();
+    outTexture.format = ybi::TextureFormat::RGBA8_UNORM;
+    outTexture.sourcePath = ntcPath.string();
     const char *textureName = meta->GetName();
     outTexture.textureName = textureName ? textureName : "";
-    ExpandToRgba(packed, desc.width, desc.height, readChannels, &outTexture.rgba8);
+    ExpandToRgba(packed, desc.width, desc.height, readChannels, &outTexture.pixels);
     return true;
 }
 
 } // namespace
 
 bool DecodeNtcDiffuseTextures(const std::vector<ybi::MaterialInfo> &materials,
-                              std::vector<DecodedMaterialTexture> *outTextures,
+                              std::vector<ybi::DecodedMaterialTexture> *outTextures,
                               std::string *outError)
 {
     if (!outTextures)
@@ -342,7 +343,7 @@ bool DecodeNtcDiffuseTextures(const std::vector<ybi::MaterialInfo> &materials,
     return true;
 }
 
-bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &decodedTextures,
+bool UploadDecodedTexturesToCuda(const std::vector<ybi::DecodedMaterialTexture> &decodedTextures,
                                  UploadedMaterialTextures *outTextures,
                                  std::string *outError)
 {
@@ -360,8 +361,8 @@ bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &deco
 
     for (size_t i = 0; i < decodedTextures.size(); ++i)
     {
-        const DecodedMaterialTexture &src = decodedTextures[i];
-        if (!src.valid || src.width <= 0 || src.height <= 0 || src.rgba8.empty())
+        const ybi::DecodedMaterialTexture &src = decodedTextures[i];
+        if (!src.valid || src.width <= 0 || src.height <= 0 || src.pixels.empty())
         {
             continue;
         }
@@ -383,7 +384,7 @@ bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &deco
         if (!CheckCuda(cudaMemcpy2DToArray(array,
                                            0,
                                            0,
-                                           src.rgba8.data(),
+                                           src.pixels.data(),
                                            static_cast<size_t>(src.width) * 4u,
                                            static_cast<size_t>(src.width) * 4u,
                                            src.height,

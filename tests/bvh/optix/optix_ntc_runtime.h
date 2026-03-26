@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene/scene.h"
+#include "texture/decoded_material_texture.h"
 
 #include <cuda_runtime_api.h>
 
@@ -9,16 +10,6 @@
 
 namespace testbvh
 {
-
-struct DecodedMaterialTexture
-{
-    bool valid = false;
-    int width = 0;
-    int height = 0;
-    std::vector<unsigned char> rgba8;
-    std::string ntcPath;
-    std::string textureName;
-};
 
 struct MaterialTextureRef
 {
@@ -36,10 +27,10 @@ struct UploadedMaterialTextures
 };
 
 bool DecodeNtcDiffuseTextures(const std::vector<ybi::MaterialInfo> &materials,
-                              std::vector<DecodedMaterialTexture> *outTextures,
+                              std::vector<ybi::DecodedMaterialTexture> *outTextures,
                               std::string *outError);
 
-bool UploadDecodedTexturesToCuda(const std::vector<DecodedMaterialTexture> &decodedTextures,
+bool UploadDecodedTexturesToCuda(const std::vector<ybi::DecodedMaterialTexture> &decodedTextures,
                                  UploadedMaterialTextures *outTextures,
                                  std::string *outError);
 

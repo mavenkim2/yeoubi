@@ -1,5 +1,6 @@
 #include "device/device.h"
 #include "io/usd/load.h"
+#include "lights/dome_cdf.h"
 #include "render/color_transform.h"
 #include "render/dispatch_types.h"
 #include "render/integrator_ray_differential.h"
@@ -9,6 +10,7 @@
 #include "tessellation/subdivision.h"
 #include "texture/exr_io.h"
 #include "texture/path_utils.h"
+#include "texture/decoded_material_texture.h"
 #include "texture/udim_utils.h"
 #include "texture/virtual_texture/feedback.h"
 #include "texture/virtual_texture/helpers.h"
@@ -20,9 +22,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "third_party/stb_image_write.h"
 #include "util/array.h"
-#include "util/cdf.h"
 #include "util/half_float.h"
-#include "util/math_constants.h"
 #include "util/vec3.h"
 #include "util/float3x4.h"
 #include "util/vec4.h"
@@ -994,19 +994,6 @@ static bool SavePNG(const char *filePath, const std::vector<uint8_t> &rgba, int 
     return stbi_write_png(filePath, width, height, 4, rgba.data(), strideInBytes) != 0;
 }
 
-struct DecodedMaterialTexture
-{
-    bool valid = false;
-    uint32_t udim = 1001u;
-    int width = 0;
-    int height = 0;
-    TextureFormat format = TextureFormat::RGBA8_UNORM;
-    std::vector<uint8_t> pixels;
-    std::string sourcePath;
-    TextureWrapMode wrapS = TEXTURE_WRAP_MODE_REPEAT;
-    TextureWrapMode wrapT = TEXTURE_WRAP_MODE_REPEAT;
-};
-
 struct ImageDecodeStats
 {
     double totalMs = 0.0;
@@ -1541,101 +1528,6 @@ static void DestroyUploadedTexture(Device *device, UploadedStandaloneTexture *te
     texture->ref = {};
     texture->texture = {};
     texture->deviceBytes = 0u;
-}
-
-static Vec3 ReadDecodedTextureRgb(const DecodedMaterialTexture &texture, int x, int y)
-{
-    if (!texture.valid || texture.width <= 0 || texture.height <= 0 || texture.pixels.empty())
-    {
-        return Vec3(0.0f);
-    }
-
-    x = Clamp(x, 0, texture.width - 1);
-    y = Clamp(y, 0, texture.height - 1);
-    const size_t pixelIndex =
-        static_cast<size_t>(y) * static_cast<size_t>(texture.width) + static_cast<size_t>(x);
-
-    switch (texture.format)
-    {
-        case TextureFormat::RGBA8_UNORM:
-        {
-            const size_t offset = pixelIndex * 4u;
-            if (offset + 3u >= texture.pixels.size())
-            {
-                return Vec3(0.0f);
-            }
-            return Vec3(float(texture.pixels[offset + 0u]) * (1.0f / 255.0f),
-                        float(texture.pixels[offset + 1u]) * (1.0f / 255.0f),
-                        float(texture.pixels[offset + 2u]) * (1.0f / 255.0f));
-        }
-        case TextureFormat::RGBA16_FLOAT:
-        {
-            const size_t byteOffset = pixelIndex * 4u * sizeof(uint16_t);
-            if (byteOffset + 4u * sizeof(uint16_t) > texture.pixels.size())
-            {
-                return Vec3(0.0f);
-            }
-
-            uint16_t rBits = 0u;
-            uint16_t gBits = 0u;
-            uint16_t bBits = 0u;
-            std::memcpy(&rBits, texture.pixels.data() + byteOffset + 0u * sizeof(uint16_t), sizeof(uint16_t));
-            std::memcpy(&gBits, texture.pixels.data() + byteOffset + 1u * sizeof(uint16_t), sizeof(uint16_t));
-            std::memcpy(&bBits, texture.pixels.data() + byteOffset + 2u * sizeof(uint16_t), sizeof(uint16_t));
-            return Vec3(ybi::util::HalfBitsToFloat(rBits),
-                        ybi::util::HalfBitsToFloat(gBits),
-                        ybi::util::HalfBitsToFloat(bBits));
-        }
-        default:
-            return Vec3(0.0f);
-    }
-}
-
-static bool BuildDomeTextureCdf(const DecodedMaterialTexture &domeTexture,
-                                std::vector<float> *outConditional,
-                                std::vector<float> *outMarginal,
-                                std::string *outError)
-{
-    YBI_ASSERT(outConditional);
-    YBI_ASSERT(outMarginal);
-    outConditional->clear();
-    outMarginal->clear();
-
-    if (!domeTexture.valid || domeTexture.width <= 0 || domeTexture.height <= 0)
-    {
-        return true;
-    }
-
-    if (domeTexture.format != TextureFormat::RGBA8_UNORM &&
-        domeTexture.format != TextureFormat::RGBA16_FLOAT)
-    {
-        if (outError)
-        {
-            *outError = "unsupported dome texture format for CDF";
-        }
-        return false;
-    }
-
-    outConditional->resize(static_cast<size_t>(domeTexture.height) *
-                           static_cast<size_t>(domeTexture.width + 1));
-    outMarginal->resize(static_cast<size_t>(domeTexture.height + 1));
-
-    InitializeCDF2D(
-        [&](float u, float v) {
-            const int x = Clamp(int(u * float(domeTexture.width)), 0, domeTexture.width - 1);
-            const int y = Clamp(int(v * float(domeTexture.height)), 0, domeTexture.height - 1);
-            const Vec3 rgb = ReadDecodedTextureRgb(domeTexture, x, y);
-            const float theta = kPi * ((float(y) + 0.5f) / float(domeTexture.height));
-            return MaxComponent(rgb) > 0.0f ? Luminance(rgb) * std::max(sinf(theta), 0.0f) : 0.0f;
-        },
-        Vec2(0.0f),
-        Vec2(1.0f),
-        domeTexture.width,
-        domeTexture.height,
-        outConditional->data(),
-        outMarginal->data());
-
-    return true;
 }
 
 struct UploadedMeshRefs
@@ -2661,7 +2553,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
 #if defined(YBI_OPTIX_HARNESS_WITH_NTC)
         if (options.useNtc)
         {
-            std::vector<testbvh::DecodedMaterialTexture> ntcTextures;
+            std::vector<ybi::DecodedMaterialTexture> ntcTextures;
             std::string ntcError;
             if (testbvh::DecodeNtcDiffuseTextures(state->scenePool.materials, &ntcTextures, &ntcError))
             {
@@ -2682,9 +2574,10 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
                     dst.udim = kUdimMin;
                     dst.width = ntcTextures[i].width;
                     dst.height = ntcTextures[i].height;
-                    dst.format = TextureFormat::RGBA8_UNORM;
-                    dst.pixels = std::move(ntcTextures[i].rgba8);
-                    dst.sourcePath = ntcTextures[i].ntcPath;
+                    dst.format = ntcTextures[i].format;
+                    dst.pixels = std::move(ntcTextures[i].pixels);
+                    dst.sourcePath = ntcTextures[i].sourcePath;
+                    dst.textureName = ntcTextures[i].textureName;
                     const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
                         state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
                     dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
@@ -2788,7 +2681,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         std::vector<float> domeConditionalCdf;
         std::vector<float> domeMarginalCdf;
         std::string domeCdfError;
-        if (!BuildDomeTextureCdf(
+        if (!ybi::lights::BuildDomeTextureCdf(
                 state->domeTexture, &domeConditionalCdf, &domeMarginalCdf, &domeCdfError))
         {
             std::fprintf(stderr, "Dome texture CDF build failed: %s\n", domeCdfError.c_str());

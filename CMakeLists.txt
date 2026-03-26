@@ -318,6 +318,7 @@ endif()
 
 if (WITH_USD)
     add_executable(yeoubi_template_harness
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/lights/dome_cdf.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/template_harness.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/scene_memory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
