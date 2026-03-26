@@ -33,7 +33,7 @@ struct V3UdimEntry
     uint32_t mipCount = 0;
     uint32_t streamMipCount = 0;
     uint32_t tailMipCount = 0;
-    uint32_t reserved0 = 0;
+    uint32_t pixelFormat = 0;
     uint64_t mipRecordOffset = 0;
     uint32_t mipRecordCount = 0;
     uint32_t reserved1 = 0;
@@ -120,6 +120,16 @@ bool ValidateBaseEntry(const V3UdimEntry &entry, const std::string &path, std::s
     return true;
 }
 
+VirtualTexturePixelFormat ResolvePixelFormatForHeader(const TileFileHeader &header,
+                                                      const V3UdimEntry &entry)
+{
+    if (header.version >= 5 && IsValidVirtualTexturePixelFormat(entry.pixelFormat))
+    {
+        return static_cast<VirtualTexturePixelFormat>(entry.pixelFormat);
+    }
+    return VirtualTexturePixelFormat::RGBA32_FLOAT;
+}
+
 bool OpenTileFileV3(const TileFileHeader &header,
                     VirtualTextureTileFile *outFile,
                     std::string *outError)
@@ -168,6 +178,7 @@ bool OpenTileFileV3(const TileFileHeader &header,
         table.imageWidth = entry.imageWidth;
         table.imageHeight = entry.imageHeight;
         table.tileSize = entry.tileSize;
+        table.pixelFormat = ResolvePixelFormatForHeader(header, entry);
         table.mips.resize(entry.mipCount);
 
         for (const V3MipRecord &srcMip : mipRecords)
@@ -256,7 +267,9 @@ bool OpenTileFileV3(const TileFileHeader &header,
         }
 
         outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
-                                      static_cast<uint64_t>(entry.imageHeight) * 4u * sizeof(float);
+                                      static_cast<uint64_t>(entry.imageHeight) *
+                                      static_cast<uint64_t>(
+                                          VirtualTexturePixelFormatBytesPerPixel(table.pixelFormat));
         outFile->udims.emplace(entry.udim, std::move(table));
     }
 
@@ -311,6 +324,7 @@ bool OpenTileFileV4(const TileFileHeader &header,
         table.imageWidth = entry.imageWidth;
         table.imageHeight = entry.imageHeight;
         table.tileSize = entry.tileSize;
+        table.pixelFormat = ResolvePixelFormatForHeader(header, entry);
         table.mips.resize(entry.mipCount);
 
         for (const V4MipRecord &srcMip : mipRecords)
@@ -399,7 +413,9 @@ bool OpenTileFileV4(const TileFileHeader &header,
         }
 
         outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
-                                      static_cast<uint64_t>(entry.imageHeight) * 4u * sizeof(float);
+                                      static_cast<uint64_t>(entry.imageHeight) *
+                                      static_cast<uint64_t>(
+                                          VirtualTexturePixelFormatBytesPerPixel(table.pixelFormat));
         outFile->udims.emplace(entry.udim, std::move(table));
     }
 
@@ -454,7 +470,11 @@ bool OpenVirtualTextureTileFile(const std::string &path,
     }
 
     bool opened = false;
-    if (std::memcmp(header.magic, "YBITILE4", 8) == 0 && header.version == 4)
+    if (std::memcmp(header.magic, "YBITILE5", 8) == 0 && header.version == 5)
+    {
+        opened = OpenTileFileV4(header, outFile, outError);
+    }
+    else if (std::memcmp(header.magic, "YBITILE4", 8) == 0 && header.version == 4)
     {
         opened = OpenTileFileV4(header, outFile, outError);
     }

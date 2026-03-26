@@ -230,6 +230,18 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
                                  UdimImage *outImage,
                                  std::string *outError)
 {
+    const texture::VirtualTexturePixelFormat pixelFormat =
+        static_cast<texture::VirtualTexturePixelFormat>(entry.pixelFormat);
+    if (!texture::IsValidVirtualTexturePixelFormat(entry.pixelFormat))
+    {
+        if (outError)
+        {
+            *outError = "tile file has invalid pixel format in: " + path.string();
+        }
+        return false;
+    }
+    const uint32_t channelCount = texture::VirtualTexturePixelFormatChannelCount(pixelFormat);
+    const uint32_t bytesPerChannel = texture::VirtualTexturePixelFormatBytesPerChannel(pixelFormat);
     if (mipRecords.empty())
     {
         if (outError)
@@ -242,6 +254,7 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
     outImage->udim = entry.udim;
     outImage->width = entry.imageWidth;
     outImage->height = entry.imageHeight;
+    outImage->pixelFormat = pixelFormat;
     outImage->mipLevels.assign(entry.mipCount, UdimMipImage{});
 
     for (const ReadMipRecord &srcMip : mipRecords)
@@ -268,14 +281,17 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
         dstMip.level = srcMip.mipLevel;
         dstMip.width = srcMip.width;
         dstMip.height = srcMip.height;
-        dstMip.rgba.assign(static_cast<size_t>(srcMip.width) * static_cast<size_t>(srcMip.height) * 4u,
+        dstMip.pixelFormat = pixelFormat;
+        dstMip.rgba.assign(static_cast<size_t>(srcMip.width) * static_cast<size_t>(srcMip.height) *
+                               static_cast<size_t>(channelCount),
                            0.0f);
 
         if (srcMip.isTail != 0u)
         {
             const uint64_t expectedBytes = static_cast<uint64_t>(srcMip.width) *
-                                           static_cast<uint64_t>(srcMip.height) * 4u *
-                                           sizeof(float);
+                                           static_cast<uint64_t>(srcMip.height) *
+                                           static_cast<uint64_t>(channelCount) *
+                                           static_cast<uint64_t>(bytesPerChannel);
             if (srcMip.rawByteSize != expectedBytes)
             {
                 if (outError)
@@ -325,7 +341,8 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
             }
 
             const uint64_t expectedBytes =
-                static_cast<uint64_t>(r.width) * static_cast<uint64_t>(r.height) * 4u * sizeof(float);
+                static_cast<uint64_t>(r.width) * static_cast<uint64_t>(r.height) *
+                static_cast<uint64_t>(channelCount) * static_cast<uint64_t>(bytesPerChannel);
             if (r.rawByteSize != expectedBytes)
             {
                 if (outError)
@@ -362,12 +379,17 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
             const float *tileF32 = reinterpret_cast<const float *>(rawPayload.data());
             for (uint32_t y = 0; y < r.height; ++y)
             {
-                const float *src = tileF32 + static_cast<size_t>(y) * static_cast<size_t>(r.width) * 4u;
+                const float *src =
+                    tileF32 + static_cast<size_t>(y) * static_cast<size_t>(r.width) *
+                                  static_cast<size_t>(channelCount);
                 float *dst = dstMip.rgba.data() +
                              (static_cast<size_t>(y0 + y) * static_cast<size_t>(dstMip.width) +
                               static_cast<size_t>(x0)) *
-                                 4u;
-                std::memcpy(dst, src, static_cast<size_t>(r.width) * 4u * sizeof(float));
+                                 static_cast<size_t>(channelCount);
+                std::memcpy(dst,
+                            src,
+                            static_cast<size_t>(r.width) * static_cast<size_t>(channelCount) *
+                                sizeof(float));
             }
         }
     }
@@ -380,7 +402,8 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
         const uint32_t expectedH =
             (mipIndex == 0u) ? entry.imageHeight : std::max(1u, outImage->mipLevels[mipIndex - 1u].height >> 1u);
         const size_t expectedPixels =
-            static_cast<size_t>(expectedW) * static_cast<size_t>(expectedH) * 4u;
+            static_cast<size_t>(expectedW) * static_cast<size_t>(expectedH) *
+            static_cast<size_t>(channelCount);
         if (mip.level != mipIndex || mip.width != expectedW || mip.height != expectedH ||
             mip.rgba.size() != expectedPixels)
         {
@@ -469,6 +492,7 @@ bool WriteTileBinary(const std::filesystem::path &path,
         entry.imageWidth = img.width;
         entry.imageHeight = img.height;
         entry.tileSize = static_cast<uint32_t>(tileSize);
+        entry.pixelFormat = static_cast<uint32_t>(img.pixelFormat);
         entry.mipCount = static_cast<uint32_t>(mipChain.size());
         entry.streamMipCount = 0u;
         entry.tailMipCount = 0u;
@@ -701,7 +725,8 @@ bool ReadTileBinary(const std::filesystem::path &path,
 
     const bool isV3 = (std::memcmp(outHeader.magic, "YBITILE3", 8) == 0 && outHeader.version == 3);
     const bool isV4 = (std::memcmp(outHeader.magic, "YBITILE4", 8) == 0 && outHeader.version == 4);
-    if (!isV3 && !isV4)
+    const bool isV5 = (std::memcmp(outHeader.magic, "YBITILE5", 8) == 0 && outHeader.version == 5);
+    if (!isV3 && !isV4 && !isV5)
     {
         if (outError)
         {
@@ -720,7 +745,8 @@ bool ReadTileBinary(const std::filesystem::path &path,
     for (const UdimEntry &entry : outEntries)
     {
         if (entry.udim < kUdimMin || entry.udim > kUdimMax || entry.tileSize == 0 ||
-            entry.mipCount == 0 || entry.mipRecordCount != entry.mipCount)
+            entry.mipCount == 0 || entry.mipRecordCount != entry.mipCount ||
+            !texture::IsValidVirtualTexturePixelFormat(entry.pixelFormat))
         {
             if (outError)
             {

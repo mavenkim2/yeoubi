@@ -92,6 +92,15 @@ bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std
             }
             return false;
         }
+        const size_t bytesPerPixel = texture::VirtualTexturePixelFormatBytesPerPixel(img.pixelFormat);
+        if (bytesPerPixel == 0u)
+        {
+            if (outError)
+            {
+                *outError = "invalid image pixel format";
+            }
+            return false;
+        }
         if (img.mipLevels.empty())
         {
             if (outError)
@@ -120,8 +129,11 @@ bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std
                 expectedW = std::max(1u, prev.width >> 1u);
                 expectedH = std::max(1u, prev.height >> 1u);
             }
-            const size_t expectedPixels = static_cast<size_t>(expectedW) * static_cast<size_t>(expectedH) * 4u;
-            if (mip.width != expectedW || mip.height != expectedH || mip.rgba.size() != expectedPixels)
+            const size_t expectedSamples =
+                static_cast<size_t>(expectedW) * static_cast<size_t>(expectedH) *
+                texture::VirtualTexturePixelFormatChannelCount(img.pixelFormat);
+            if (mip.pixelFormat != img.pixelFormat || mip.width != expectedW || mip.height != expectedH ||
+                mip.rgba.size() != expectedSamples)
             {
                 if (outError)
                 {
