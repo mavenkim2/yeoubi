@@ -168,6 +168,27 @@ YBI_DEVICE int FindDomeLightIndex(const LaunchParams &params)
     return -1;
 }
 
+YBI_DEVICE const char *LightTypeName(unsigned int type)
+{
+    switch (type)
+    {
+        case static_cast<unsigned int>(LightType::Dome):
+            return "dome";
+        case static_cast<unsigned int>(LightType::Distant):
+            return "distant";
+        case static_cast<unsigned int>(LightType::Rect):
+            return "rect";
+        case static_cast<unsigned int>(LightType::Disk):
+            return "disk";
+        case static_cast<unsigned int>(LightType::Sphere):
+            return "sphere";
+        case static_cast<unsigned int>(LightType::Cylinder):
+            return "cylinder";
+        default:
+            return "unknown";
+    }
+}
+
 YBI_DEVICE float DomeDirectionPdf()
 {
     return 0.25f * ybi::kInvPi;

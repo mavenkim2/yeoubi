@@ -38,6 +38,128 @@ YBI_DEVICE EvaluatedMaterial DefaultMaterial()
     return {};
 }
 
+YBI_DEVICE bool DebugTraceEnabled(const LaunchParams &params, const UInt2 &launchIndex)
+{
+    return params.singlePixelEnabled != 0 &&
+           launchIndex.x == static_cast<unsigned int>(params.singlePixelX) &&
+           launchIndex.y == static_cast<unsigned int>(params.singlePixelY);
+}
+
+template <typename State>
+YBI_DEVICE bool DebugTraceEnabled(const State &state)
+{
+    return DebugTraceEnabled(state.Params(), state.LaunchIndex());
+}
+
+YBI_DEVICE void DebugPrintLightContribution(const LaunchParams &params,
+                                            const UInt2 &launchIndex,
+                                            const char *label,
+                                            int depth,
+                                            int lightIndex,
+                                            unsigned int lightType,
+                                            float lightPdf,
+                                            float bsdfPdf,
+                                            float misWeight,
+                                            const Vec3 &throughput,
+                                            const Vec3 &lightRadiance,
+                                            const Vec3 &bsdfValue,
+                                            const Vec3 &shadowTr,
+                                            const Vec3 &contribution)
+{
+    if (!DebugTraceEnabled(params, launchIndex))
+    {
+        return;
+    }
+
+    printf("debug %s pixel=(%u,%u) spp=%d depth=%d light=%d type=%s lightPdf=%.9g bsdfPdf=%.9g mis=%.9g\n",
+           label,
+           launchIndex.x,
+           launchIndex.y,
+           params.currentSpp,
+           depth,
+           lightIndex,
+           LightTypeName(lightType),
+           lightPdf,
+           bsdfPdf,
+           misWeight);
+    printf("  throughput=(%.6f %.6f %.6f) Li=(%.6f %.6f %.6f) f=(%.6f %.6f %.6f) Tr=(%.6f %.6f %.6f) contrib=(%.6f %.6f %.6f)\n",
+           throughput.x,
+           throughput.y,
+           throughput.z,
+           lightRadiance.x,
+           lightRadiance.y,
+           lightRadiance.z,
+           bsdfValue.x,
+           bsdfValue.y,
+           bsdfValue.z,
+           shadowTr.x,
+           shadowTr.y,
+           shadowTr.z,
+           contribution.x,
+           contribution.y,
+           contribution.z);
+}
+
+YBI_DEVICE void DebugPrintEmissionContribution(const LaunchParams &params,
+                                               const UInt2 &launchIndex,
+                                               int depth,
+                                               const Vec3 &throughput,
+                                               const Vec3 &emission,
+                                               const Vec3 &contribution)
+{
+    if (!DebugTraceEnabled(params, launchIndex))
+    {
+        return;
+    }
+
+    printf("debug emissive-hit pixel=(%u,%u) spp=%d depth=%d\n",
+           launchIndex.x,
+           launchIndex.y,
+           params.currentSpp,
+           depth);
+    printf("  throughput=(%.6f %.6f %.6f) emission=(%.6f %.6f %.6f) contrib=(%.6f %.6f %.6f)\n",
+           throughput.x,
+           throughput.y,
+           throughput.z,
+           emission.x,
+           emission.y,
+           emission.z,
+           contribution.x,
+           contribution.y,
+           contribution.z);
+}
+
+YBI_DEVICE void DebugPrintBsdfSample(const LaunchParams &params,
+                                     const UInt2 &launchIndex,
+                                     int depth,
+                                     const BsdfSample &bsdf,
+                                     const Vec3 &throughput)
+{
+    if (!DebugTraceEnabled(params, launchIndex))
+    {
+        return;
+    }
+
+    printf("debug bsdf pixel=(%u,%u) spp=%d depth=%d pdf=%.9g skipNeeMis=%d transmission=%d\n",
+           launchIndex.x,
+           launchIndex.y,
+           params.currentSpp,
+           depth,
+           bsdf.pdf,
+           bsdf.skipNeeMis ? 1 : 0,
+           bsdf.transmission ? 1 : 0);
+    printf("  wi=(%.6f %.6f %.6f) weight=(%.6f %.6f %.6f) throughputNext=(%.6f %.6f %.6f)\n",
+           bsdf.wi.x,
+           bsdf.wi.y,
+           bsdf.wi.z,
+           bsdf.weight.x,
+           bsdf.weight.y,
+           bsdf.weight.z,
+           throughput.x,
+           throughput.y,
+           throughput.z);
+}
+
 YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params, int materialIndex)
 {
     EvaluatedMaterial material = DefaultMaterial();
@@ -137,7 +259,7 @@ YBI_DEVICE void DebugPrintEvaluatedMaterial(const State &state,
 {
     const LaunchParams &params = state.Params();
     const UInt2 launchIndex = state.LaunchIndex();
-    if (params.currentSpp != 0 || depth != 0 || launchIndex.x != 283u || launchIndex.y != 812u)
+    if (!DebugTraceEnabled(params, launchIndex))
     {
         return;
     }
@@ -268,6 +390,9 @@ YBI_DEVICE Vec3 TraceShadowTransmittance(State &state,
 }
 
 YBI_DEVICE Vec3 AccumulateAnalyticLightRadiance(const LaunchParams &params,
+                                                const UInt2 &launchIndex,
+                                                int depth,
+                                                const Vec3 &throughput,
                                                 const Vec3 &rayOrigin,
                                                 const Vec3 &rayDir,
                                                 float rayBias,
@@ -278,6 +403,7 @@ YBI_DEVICE Vec3 AccumulateAnalyticLightRadiance(const LaunchParams &params,
 {
     Vec3 lightRadiance = Vec3(0.0f, 0.0f, 0.0f);
     float tMin = rayBias;
+    const PackedLight *lights = GetPackedLights(params);
 
     // Analytic lights are visible along the segment but do not block it.
     while (tMin < tMax)
@@ -293,7 +419,25 @@ YBI_DEVICE Vec3 AccumulateAnalyticLightRadiance(const LaunchParams &params,
         {
             misWeight = bsdfPdf / MaxFloat(bsdfPdf + lightHit.pdf, 1.0e-6f);
         }
-        lightRadiance = lightRadiance + lightHit.radiance * misWeight;
+        const Vec3 weightedRadiance = lightHit.radiance * misWeight;
+        lightRadiance = lightRadiance + weightedRadiance;
+        if (lights && lightHit.lightIndex >= 0 && lightHit.lightIndex < params.lightCount)
+        {
+            DebugPrintLightContribution(params,
+                                        launchIndex,
+                                        "light-hit",
+                                        depth,
+                                        lightHit.lightIndex,
+                                        lights[lightHit.lightIndex].type,
+                                        lightHit.pdf,
+                                        bsdfPdf,
+                                        misWeight,
+                                        throughput,
+                                        lightHit.radiance,
+                                        Vec3(1.0f, 1.0f, 1.0f),
+                                        Vec3(1.0f, 1.0f, 1.0f),
+                                        throughput * weightedRadiance);
+        }
         tMin = MaxFloat(lightHit.distance + rayBias, tMin + rayBias);
     }
 
@@ -328,6 +472,9 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         {
             const float sceneDistance = hasSceneHit ? hit.t : 1.0e20f;
             const Vec3 lightRadiance = AccumulateAnalyticLightRadiance(params,
+                                                                       launchIndex,
+                                                                       depth,
+                                                                       throughput,
                                                                        rayOrigin,
                                                                        rayDir,
                                                                        rayBias,
@@ -343,12 +490,35 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if (!hasSceneHit)
         {
-            radiance = radiance +
-                       throughput * EvaluateMissInfiniteLightRadiance(state,
-                                                                     rayDir,
-                                                                     currentRayHasBsdfContext,
-                                                                     currentRaySkipNeeMis,
-                                                                     currentRayBsdfPdf);
+            const Vec3 missRadiance = EvaluateMissInfiniteLightRadiance(state,
+                                                                        rayDir,
+                                                                        currentRayHasBsdfContext,
+                                                                        currentRaySkipNeeMis,
+                                                                        currentRayBsdfPdf);
+            const Vec3 contribution = throughput * missRadiance;
+            radiance = radiance + contribution;
+            const PackedLight *lights = GetPackedLights(params);
+            const int domeLightIndex = FindDomeLightIndex(params);
+            float domePdf = 0.0f;
+            if (lights && domeLightIndex >= 0 && domeLightIndex < params.lightCount &&
+                currentRayHasBsdfContext)
+            {
+                domePdf = DomeDirectionPdf(params, lights[domeLightIndex], rayDir);
+            }
+            DebugPrintLightContribution(params,
+                                        launchIndex,
+                                        "miss",
+                                        depth,
+                                        domeLightIndex,
+                                        static_cast<unsigned int>(LightType::Dome),
+                                        domePdf,
+                                        currentRayBsdfPdf,
+                                        1.0f,
+                                        throughput,
+                                        missRadiance,
+                                        Vec3(1.0f, 1.0f, 1.0f),
+                                        Vec3(1.0f, 1.0f, 1.0f),
+                                        contribution);
             break;
         }
 
@@ -374,7 +544,10 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if ((preparedMaterial.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {
-            radiance = radiance + throughput * preparedMaterial.emissiveColor;
+            const Vec3 contribution = throughput * preparedMaterial.emissiveColor;
+            radiance = radiance + contribution;
+            DebugPrintEmissionContribution(
+                params, launchIndex, depth, throughput, preparedMaterial.emissiveColor, contribution);
         }
 
         DirectLightSample lightSample = {};
@@ -402,8 +575,28 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
                         lightSample.isDeltaLight
                             ? 1.0f
                             : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
-                    radiance = radiance + throughput * f * shadowTr * lightSample.radiance *
+                    const Vec3 contribution = throughput * f * shadowTr * lightSample.radiance *
                                               (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
+                    radiance = radiance + contribution;
+                    const PackedLight *lights = GetPackedLights(params);
+                    const unsigned int lightType =
+                        (lights && lightSample.lightIndex >= 0 && lightSample.lightIndex < params.lightCount)
+                            ? lights[lightSample.lightIndex].type
+                            : 0u;
+                    DebugPrintLightContribution(params,
+                                                launchIndex,
+                                                "direct",
+                                                depth,
+                                                lightSample.lightIndex,
+                                                lightType,
+                                                lightSample.pdf,
+                                                bsdfPdf,
+                                                misWeight,
+                                                throughput,
+                                                lightSample.radiance,
+                                                f,
+                                                shadowTr,
+                                                contribution);
                 }
             }
         }
@@ -428,8 +621,28 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
                 {
                     const float misWeight =
                         domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
-                    radiance = radiance + throughput * f * shadowTr * domeSample.radiance *
+                    const Vec3 contribution = throughput * f * shadowTr * domeSample.radiance *
                                               (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
+                    radiance = radiance + contribution;
+                    const PackedLight *lights = GetPackedLights(params);
+                    const unsigned int lightType =
+                        (lights && domeSample.lightIndex >= 0 && domeSample.lightIndex < params.lightCount)
+                            ? lights[domeSample.lightIndex].type
+                            : 0u;
+                    DebugPrintLightContribution(params,
+                                                launchIndex,
+                                                "dome",
+                                                depth,
+                                                domeSample.lightIndex,
+                                                lightType,
+                                                domeSample.pdf,
+                                                bsdfPdf,
+                                                misWeight,
+                                                throughput,
+                                                domeSample.radiance,
+                                                f,
+                                                shadowTr,
+                                                contribution);
                 }
             }
         }
@@ -446,6 +659,7 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         }
 
         throughput = throughput * bsdf.weight;
+        DebugPrintBsdfSample(params, launchIndex, depth, bsdf, throughput);
         if (MaxComponent(throughput) <= 0.0f)
         {
             break;
