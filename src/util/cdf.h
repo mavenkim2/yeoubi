@@ -13,11 +13,6 @@ namespace ybi
 namespace detail
 {
 
-inline int ClampCdfIndex(int value, int lo, int hi)
-{
-    return value < lo ? lo : (value > hi ? hi : value);
-}
-
 inline void InitializeUniformCdf(int steps, float *cdf)
 {
     YBI_ASSERT(cdf);
@@ -93,7 +88,7 @@ inline void InitializeInverseCDF(
         const float value = (float(i) + 0.5f) * invSteps;
         const float *itr = std::upper_bound(cdfBegin, cdfEnd, value);
         int index = int(itr - cdfBegin) - 1;
-        index = detail::ClampCdfIndex(index, 0, steps - 1);
+        index = Clamp(index, 0, steps - 1);
 
         const float cdfLo = cdf[size_t(index)];
         const float cdfHi = cdf[size_t(index + 1)];
