@@ -8,19 +8,6 @@ namespace ybi
 namespace render
 {
 
-YBI_DEVICE float Clamp01(float x)
-{
-    if (x < 0.0f)
-    {
-        return 0.0f;
-    }
-    if (x > 1.0f)
-    {
-        return 1.0f;
-    }
-    return x;
-}
-
 YBI_DEVICE float EvalAOVisibility(int visibleSamples, int totalSamples)
 {
     const int denom = totalSamples > 0 ? totalSamples : 1;
@@ -50,9 +37,9 @@ YBI_DEVICE void EvalPrimaryDiffuseCore(bool sampled,
 
 YBI_DEVICE uint32_t PackRGB8(float r, float g, float b)
 {
-    const uint32_t ru = static_cast<uint32_t>(Clamp01(r) * 255.0f + 0.5f);
-    const uint32_t gu = static_cast<uint32_t>(Clamp01(g) * 255.0f + 0.5f);
-    const uint32_t bu = static_cast<uint32_t>(Clamp01(b) * 255.0f + 0.5f);
+    const uint32_t ru = static_cast<uint32_t>(Clamp(r, 0.0f, 1.0f) * 255.0f + 0.5f);
+    const uint32_t gu = static_cast<uint32_t>(Clamp(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+    const uint32_t bu = static_cast<uint32_t>(Clamp(b, 0.0f, 1.0f) * 255.0f + 0.5f);
     return ru | (gu << 8) | (bu << 16);
 }
 

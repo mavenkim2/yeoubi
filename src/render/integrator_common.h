@@ -109,19 +109,6 @@ struct HitInfo
     bool hasTextureDifferentials = false;
 };
 
-YBI_DEVICE float Clamp01(float v)
-{
-    if (v < 0.0f)
-    {
-        return 0.0f;
-    }
-    if (v > 1.0f)
-    {
-        return 1.0f;
-    }
-    return v;
-}
-
 YBI_DEVICE int ClampInt(int v, int lo, int hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -223,7 +210,7 @@ YBI_DEVICE float ApplyWrapMode(float uv, int wrapMode, bool &outBlack)
     switch (wrapMode)
     {
         case kWrapModeClamp:
-            return Clamp01(uv);
+            return Clamp(uv, 0.0f, 1.0f);
         case kWrapModeMirror:
         {
             float t = fmodf(uv, 2.0f);
@@ -232,7 +219,7 @@ YBI_DEVICE float ApplyWrapMode(float uv, int wrapMode, bool &outBlack)
                 t += 2.0f;
             }
             const float mirrored = (t <= 1.0f) ? t : (2.0f - t);
-            return Clamp01(mirrored);
+            return Clamp(mirrored, 0.0f, 1.0f);
         }
         case kWrapModeBlack:
             if (uv < 0.0f || uv > 1.0f)

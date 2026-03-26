@@ -113,12 +113,12 @@ YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
     material.emissiveColor = ClampVec3(material.emissiveColor, 0.0f, 65504.0f);
     material.specularColor = ClampVec3(material.specularColor, 0.0f, 1.0f);
     material.roughness = MaxFloat(MinFloat(material.roughness, 1.0f), 0.0f);
-    material.metallic = Clamp01(material.metallic);
+    material.metallic = Clamp(material.metallic, 0.0f, 1.0f);
     material.ior = MaxFloat(material.ior, 1.0f);
-    material.opacity = Clamp01(material.opacity);
-    material.clearcoat = Clamp01(material.clearcoat);
-    material.clearcoatRoughness = Clamp01(material.clearcoatRoughness);
-    material.opacityThreshold = Clamp01(material.opacityThreshold);
+    material.opacity = Clamp(material.opacity, 0.0f, 1.0f);
+    material.clearcoat = Clamp(material.clearcoat, 0.0f, 1.0f);
+    material.clearcoatRoughness = Clamp(material.clearcoatRoughness, 0.0f, 1.0f);
+    material.opacityThreshold = Clamp(material.opacityThreshold, 0.0f, 1.0f);
     material.flags = 0u;
     if (material.emissiveColor.x > 0.0f || material.emissiveColor.y > 0.0f ||
         material.emissiveColor.z > 0.0f)
@@ -194,7 +194,7 @@ YBI_DEVICE bool ShouldAlphaCutout(const EvaluatedMaterial &material)
 
 YBI_DEVICE Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
 {
-    const float transmission = Clamp01(1.0f - material.opacity);
+    const float transmission = Clamp(1.0f - material.opacity, 0.0f, 1.0f);
     return Vec3(transmission, transmission, transmission);
 }
 
