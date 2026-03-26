@@ -241,7 +241,7 @@ YBI_DEVICE bool SampleVirtualTexturePage(State &state,
     textureRef.valid = 1;
     textureRef.wrapS = static_cast<int>(DeviceTextureWrapMode::Clamp);
     textureRef.wrapT = static_cast<int>(DeviceTextureWrapMode::Clamp);
-    textureRef.format = static_cast<DeviceTextureFormat>(params.virtualTexturePhysicalTextureFormat);
+    textureRef.format = static_cast<TextureFormat>(params.virtualTexturePhysicalTextureFormat);
 
     const float u =
         (float(page * static_cast<unsigned int>(params.virtualTexturePageSize) +

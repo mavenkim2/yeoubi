@@ -212,7 +212,7 @@ void VirtualTextureManager::BindLaunchParams(LaunchParams *params) const
     params->virtualTexturePhysicalPagesPerTexture =
         finalized_ ? static_cast<int>(streamPageCountX_) : 0;
     params->virtualTexturePhysicalTextureFormat =
-        finalized_ ? static_cast<int>(DeviceTextureFormat::RGBA8_UNORM) : 0;
+        finalized_ ? static_cast<int>(TextureFormat::RGBA8_UNORM) : 0;
     params->virtualTextureSampleMip = 0;
     params->virtualTextureTextureMeta =
         finalized_ ? reinterpret_cast<unsigned long long>(textureMetaDevice_.data()) : 0ull;
@@ -313,7 +313,7 @@ bool VirtualTextureManager::AllocateStreamTexture(std::string *outError)
     createInfo.wrapS = DeviceTextureWrapMode::Clamp;
     createInfo.wrapT = DeviceTextureWrapMode::Clamp;
     createInfo.filter = DeviceTextureFilterMode::Nearest;
-    createInfo.format = DeviceTextureFormat::RGBA8_UNORM;
+    createInfo.format = TextureFormat::RGBA8_UNORM;
 
     DeviceTexture texture = {};
     if (!device_->CreateTexture(createInfo, &texture, outError))

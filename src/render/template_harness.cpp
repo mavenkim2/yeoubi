@@ -998,7 +998,7 @@ struct DecodedMaterialTexture
     uint32_t udim = 1001u;
     int width = 0;
     int height = 0;
-    DeviceTextureFormat format = DeviceTextureFormat::RGBA8_UNORM;
+    TextureFormat format = TextureFormat::RGBA8_UNORM;
     std::vector<uint8_t> pixels;
     std::string sourcePath;
     TextureWrapMode wrapS = TEXTURE_WRAP_MODE_REPEAT;
@@ -2563,7 +2563,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
                     dst.udim = kUdimMin;
                     dst.width = ntcTextures[i].width;
                     dst.height = ntcTextures[i].height;
-                    dst.format = DeviceTextureFormat::RGBA8_UNORM;
+                    dst.format = TextureFormat::RGBA8_UNORM;
                     dst.pixels = std::move(ntcTextures[i].rgba8);
                     dst.sourcePath = ntcTextures[i].ntcPath;
                     const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
@@ -2634,7 +2634,7 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
         std::string domeReason;
         const bool domeIsExr = ybi::texture::LowerExt(domeTexturePath) == ".exr";
         state->domeTexture.format =
-            domeIsExr ? DeviceTextureFormat::RGBA16_FLOAT : DeviceTextureFormat::RGBA8_UNORM;
+            domeIsExr ? TextureFormat::RGBA16_FLOAT : TextureFormat::RGBA8_UNORM;
         const bool domeLoaded =
             domeIsExr
                 ? LoadExrRgba16Float(domeTexturePath,

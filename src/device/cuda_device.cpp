@@ -302,7 +302,7 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
     }
     *outTexture = {};
 
-    const size_t pixelBytes = DeviceTextureFormatPixelBytes(info.format);
+    const size_t pixelBytes = TextureFormatPixelBytes(info.format);
     if (pixelBytes == 0u)
     {
         if (outError)
@@ -335,11 +335,11 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
     cudaTextureReadMode readMode = cudaReadModeElementType;
     switch (info.format)
     {
-        case DeviceTextureFormat::RGBA8_UNORM:
+        case TextureFormat::RGBA8_UNORM:
             channelDesc = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
             readMode = cudaReadModeNormalizedFloat;
             break;
-        case DeviceTextureFormat::RGBA16_FLOAT:
+        case TextureFormat::RGBA16_FLOAT:
             channelDesc = cudaCreateChannelDesc(16, 16, 16, 16, cudaChannelFormatKindFloat);
             readMode = cudaReadModeElementType;
             break;
@@ -426,7 +426,7 @@ bool CUDADevice::UpdateTextureRegion(const DeviceTexture &texture,
         return false;
     }
 
-    const size_t texelBytes = DeviceTextureFormatPixelBytes(texture.format);
+    const size_t texelBytes = TextureFormatPixelBytes(texture.format);
     if (texelBytes == 0u || width == 0u || height == 0u || x + width > texture.width ||
         y + height > texture.height)
     {

@@ -39,13 +39,6 @@ enum class DeviceTextureFilterMode : uint8_t
     Linear = 1,
 };
 
-using DeviceTextureFormat = texture::TextureFormat;
-
-inline size_t DeviceTextureFormatPixelBytes(DeviceTextureFormat format)
-{
-    return texture::TextureFormatPixelBytes(format);
-}
-
 struct DeviceTextureCreateInfo
 {
     const void *pixels = nullptr;
@@ -55,7 +48,7 @@ struct DeviceTextureCreateInfo
     DeviceTextureWrapMode wrapS = DeviceTextureWrapMode::Repeat;
     DeviceTextureWrapMode wrapT = DeviceTextureWrapMode::Repeat;
     DeviceTextureFilterMode filter = DeviceTextureFilterMode::Nearest;
-    DeviceTextureFormat format = DeviceTextureFormat::RGBA8_UNORM;
+    TextureFormat format = TextureFormat::RGBA8_UNORM;
 };
 
 struct DeviceTexture
@@ -67,7 +60,7 @@ struct DeviceTexture
     DeviceTextureWrapMode wrapS = DeviceTextureWrapMode::Repeat;
     DeviceTextureWrapMode wrapT = DeviceTextureWrapMode::Repeat;
     DeviceTextureFilterMode filter = DeviceTextureFilterMode::Nearest;
-    DeviceTextureFormat format = DeviceTextureFormat::RGBA8_UNORM;
+    TextureFormat format = TextureFormat::RGBA8_UNORM;
     bool valid = false;
 };
 

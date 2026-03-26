@@ -31,7 +31,7 @@ struct UdimEntry
     uint32_t mipCount = 0;
     uint32_t streamMipCount = 0;
     uint32_t tailMipCount = 0;
-    uint32_t pixelFormat = static_cast<uint32_t>(texture::TextureFormat::RGBA32_FLOAT);
+    uint32_t pixelFormat = static_cast<uint32_t>(TextureFormat::RGBA32_FLOAT);
     uint64_t mipRecordOffset = 0;
     uint32_t mipRecordCount = 0;
     uint32_t reserved1 = 0;
@@ -72,7 +72,7 @@ struct UdimMipImage
     uint32_t level = 0;
     uint32_t width = 0;
     uint32_t height = 0;
-    texture::TextureFormat pixelFormat = texture::TextureFormat::RGBA32_FLOAT;
+    TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
     std::vector<float> rgba;
 };
 
@@ -81,7 +81,7 @@ struct UdimImage
     uint32_t udim = 0;
     uint32_t width = 0;
     uint32_t height = 0;
-    texture::TextureFormat pixelFormat = texture::TextureFormat::RGBA32_FLOAT;
+    TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
     std::vector<UdimMipImage> mipLevels;
 };
 

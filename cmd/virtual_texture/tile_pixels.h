@@ -24,28 +24,28 @@ enum class TextureSemanticClass : uint8_t
 bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                        uint32_t sourceChannelCount,
                        ExrNumericType sourceNumericType,
-                       texture::TextureFormat *outFormat,
+                       TextureFormat *outFormat,
                        std::string *outError);
 
-bool ConvertMipChainToPixelFormat(texture::TextureFormat pixelFormat,
+bool ConvertMipChainToPixelFormat(TextureFormat pixelFormat,
                                   std::vector<tilebin::UdimMipImage> *mipLevels,
                                   std::string *outError);
 
-bool ConvertPixelsToPixelFormat(texture::TextureFormat pixelFormat,
+bool ConvertPixelsToPixelFormat(TextureFormat pixelFormat,
                                 const std::vector<float> &rgbaPixels,
                                 std::vector<float> *outPixels,
                                 std::string *outError);
 
-void ExpandPixelsToRgba(texture::TextureFormat pixelFormat,
+void ExpandPixelsToRgba(TextureFormat pixelFormat,
                         const std::vector<float> &pixels,
                         std::vector<float> *outRgba);
 
-bool EncodePixelPayload(texture::TextureFormat pixelFormat,
+bool EncodePixelPayload(TextureFormat pixelFormat,
                         const std::vector<float> &pixels,
                         std::vector<unsigned char> *outBytes,
                         std::string *outError);
 
-bool DecodePixelPayload(texture::TextureFormat pixelFormat,
+bool DecodePixelPayload(TextureFormat pixelFormat,
                         const unsigned char *bytes,
                         size_t byteCount,
                         std::vector<float> *outPixels,

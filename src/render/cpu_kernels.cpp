@@ -96,7 +96,7 @@ struct CPUIntegratorState
                              4u;
         switch (textureRef.format)
         {
-            case DeviceTextureFormat::RGBA8_UNORM:
+            case TextureFormat::RGBA8_UNORM:
             {
                 const uint8_t *pixels =
                     reinterpret_cast<const uint8_t *>(textureRef.textureObject);
@@ -106,7 +106,7 @@ struct CPUIntegratorState
                              pixels[index + 3] * (1.0f / 255.0f)};
                 return true;
             }
-            case DeviceTextureFormat::RGBA16_FLOAT:
+            case TextureFormat::RGBA16_FLOAT:
             {
                 const uint16_t *pixels =
                     reinterpret_cast<const uint16_t *>(textureRef.textureObject);

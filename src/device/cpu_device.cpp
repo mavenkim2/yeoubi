@@ -103,7 +103,7 @@ bool CPUDevice::CreateTexture(const DeviceTextureCreateInfo &info,
     }
     *outTexture = {};
 
-    const size_t pixelBytes = DeviceTextureFormatPixelBytes(info.format);
+    const size_t pixelBytes = TextureFormatPixelBytes(info.format);
     if (pixelBytes == 0u)
     {
         if (outError)
@@ -174,7 +174,7 @@ bool CPUDevice::UpdateTextureRegion(const DeviceTexture &texture,
         return false;
     }
 
-    const size_t texelBytes = DeviceTextureFormatPixelBytes(texture.format);
+    const size_t texelBytes = TextureFormatPixelBytes(texture.format);
     if (texelBytes == 0u || width == 0u || height == 0u || x + width > texture.width ||
         y + height > texture.height)
     {

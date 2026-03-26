@@ -45,7 +45,7 @@ struct LaunchParams
         int valid;
         int wrapS;
         int wrapT;
-        DeviceTextureFormat format;
+        TextureFormat format;
         uint8_t _padding0;
         uint8_t _padding1;
         uint8_t _padding2;

@@ -5,9 +5,6 @@
 
 namespace ybi
 {
-namespace texture
-{
-
 enum class TextureFormat : uint32_t
 {
     RGBA8_UNORM = 0,
@@ -79,6 +76,4 @@ inline bool IsValidTextureFormat(uint32_t value)
             return false;
     }
 }
-
-} // namespace texture
 } // namespace ybi
