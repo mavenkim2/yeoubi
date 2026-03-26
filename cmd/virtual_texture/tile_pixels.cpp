@@ -82,7 +82,7 @@ bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                 return false;
             }
             *outFormat =
-                isHalf ? TextureFormat::RG16_FLOAT : TextureFormat::RG32_FLOAT;
+                isHalf ? TextureFormat::RGBA16_FLOAT : TextureFormat::RGBA32_FLOAT;
             return true;
         case TextureSemanticClass::Color:
             if (sourceChannelCount != 3u && sourceChannelCount != 4u)
