@@ -287,7 +287,6 @@ bool ReadLevelRgba(const EXRHeader &header,
                    std::vector<float> *outValues,
                    std::string *outError)
 {
-    int numChannels = header.num_channels;
     if (level.width <= 0 || level.height <= 0)
     {
         if (outError)
@@ -311,9 +310,14 @@ bool ReadLevelRgba(const EXRHeader &header,
                 continue;
             }
             float **channels = reinterpret_cast<float **>(tile.images);
-            for (int channel = 0; channel < numChannels; channel++)
+            for (int channel = 0; channel < 4; ++channel)
             {
-                if (!channels[channelIndices[channel]])
+                const int channelIndex = channelIndices[channel];
+                if (channelIndex < 0)
+                {
+                    continue;
+                }
+                if (channelIndex >= header.num_channels || !channels[channelIndex])
                 {
                     if (outError)
                     {
@@ -349,10 +353,17 @@ bool ReadLevelRgba(const EXRHeader &header,
                         (static_cast<size_t>(dstY) * static_cast<size_t>(width) +
                          static_cast<size_t>(dstX)) *
                         4u;
-                    for (int channel = 0; channel < 4; channel++)
+                    for (int channel = 0; channel < 4; ++channel)
                     {
-                        (*outValues)[dstBase + channel] =
-                            channels[channelIndices[channel]][srcIndex];
+                        const int channelIndex = channelIndices[channel];
+                        if (channelIndex >= 0)
+                        {
+                            (*outValues)[dstBase + channel] = channels[channelIndex][srcIndex];
+                        }
+                        else if (channel == 3)
+                        {
+                            (*outValues)[dstBase + channel] = 1.0f;
+                        }
                     }
                 }
             }
@@ -368,21 +379,37 @@ bool ReadLevelRgba(const EXRHeader &header,
         return false;
     }
     float **channels = reinterpret_cast<float **>(level.images);
-    for (int channel = 0; channel < numChannels; channel++)
+    for (int channel = 0; channel < 4; ++channel)
     {
-        if (outError)
+        const int channelIndex = channelIndices[channel];
+        if (channelIndex < 0)
         {
-            *outError = "EXR RGB channels are null";
+            continue;
         }
-        return false;
+        if (channelIndex >= header.num_channels || !channels[channelIndex])
+        {
+            if (outError)
+            {
+                *outError = "EXR RGB channels are null";
+            }
+            return false;
+        }
     }
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
     for (size_t i = 0; i < pixelCount; ++i)
     {
         const size_t dstBase = i * 4u;
-        for (int channel = 0; channel < 4; channel++)
+        for (int channel = 0; channel < 4; ++channel)
         {
-            (*outValues)[dstBase + channel] = channels[channelIndices[channel]][i];
+            const int channelIndex = channelIndices[channel];
+            if (channelIndex >= 0)
+            {
+                (*outValues)[dstBase + channel] = channels[channelIndex][i];
+            }
+            else if (channel == 3)
+            {
+                (*outValues)[dstBase + channel] = 1.0f;
+            }
         }
     }
     return true;
@@ -459,7 +486,7 @@ bool LoadStoredMipChain(const std::string &path,
         }
         if (flipVertical)
         {
-            FlipImageVertical(&mip.rgba, mip.width, mip.height, header->num_channels);
+            FlipImageVertical(&mip.rgba, mip.width, mip.height, 4);
         }
         loaded.push_back(std::move(mip));
         level = level->next_level;
@@ -487,7 +514,6 @@ bool LoadStoredMipChain(const std::string &path,
     size_t nextLoadedIndex = 1u;
     while (outMips->back().width > 1u || outMips->back().height > 1u)
     {
-        YBI_LOGFATAL("error\n");
         const uint32_t nextLevel = static_cast<uint32_t>(outMips->size());
         const uint32_t expectedW = std::max(1u, outMips->back().width >> 1u);
         const uint32_t expectedH = std::max(1u, outMips->back().height >> 1u);

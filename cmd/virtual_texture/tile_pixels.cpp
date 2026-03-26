@@ -61,11 +61,11 @@ bool ChoosePixelFormat(TextureSemanticClass semanticClass,
     switch (semanticClass)
     {
         case TextureSemanticClass::Scalar:
-            if (sourceChannelCount != 1u)
+            if (sourceChannelCount < 1u)
             {
                 if (outError)
                 {
-                    *outError = "scalar texture must have exactly 1 source channel";
+                    *outError = "scalar texture must have at least 1 source channel";
                 }
                 return false;
             }

@@ -307,13 +307,15 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
     std::atomic<int> failed{0};
     std::mutex logMutex;
 
-    tbb::parallel_for(size_t(0), workItems.size(), [&](size_t i) {
+    // TinyEXR-based mip loading crashes under the current parallel tile-prep path.
+    for (size_t i = 0; i < workItems.size(); ++i)
+    {
         const TextureGroup &group = *workItems[i];
         if (ybi::texture::LowerExt(group.basePathNoUdim) != ".exr")
         {
             std::lock_guard<std::mutex> lock(logMutex);
             std::printf("Tile prep: skip non-EXR texture %s\n", group.basePathNoUdim.c_str());
-            return;
+            continue;
         }
 
         std::vector<std::pair<uint32_t, std::string>> udimPaths;
@@ -325,16 +327,17 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             {
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf("Tile prep: skip missing texture %s\n", group.texturePath.c_str());
-                return;
+                continue;
             }
             failed.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(logMutex);
             std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
-            return;
+            continue;
         }
 
         std::vector<ybi::tilebin::UdimImage> images;
         images.reserve(udimPaths.size());
+        bool groupFailed = false;
         bool havePixelFormat = false;
         ybi::TextureFormat pixelFormat = ybi::TextureFormat::RGBA32_FLOAT;
         for (const auto &udimPath : udimPaths)
@@ -350,7 +353,8 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf(
                     "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
-                return;
+                groupFailed = true;
+                break;
             }
 
             {
@@ -372,7 +376,8 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 std::printf("Tile prep: FAIL %s : empty mip chain for %s\n",
                             group.basePathNoUdim.c_str(),
                             udimPath.second.c_str());
-                return;
+                groupFailed = true;
+                break;
             }
 
             image.width = mipResult.mipLevels[0].width;
@@ -388,7 +393,8 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf(
                     "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
-                return;
+                groupFailed = true;
+                break;
             }
             if (havePixelFormat && udimPixelFormat != pixelFormat)
             {
@@ -396,7 +402,8 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf("Tile prep: FAIL %s : inconsistent pixel format across UDIMs\n",
                             group.basePathNoUdim.c_str());
-                return;
+                groupFailed = true;
+                break;
             }
             pixelFormat = udimPixelFormat;
             havePixelFormat = true;
@@ -407,11 +414,16 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf(
                     "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
-                return;
+                groupFailed = true;
+                break;
             }
             image.pixelFormat = pixelFormat;
             image.mipLevels = std::move(mipResult.mipLevels);
             images.push_back(std::move(image));
+        }
+        if (groupFailed)
+        {
+            continue;
         }
 
         const std::string baseName = MakeTileOutputStem(group.basePathNoUdim);
@@ -421,7 +433,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             failed.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(logMutex);
             std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
-            return;
+            continue;
         }
 
         for (const ybi::tilebin::UdimImage &img : images)
@@ -441,8 +453,13 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf(
                     "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
-                return;
+                groupFailed = true;
+                break;
             }
+        }
+        if (groupFailed)
+        {
+            continue;
         }
 
         if (cli.tileVerifyPass &&
@@ -451,7 +468,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             failed.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(logMutex);
             std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
-            return;
+            continue;
         }
 
         const int done = processed.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -464,7 +481,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                         binPath.string().c_str(),
                         images.size());
         }
-    });
+    }
 
     std::printf("Tile prep: done processed=%d failed=%d total=%zu\n",
                 processed.load(std::memory_order_relaxed),
