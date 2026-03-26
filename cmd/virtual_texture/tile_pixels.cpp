@@ -12,9 +12,9 @@ namespace tileprep
 namespace
 {
 
-uint32_t ChannelCountForFormat(texture::VirtualTexturePixelFormat pixelFormat)
+uint32_t ChannelCountForFormat(texture::TextureFormat pixelFormat)
 {
-    return texture::VirtualTexturePixelFormatChannelCount(pixelFormat);
+    return texture::TextureFormatChannelCount(pixelFormat);
 }
 
 bool ValidateRgbaPixels(const std::vector<float> &rgbaPixels, std::string *outError)
@@ -35,7 +35,7 @@ bool ValidateRgbaPixels(const std::vector<float> &rgbaPixels, std::string *outEr
 bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                        uint32_t sourceChannelCount,
                        ExrNumericType sourceNumericType,
-                       texture::VirtualTexturePixelFormat *outFormat,
+                       texture::TextureFormat *outFormat,
                        std::string *outError)
 {
     if (!outFormat)
@@ -69,8 +69,8 @@ bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                 }
                 return false;
             }
-            *outFormat = isHalf ? texture::VirtualTexturePixelFormat::R16_FLOAT
-                                : texture::VirtualTexturePixelFormat::R32_FLOAT;
+            *outFormat =
+                isHalf ? texture::TextureFormat::R16_FLOAT : texture::TextureFormat::R32_FLOAT;
             return true;
         case TextureSemanticClass::Normal:
             if (sourceChannelCount < 2u)
@@ -81,8 +81,8 @@ bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                 }
                 return false;
             }
-            *outFormat = isHalf ? texture::VirtualTexturePixelFormat::RG16_FLOAT
-                                : texture::VirtualTexturePixelFormat::RG32_FLOAT;
+            *outFormat =
+                isHalf ? texture::TextureFormat::RG16_FLOAT : texture::TextureFormat::RG32_FLOAT;
             return true;
         case TextureSemanticClass::Color:
             if (sourceChannelCount != 3u && sourceChannelCount != 4u)
@@ -93,8 +93,8 @@ bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                 }
                 return false;
             }
-            *outFormat = isHalf ? texture::VirtualTexturePixelFormat::RGBA16_FLOAT
-                                : texture::VirtualTexturePixelFormat::RGBA32_FLOAT;
+            *outFormat = isHalf ? texture::TextureFormat::RGBA16_FLOAT
+                                : texture::TextureFormat::RGBA32_FLOAT;
             return true;
         case TextureSemanticClass::Unknown:
         default:
@@ -106,7 +106,7 @@ bool ChoosePixelFormat(TextureSemanticClass semanticClass,
     }
 }
 
-bool ConvertPixelsToPixelFormat(texture::VirtualTexturePixelFormat pixelFormat,
+bool ConvertPixelsToPixelFormat(texture::TextureFormat pixelFormat,
                                 const std::vector<float> &rgbaPixels,
                                 std::vector<float> *outPixels,
                                 std::string *outError)
@@ -163,7 +163,7 @@ bool ConvertPixelsToPixelFormat(texture::VirtualTexturePixelFormat pixelFormat,
     return true;
 }
 
-bool ConvertMipChainToPixelFormat(texture::VirtualTexturePixelFormat pixelFormat,
+bool ConvertMipChainToPixelFormat(texture::TextureFormat pixelFormat,
                                   std::vector<tilebin::UdimMipImage> *mipLevels,
                                   std::string *outError)
 {
@@ -189,7 +189,7 @@ bool ConvertMipChainToPixelFormat(texture::VirtualTexturePixelFormat pixelFormat
     return true;
 }
 
-void ExpandPixelsToRgba(texture::VirtualTexturePixelFormat pixelFormat,
+void ExpandPixelsToRgba(texture::TextureFormat pixelFormat,
                         const std::vector<float> &pixels,
                         std::vector<float> *outRgba)
 {
@@ -235,7 +235,7 @@ void ExpandPixelsToRgba(texture::VirtualTexturePixelFormat pixelFormat,
     }
 }
 
-bool EncodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
+bool EncodePixelPayload(texture::TextureFormat pixelFormat,
                         const std::vector<float> &pixels,
                         std::vector<unsigned char> *outBytes,
                         std::string *outError)
@@ -250,7 +250,7 @@ bool EncodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
     }
 
     const uint32_t channelCount = ChannelCountForFormat(pixelFormat);
-    const uint32_t bytesPerChannel = texture::VirtualTexturePixelFormatBytesPerChannel(pixelFormat);
+    const uint32_t bytesPerChannel = texture::TextureFormatBytesPerChannel(pixelFormat);
     if (channelCount == 0u || bytesPerChannel == 0u)
     {
         if (outError)
@@ -283,7 +283,7 @@ bool EncodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
     return true;
 }
 
-bool DecodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
+bool DecodePixelPayload(texture::TextureFormat pixelFormat,
                         const unsigned char *bytes,
                         size_t byteCount,
                         std::vector<float> *outPixels,
@@ -299,7 +299,7 @@ bool DecodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
     }
 
     const uint32_t channelCount = ChannelCountForFormat(pixelFormat);
-    const uint32_t bytesPerChannel = texture::VirtualTexturePixelFormatBytesPerChannel(pixelFormat);
+    const uint32_t bytesPerChannel = texture::TextureFormatBytesPerChannel(pixelFormat);
     if (channelCount == 0u || bytesPerChannel == 0u)
     {
         if (outError)

@@ -24,28 +24,28 @@ enum class TextureSemanticClass : uint8_t
 bool ChoosePixelFormat(TextureSemanticClass semanticClass,
                        uint32_t sourceChannelCount,
                        ExrNumericType sourceNumericType,
-                       texture::VirtualTexturePixelFormat *outFormat,
+                       texture::TextureFormat *outFormat,
                        std::string *outError);
 
-bool ConvertMipChainToPixelFormat(texture::VirtualTexturePixelFormat pixelFormat,
+bool ConvertMipChainToPixelFormat(texture::TextureFormat pixelFormat,
                                   std::vector<tilebin::UdimMipImage> *mipLevels,
                                   std::string *outError);
 
-bool ConvertPixelsToPixelFormat(texture::VirtualTexturePixelFormat pixelFormat,
+bool ConvertPixelsToPixelFormat(texture::TextureFormat pixelFormat,
                                 const std::vector<float> &rgbaPixels,
                                 std::vector<float> *outPixels,
                                 std::string *outError);
 
-void ExpandPixelsToRgba(texture::VirtualTexturePixelFormat pixelFormat,
+void ExpandPixelsToRgba(texture::TextureFormat pixelFormat,
                         const std::vector<float> &pixels,
                         std::vector<float> *outRgba);
 
-bool EncodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
+bool EncodePixelPayload(texture::TextureFormat pixelFormat,
                         const std::vector<float> &pixels,
                         std::vector<unsigned char> *outBytes,
                         std::string *outError);
 
-bool DecodePixelPayload(texture::VirtualTexturePixelFormat pixelFormat,
+bool DecodePixelPayload(texture::TextureFormat pixelFormat,
                         const unsigned char *bytes,
                         size_t byteCount,
                         std::vector<float> *outPixels,

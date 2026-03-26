@@ -86,7 +86,7 @@ bool WriteTilePreviewImages(const fs::path &verifyDir,
                             int imageWidth,
                             int imageHeight,
                             int tileSize,
-                            ybi::texture::VirtualTexturePixelFormat pixelFormat,
+                            ybi::texture::TextureFormat pixelFormat,
                             const std::vector<float> &image,
                             int verifyCount,
                             std::string &outError)
@@ -336,8 +336,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         std::vector<ybi::tilebin::UdimImage> images;
         images.reserve(udimPaths.size());
         bool havePixelFormat = false;
-        ybi::texture::VirtualTexturePixelFormat pixelFormat =
-            ybi::texture::VirtualTexturePixelFormat::RGBA32_FLOAT;
+        ybi::texture::TextureFormat pixelFormat = ybi::texture::TextureFormat::RGBA32_FLOAT;
         for (const auto &udimPath : udimPaths)
         {
             ybi::tilebin::UdimImage image = {};
@@ -378,8 +377,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
             image.width = mipResult.mipLevels[0].width;
             image.height = mipResult.mipLevels[0].height;
-            ybi::texture::VirtualTexturePixelFormat udimPixelFormat =
-                ybi::texture::VirtualTexturePixelFormat::RGBA32_FLOAT;
+            ybi::texture::TextureFormat udimPixelFormat = ybi::texture::TextureFormat::RGBA32_FLOAT;
             if (!ybi::tileprep::ChoosePixelFormat(group.semanticClass,
                                                   mipResult.sourceChannelCount,
                                                   mipResult.sourceNumericType,

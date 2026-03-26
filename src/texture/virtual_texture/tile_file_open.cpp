@@ -120,14 +120,13 @@ bool ValidateBaseEntry(const V3UdimEntry &entry, const std::string &path, std::s
     return true;
 }
 
-VirtualTexturePixelFormat ResolvePixelFormatForHeader(const TileFileHeader &header,
-                                                      const V3UdimEntry &entry)
+TextureFormat ResolvePixelFormatForHeader(const TileFileHeader &header, const V3UdimEntry &entry)
 {
-    if (header.version >= 5 && IsValidVirtualTexturePixelFormat(entry.pixelFormat))
+    if (header.version >= 5 && IsValidTextureFormat(entry.pixelFormat))
     {
-        return static_cast<VirtualTexturePixelFormat>(entry.pixelFormat);
+        return static_cast<TextureFormat>(entry.pixelFormat);
     }
-    return VirtualTexturePixelFormat::RGBA32_FLOAT;
+    return TextureFormat::RGBA32_FLOAT;
 }
 
 bool OpenTileFileV3(const TileFileHeader &header,
@@ -269,7 +268,7 @@ bool OpenTileFileV3(const TileFileHeader &header,
         outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
                                       static_cast<uint64_t>(entry.imageHeight) *
                                       static_cast<uint64_t>(
-                                          VirtualTexturePixelFormatBytesPerPixel(table.pixelFormat));
+                                          TextureFormatPixelBytes(table.pixelFormat));
         outFile->udims.emplace(entry.udim, std::move(table));
     }
 
@@ -415,7 +414,7 @@ bool OpenTileFileV4(const TileFileHeader &header,
         outFile->totalTextureBytes += static_cast<uint64_t>(entry.imageWidth) *
                                       static_cast<uint64_t>(entry.imageHeight) *
                                       static_cast<uint64_t>(
-                                          VirtualTexturePixelFormatBytesPerPixel(table.pixelFormat));
+                                          TextureFormatPixelBytes(table.pixelFormat));
         outFile->udims.emplace(entry.udim, std::move(table));
     }
 

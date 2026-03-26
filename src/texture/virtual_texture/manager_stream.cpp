@@ -66,7 +66,7 @@ bool VirtualTextureManager::OpenTileFileIfNeeded(TextureState *texture, std::str
         return false;
     }
     bool havePixelFormat = false;
-    VirtualTexturePixelFormat pixelFormat = VirtualTexturePixelFormat::RGBA32_FLOAT;
+    TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
     for (const auto &entry : texture->tileFile.udims)
     {
         if (!havePixelFormat)

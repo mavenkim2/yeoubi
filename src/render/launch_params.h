@@ -2,7 +2,7 @@
 
 #include "device/device.h"
 #include "scene/material_light.h"
-#include "texture/virtual_texture/pixel_format.h"
+#include "texture/texture_format.h"
 #include "util/float4x4.h"
 #include "util/vec3.h"
 

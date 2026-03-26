@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device/device_memory_view.h"
+#include "texture/texture_format.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,23 +39,11 @@ enum class DeviceTextureFilterMode : uint8_t
     Linear = 1,
 };
 
-enum class DeviceTextureFormat : uint8_t
-{
-    RGBA8_UNORM = 0,
-    RGBA16_FLOAT = 1,
-};
+using DeviceTextureFormat = texture::TextureFormat;
 
 inline size_t DeviceTextureFormatPixelBytes(DeviceTextureFormat format)
 {
-    switch (format)
-    {
-        case DeviceTextureFormat::RGBA8_UNORM:
-            return 4u;
-        case DeviceTextureFormat::RGBA16_FLOAT:
-            return 8u;
-        default:
-            return 0u;
-    }
+    return texture::TextureFormatPixelBytes(format);
 }
 
 struct DeviceTextureCreateInfo

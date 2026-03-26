@@ -114,13 +114,13 @@ bool ReadDecodedPayload(VirtualTextureTileFile *file,
     return true;
 }
 
-bool DecodePixelsToFloats(VirtualTexturePixelFormat pixelFormat,
+bool DecodePixelsToFloats(TextureFormat pixelFormat,
                           const std::vector<unsigned char> &rawBytes,
                           std::vector<float> *outPixels,
                           std::string *outError)
 {
-    const uint32_t channelCount = VirtualTexturePixelFormatChannelCount(pixelFormat);
-    const uint32_t bytesPerChannel = VirtualTexturePixelFormatBytesPerChannel(pixelFormat);
+    const uint32_t channelCount = TextureFormatChannelCount(pixelFormat);
+    const uint32_t bytesPerChannel = TextureFormatBytesPerChannel(pixelFormat);
     if (channelCount == 0u || bytesPerChannel == 0u)
     {
         if (outError)
@@ -157,11 +157,11 @@ bool DecodePixelsToFloats(VirtualTexturePixelFormat pixelFormat,
     return true;
 }
 
-void ExpandTypedPixelsToRgba8(VirtualTexturePixelFormat pixelFormat,
+void ExpandTypedPixelsToRgba8(TextureFormat pixelFormat,
                               const std::vector<float> &pixels,
                               std::vector<unsigned char> *outRgba8)
 {
-    const uint32_t channelCount = VirtualTexturePixelFormatChannelCount(pixelFormat);
+    const uint32_t channelCount = TextureFormatChannelCount(pixelFormat);
     if (channelCount == 0u || (pixels.size() % static_cast<size_t>(channelCount)) != 0u)
     {
         outRgba8->clear();
@@ -244,8 +244,8 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
         return false;
     }
     const VirtualTextureMipTable &mipTable = table.mips[mip];
-    const uint32_t channelCount = VirtualTexturePixelFormatChannelCount(table.pixelFormat);
-    const uint32_t bytesPerChannel = VirtualTexturePixelFormatBytesPerChannel(table.pixelFormat);
+    const uint32_t channelCount = TextureFormatChannelCount(table.pixelFormat);
+    const uint32_t bytesPerChannel = TextureFormatBytesPerChannel(table.pixelFormat);
     if (channelCount == 0u || bytesPerChannel == 0u)
     {
         if (outError)

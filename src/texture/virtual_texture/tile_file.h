@@ -1,6 +1,6 @@
 #pragma once
 
-#include "texture/virtual_texture/pixel_format.h"
+#include "texture/texture_format.h"
 
 #include <cstdint>
 #include <fstream>
@@ -47,7 +47,7 @@ struct VirtualTextureUdimTable
     uint32_t imageWidth = 0;
     uint32_t imageHeight = 0;
     uint32_t tileSize = 0;
-    VirtualTexturePixelFormat pixelFormat = VirtualTexturePixelFormat::RGBA32_FLOAT;
+    TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
     std::vector<VirtualTextureMipTable> mips;
 };
 

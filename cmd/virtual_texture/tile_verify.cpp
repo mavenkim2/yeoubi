@@ -200,7 +200,7 @@ int main(int argc, char **argv)
                 sourceMipChain.mipLevels[0].width,
                 sourceMipChain.mipLevels[0].height,
                 sourceMipChain.mipLevels.size(),
-                ybi::texture::VirtualTexturePixelFormatChannelCount(decoded->pixelFormat),
+                ybi::texture::TextureFormatChannelCount(decoded->pixelFormat),
                 sourceMipChain.hasStoredMipLevels ? "yes" : "no");
 
     bool allOk = true;
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
         if (!mipOk && diff.firstMismatch < srcPixels.size())
         {
             const size_t channels =
-                static_cast<size_t>(ybi::texture::VirtualTexturePixelFormatChannelCount(
+                static_cast<size_t>(ybi::texture::TextureFormatChannelCount(
                     decoded->pixelFormat));
             const size_t pixel = diff.firstMismatch / channels;
             const size_t chan = diff.firstMismatch % channels;

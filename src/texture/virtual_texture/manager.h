@@ -102,7 +102,7 @@ private:
         uint32_t height = 0u;
         uint32_t mipCount = 0u;
         uint32_t tailFirstMip = 0u;
-        VirtualTexturePixelFormat pixelFormat = VirtualTexturePixelFormat::RGBA32_FLOAT;
+        TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
         std::array<int16_t, 128> udimToLocal = {};
         std::vector<uint32_t> activeUdims;
         std::string tileFilePath;

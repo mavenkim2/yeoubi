@@ -231,9 +231,8 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
                                  UdimImage *outImage,
                                  std::string *outError)
 {
-    const texture::VirtualTexturePixelFormat pixelFormat =
-        static_cast<texture::VirtualTexturePixelFormat>(entry.pixelFormat);
-    if (!texture::IsValidVirtualTexturePixelFormat(entry.pixelFormat))
+    const texture::TextureFormat pixelFormat = static_cast<texture::TextureFormat>(entry.pixelFormat);
+    if (!texture::IsValidTextureFormat(entry.pixelFormat))
     {
         if (outError)
         {
@@ -241,8 +240,8 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
         }
         return false;
     }
-    const uint32_t channelCount = texture::VirtualTexturePixelFormatChannelCount(pixelFormat);
-    const uint32_t bytesPerChannel = texture::VirtualTexturePixelFormatBytesPerChannel(pixelFormat);
+    const uint32_t channelCount = texture::TextureFormatChannelCount(pixelFormat);
+    const uint32_t bytesPerChannel = texture::TextureFormatBytesPerChannel(pixelFormat);
     if (mipRecords.empty())
     {
         if (outError)
@@ -497,7 +496,7 @@ bool WriteTileBinary(const std::filesystem::path &path,
     {
         const UdimImage &img = images[i];
         const std::vector<UdimMipImage> &mipChain = img.mipLevels;
-        const uint32_t channelCount = texture::VirtualTexturePixelFormatChannelCount(img.pixelFormat);
+        const uint32_t channelCount = texture::TextureFormatChannelCount(img.pixelFormat);
 
         UdimEntry &entry = entries[i];
         entry.udim = img.udim;
@@ -769,7 +768,7 @@ bool ReadTileBinary(const std::filesystem::path &path,
     {
         if (entry.udim < kUdimMin || entry.udim > kUdimMax || entry.tileSize == 0 ||
             entry.mipCount == 0 || entry.mipRecordCount != entry.mipCount ||
-            !texture::IsValidVirtualTexturePixelFormat(entry.pixelFormat))
+            !texture::IsValidTextureFormat(entry.pixelFormat))
         {
             if (outError)
             {
