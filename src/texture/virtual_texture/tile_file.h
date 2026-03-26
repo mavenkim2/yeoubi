@@ -68,7 +68,8 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
                             uint32_t mip,
                             uint32_t tileX,
                             uint32_t tileY,
-                            std::vector<unsigned char> *outRgba8,
+                            std::vector<unsigned char> *outPixels,
+                            TextureFormat *outFormat,
                             uint32_t *outWidth,
                             uint32_t *outHeight,
                             uint64_t *outSourceBytes,
@@ -77,12 +78,18 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
 bool ReadVirtualTextureTailMip(VirtualTextureTileFile *file,
                                uint32_t udim,
                                uint32_t maxDim,
-                               std::vector<unsigned char> *outRgba8,
+                               std::vector<unsigned char> *outPixels,
+                               TextureFormat *outFormat,
                                uint32_t *outWidth,
                                uint32_t *outHeight,
                                uint32_t *outMip,
                                uint64_t *outSourceBytes,
                                std::string *outError);
+
+bool ExpandVirtualTextureTypedPixelsToRgba8(TextureFormat pixelFormat,
+                                            const std::vector<unsigned char> &pixels,
+                                            std::vector<unsigned char> *outRgba8,
+                                            std::string *outError);
 
 } // namespace texture
 } // namespace ybi

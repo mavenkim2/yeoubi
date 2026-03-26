@@ -209,13 +209,14 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
                             uint32_t mip,
                             uint32_t tileX,
                             uint32_t tileY,
-                            std::vector<unsigned char> *outRgba8,
+                            std::vector<unsigned char> *outPixels,
+                            TextureFormat *outFormat,
                             uint32_t *outWidth,
                             uint32_t *outHeight,
                             uint64_t *outSourceBytes,
                             std::string *outError)
 {
-    if (!file || !outRgba8 || !outWidth || !outHeight || !outSourceBytes)
+    if (!file || !outPixels || !outFormat || !outWidth || !outHeight || !outSourceBytes)
     {
         if (outError)
         {
@@ -289,13 +290,8 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
         {
             return false;
         }
-
-        std::vector<float> pixels;
-        if (!DecodePixelsToFloats(table.pixelFormat, rawPayload, &pixels, outError))
-        {
-            return false;
-        }
-        ExpandTypedPixelsToRgba8(table.pixelFormat, pixels, outRgba8);
+        *outPixels = std::move(rawPayload);
+        *outFormat = table.pixelFormat;
         *outWidth = mipTable.width;
         *outHeight = mipTable.height;
         *outSourceBytes = mipTable.tailStoredByteSize;
@@ -355,13 +351,8 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
     {
         return false;
     }
-
-    std::vector<float> pixels;
-    if (!DecodePixelsToFloats(table.pixelFormat, rawPayload, &pixels, outError))
-    {
-        return false;
-    }
-    ExpandTypedPixelsToRgba8(table.pixelFormat, pixels, outRgba8);
+    *outPixels = std::move(rawPayload);
+    *outFormat = table.pixelFormat;
     *outWidth = record.width;
     *outHeight = record.height;
     *outSourceBytes = record.storedByteSize;
@@ -371,14 +362,15 @@ bool ReadVirtualTextureTile(VirtualTextureTileFile *file,
 bool ReadVirtualTextureTailMip(VirtualTextureTileFile *file,
                                uint32_t udim,
                                uint32_t maxDim,
-                               std::vector<unsigned char> *outRgba8,
+                               std::vector<unsigned char> *outPixels,
+                               TextureFormat *outFormat,
                                uint32_t *outWidth,
                                uint32_t *outHeight,
                                uint32_t *outMip,
                                uint64_t *outSourceBytes,
                                std::string *outError)
 {
-    if (!file || !outRgba8 || !outWidth || !outHeight || !outMip || !outSourceBytes)
+    if (!file || !outPixels || !outFormat || !outWidth || !outHeight || !outMip || !outSourceBytes)
     {
         if (outError)
         {
@@ -435,7 +427,8 @@ bool ReadVirtualTextureTailMip(VirtualTextureTileFile *file,
                                 chosen->level,
                                 0u,
                                 0u,
-                                outRgba8,
+                                outPixels,
+                                outFormat,
                                 outWidth,
                                 outHeight,
                                 outSourceBytes,
@@ -445,6 +438,28 @@ bool ReadVirtualTextureTailMip(VirtualTextureTileFile *file,
     }
 
     *outMip = chosen->level;
+    return true;
+}
+
+bool ExpandVirtualTextureTypedPixelsToRgba8(TextureFormat pixelFormat,
+                                            const std::vector<unsigned char> &pixels,
+                                            std::vector<unsigned char> *outRgba8,
+                                            std::string *outError)
+{
+    std::vector<float> decoded;
+    if (!DecodePixelsToFloats(pixelFormat, pixels, &decoded, outError))
+    {
+        return false;
+    }
+    ExpandTypedPixelsToRgba8(pixelFormat, decoded, outRgba8);
+    if (outRgba8->empty() && !pixels.empty())
+    {
+        if (outError)
+        {
+            *outError = "failed expanding typed virtual texture pixels to RGBA8";
+        }
+        return false;
+    }
     return true;
 }
 

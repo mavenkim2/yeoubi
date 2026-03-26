@@ -216,6 +216,8 @@ bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
     }
 
     std::vector<unsigned char> rgba8;
+    std::vector<unsigned char> pixels;
+    TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
     uint32_t width = 0u;
     uint32_t height = 0u;
     uint64_t sourceBytes = 0u;
@@ -226,11 +228,20 @@ bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
                                 info.mip,
                                 info.tileX,
                                 info.tileY,
-                                &rgba8,
+                                &pixels,
+                                &pixelFormat,
                                 &width,
                                 &height,
                                 &sourceBytes,
                                 &readError))
+    {
+        if (outError)
+        {
+            *outError = readError;
+        }
+        return false;
+    }
+    if (!ExpandVirtualTextureTypedPixelsToRgba8(pixelFormat, pixels, &rgba8, &readError))
     {
         if (outError)
         {

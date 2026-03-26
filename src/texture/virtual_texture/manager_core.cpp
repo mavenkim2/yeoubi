@@ -136,7 +136,9 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std:
     for (size_t local = 0; local < texture->activeUdims.size(); ++local)
     {
         const uint32_t udim = texture->activeUdims[local];
+        std::vector<unsigned char> tailPixels;
         std::vector<unsigned char> tailRgba8;
+        TextureFormat tailFormat = TextureFormat::RGBA32_FLOAT;
         uint32_t tailW = 0u;
         uint32_t tailH = 0u;
         uint32_t tailMip = 0u;
@@ -145,7 +147,8 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std:
         if (!ReadVirtualTextureTailMip(&texture->tileFile,
                                        udim,
                                        config_.tailMaxDim,
-                                       &tailRgba8,
+                                       &tailPixels,
+                                       &tailFormat,
                                        &tailW,
                                        &tailH,
                                        &tailMip,
@@ -155,6 +158,17 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std:
             if (outError)
             {
                 *outError = "VirtualTextureManager: required tail mip missing (textureId=" +
+                            std::to_string(texture->textureId) +
+                            " udim=" + std::to_string(udim) + "): " + tailError;
+            }
+            return false;
+        }
+        if (!ExpandVirtualTextureTypedPixelsToRgba8(
+                tailFormat, tailPixels, &tailRgba8, &tailError))
+        {
+            if (outError)
+            {
+                *outError = "VirtualTextureManager: failed expanding tail mip (textureId=" +
                             std::to_string(texture->textureId) +
                             " udim=" + std::to_string(udim) + "): " + tailError;
             }
