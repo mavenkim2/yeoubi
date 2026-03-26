@@ -1,5 +1,6 @@
 #include "tile_binary.h"
 #include "tile_binary_detail.h"
+#include "tile_pixels.h"
 
 #include "miniz.h"
 
@@ -314,7 +315,11 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
                 return false;
             }
 
-            std::memcpy(dstMip.rgba.data(), rawPayload.data(), static_cast<size_t>(srcMip.rawByteSize));
+            if (!tileprep::DecodePixelPayload(
+                    pixelFormat, rawPayload.data(), rawPayload.size(), &dstMip.rgba, outError))
+            {
+                return false;
+            }
             continue;
         }
 
@@ -376,12 +381,17 @@ bool ReconstructImageFromRecords(const std::filesystem::path &path,
                 return false;
             }
 
-            const float *tileF32 = reinterpret_cast<const float *>(rawPayload.data());
+            std::vector<float> tilePixels;
+            if (!tileprep::DecodePixelPayload(
+                    pixelFormat, rawPayload.data(), rawPayload.size(), &tilePixels, outError))
+            {
+                return false;
+            }
             for (uint32_t y = 0; y < r.height; ++y)
             {
-                const float *src =
-                    tileF32 + static_cast<size_t>(y) * static_cast<size_t>(r.width) *
-                                  static_cast<size_t>(channelCount);
+                const float *src = tilePixels.data() +
+                                   static_cast<size_t>(y) * static_cast<size_t>(r.width) *
+                                       static_cast<size_t>(channelCount);
                 float *dst = dstMip.rgba.data() +
                              (static_cast<size_t>(y0 + y) * static_cast<size_t>(dstMip.width) +
                               static_cast<size_t>(x0)) *
@@ -450,8 +460,8 @@ bool WriteTileBinary(const std::filesystem::path &path,
     }
 
     TileFileHeader header = {};
-    std::memcpy(header.magic, "YBITILE4", 8);
-    header.version = 4;
+    std::memcpy(header.magic, "YBITILE5", 8);
+    header.version = 5;
     header.channels = 4;
     header.elementType = 1;
     header.udimCount = static_cast<uint32_t>(images.size());
@@ -482,10 +492,12 @@ bool WriteTileBinary(const std::filesystem::path &path,
     }
 
     std::vector<float> tilePixels;
+    std::vector<unsigned char> encodedPixels;
     for (size_t i = 0; i < images.size(); ++i)
     {
         const UdimImage &img = images[i];
         const std::vector<UdimMipImage> &mipChain = img.mipLevels;
+        const uint32_t channelCount = texture::VirtualTexturePixelFormatChannelCount(img.pixelFormat);
 
         UdimEntry &entry = entries[i];
         entry.udim = img.udim;
@@ -564,10 +576,15 @@ bool WriteTileBinary(const std::filesystem::path &path,
                 mipRecord.firstTileRecord = 0u;
                 mipRecord.tileRecordCount = 0u;
                 mipRecord.byteOffset = static_cast<uint64_t>(out.tellp());
-                mipRecord.rawByteSize = static_cast<uint64_t>(mip.rgba.size() * sizeof(float));
+                if (!tileprep::EncodePixelPayload(
+                        img.pixelFormat, mip.rgba, &encodedPixels, outError))
+                {
+                    return false;
+                }
+                mipRecord.rawByteSize = static_cast<uint64_t>(encodedPixels.size());
 
                 std::vector<unsigned char> compressed;
-                if (!CompressPayload(reinterpret_cast<const unsigned char *>(mip.rgba.data()),
+                if (!CompressPayload(encodedPixels.data(),
                                      mipRecord.rawByteSize,
                                      &compressed,
                                      &mipRecord.compression,
@@ -604,15 +621,16 @@ bool WriteTileBinary(const std::filesystem::path &path,
                         const uint32_t tileIndex = nextTileRecord++;
                         int tileWidth = 0;
                         int tileHeight = 0;
-                        detail::ExtractTileRgbaF32(mip.rgba,
-                                                   static_cast<int>(mip.width),
-                                                   static_cast<int>(mip.height),
-                                                   static_cast<int>(tx),
-                                                   static_cast<int>(ty),
-                                                   tileSize,
-                                                   tilePixels,
-                                                   tileWidth,
-                                                   tileHeight);
+                        detail::ExtractTileFloatSamples(mip.rgba,
+                                                        static_cast<int>(mip.width),
+                                                        static_cast<int>(mip.height),
+                                                        channelCount,
+                                                        static_cast<int>(tx),
+                                                        static_cast<int>(ty),
+                                                        tileSize,
+                                                        tilePixels,
+                                                        tileWidth,
+                                                        tileHeight);
 
                         V4TileRecord &record = tileRecords[tileIndex];
                         record.mipLevel = mip.level;
@@ -621,10 +639,15 @@ bool WriteTileBinary(const std::filesystem::path &path,
                         record.width = static_cast<uint32_t>(tileWidth);
                         record.height = static_cast<uint32_t>(tileHeight);
                         record.byteOffset = static_cast<uint64_t>(out.tellp());
-                        record.rawByteSize = static_cast<uint64_t>(tilePixels.size() * sizeof(float));
+                        if (!tileprep::EncodePixelPayload(
+                                img.pixelFormat, tilePixels, &encodedPixels, outError))
+                        {
+                            return false;
+                        }
+                        record.rawByteSize = static_cast<uint64_t>(encodedPixels.size());
 
                         std::vector<unsigned char> compressed;
-                        if (!CompressPayload(reinterpret_cast<const unsigned char *>(tilePixels.data()),
+                        if (!CompressPayload(encodedPixels.data(),
                                              record.rawByteSize,
                                              &compressed,
                                              &record.compression,

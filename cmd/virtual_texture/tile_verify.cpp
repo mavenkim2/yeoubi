@@ -1,5 +1,6 @@
 #include "exr_mips.h"
 #include "tile_binary.h"
+#include "tile_pixels.h"
 #include "texture/udim_utils.h"
 
 #include <algorithm>
@@ -195,10 +196,11 @@ int main(int argc, char **argv)
     }
 
     std::printf("verify stats: exr=%s tiles=%s udim=%u\n", exrPath.c_str(), tilesBinPath.c_str(), udim);
-    std::printf("verify stats: width=%u height=%u mipCount=%zu channels=4 storedMips=%s\n",
+    std::printf("verify stats: width=%u height=%u mipCount=%zu channels=%u storedMips=%s\n",
                 sourceMipChain.mipLevels[0].width,
                 sourceMipChain.mipLevels[0].height,
                 sourceMipChain.mipLevels.size(),
+                ybi::texture::VirtualTexturePixelFormatChannelCount(decoded->pixelFormat),
                 sourceMipChain.hasStoredMipLevels ? "yes" : "no");
 
     bool allOk = true;
@@ -207,7 +209,7 @@ int main(int argc, char **argv)
         const ybi::tilebin::UdimMipImage &srcMip = sourceMipChain.mipLevels[mipIndex];
         const ybi::tilebin::UdimMipImage &dstMip = decoded->mipLevels[mipIndex];
         if (srcMip.level != dstMip.level || srcMip.width != dstMip.width ||
-            srcMip.height != dstMip.height)
+            srcMip.height != dstMip.height || dstMip.pixelFormat != decoded->pixelFormat)
         {
             std::printf("verify mip %zu: dimension mismatch exr=%ux%u tile=%ux%u levels=%u/%u\n",
                         mipIndex,
@@ -221,8 +223,16 @@ int main(int argc, char **argv)
             continue;
         }
 
+        std::vector<float> srcPixels;
+        if (!ybi::tileprep::ConvertPixelsToPixelFormat(
+                decoded->pixelFormat, srcMip.rgba, &srcPixels, &error))
+        {
+            std::printf("verify failed: %s\n", error.c_str());
+            return 2;
+        }
+
         ybi::tilebin::DiffStats diff = {};
-        const bool mipOk = ybi::tilebin::DiffImagesExact(srcMip.rgba, dstMip.rgba, eps, &diff);
+        const bool mipOk = ybi::tilebin::DiffImagesExact(srcPixels, dstMip.rgba, eps, &diff);
         std::printf("verify mip %zu: width=%u height=%u maxAbs=%.9g meanAbs=%.9g rmse=%.9g mismatches=%llu/%zu %s\n",
                     mipIndex,
                     srcMip.width,
@@ -231,12 +241,15 @@ int main(int argc, char **argv)
                     diff.meanAbs,
                     diff.rmse,
                     static_cast<unsigned long long>(diff.mismatchCount),
-                    srcMip.rgba.size(),
+                    srcPixels.size(),
                     mipOk ? "PASS" : "FAIL");
-        if (!mipOk && diff.firstMismatch < srcMip.rgba.size())
+        if (!mipOk && diff.firstMismatch < srcPixels.size())
         {
-            const size_t pixel = diff.firstMismatch / 4u;
-            const size_t chan = diff.firstMismatch % 4u;
+            const size_t channels =
+                static_cast<size_t>(ybi::texture::VirtualTexturePixelFormatChannelCount(
+                    decoded->pixelFormat));
+            const size_t pixel = diff.firstMismatch / channels;
+            const size_t chan = diff.firstMismatch % channels;
             const size_t x = pixel % static_cast<size_t>(srcMip.width);
             const size_t y = pixel / static_cast<size_t>(srcMip.width);
             std::printf("first mismatch mip %zu: x=%zu y=%zu c=%zu exr=%.9g tile=%.9g\n",
@@ -244,7 +257,7 @@ int main(int argc, char **argv)
                         x,
                         y,
                         chan,
-                        srcMip.rgba[diff.firstMismatch],
+                        srcPixels[diff.firstMismatch],
                         dstMip.rgba[diff.firstMismatch]);
         }
         allOk = allOk && mipOk;

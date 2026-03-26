@@ -1,8 +1,10 @@
 #include "../usd_ntc_encode/shared.h"
 #include "exr_mips.h"
+#include "tile_binary_detail.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
 #include "tile_binary.h"
+#include "tile_pixels.h"
 
 #include <algorithm>
 #include <atomic>
@@ -29,28 +31,22 @@ struct TextureGroup
     std::string texturePath;
     std::string firstInputName;
     std::string conflictingInputName;
-    enum class SemanticClass : uint8_t
-    {
-        Unknown = 0,
-        Scalar = 1,
-        Normal = 2,
-        Color = 3,
-    } semanticClass = SemanticClass::Unknown;
+    ybi::tileprep::TextureSemanticClass semanticClass = ybi::tileprep::TextureSemanticClass::Unknown;
 };
 
-TextureGroup::SemanticClass ClassifyInputSemantic(const std::string &inputName)
+ybi::tileprep::TextureSemanticClass ClassifyInputSemantic(const std::string &inputName)
 {
     if (inputName == "roughness" || inputName == "metallic" || inputName == "occlusion" ||
         inputName == "ior" || inputName == "opacity" || inputName == "clearcoat" ||
         inputName == "clearcoatRoughness")
     {
-        return TextureGroup::SemanticClass::Scalar;
+        return ybi::tileprep::TextureSemanticClass::Scalar;
     }
     if (inputName == "normal")
     {
-        return TextureGroup::SemanticClass::Normal;
+        return ybi::tileprep::TextureSemanticClass::Normal;
     }
-    return TextureGroup::SemanticClass::Color;
+    return ybi::tileprep::TextureSemanticClass::Color;
 }
 
 bool AccumulateTextureSemantic(TextureGroup *group, const std::string &inputName)
@@ -59,8 +55,8 @@ bool AccumulateTextureSemantic(TextureGroup *group, const std::string &inputName
     {
         return false;
     }
-    const TextureGroup::SemanticClass semanticClass = ClassifyInputSemantic(inputName);
-    if (group->semanticClass == TextureGroup::SemanticClass::Unknown)
+    const ybi::tileprep::TextureSemanticClass semanticClass = ClassifyInputSemantic(inputName);
+    if (group->semanticClass == ybi::tileprep::TextureSemanticClass::Unknown)
     {
         group->semanticClass = semanticClass;
         group->firstInputName = inputName;
@@ -84,43 +80,25 @@ std::string MakeTileOutputStem(const std::string &basePathNoUdim)
            "_" + Sanitize(fs::path(basePathNoUdim).filename().string());
 }
 
-void ExtractTileRgbaF32(const std::vector<float> &image,
-                        int imageWidth,
-                        int imageHeight,
-                        int tileX,
-                        int tileY,
-                        int tileSize,
-                        std::vector<float> &outTile,
-                        int &outWidth,
-                        int &outHeight)
-{
-    const int x0 = tileX * tileSize;
-    const int y0 = tileY * tileSize;
-    outWidth = std::max(0, std::min(tileSize, imageWidth - x0));
-    outHeight = std::max(0, std::min(tileSize, imageHeight - y0));
-    outTile.assign(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4u, 0.0f);
-    for (int y = 0; y < outHeight; ++y)
-    {
-        const float *src =
-            image.data() + (static_cast<size_t>(y0 + y) * static_cast<size_t>(imageWidth) +
-                            static_cast<size_t>(x0)) *
-                               4u;
-        float *dst = outTile.data() + static_cast<size_t>(y) * static_cast<size_t>(outWidth) * 4u;
-        std::memcpy(dst, src, static_cast<size_t>(outWidth) * 4u * sizeof(float));
-    }
-}
-
 bool WriteTilePreviewImages(const fs::path &verifyDir,
                             const std::string &baseName,
                             uint32_t udim,
                             int imageWidth,
                             int imageHeight,
                             int tileSize,
+                            ybi::texture::VirtualTexturePixelFormat pixelFormat,
                             const std::vector<float> &image,
                             int verifyCount,
                             std::string &outError)
 {
     int verifyWritten = 0;
+    std::vector<float> rgbaImage;
+    ybi::tileprep::ExpandPixelsToRgba(pixelFormat, image, &rgbaImage);
+    if (rgbaImage.empty())
+    {
+        outError = "failed expanding preview image to RGBA";
+        return false;
+    }
     std::vector<float> tilePixels;
     const int tilesX = (imageWidth + tileSize - 1) / tileSize;
     const int tilesY = (imageHeight + tileSize - 1) / tileSize;
@@ -130,15 +108,16 @@ bool WriteTilePreviewImages(const fs::path &verifyDir,
         {
             int tileWidth = 0;
             int tileHeight = 0;
-            ExtractTileRgbaF32(image,
-                               imageWidth,
-                               imageHeight,
-                               tx,
-                               ty,
-                               tileSize,
-                               tilePixels,
-                               tileWidth,
-                               tileHeight);
+            ybi::tilebin::detail::ExtractTileFloatSamples(rgbaImage,
+                                                          imageWidth,
+                                                          imageHeight,
+                                                          4u,
+                                                          tx,
+                                                          ty,
+                                                          tileSize,
+                                                          tilePixels,
+                                                          tileWidth,
+                                                          tileHeight);
             std::vector<unsigned char> rgba8(tilePixels.size());
             for (size_t i = 0; i < tilePixels.size(); ++i)
             {
@@ -196,8 +175,8 @@ bool VerifyRoundTripTileBinary(const fs::path &tilePath,
             outError = "tile verify missing source udim=" + std::to_string(decoded.udim);
             return false;
         }
-        const ybi::tilebin::UdimImage &source = *it->second;
-        if (source.width != decoded.width || source.height != decoded.height)
+            const ybi::tilebin::UdimImage &source = *it->second;
+            if (source.width != decoded.width || source.height != decoded.height)
         {
             outError = "tile verify dimension mismatch udim=" + std::to_string(decoded.udim);
             return false;
@@ -214,7 +193,7 @@ bool VerifyRoundTripTileBinary(const fs::path &tilePath,
             const ybi::tilebin::UdimMipImage &sourceMip = source.mipLevels[mipIndex];
             const ybi::tilebin::UdimMipImage &decodedMip = decoded.mipLevels[mipIndex];
             if (sourceMip.level != decodedMip.level || sourceMip.width != decodedMip.width ||
-                sourceMip.height != decodedMip.height)
+                sourceMip.height != decodedMip.height || sourceMip.pixelFormat != decodedMip.pixelFormat)
             {
                 outError =
                     "tile verify mip metadata mismatch udim=" + std::to_string(decoded.udim) +
@@ -356,6 +335,9 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
         std::vector<ybi::tilebin::UdimImage> images;
         images.reserve(udimPaths.size());
+        bool havePixelFormat = false;
+        ybi::texture::VirtualTexturePixelFormat pixelFormat =
+            ybi::texture::VirtualTexturePixelFormat::RGBA32_FLOAT;
         for (const auto &udimPath : udimPaths)
         {
             ybi::tilebin::UdimImage image = {};
@@ -396,6 +378,40 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
             image.width = mipResult.mipLevels[0].width;
             image.height = mipResult.mipLevels[0].height;
+            ybi::texture::VirtualTexturePixelFormat udimPixelFormat =
+                ybi::texture::VirtualTexturePixelFormat::RGBA32_FLOAT;
+            if (!ybi::tileprep::ChoosePixelFormat(group.semanticClass,
+                                                  mipResult.sourceChannelCount,
+                                                  mipResult.sourceNumericType,
+                                                  &udimPixelFormat,
+                                                  &mipReason))
+            {
+                failed.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf(
+                    "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
+                return;
+            }
+            if (havePixelFormat && udimPixelFormat != pixelFormat)
+            {
+                failed.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf("Tile prep: FAIL %s : inconsistent pixel format across UDIMs\n",
+                            group.basePathNoUdim.c_str());
+                return;
+            }
+            pixelFormat = udimPixelFormat;
+            havePixelFormat = true;
+            if (!ybi::tileprep::ConvertMipChainToPixelFormat(
+                    pixelFormat, &mipResult.mipLevels, &mipReason))
+            {
+                failed.fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::printf(
+                    "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
+                return;
+            }
+            image.pixelFormat = pixelFormat;
             image.mipLevels = std::move(mipResult.mipLevels);
             images.push_back(std::move(image));
         }
@@ -418,6 +434,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
                                         static_cast<int>(img.width),
                                         static_cast<int>(img.height),
                                         tileSize,
+                                        img.pixelFormat,
                                         img.mipLevels[0].rgba,
                                         cli.tileVerifyCount,
                                         reason))

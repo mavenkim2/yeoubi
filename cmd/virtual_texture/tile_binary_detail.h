@@ -14,15 +14,16 @@ namespace tilebin
 namespace detail
 {
 
-void ExtractTileRgbaF32(const std::vector<float> &image,
-                        int imageWidth,
-                        int imageHeight,
-                        int tileX,
-                        int tileY,
-                        int tileSize,
-                        std::vector<float> &outTile,
-                        int &outWidth,
-                        int &outHeight);
+void ExtractTileFloatSamples(const std::vector<float> &image,
+                             int imageWidth,
+                             int imageHeight,
+                             uint32_t channelCount,
+                             int tileX,
+                             int tileY,
+                             int tileSize,
+                             std::vector<float> &outTile,
+                             int &outWidth,
+                             int &outHeight);
 
 bool ValidateImageBasics(const std::vector<UdimImage> &images, int tileSize, std::string *outError);
 

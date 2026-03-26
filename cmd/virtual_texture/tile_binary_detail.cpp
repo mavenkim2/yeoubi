@@ -18,28 +18,35 @@ static constexpr uint32_t kUdimMax = 1100;
 
 } // namespace
 
-void ExtractTileRgbaF32(const std::vector<float> &image,
-                        int imageWidth,
-                        int imageHeight,
-                        int tileX,
-                        int tileY,
-                        int tileSize,
-                        std::vector<float> &outTile,
-                        int &outWidth,
-                        int &outHeight)
+void ExtractTileFloatSamples(const std::vector<float> &image,
+                             int imageWidth,
+                             int imageHeight,
+                             uint32_t channelCount,
+                             int tileX,
+                             int tileY,
+                             int tileSize,
+                             std::vector<float> &outTile,
+                             int &outWidth,
+                             int &outHeight)
 {
     const int x0 = tileX * tileSize;
     const int y0 = tileY * tileSize;
     outWidth = std::max(0, std::min(tileSize, imageWidth - x0));
     outHeight = std::max(0, std::min(tileSize, imageHeight - y0));
-    outTile.assign(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4u, 0.0f);
+    outTile.assign(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) *
+                       static_cast<size_t>(channelCount),
+                   0.0f);
     for (int y = 0; y < outHeight; ++y)
     {
         const float *src = image.data() + (static_cast<size_t>(y0 + y) * static_cast<size_t>(imageWidth) +
                                            static_cast<size_t>(x0)) *
-                                              4u;
-        float *dst = outTile.data() + static_cast<size_t>(y) * static_cast<size_t>(outWidth) * 4u;
-        std::memcpy(dst, src, static_cast<size_t>(outWidth) * 4u * sizeof(float));
+                                              static_cast<size_t>(channelCount);
+        float *dst = outTile.data() + static_cast<size_t>(y) * static_cast<size_t>(outWidth) *
+                                          static_cast<size_t>(channelCount);
+        std::memcpy(dst,
+                    src,
+                    static_cast<size_t>(outWidth) * static_cast<size_t>(channelCount) *
+                        sizeof(float));
     }
 }
 
