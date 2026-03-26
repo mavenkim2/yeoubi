@@ -18,11 +18,18 @@ namespace
 {
 struct LayerChannels
 {
-    int first = -1;
+    std::vector<int> ordered;
     int r = -1;
     int g = -1;
     int b = -1;
     int a = -1;
+};
+
+struct SelectedChannels
+{
+    std::array<int, 4> rgba = {-1, -1, -1, -1};
+    std::array<int, 4> source = {-1, -1, -1, -1};
+    uint32_t sourceChannelCount = 0u;
 };
 std::pair<std::string, std::string> SplitChannelName(const char *name)
 {
@@ -123,17 +130,21 @@ void BuildManualMipChain(const std::vector<float> &base,
         outMips->push_back(std::move(next));
     }
 }
-bool FindRgbaChannels(const EXRHeader &header, std::array<int, 4> &channels, std::string *outError)
+bool FindSelectedChannels(const EXRHeader &header,
+                          SelectedChannels *outChannels,
+                          std::string *outError)
 {
+    if (!outChannels)
+    {
+        return false;
+    }
+    *outChannels = {};
     std::map<std::string, LayerChannels> layers;
     for (int i = 0; i < header.num_channels; ++i)
     {
         const auto split = SplitChannelName(header.channels[i].name);
         LayerChannels &layer = layers[split.first];
-        if (layer.first < 0)
-        {
-            layer.first = i;
-        }
+        layer.ordered.push_back(i);
         if (split.second == "R" && layer.r < 0)
         {
             layer.r = i;
@@ -170,14 +181,14 @@ bool FindRgbaChannels(const EXRHeader &header, std::array<int, 4> &channels, std
         choose = layers.begin();
         for (auto it = layers.begin(); it != layers.end(); ++it)
         {
-            if (it->second.first >= 0)
+            if (!it->second.ordered.empty())
             {
                 choose = it;
                 break;
             }
         }
     }
-    if (choose == layers.end() || choose->second.first < 0)
+    if (choose == layers.end() || choose->second.ordered.empty())
     {
         if (outError)
         {
@@ -186,12 +197,90 @@ bool FindRgbaChannels(const EXRHeader &header, std::array<int, 4> &channels, std
         return false;
     }
 
-    channels[0] = (choose->second.r >= 0) ? choose->second.r : choose->second.first;
-    channels[1] = (choose->second.g >= 0) ? choose->second.g : choose->second.first;
-    channels[2] = (choose->second.b >= 0) ? choose->second.b : choose->second.first;
-    channels[3] = choose->second.a;
+    if (choose->second.ordered.size() > outChannels->source.size())
+    {
+        if (outError)
+        {
+            *outError = "selected EXR layer has more than 4 channels";
+        }
+        return false;
+    }
+
+    outChannels->sourceChannelCount = static_cast<uint32_t>(choose->second.ordered.size());
+    for (size_t i = 0; i < choose->second.ordered.size(); ++i)
+    {
+        outChannels->source[i] = choose->second.ordered[i];
+    }
+
+    const int first = choose->second.ordered[0];
+    outChannels->rgba[0] = (choose->second.r >= 0) ? choose->second.r : first;
+    outChannels->rgba[1] = (choose->second.g >= 0) ? choose->second.g : first;
+    outChannels->rgba[2] = (choose->second.b >= 0) ? choose->second.b : first;
+    outChannels->rgba[3] = choose->second.a;
     return true;
 }
+
+bool DetermineSourceNumericType(const EXRHeader &header,
+                                const SelectedChannels &channels,
+                                ExrNumericType *outType,
+                                std::string *outError)
+{
+    if (!outType)
+    {
+        return false;
+    }
+    *outType = ExrNumericType::Unknown;
+    if (channels.sourceChannelCount == 0u)
+    {
+        if (outError)
+        {
+            *outError = "selected EXR layer has no channels";
+        }
+        return false;
+    }
+
+    int pixelType = -1;
+    for (uint32_t i = 0u; i < channels.sourceChannelCount; ++i)
+    {
+        const int channelIndex = channels.source[i];
+        if (channelIndex < 0 || channelIndex >= header.num_channels)
+        {
+            if (outError)
+            {
+                *outError = "selected EXR channel index out of range";
+            }
+            return false;
+        }
+
+        const int currentType = header.pixel_types[channelIndex];
+        if (currentType != TINYEXR_PIXELTYPE_HALF && currentType != TINYEXR_PIXELTYPE_FLOAT)
+        {
+            if (outError)
+            {
+                *outError = "selected EXR channels are not half/float";
+            }
+            return false;
+        }
+        if (pixelType < 0)
+        {
+            pixelType = currentType;
+            continue;
+        }
+        if (pixelType != currentType)
+        {
+            if (outError)
+            {
+                *outError = "selected EXR channels use mixed numeric types";
+            }
+            return false;
+        }
+    }
+
+    *outType = (pixelType == TINYEXR_PIXELTYPE_HALF) ? ExrNumericType::Float16
+                                                     : ExrNumericType::Float32;
+    return true;
+}
+
 bool ReadLevelRgba(const EXRHeader &header,
                    const EXRImage &level,
                    const std::array<int, 4> &channelIndices,
@@ -247,20 +336,20 @@ bool ReadLevelRgba(const EXRHeader &header,
                 for (int x = 0; x < tw; ++x)
                 {
                     const int dstX = x0 + x;
-                    if (dstX < 0 || dstX >= level.width)
-                    {
-                        continue;
-                    }
-                    // TinyEXR stores each tile row at the header tile stride, even
-                    // when edge tiles are clipped smaller at this mip level.
-                    const size_t srcIndex =
-                        static_cast<size_t>(y) * static_cast<size_t>(tileSizeX) +
-                        static_cast<size_t>(x);
+                        if (dstX < 0 || dstX >= level.width)
+                        {
+                            continue;
+                        }
+                        // TinyEXR stores each tile row at the header tile stride, even
+                        // when edge tiles are clipped smaller at this mip level.
+                        const size_t srcIndex =
+                            static_cast<size_t>(y) * static_cast<size_t>(tileSizeX) +
+                            static_cast<size_t>(x);
                     const size_t dstBase =
                         (static_cast<size_t>(dstY) * static_cast<size_t>(width) +
                          static_cast<size_t>(dstX)) *
-                        numChannels;
-                    for (int channel = 0; channel < numChannels; channel++)
+                        4u;
+                    for (int channel = 0; channel < 4; channel++)
                     {
                         (*outValues)[dstBase + channel] =
                             channels[channelIndices[channel]][srcIndex];
@@ -290,8 +379,8 @@ bool ReadLevelRgba(const EXRHeader &header,
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
     for (size_t i = 0; i < pixelCount; ++i)
     {
-        const size_t dstBase = i * numChannels;
-        for (int channel = 0; channel < numChannels; channel++)
+        const size_t dstBase = i * 4u;
+        for (int channel = 0; channel < 4; channel++)
         {
             (*outValues)[dstBase + channel] = channels[channelIndices[channel]][i];
         }
@@ -336,9 +425,9 @@ bool LoadStoredMipChain(const std::string &path,
         FreeEXRImage(&image);
         return false;
     }
-    std::array<int, 4> channels;
+    SelectedChannels channels;
 
-    if (!FindRgbaChannels(*header, channels, outError))
+    if (!FindSelectedChannels(*header, &channels, outError))
     {
         FreeEXRImage(&image);
         return false;
@@ -363,7 +452,7 @@ bool LoadStoredMipChain(const std::string &path,
         mip.level = static_cast<uint32_t>(std::max(level->level_x, 0));
         mip.width = static_cast<uint32_t>(std::max(level->width, 1));
         mip.height = static_cast<uint32_t>(std::max(level->height, 1));
-        if (!ReadLevelRgba(*header, *level, channels, &mip.rgba, outError))
+        if (!ReadLevelRgba(*header, *level, channels.rgba, &mip.rgba, outError))
         {
             FreeEXRImage(&image);
             return false;
@@ -480,6 +569,18 @@ bool LoadExrMipChain(const std::string &path,
     outResult->tileLevelMode = header.tile_level_mode;
     outResult->hasStoredMipLevels =
         (header.tiled != 0 && header.tile_level_mode == TINYEXR_TILE_MIPMAP_LEVELS);
+    SelectedChannels sourceChannels = {};
+    if (!FindSelectedChannels(header, &sourceChannels, outError))
+    {
+        FreeEXRHeader(&header);
+        return false;
+    }
+    outResult->sourceChannelCount = sourceChannels.sourceChannelCount;
+    if (!DetermineSourceNumericType(header, sourceChannels, &outResult->sourceNumericType, outError))
+    {
+        FreeEXRHeader(&header);
+        return false;
+    }
     bool ok = true;
     if (outResult->hasStoredMipLevels)
     {
