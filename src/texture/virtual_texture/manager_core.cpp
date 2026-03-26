@@ -441,6 +441,7 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
         meta.tailPixels = 0ull;
         meta.tailPageCountX = texture.tailPageCountX;
         meta.tailPageCountY = texture.tailPageCountY;
+        meta.pixelFormat = static_cast<uint32_t>(texture.pixelFormat);
         for (size_t i = 0; i < texture.udimToLocal.size(); ++i)
         {
             meta.udimToLocal[i] = texture.udimToLocal[i];

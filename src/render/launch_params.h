@@ -2,6 +2,7 @@
 
 #include "device/device.h"
 #include "scene/material_light.h"
+#include "texture/virtual_texture/pixel_format.h"
 #include "util/float4x4.h"
 #include "util/vec3.h"
 
@@ -75,7 +76,7 @@ struct LaunchParams
         unsigned long long tailPixels;
         unsigned int tailPageCountX;
         unsigned int tailPageCountY;
-        unsigned int _padding0;
+        unsigned int pixelFormat;
         short udimToLocal[128];
     };
 

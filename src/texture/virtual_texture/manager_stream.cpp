@@ -65,6 +65,27 @@ bool VirtualTextureManager::OpenTileFileIfNeeded(TextureState *texture, std::str
         }
         return false;
     }
+    bool havePixelFormat = false;
+    VirtualTexturePixelFormat pixelFormat = VirtualTexturePixelFormat::RGBA32_FLOAT;
+    for (const auto &entry : texture->tileFile.udims)
+    {
+        if (!havePixelFormat)
+        {
+            pixelFormat = entry.second.pixelFormat;
+            havePixelFormat = true;
+            continue;
+        }
+        if (entry.second.pixelFormat != pixelFormat)
+        {
+            if (outError)
+            {
+                *outError = "VirtualTextureManager: tile file has mixed pixel formats: " +
+                            texture->tileFilePath;
+            }
+            return false;
+        }
+    }
+    texture->pixelFormat = pixelFormat;
     texture->tileFileOpen = true;
     return true;
 }
