@@ -1,8 +1,8 @@
 #include "../usd_ntc_encode/shared.h"
 #include "exr_mips.h"
-#include "tile_binary.h"
 #include "texture/path_utils.h"
 #include "texture/udim_utils.h"
+#include "tile_binary.h"
 
 #include <algorithm>
 #include <atomic>
@@ -27,12 +27,61 @@ struct TextureGroup
 {
     std::string basePathNoUdim;
     std::string texturePath;
+    std::string firstInputName;
+    std::string conflictingInputName;
+    enum class SemanticClass : uint8_t
+    {
+        Unknown = 0,
+        Scalar = 1,
+        Normal = 2,
+        Color = 3,
+    } semanticClass = SemanticClass::Unknown;
 };
+
+TextureGroup::SemanticClass ClassifyInputSemantic(const std::string &inputName)
+{
+    if (inputName == "roughness" || inputName == "metallic" || inputName == "occlusion" ||
+        inputName == "ior" || inputName == "opacity" || inputName == "clearcoat" ||
+        inputName == "clearcoatRoughness")
+    {
+        return TextureGroup::SemanticClass::Scalar;
+    }
+    if (inputName == "normal")
+    {
+        return TextureGroup::SemanticClass::Normal;
+    }
+    return TextureGroup::SemanticClass::Color;
+}
+
+bool AccumulateTextureSemantic(TextureGroup *group, const std::string &inputName)
+{
+    if (!group)
+    {
+        return false;
+    }
+    const TextureGroup::SemanticClass semanticClass = ClassifyInputSemantic(inputName);
+    if (group->semanticClass == TextureGroup::SemanticClass::Unknown)
+    {
+        group->semanticClass = semanticClass;
+        group->firstInputName = inputName;
+        return true;
+    }
+    if (group->semanticClass == semanticClass)
+    {
+        return true;
+    }
+    if (group->conflictingInputName.empty())
+    {
+        group->conflictingInputName = inputName;
+    }
+    return false;
+}
 
 std::string MakeTileOutputStem(const std::string &basePathNoUdim)
 {
-    return std::to_string(static_cast<unsigned long long>(std::hash<std::string>{}(basePathNoUdim))) + "_" +
-           Sanitize(fs::path(basePathNoUdim).filename().string());
+    return std::to_string(
+               static_cast<unsigned long long>(std::hash<std::string>{}(basePathNoUdim))) +
+           "_" + Sanitize(fs::path(basePathNoUdim).filename().string());
 }
 
 void ExtractTileRgbaF32(const std::vector<float> &image,
@@ -52,9 +101,10 @@ void ExtractTileRgbaF32(const std::vector<float> &image,
     outTile.assign(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4u, 0.0f);
     for (int y = 0; y < outHeight; ++y)
     {
-        const float *src = image.data() + (static_cast<size_t>(y0 + y) * static_cast<size_t>(imageWidth) +
-                                           static_cast<size_t>(x0)) *
-                                              4u;
+        const float *src =
+            image.data() + (static_cast<size_t>(y0 + y) * static_cast<size_t>(imageWidth) +
+                            static_cast<size_t>(x0)) *
+                               4u;
         float *dst = outTile.data() + static_cast<size_t>(y) * static_cast<size_t>(outWidth) * 4u;
         std::memcpy(dst, src, static_cast<size_t>(outWidth) * 4u * sizeof(float));
     }
@@ -80,17 +130,30 @@ bool WriteTilePreviewImages(const fs::path &verifyDir,
         {
             int tileWidth = 0;
             int tileHeight = 0;
-            ExtractTileRgbaF32(image, imageWidth, imageHeight, tx, ty, tileSize, tilePixels, tileWidth, tileHeight);
+            ExtractTileRgbaF32(image,
+                               imageWidth,
+                               imageHeight,
+                               tx,
+                               ty,
+                               tileSize,
+                               tilePixels,
+                               tileWidth,
+                               tileHeight);
             std::vector<unsigned char> rgba8(tilePixels.size());
             for (size_t i = 0; i < tilePixels.size(); ++i)
             {
                 const float v = std::min(1.0f, std::max(0.0f, tilePixels[i]));
                 rgba8[i] = static_cast<unsigned char>(v * 255.0f + 0.5f);
             }
-            const fs::path verifyPath = verifyDir /
-                                        (baseName + "_udim" + std::to_string(udim) + "_tile_" + std::to_string(tx) + "_" +
-                                         std::to_string(ty) + ".png");
-            if (stbi_write_png(verifyPath.string().c_str(), tileWidth, tileHeight, 4, rgba8.data(), tileWidth * 4) == 0)
+            const fs::path verifyPath =
+                verifyDir / (baseName + "_udim" + std::to_string(udim) + "_tile_" +
+                             std::to_string(tx) + "_" + std::to_string(ty) + ".png");
+            if (stbi_write_png(verifyPath.string().c_str(),
+                               tileWidth,
+                               tileHeight,
+                               4,
+                               rgba8.data(),
+                               tileWidth * 4) == 0)
             {
                 outError = "failed writing tile verify image: " + verifyPath.string();
                 return false;
@@ -153,8 +216,9 @@ bool VerifyRoundTripTileBinary(const fs::path &tilePath,
             if (sourceMip.level != decodedMip.level || sourceMip.width != decodedMip.width ||
                 sourceMip.height != decodedMip.height)
             {
-                outError = "tile verify mip metadata mismatch udim=" + std::to_string(decoded.udim) +
-                           " mip=" + std::to_string(mipIndex);
+                outError =
+                    "tile verify mip metadata mismatch udim=" + std::to_string(decoded.udim) +
+                    " mip=" + std::to_string(mipIndex);
                 return false;
             }
 
@@ -216,6 +280,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
         for (const auto &kv : mat.channels)
         {
+            const std::string &inputName = kv.first;
             const std::string &texturePath = kv.second.texturePath;
             const std::string basePathNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
             TextureGroup &group = groups[basePathNoUdim];
@@ -223,6 +288,16 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             if (group.texturePath.empty())
             {
                 group.texturePath = texturePath;
+            }
+            if (!AccumulateTextureSemantic(&group, inputName))
+            {
+                if (outError)
+                {
+                    *outError = "Tile prep: texture path " + basePathNoUdim +
+                                " is used by incompatible semantics (" + group.firstInputName +
+                                " vs " + group.conflictingInputName + ")";
+                }
+                return false;
             }
         }
     }
@@ -233,7 +308,8 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         std::printf("Tile prep: forcing tileSize=%d (requested=%d)\n", tileSize, cli.tileSize);
     }
 
-    std::printf("Tile prep: selected materials=%d textures=%zu tileSize=%d verifyCount=%d verifyPass=%s eps=%g\n",
+    std::printf("Tile prep: selected materials=%d textures=%zu tileSize=%d verifyCount=%d "
+                "verifyPass=%s eps=%g\n",
                 selectedMaterials,
                 groups.size(),
                 tileSize,
@@ -265,7 +341,8 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         std::string reason;
         if (!ybi::usd_ntc::CollectUdimPaths(group.texturePath, udimPaths, reason))
         {
-            if (reason.rfind("missing texture file ", 0) == 0 || reason.rfind("no UDIM files found for ", 0) == 0)
+            if (reason.rfind("missing texture file ", 0) == 0 ||
+                reason.rfind("no UDIM files found for ", 0) == 0)
             {
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::printf("Tile prep: skip missing texture %s\n", group.texturePath.c_str());
@@ -290,13 +367,15 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             {
                 failed.fetch_add(1, std::memory_order_relaxed);
                 std::lock_guard<std::mutex> lock(logMutex);
-                std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
+                std::printf(
+                    "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), mipReason.c_str());
                 return;
             }
 
             {
                 std::lock_guard<std::mutex> lock(logMutex);
-                std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d loaded_mips=%zu\n",
+                std::printf("Tile prep: exr %s udim=%u mipmap_levels=%s tiled=%d level_mode=%d "
+                            "loaded_mips=%zu\n",
                             udimPath.second.c_str(),
                             udimPath.first,
                             mipResult.hasStoredMipLevels ? "yes" : "no",
@@ -345,12 +424,14 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
             {
                 failed.fetch_add(1, std::memory_order_relaxed);
                 std::lock_guard<std::mutex> lock(logMutex);
-                std::printf("Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
+                std::printf(
+                    "Tile prep: FAIL %s : %s\n", group.basePathNoUdim.c_str(), reason.c_str());
                 return;
             }
         }
 
-        if (cli.tileVerifyPass && !VerifyRoundTripTileBinary(binPath, images, cli.tileVerifyEps, reason))
+        if (cli.tileVerifyPass &&
+            !VerifyRoundTripTileBinary(binPath, images, cli.tileVerifyEps, reason))
         {
             failed.fetch_add(1, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(logMutex);
