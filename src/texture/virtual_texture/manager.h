@@ -130,6 +130,12 @@ private:
         std::list<uint32_t>::iterator lruIt;
     };
 
+    struct StreamTextureState
+    {
+        TextureFormat format = TextureFormat::RGBA8_UNORM;
+        size_t bytes = 0u;
+    };
+
     struct KeyVirtualInfo
     {
         bool valid = false;
@@ -167,20 +173,26 @@ private:
                               uint32_t *outPageType) const;
     bool UpdatePageTableTexel(
         uint32_t mip, uint32_t x, uint32_t y, uint32_t entry, std::string *outError);
-    bool AllocateStreamTexture(std::string *outError);
+    bool AllocateStreamTexture(TextureFormat format, std::string *outError);
     bool UploadStreamPage(uint32_t slotIndex,
-                          const std::vector<unsigned char> &rgba8,
+                          const std::vector<unsigned char> &pixels,
+                          TextureFormat pixelFormat,
                           uint32_t width,
                           uint32_t height,
                           std::string *outError);
     bool LoadStreamPageForKey(const KeyVirtualInfo &info,
-                              std::vector<unsigned char> *outRgba8,
+                              std::vector<unsigned char> *outPixels,
+                              TextureFormat *outFormat,
                               uint32_t *outWidth,
                               uint32_t *outHeight,
                               std::string *outError);
     bool TouchResidentKey(unsigned long long key);
     bool EvictOne(uint32_t *outSlotIndex, std::string *outError);
-    bool AllocateStreamSlot(uint32_t *outSlotIndex, bool *outEvicted, std::string *outError);
+    bool AllocateStreamSlot(
+        TextureFormat pixelFormat, uint32_t *outSlotIndex, bool *outEvicted, std::string *outError);
+    bool TakeFreeSlotForFormat(TextureFormat pixelFormat, uint32_t *outSlotIndex);
+    bool CanAllocateStreamTexture(TextureFormat pixelFormat) const;
+    TextureFormat GetStreamSlotFormat(uint32_t slotIndex) const;
 
     Device *device_ = nullptr;
     VirtualTextureManagerConfig config_ = {};
@@ -209,10 +221,14 @@ private:
     uint32_t streamPageCountY_ = 0u;
     uint32_t streamPageCount_ = 0u;
     uint32_t maxStreamTextureCount_ = 0u;
-    size_t streamTextureBytes_ = 0u;
+    size_t streamTextureMinBytes_ = 0u;
+    uint64_t streamTextureBytesAllocated_ = 0u;
     std::vector<DeviceTexture> streamTextures_;
+    std::vector<StreamTextureState> streamTextureStates_;
     std::vector<unsigned long long> streamTextureHandlesHost_;
     DeviceMemoryView<uint8_t> streamTextureHandlesDevice_ = {};
+    std::vector<uint32_t> streamTextureFormatsHost_;
+    DeviceMemoryView<uint8_t> streamTextureFormatsDevice_ = {};
 
     std::vector<StreamSlotState> streamSlots_;
     std::unordered_map<unsigned long long, uint32_t> keyToStreamSlot_;

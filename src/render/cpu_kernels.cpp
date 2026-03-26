@@ -91,13 +91,14 @@ struct CPUIntegratorState
         const int safeY =
             texelY < 0 ? 0 : (texelY >= textureRef.height ? textureRef.height - 1 : texelY);
 
-        const size_t index = (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
-                              static_cast<size_t>(safeX)) *
-                             4u;
         switch (textureRef.format)
         {
             case TextureFormat::RGBA8_UNORM:
             {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX)) *
+                    4u;
                 const uint8_t *pixels =
                     reinterpret_cast<const uint8_t *>(textureRef.textureObject);
                 outSample = {pixels[index + 0] * (1.0f / 255.0f),
@@ -106,14 +107,81 @@ struct CPUIntegratorState
                              pixels[index + 3] * (1.0f / 255.0f)};
                 return true;
             }
+            case TextureFormat::R16_FLOAT:
+            {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX));
+                const uint16_t *pixels =
+                    reinterpret_cast<const uint16_t *>(textureRef.textureObject);
+                outSample = ybi::render::integrator::ExpandTextureFormatSample(
+                    textureRef.format, ybi::util::HalfBitsToFloat(pixels[index]), 0.0f, 0.0f, 1.0f);
+                return true;
+            }
+            case TextureFormat::RG16_FLOAT:
+            {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX)) *
+                    2u;
+                const uint16_t *pixels =
+                    reinterpret_cast<const uint16_t *>(textureRef.textureObject);
+                outSample = ybi::render::integrator::ExpandTextureFormatSample(
+                    textureRef.format,
+                    ybi::util::HalfBitsToFloat(pixels[index + 0]),
+                    ybi::util::HalfBitsToFloat(pixels[index + 1]),
+                    0.0f,
+                    1.0f);
+                return true;
+            }
             case TextureFormat::RGBA16_FLOAT:
             {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX)) *
+                    4u;
                 const uint16_t *pixels =
                     reinterpret_cast<const uint16_t *>(textureRef.textureObject);
                 outSample = {ybi::util::HalfBitsToFloat(pixels[index + 0]),
                              ybi::util::HalfBitsToFloat(pixels[index + 1]),
                              ybi::util::HalfBitsToFloat(pixels[index + 2]),
                              ybi::util::HalfBitsToFloat(pixels[index + 3])};
+                return true;
+            }
+            case TextureFormat::R32_FLOAT:
+            {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX));
+                const float *pixels = reinterpret_cast<const float *>(textureRef.textureObject);
+                outSample = ybi::render::integrator::ExpandTextureFormatSample(
+                    textureRef.format, pixels[index], 0.0f, 0.0f, 1.0f);
+                return true;
+            }
+            case TextureFormat::RG32_FLOAT:
+            {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX)) *
+                    2u;
+                const float *pixels = reinterpret_cast<const float *>(textureRef.textureObject);
+                outSample = ybi::render::integrator::ExpandTextureFormatSample(
+                    textureRef.format, pixels[index + 0], pixels[index + 1], 0.0f, 1.0f);
+                return true;
+            }
+            case TextureFormat::RGBA32_FLOAT:
+            {
+                const size_t index =
+                    (static_cast<size_t>(safeY) * static_cast<size_t>(textureRef.width) +
+                     static_cast<size_t>(safeX)) *
+                    4u;
+                const float *pixels = reinterpret_cast<const float *>(textureRef.textureObject);
+                outSample = ybi::render::integrator::ExpandTextureFormatSample(
+                    textureRef.format,
+                    pixels[index + 0],
+                    pixels[index + 1],
+                    pixels[index + 2],
+                    pixels[index + 3]);
                 return true;
             }
             default:

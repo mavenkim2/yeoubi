@@ -52,9 +52,12 @@ static void ResizeToPage(const std::vector<uint8_t> &src,
                          uint32_t srcW,
                          uint32_t srcH,
                          uint32_t pageSize,
+                         TextureFormat pixelFormat,
                          uint8_t *dstPage)
 {
-    std::memset(dstPage, 0, static_cast<size_t>(pageSize) * static_cast<size_t>(pageSize) * 4u);
+    const size_t texelBytes = TextureFormatPixelBytes(pixelFormat);
+    std::memset(
+        dstPage, 0, static_cast<size_t>(pageSize) * static_cast<size_t>(pageSize) * texelBytes);
     for (uint32_t y = 0; y < pageSize; ++y)
     {
         const uint32_t sy = std::min(srcH - 1u, (y * srcH) / pageSize);
@@ -62,13 +65,10 @@ static void ResizeToPage(const std::vector<uint8_t> &src,
         {
             const uint32_t sx = std::min(srcW - 1u, (x * srcW) / pageSize);
             const size_t srcBase =
-                (static_cast<size_t>(sy) * static_cast<size_t>(srcW) + static_cast<size_t>(sx)) * 4u;
+                (static_cast<size_t>(sy) * static_cast<size_t>(srcW) + static_cast<size_t>(sx)) * texelBytes;
             const size_t dstBase =
-                (static_cast<size_t>(y) * static_cast<size_t>(pageSize) + static_cast<size_t>(x)) * 4u;
-            dstPage[dstBase + 0u] = src[srcBase + 0u];
-            dstPage[dstBase + 1u] = src[srcBase + 1u];
-            dstPage[dstBase + 2u] = src[srcBase + 2u];
-            dstPage[dstBase + 3u] = src[srcBase + 3u];
+                (static_cast<size_t>(y) * static_cast<size_t>(pageSize) + static_cast<size_t>(x)) * texelBytes;
+            std::memcpy(dstPage + dstBase, src.data() + srcBase, texelBytes);
         }
     }
 }
@@ -130,14 +130,13 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std:
         return false;
     }
 
-    const size_t pageBytes =
-        static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) * 4u;
+    const size_t pageBytes = static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) *
+                             TextureFormatPixelBytes(texture->pixelFormat);
     uint32_t tailPageCount = 0u;
     for (size_t local = 0; local < texture->activeUdims.size(); ++local)
     {
         const uint32_t udim = texture->activeUdims[local];
         std::vector<unsigned char> tailPixels;
-        std::vector<unsigned char> tailRgba8;
         TextureFormat tailFormat = TextureFormat::RGBA32_FLOAT;
         uint32_t tailW = 0u;
         uint32_t tailH = 0u;
@@ -163,18 +162,17 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std:
             }
             return false;
         }
-        if (!ExpandVirtualTextureTypedPixelsToRgba8(
-                tailFormat, tailPixels, &tailRgba8, &tailError))
+        if (tailFormat != texture->pixelFormat)
         {
             if (outError)
             {
-                *outError = "VirtualTextureManager: failed expanding tail mip (textureId=" +
+                *outError = "VirtualTextureManager: tail mip format mismatch (textureId=" +
                             std::to_string(texture->textureId) +
-                            " udim=" + std::to_string(udim) + "): " + tailError;
+                            " udim=" + std::to_string(udim) + ")";
             }
             return false;
         }
-        if (tailRgba8.empty() || tailW == 0u || tailH == 0u)
+        if (tailPixels.empty() || tailW == 0u || tailH == 0u)
         {
             if (outError)
             {
@@ -188,7 +186,8 @@ bool VirtualTextureManager::BuildTailPagesForTexture(TextureState *texture, std:
         texture->tailPageIndexByLocalUdim[local] = tailPageCount++;
         const size_t oldSize = texture->tailPixelsHost.size();
         texture->tailPixelsHost.resize(oldSize + pageBytes, 0u);
-        ResizeToPage(tailRgba8, tailW, tailH, config_.pageSize, texture->tailPixelsHost.data() + oldSize);
+        ResizeToPage(
+            tailPixels, tailW, tailH, config_.pageSize, tailFormat, texture->tailPixelsHost.data() + oldSize);
     }
 
     if (tailPageCount > 0u)
@@ -301,6 +300,10 @@ bool VirtualTextureManager::BuildMipReservations(std::string *outError)
     for (uint32_t textureIndex = 0u; textureIndex < textures_.size(); ++textureIndex)
     {
         TextureState &texture = textures_[textureIndex];
+        if (!OpenTileFileIfNeeded(&texture, outError))
+        {
+            return false;
+        }
         texture.mipInfos.resize(texture.mipCount);
         const uint32_t udimCount = static_cast<uint32_t>(texture.activeUdims.size());
         texture.udimInfos.assign(static_cast<size_t>(texture.mipCount) * static_cast<size_t>(udimCount),

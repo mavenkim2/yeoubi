@@ -4,6 +4,7 @@
 #include "render/integrator_texture_mip.h"
 #include "render/launch_params.h"
 #include "texture/virtual_texture/key.h"
+#include "util/half_float.h"
 
 namespace ybi
 {
@@ -77,6 +78,90 @@ YBI_DEVICE Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sampl
 YBI_DEVICE Vec3 MaterialSampleToViewColor(const LaunchParams &params, const Vec4 &sample)
 {
     return MaterialSampleToColorForSemantic(params.textureViewSemantic, sample);
+}
+
+YBI_DEVICE Vec4 ExpandTextureFormatSample(TextureFormat format, float x, float y, float z, float w)
+{
+    switch (format)
+    {
+        case TextureFormat::R16_FLOAT:
+        case TextureFormat::R32_FLOAT:
+            return Vec4(x, x, x, 1.0f);
+        case TextureFormat::RG16_FLOAT:
+        case TextureFormat::RG32_FLOAT:
+            return Vec4(x, y, 0.0f, 1.0f);
+        case TextureFormat::RGBA8_UNORM:
+        case TextureFormat::RGBA16_FLOAT:
+        case TextureFormat::RGBA32_FLOAT:
+            return Vec4(x, y, z, w);
+        default:
+            return Vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+}
+
+YBI_DEVICE bool DecodeTypedTextureSample(TextureFormat format,
+                                         const unsigned char *pixels,
+                                         unsigned long long sampleOffset,
+                                         Vec4 *outSample)
+{
+    if (!pixels || !outSample)
+    {
+        return false;
+    }
+
+    switch (format)
+    {
+        case TextureFormat::RGBA8_UNORM:
+            *outSample = ExpandTextureFormatSample(format,
+                                                  float(pixels[sampleOffset + 0ull]) * (1.0f / 255.0f),
+                                                  float(pixels[sampleOffset + 1ull]) * (1.0f / 255.0f),
+                                                  float(pixels[sampleOffset + 2ull]) * (1.0f / 255.0f),
+                                                  float(pixels[sampleOffset + 3ull]) * (1.0f / 255.0f));
+            return true;
+        case TextureFormat::R16_FLOAT:
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(pixels + sampleOffset);
+            *outSample = ExpandTextureFormatSample(format, ybi::util::HalfBitsToFloat(src[0]), 0.0f, 0.0f, 1.0f);
+            return true;
+        }
+        case TextureFormat::RG16_FLOAT:
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(pixels + sampleOffset);
+            *outSample =
+                ExpandTextureFormatSample(format, ybi::util::HalfBitsToFloat(src[0]), ybi::util::HalfBitsToFloat(src[1]), 0.0f, 1.0f);
+            return true;
+        }
+        case TextureFormat::RGBA16_FLOAT:
+        {
+            const uint16_t *src = reinterpret_cast<const uint16_t *>(pixels + sampleOffset);
+            *outSample = ExpandTextureFormatSample(format,
+                                                  ybi::util::HalfBitsToFloat(src[0]),
+                                                  ybi::util::HalfBitsToFloat(src[1]),
+                                                  ybi::util::HalfBitsToFloat(src[2]),
+                                                  ybi::util::HalfBitsToFloat(src[3]));
+            return true;
+        }
+        case TextureFormat::R32_FLOAT:
+        {
+            const float *src = reinterpret_cast<const float *>(pixels + sampleOffset);
+            *outSample = ExpandTextureFormatSample(format, src[0], 0.0f, 0.0f, 1.0f);
+            return true;
+        }
+        case TextureFormat::RG32_FLOAT:
+        {
+            const float *src = reinterpret_cast<const float *>(pixels + sampleOffset);
+            *outSample = ExpandTextureFormatSample(format, src[0], src[1], 0.0f, 1.0f);
+            return true;
+        }
+        case TextureFormat::RGBA32_FLOAT:
+        {
+            const float *src = reinterpret_cast<const float *>(pixels + sampleOffset);
+            *outSample = ExpandTextureFormatSample(format, src[0], src[1], src[2], src[3]);
+            return true;
+        }
+        default:
+            return false;
+    }
 }
 
 YBI_DEVICE uint32_t PackVirtualTexturePageEntry(unsigned int page,
@@ -228,8 +313,10 @@ YBI_DEVICE bool SampleVirtualTexturePage(State &state,
 
     const unsigned long long *handles =
         reinterpret_cast<const unsigned long long *>(params.virtualTexturePhysicalTextures);
+    const uint32_t *formats =
+        reinterpret_cast<const uint32_t *>(params.virtualTexturePhysicalTextureFormats);
     const unsigned long long handle = handles[physicalTextureID];
-    if (handle == 0ull)
+    if (handle == 0ull || !formats)
     {
         return false;
     }
@@ -241,7 +328,7 @@ YBI_DEVICE bool SampleVirtualTexturePage(State &state,
     textureRef.valid = 1;
     textureRef.wrapS = static_cast<int>(DeviceTextureWrapMode::Clamp);
     textureRef.wrapT = static_cast<int>(DeviceTextureWrapMode::Clamp);
-    textureRef.format = static_cast<TextureFormat>(params.virtualTexturePhysicalTextureFormat);
+    textureRef.format = static_cast<TextureFormat>(formats[physicalTextureID]);
 
     const float u =
         (float(page * static_cast<unsigned int>(params.virtualTexturePageSize) +
@@ -434,13 +521,15 @@ YBI_DEVICE bool TryResolveVirtualTextureTailSample(
     const unsigned long long pageIndex =
         static_cast<unsigned long long>(fallbackPageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
         static_cast<unsigned long long>(fallbackPageX);
+    const TextureFormat pixelFormat = static_cast<TextureFormat>(meta->pixelFormat);
+    const unsigned long long texelBytes = static_cast<unsigned long long>(TextureFormatPixelBytes(pixelFormat));
     const unsigned long long pageBytes =
-        static_cast<unsigned long long>(safeTileSize) * static_cast<unsigned long long>(safeTileSize) * 4ull;
+        static_cast<unsigned long long>(safeTileSize) * static_cast<unsigned long long>(safeTileSize) * texelBytes;
     const unsigned long long sampleOffset =
         pageIndex * pageBytes +
         (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(safeTileSize) +
          static_cast<unsigned long long>(tailX)) *
-            4ull;
+            texelBytes;
     *outSamplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
     *outSampleOffset = sampleOffset;
     return true;
@@ -714,12 +803,15 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
                 const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, tileSize);
                 const unsigned long long pageIndex =
                     static_cast<unsigned long long>(page);
+                const TextureFormat pixelFormat = static_cast<TextureFormat>(meta->pixelFormat);
+                const unsigned long long texelBytes =
+                    static_cast<unsigned long long>(TextureFormatPixelBytes(pixelFormat));
                 const unsigned long long pageBytes =
-                    static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * 4ull;
+                    static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * texelBytes;
                 sampleOffset = pageIndex * pageBytes +
                                (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(tileSize) +
                                 static_cast<unsigned long long>(tailX)) *
-                                   4ull;
+                                   texelBytes;
                 samplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
             }
             else
@@ -741,10 +833,12 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
 
     if (!haveSample)
     {
-        sample = Vec4(float(samplePixels[sampleOffset + 0]) * (1.0f / 255.0f),
-                      float(samplePixels[sampleOffset + 1]) * (1.0f / 255.0f),
-                      float(samplePixels[sampleOffset + 2]) * (1.0f / 255.0f),
-                      float(samplePixels[sampleOffset + 3]) * (1.0f / 255.0f));
+        if (!DecodeTypedTextureSample(
+                static_cast<TextureFormat>(meta->pixelFormat), samplePixels, sampleOffset, &sample))
+        {
+            outColor = Vec3(0.0f, 0.0f, 0.0f);
+            return true;
+        }
     }
     outColor = MaterialSampleToViewColor(params, sample);
     return true;

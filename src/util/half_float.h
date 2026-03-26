@@ -1,28 +1,35 @@
 #pragma once
 
+#include "device/util.h"
+
 #include <cstdint>
-#include <cstring>
 
 namespace ybi
 {
 namespace util
 {
 
-inline uint32_t FloatToBits(float value)
+YBI_DEVICE uint32_t FloatToBits(float value)
 {
-    uint32_t bits = 0u;
-    std::memcpy(&bits, &value, sizeof(bits));
-    return bits;
+    union
+    {
+        float f;
+        uint32_t u;
+    } bits = {value};
+    return bits.u;
 }
 
-inline float BitsToFloat(uint32_t bits)
+YBI_DEVICE float BitsToFloat(uint32_t bits)
 {
-    float value = 0.0f;
-    std::memcpy(&value, &bits, sizeof(value));
-    return value;
+    union
+    {
+        uint32_t u;
+        float f;
+    } value = {bits};
+    return value.f;
 }
 
-inline uint16_t FloatToHalfBits(float value)
+YBI_DEVICE uint16_t FloatToHalfBits(float value)
 {
     const uint32_t bits = FloatToBits(value);
     const uint32_t sign = (bits >> 16u) & 0x8000u;
@@ -83,7 +90,7 @@ inline uint16_t FloatToHalfBits(float value)
                                  (halfMantissa & 0x03ffu));
 }
 
-inline float HalfBitsToFloat(uint16_t bits)
+YBI_DEVICE float HalfBitsToFloat(uint16_t bits)
 {
     const uint32_t sign = (static_cast<uint32_t>(bits & 0x8000u)) << 16u;
     const uint32_t exponent = (bits >> 10u) & 0x1fu;

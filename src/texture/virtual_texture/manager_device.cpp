@@ -12,6 +12,12 @@ namespace
 {
 static constexpr uint32_t kStreamPagesPerTexture = 256u;
 
+size_t ComputeStreamTextureBytes(uint32_t pageSize, TextureFormat format)
+{
+    return static_cast<size_t>(pageSize) * static_cast<size_t>(pageSize) *
+           static_cast<size_t>(kStreamPagesPerTexture) * TextureFormatPixelBytes(format);
+}
+
 uint64_t ComputeTileFileHostBytes(const VirtualTextureTileFile &file)
 {
     uint64_t bytes = static_cast<uint64_t>(file.path.size());
@@ -90,23 +96,31 @@ bool VirtualTextureManager::AllocateDeviceState(std::string *outError)
         device_->CopyBytesToDevice(textureMetaDevice_, textureMetaHost_.data(), bytes);
     }
 
-    const size_t pageBytes =
-        static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) * 4u;
     streamPageCountX_ = kStreamPagesPerTexture;
     streamPageCountY_ = 0u;
     streamPageCount_ = 0u;
-    streamTextureBytes_ = static_cast<size_t>(streamPageCountX_) * pageBytes;
+    streamTextureMinBytes_ = ComputeStreamTextureBytes(config_.pageSize, TextureFormat::R16_FLOAT);
+    streamTextureBytesAllocated_ = 0u;
     maxStreamTextureCount_ =
-        static_cast<uint32_t>(config_.cacheBytes / std::max<size_t>(1u, streamTextureBytes_));
+        static_cast<uint32_t>(config_.cacheBytes / std::max<size_t>(1u, streamTextureMinBytes_));
 
     streamTextures_.clear();
+    streamTextureStates_.clear();
     streamTextureHandlesHost_.assign(maxStreamTextureCount_, 0ull);
+    streamTextureFormatsHost_.assign(maxStreamTextureCount_, 0u);
     if (!streamTextureHandlesHost_.empty())
     {
         const size_t bytes = streamTextureHandlesHost_.size() * sizeof(unsigned long long);
         streamTextureHandlesDevice_ = device_->AllocBytes(bytes);
         device_->CopyBytesToDevice(
             streamTextureHandlesDevice_, streamTextureHandlesHost_.data(), bytes);
+    }
+    if (!streamTextureFormatsHost_.empty())
+    {
+        const size_t bytes = streamTextureFormatsHost_.size() * sizeof(uint32_t);
+        streamTextureFormatsDevice_ = device_->AllocBytes(bytes);
+        device_->CopyBytesToDevice(
+            streamTextureFormatsDevice_, streamTextureFormatsHost_.data(), bytes);
     }
     streamSlots_.clear();
     keyToStreamSlot_.clear();
@@ -140,9 +154,10 @@ VirtualTextureMemoryStats VirtualTextureManager::GetMemoryStats() const
     stats.deviceMetaBytes += textureMetaDevice_.numBytes();
     stats.hostMetaBytes +=
         static_cast<uint64_t>(streamTextureHandlesHost_.size()) * sizeof(unsigned long long);
+    stats.hostMetaBytes += static_cast<uint64_t>(streamTextureFormatsHost_.size()) * sizeof(uint32_t);
     stats.deviceMetaBytes += streamTextureHandlesDevice_.numBytes();
-    stats.deviceStreamBytes +=
-        static_cast<uint64_t>(streamTextures_.size()) * static_cast<uint64_t>(streamTextureBytes_);
+    stats.deviceMetaBytes += streamTextureFormatsDevice_.numBytes();
+    stats.deviceStreamBytes += streamTextureBytesAllocated_;
 
     for (const TextureState &texture : textures_)
     {
@@ -208,11 +223,12 @@ void VirtualTextureManager::BindLaunchParams(LaunchParams *params) const
     params->virtualTextureStreamPageCountY = finalized_ ? static_cast<int>(streamPageCountY_) : 0;
     params->virtualTexturePhysicalTextures =
         finalized_ ? reinterpret_cast<unsigned long long>(streamTextureHandlesDevice_.data()) : 0ull;
+    params->virtualTexturePhysicalTextureFormats =
+        finalized_ ? reinterpret_cast<unsigned long long>(streamTextureFormatsDevice_.data()) : 0ull;
     params->virtualTexturePhysicalTextureCount = finalized_ ? static_cast<int>(streamPageCountY_) : 0;
     params->virtualTexturePhysicalPagesPerTexture =
         finalized_ ? static_cast<int>(streamPageCountX_) : 0;
-    params->virtualTexturePhysicalTextureFormat =
-        finalized_ ? static_cast<int>(TextureFormat::RGBA8_UNORM) : 0;
+    params->_virtualTexturePadding0 = 0;
     params->virtualTextureSampleMip = 0;
     params->virtualTextureTextureMeta =
         finalized_ ? reinterpret_cast<unsigned long long>(textureMetaDevice_.data()) : 0ull;
@@ -282,7 +298,17 @@ bool VirtualTextureManager::UpdatePageTableTexel(uint32_t mip,
     return true;
 }
 
-bool VirtualTextureManager::AllocateStreamTexture(std::string *outError)
+bool VirtualTextureManager::CanAllocateStreamTexture(TextureFormat format) const
+{
+    if (streamTextures_.size() >= maxStreamTextureCount_)
+    {
+        return false;
+    }
+    const uint64_t bytes = static_cast<uint64_t>(ComputeStreamTextureBytes(config_.pageSize, format));
+    return streamTextureBytesAllocated_ + bytes <= config_.cacheBytes;
+}
+
+bool VirtualTextureManager::AllocateStreamTexture(TextureFormat format, std::string *outError)
 {
     if (!device_)
     {
@@ -300,11 +326,20 @@ bool VirtualTextureManager::AllocateStreamTexture(std::string *outError)
         }
         return false;
     }
+    const size_t streamTextureBytes = ComputeStreamTextureBytes(config_.pageSize, format);
+    if (streamTextureBytesAllocated_ + static_cast<uint64_t>(streamTextureBytes) > config_.cacheBytes)
+    {
+        if (outError)
+        {
+            *outError = "VirtualTextureManager: stream texture cache exhausted";
+        }
+        return false;
+    }
 
     const uint32_t physicalTextureID = static_cast<uint32_t>(streamTextures_.size());
     const uint32_t textureWidth = config_.pageSize * streamPageCountX_;
     const uint32_t textureHeight = config_.pageSize;
-    std::vector<uint8_t> zeros(streamTextureBytes_, 0u);
+    std::vector<uint8_t> zeros(streamTextureBytes, 0u);
     DeviceTextureCreateInfo createInfo = {};
     createInfo.pixels = zeros.data();
     createInfo.pixelBytes = zeros.size();
@@ -313,7 +348,7 @@ bool VirtualTextureManager::AllocateStreamTexture(std::string *outError)
     createInfo.wrapS = DeviceTextureWrapMode::Clamp;
     createInfo.wrapT = DeviceTextureWrapMode::Clamp;
     createInfo.filter = DeviceTextureFilterMode::Nearest;
-    createInfo.format = TextureFormat::RGBA8_UNORM;
+    createInfo.format = format;
 
     DeviceTexture texture = {};
     if (!device_->CreateTexture(createInfo, &texture, outError))
@@ -322,15 +357,25 @@ bool VirtualTextureManager::AllocateStreamTexture(std::string *outError)
     }
 
     streamTextures_.push_back(texture);
+    streamTextureStates_.push_back({format, streamTextureBytes});
+    streamTextureBytesAllocated_ += static_cast<uint64_t>(streamTextureBytes);
     if (physicalTextureID < streamTextureHandlesHost_.size())
     {
         streamTextureHandlesHost_[physicalTextureID] = texture.handle;
+        streamTextureFormatsHost_[physicalTextureID] = static_cast<uint32_t>(format);
         if (streamTextureHandlesDevice_.data() != nullptr)
         {
             const size_t byteOffset = static_cast<size_t>(physicalTextureID) * sizeof(unsigned long long);
             DeviceMemoryView<uint8_t> dst = {
                 streamTextureHandlesDevice_.data() + byteOffset, sizeof(unsigned long long)};
             device_->CopyBytesToDevice(dst, &streamTextureHandlesHost_[physicalTextureID], sizeof(unsigned long long));
+        }
+        if (streamTextureFormatsDevice_.data() != nullptr)
+        {
+            const size_t byteOffset = static_cast<size_t>(physicalTextureID) * sizeof(uint32_t);
+            DeviceMemoryView<uint8_t> dst = {
+                streamTextureFormatsDevice_.data() + byteOffset, sizeof(uint32_t)};
+            device_->CopyBytesToDevice(dst, &streamTextureFormatsHost_[physicalTextureID], sizeof(uint32_t));
         }
     }
     streamPageCountY_ = static_cast<uint32_t>(streamTextures_.size());
@@ -362,6 +407,10 @@ void VirtualTextureManager::Shutdown()
             {
                 device_->DestroyTexture(texture);
             }
+        }
+        if (streamTextureFormatsDevice_.data() != nullptr)
+        {
+            device_->FreeBytes(streamTextureFormatsDevice_);
         }
         if (streamTextureHandlesDevice_.data() != nullptr)
         {
@@ -409,7 +458,9 @@ void VirtualTextureManager::Shutdown()
     udimInfosHost_.clear();
     textureMetaHost_.clear();
     streamTextures_.clear();
+    streamTextureStates_.clear();
     streamTextureHandlesHost_.clear();
+    streamTextureFormatsHost_.clear();
     streamSlots_.clear();
     keyToStreamSlot_.clear();
     lruSlots_.clear();
@@ -418,8 +469,10 @@ void VirtualTextureManager::Shutdown()
     streamPageCountY_ = 0u;
     streamPageCount_ = 0u;
     maxStreamTextureCount_ = 0u;
-    streamTextureBytes_ = 0u;
+    streamTextureMinBytes_ = 0u;
+    streamTextureBytesAllocated_ = 0u;
     streamTextureHandlesDevice_ = {};
+    streamTextureFormatsDevice_ = {};
 }
 
 } // namespace texture

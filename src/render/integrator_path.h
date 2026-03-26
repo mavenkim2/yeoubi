@@ -40,9 +40,8 @@ YBI_DEVICE EvaluatedMaterial DefaultMaterial()
 
 YBI_DEVICE bool DebugTraceEnabled(const LaunchParams &params, const UInt2 &launchIndex)
 {
-    return params.singlePixelEnabled != 0 &&
-           launchIndex.x == static_cast<unsigned int>(params.singlePixelX) &&
-           launchIndex.y == static_cast<unsigned int>(params.singlePixelY);
+    (void)params;
+    return launchIndex.x == 636u && launchIndex.y == 331u;
 }
 
 template <typename State>

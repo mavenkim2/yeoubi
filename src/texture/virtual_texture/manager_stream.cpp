@@ -154,7 +154,8 @@ bool VirtualTextureManager::ResolveKey(unsigned long long key, KeyVirtualInfo *o
 }
 
 bool VirtualTextureManager::UploadStreamPage(uint32_t slotIndex,
-                                             const std::vector<unsigned char> &rgba8,
+                                             const std::vector<unsigned char> &pixels,
+                                             TextureFormat pixelFormat,
                                              uint32_t width,
                                              uint32_t height,
                                              std::string *outError)
@@ -169,8 +170,6 @@ bool VirtualTextureManager::UploadStreamPage(uint32_t slotIndex,
     }
     const uint32_t copyW = std::min(width, config_.pageSize);
     const uint32_t copyH = std::min(height, config_.pageSize);
-    const size_t pageBytes =
-        static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) * 4u;
     const uint32_t physicalTextureID = slotIndex / streamPageCountX_;
     const uint32_t page = slotIndex % streamPageCountX_;
     if (physicalTextureID >= streamTextures_.size() || !streamTextures_[physicalTextureID].valid)
@@ -181,13 +180,26 @@ bool VirtualTextureManager::UploadStreamPage(uint32_t slotIndex,
         }
         return false;
     }
+    if (streamTextures_[physicalTextureID].format != pixelFormat)
+    {
+        if (outError)
+        {
+            *outError = "VirtualTextureManager: stream texture format mismatch";
+        }
+        return false;
+    }
+    const size_t texelBytes = TextureFormatPixelBytes(pixelFormat);
+    const size_t pageBytes =
+        static_cast<size_t>(config_.pageSize) * static_cast<size_t>(config_.pageSize) * texelBytes;
 
     std::vector<uint8_t> pagePixels(pageBytes, 0u);
     for (uint32_t y = 0u; y < copyH; ++y)
     {
-        const size_t srcRow = static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
-        const size_t dstRow = static_cast<size_t>(y) * static_cast<size_t>(config_.pageSize) * 4u;
-        std::memcpy(pagePixels.data() + dstRow, rgba8.data() + srcRow, static_cast<size_t>(copyW) * 4u);
+        const size_t srcRow = static_cast<size_t>(y) * static_cast<size_t>(width) * texelBytes;
+        const size_t dstRow =
+            static_cast<size_t>(y) * static_cast<size_t>(config_.pageSize) * texelBytes;
+        std::memcpy(
+            pagePixels.data() + dstRow, pixels.data() + srcRow, static_cast<size_t>(copyW) * texelBytes);
     }
     return device_->UpdateTextureRegion(streamTextures_[physicalTextureID],
                                         page * config_.pageSize,
@@ -200,12 +212,13 @@ bool VirtualTextureManager::UploadStreamPage(uint32_t slotIndex,
 }
 
 bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
-                                                 std::vector<unsigned char> *outRgba8,
+                                                 std::vector<unsigned char> *outPixels,
+                                                 TextureFormat *outFormat,
                                                  uint32_t *outWidth,
                                                  uint32_t *outHeight,
                                                  std::string *outError)
 {
-    if (!outRgba8 || !outWidth || !outHeight)
+    if (!outPixels || !outFormat || !outWidth || !outHeight)
     {
         return false;
     }
@@ -215,7 +228,6 @@ bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
         return false;
     }
 
-    std::vector<unsigned char> rgba8;
     std::vector<unsigned char> pixels;
     TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
     uint32_t width = 0u;
@@ -241,16 +253,8 @@ bool VirtualTextureManager::LoadStreamPageForKey(const KeyVirtualInfo &info,
         }
         return false;
     }
-    if (!ExpandVirtualTextureTypedPixelsToRgba8(pixelFormat, pixels, &rgba8, &readError))
-    {
-        if (outError)
-        {
-            *outError = readError;
-        }
-        return false;
-    }
-
-    *outRgba8 = std::move(rgba8);
+    *outPixels = std::move(pixels);
+    *outFormat = pixelFormat;
     *outWidth = width;
     *outHeight = height;
     return true;
@@ -308,39 +312,61 @@ bool VirtualTextureManager::EvictOne(uint32_t *outSlotIndex, std::string *outErr
     return true;
 }
 
-bool VirtualTextureManager::AllocateStreamSlot(uint32_t *outSlotIndex,
-                                               bool *outEvicted,
-                                               std::string *outError)
+TextureFormat VirtualTextureManager::GetStreamSlotFormat(uint32_t slotIndex) const
 {
-    if (!freeSlots_.empty())
+    const uint32_t physicalTextureID = slotIndex / streamPageCountX_;
+    if (physicalTextureID >= streamTextures_.size())
     {
-        const uint32_t slot = freeSlots_.back();
-        freeSlots_.pop_back();
-        *outSlotIndex = slot;
-        *outEvicted = false;
-        return true;
+        return TextureFormat::RGBA8_UNORM;
     }
-    if (streamTextures_.size() < maxStreamTextureCount_)
+    return streamTextures_[physicalTextureID].format;
+}
+
+bool VirtualTextureManager::TakeFreeSlotForFormat(TextureFormat pixelFormat, uint32_t *outSlotIndex)
+{
+    for (size_t i = freeSlots_.size(); i > 0u; --i)
     {
-        if (!AllocateStreamTexture(outError))
+        const uint32_t slotIndex = freeSlots_[i - 1u];
+        if (GetStreamSlotFormat(slotIndex) != pixelFormat)
         {
-            return false;
+            continue;
         }
-        if (!freeSlots_.empty())
-        {
-            const uint32_t slot = freeSlots_.back();
-            freeSlots_.pop_back();
-            *outSlotIndex = slot;
-            *outEvicted = false;
-            return true;
-        }
-    }
-    if (EvictOne(outSlotIndex, outError))
-    {
-        *outEvicted = true;
+        freeSlots_.erase(freeSlots_.begin() + (i - 1u));
+        *outSlotIndex = slotIndex;
         return true;
     }
     return false;
+}
+
+bool VirtualTextureManager::AllocateStreamSlot(TextureFormat pixelFormat,
+                                               uint32_t *outSlotIndex,
+                                               bool *outEvicted,
+                                               std::string *outError)
+{
+    bool evicted = false;
+    for (;;)
+    {
+        if (TakeFreeSlotForFormat(pixelFormat, outSlotIndex))
+        {
+            *outEvicted = evicted;
+            return true;
+        }
+        if (CanAllocateStreamTexture(pixelFormat))
+        {
+            if (!AllocateStreamTexture(pixelFormat, outError))
+            {
+                return false;
+            }
+            continue;
+        }
+        uint32_t slotIndex = 0u;
+        if (!EvictOne(&slotIndex, outError))
+        {
+            return false;
+        }
+        freeSlots_.push_back(slotIndex);
+        evicted = true;
+    }
 }
 
 bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
@@ -361,9 +387,10 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
         KeyVirtualInfo info = {};
         uint32_t slotIndex = 0u;
         bool success = false;
+        TextureFormat pixelFormat = TextureFormat::RGBA32_FLOAT;
         uint32_t width = 0u;
         uint32_t height = 0u;
-        std::vector<unsigned char> rgba8;
+        std::vector<unsigned char> pixels;
         std::string error;
         double loadMs = 0.0;
     };
@@ -435,11 +462,22 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
 
             stats.misses++;
 
+            TextureState &texture = textures_[info.textureIndex];
+            if (!OpenTileFileIfNeeded(&texture, outError))
+            {
+                stats.failed++;
+                RecordFirstError(&firstError, outError ? *outError : std::string());
+                continue;
+            }
+
             uint32_t slotIndex = 0u;
             bool evicted = false;
             stats.allocateStreamSlotCalls++;
             const Clock::time_point allocateStart = Clock::now();
-            if (!AllocateStreamSlot(&slotIndex, &evicted, outError))
+            if (!AllocateStreamSlot(texture.pixelFormat,
+                                    &slotIndex,
+                                    &evicted,
+                                    outError))
             {
                 stats.allocateStreamSlotMs += ElapsedMs(allocateStart, Clock::now());
                 stats.failed++;
@@ -450,15 +488,6 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
             if (evicted)
             {
                 stats.evictions++;
-            }
-
-            TextureState &texture = textures_[info.textureIndex];
-            if (!OpenTileFileIfNeeded(&texture, outError))
-            {
-                stats.failed++;
-                freeSlots_.push_back(slotIndex);
-                RecordFirstError(&firstError, outError ? *outError : std::string());
-                continue;
             }
 
             PendingStreamLoad load = {};
@@ -483,7 +512,12 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
 
             const Clock::time_point loadStart = Clock::now();
             result.success = LoadStreamPageForKey(
-                load.info, &result.rgba8, &result.width, &result.height, &result.error);
+                load.info,
+                &result.pixels,
+                &result.pixelFormat,
+                &result.width,
+                &result.height,
+                &result.error);
             result.loadMs = ElapsedMs(loadStart, Clock::now());
             completed[i] = std::move(result);
         });
@@ -502,7 +536,8 @@ bool VirtualTextureManager::ProcessFeedback(const unsigned long long *keys,
 
             stats.uploadStreamPageCalls++;
             const Clock::time_point uploadStart = Clock::now();
-            if (!UploadStreamPage(result.slotIndex, result.rgba8, result.width, result.height, outError))
+            if (!UploadStreamPage(
+                    result.slotIndex, result.pixels, result.pixelFormat, result.width, result.height, outError))
             {
                 stats.uploadStreamPageMs += ElapsedMs(uploadStart, Clock::now());
                 stats.failed++;

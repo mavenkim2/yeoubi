@@ -81,9 +81,36 @@ struct OptixState
     {
         const cudaTextureObject_t textureObject =
             static_cast<cudaTextureObject_t>(textureRef.textureObject);
-        const float4 sample = tex2D<float4>(textureObject, uu, vv);
-        outSample = {sample.x, sample.y, sample.z, sample.w};
-        return true;
+        switch (textureRef.format)
+        {
+            case ybi::TextureFormat::RGBA8_UNORM:
+            case ybi::TextureFormat::RGBA16_FLOAT:
+            case ybi::TextureFormat::RGBA32_FLOAT:
+            {
+                const float4 sample = tex2D<float4>(textureObject, uu, vv);
+                outSample = ybi::render::integrator::ExpandTextureFormatSample(
+                    textureRef.format, sample.x, sample.y, sample.z, sample.w);
+                return true;
+            }
+            case ybi::TextureFormat::R16_FLOAT:
+            case ybi::TextureFormat::R32_FLOAT:
+            {
+                const float sample = tex2D<float>(textureObject, uu, vv);
+                outSample =
+                    ybi::render::integrator::ExpandTextureFormatSample(textureRef.format, sample, 0.0f, 0.0f, 1.0f);
+                return true;
+            }
+            case ybi::TextureFormat::RG16_FLOAT:
+            case ybi::TextureFormat::RG32_FLOAT:
+            {
+                const float2 sample = tex2D<float2>(textureObject, uu, vv);
+                outSample =
+                    ybi::render::integrator::ExpandTextureFormatSample(textureRef.format, sample.x, sample.y, 0.0f, 1.0f);
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     __device__ void RecordFeedbackKey(unsigned long long key) const

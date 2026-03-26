@@ -86,10 +86,5 @@ bool ReadVirtualTextureTailMip(VirtualTextureTileFile *file,
                                uint64_t *outSourceBytes,
                                std::string *outError);
 
-bool ExpandVirtualTextureTypedPixelsToRgba8(TextureFormat pixelFormat,
-                                            const std::vector<unsigned char> &pixels,
-                                            std::vector<unsigned char> *outRgba8,
-                                            std::string *outError);
-
 } // namespace texture
 } // namespace ybi

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "device/util.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -16,7 +18,7 @@ enum class TextureFormat : uint32_t
     RGBA32_FLOAT = 6,
 };
 
-inline uint32_t TextureFormatChannelCount(TextureFormat format)
+YBI_DEVICE uint32_t TextureFormatChannelCount(TextureFormat format)
 {
     switch (format)
     {
@@ -35,7 +37,7 @@ inline uint32_t TextureFormatChannelCount(TextureFormat format)
     }
 }
 
-inline uint32_t TextureFormatBytesPerChannel(TextureFormat format)
+YBI_DEVICE uint32_t TextureFormatBytesPerChannel(TextureFormat format)
 {
     switch (format)
     {
@@ -54,13 +56,13 @@ inline uint32_t TextureFormatBytesPerChannel(TextureFormat format)
     }
 }
 
-inline size_t TextureFormatPixelBytes(TextureFormat format)
+YBI_DEVICE size_t TextureFormatPixelBytes(TextureFormat format)
 {
     return static_cast<size_t>(TextureFormatChannelCount(format)) *
            static_cast<size_t>(TextureFormatBytesPerChannel(format));
 }
 
-inline bool IsValidTextureFormat(uint32_t value)
+YBI_DEVICE bool IsValidTextureFormat(uint32_t value)
 {
     switch (static_cast<TextureFormat>(value))
     {

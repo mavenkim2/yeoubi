@@ -441,27 +441,5 @@ bool ReadVirtualTextureTailMip(VirtualTextureTileFile *file,
     return true;
 }
 
-bool ExpandVirtualTextureTypedPixelsToRgba8(TextureFormat pixelFormat,
-                                            const std::vector<unsigned char> &pixels,
-                                            std::vector<unsigned char> *outRgba8,
-                                            std::string *outError)
-{
-    std::vector<float> decoded;
-    if (!DecodePixelsToFloats(pixelFormat, pixels, &decoded, outError))
-    {
-        return false;
-    }
-    ExpandTypedPixelsToRgba8(pixelFormat, decoded, outRgba8);
-    if (outRgba8->empty() && !pixels.empty())
-    {
-        if (outError)
-        {
-            *outError = "failed expanding typed virtual texture pixels to RGBA8";
-        }
-        return false;
-    }
-    return true;
-}
-
 } // namespace texture
 } // namespace ybi

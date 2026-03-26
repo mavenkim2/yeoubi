@@ -339,8 +339,28 @@ bool CUDADevice::CreateTexture(const DeviceTextureCreateInfo &info,
             channelDesc = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
             readMode = cudaReadModeNormalizedFloat;
             break;
+        case TextureFormat::R16_FLOAT:
+            channelDesc = cudaCreateChannelDesc(16, 0, 0, 0, cudaChannelFormatKindFloat);
+            readMode = cudaReadModeElementType;
+            break;
+        case TextureFormat::RG16_FLOAT:
+            channelDesc = cudaCreateChannelDesc(16, 16, 0, 0, cudaChannelFormatKindFloat);
+            readMode = cudaReadModeElementType;
+            break;
         case TextureFormat::RGBA16_FLOAT:
             channelDesc = cudaCreateChannelDesc(16, 16, 16, 16, cudaChannelFormatKindFloat);
+            readMode = cudaReadModeElementType;
+            break;
+        case TextureFormat::R32_FLOAT:
+            channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+            readMode = cudaReadModeElementType;
+            break;
+        case TextureFormat::RG32_FLOAT:
+            channelDesc = cudaCreateChannelDesc(32, 32, 0, 0, cudaChannelFormatKindFloat);
+            readMode = cudaReadModeElementType;
+            break;
+        case TextureFormat::RGBA32_FLOAT:
+            channelDesc = cudaCreateChannelDesc(32, 32, 32, 32, cudaChannelFormatKindFloat);
             readMode = cudaReadModeElementType;
             break;
         default:
