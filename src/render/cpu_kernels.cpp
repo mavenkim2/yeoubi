@@ -3,6 +3,7 @@
 #if defined(WITH_EMBREE)
 
 #include "device/cpu_device.h"
+#include "render/cpu_wall_profile.h"
 #include "render/integrator_ao.h"
 #include "render/integrator_hit.h"
 #include "render/integrator_path.h"
@@ -48,6 +49,7 @@ struct CPUIntegratorState
 {
     const LaunchParams *params = nullptr;
     FeedbackAccumulator *feedback = nullptr;
+    CPUWallProfile *wallProfile = nullptr;
     unsigned int pixelX = 0;
     unsigned int pixelY = 0;
 
@@ -61,11 +63,76 @@ struct CPUIntegratorState
         return {pixelX, pixelY};
     }
 
+    void PushPathLightHitPhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathLightHit);
+        }
+    }
+
+    void PushPathMissPhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathMiss);
+        }
+    }
+
+    void PushPathMaterialEvalPhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathMaterialEval);
+        }
+    }
+
+    void PushPathEmissivePhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathEmissive);
+        }
+    }
+
+    void PushPathDirectLightPhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathDirectLight);
+        }
+    }
+
+    void PushPathDomeLightPhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathDomeLight);
+        }
+    }
+
+    void PushPathBsdfSamplePhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::PathBsdfSample);
+        }
+    }
+
+    void PopPathPhase() const
+    {
+        if (wallProfile)
+        {
+            wallProfile->PopPhase();
+        }
+    }
+
     bool SampleTexture2D(const LaunchParams::MaterialTextureRef &textureRef,
                          float uu,
                          float vv,
                          ybi::render::integrator::Vec4 &outSample) const
     {
+        CPUWallProfile::Scope phaseScope(wallProfile, CPUWallPhase::TextureSample);
         if (textureRef.textureObject == 0ull || textureRef.valid == 0 || textureRef.width <= 0 ||
             textureRef.height <= 0)
         {
@@ -191,6 +258,7 @@ struct CPUIntegratorState
 
     void RecordFeedbackKey(unsigned long long key)
     {
+        CPUWallProfile::Scope phaseScope(wallProfile, CPUWallPhase::TextureFeedbackRecord);
         if (!feedback)
         {
             return;
@@ -216,6 +284,10 @@ struct CPUIntegratorState
 
     uint64_t BeginTextureMipTiming() const
     {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::TextureMip);
+        }
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
@@ -224,6 +296,10 @@ struct CPUIntegratorState
 
     void EndTextureMipTiming(uint64_t startNs, bool success)
     {
+        if (wallProfile)
+        {
+            wallProfile->PopPhase();
+        }
         if (!feedback || startNs == 0)
         {
             return;
@@ -239,6 +315,10 @@ struct CPUIntegratorState
 
     uint64_t BeginFeedbackWriteTiming() const
     {
+        if (wallProfile)
+        {
+            wallProfile->PushPhase(CPUWallPhase::TextureFeedbackWrite);
+        }
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
@@ -247,6 +327,10 @@ struct CPUIntegratorState
 
     void EndFeedbackWriteTiming(uint64_t startNs)
     {
+        if (wallProfile)
+        {
+            wallProfile->PopPhase();
+        }
         if (!feedback || startNs == 0)
         {
             return;
@@ -264,6 +348,7 @@ struct CPUIntegratorState
                         float tMin,
                         float tMax) const
     {
+        CPUWallProfile::Scope phaseScope(wallProfile, CPUWallPhase::TraceShadow);
         RTCRay shadowRay = {};
         shadowRay.org_x = origin.x;
         shadowRay.org_y = origin.y;
@@ -314,6 +399,40 @@ struct CPUIntegratorState
         }
     }
 };
+
+YBI_DEVICE void BeginPathProfilePhase(const CPUIntegratorState &state,
+                                      render::integrator::PathProfilePhase phase)
+{
+    switch (phase)
+    {
+        case render::integrator::PathProfilePhase::LightHit:
+            state.PushPathLightHitPhase();
+            break;
+        case render::integrator::PathProfilePhase::Miss:
+            state.PushPathMissPhase();
+            break;
+        case render::integrator::PathProfilePhase::MaterialEval:
+            state.PushPathMaterialEvalPhase();
+            break;
+        case render::integrator::PathProfilePhase::Emissive:
+            state.PushPathEmissivePhase();
+            break;
+        case render::integrator::PathProfilePhase::DirectLight:
+            state.PushPathDirectLightPhase();
+            break;
+        case render::integrator::PathProfilePhase::DomeLight:
+            state.PushPathDomeLightPhase();
+            break;
+        case render::integrator::PathProfilePhase::BsdfSample:
+            state.PushPathBsdfSamplePhase();
+            break;
+    }
+}
+
+YBI_DEVICE void EndPathProfilePhase(const CPUIntegratorState &state)
+{
+    state.PopPathPhase();
+}
 
 static ybi::render::integrator::Vec3
 TransformPoint3x4RowMajor(const float transform[12], const ybi::render::integrator::Vec3 &p)
@@ -420,8 +539,10 @@ static bool TracePrimary(const LaunchParams &params,
                          float tMin,
                          float tMax,
                          const ybi::render::integrator::RayDifferential *rayDiff,
-                         ybi::render::integrator::HitInfo *outHit)
+                         ybi::render::integrator::HitInfo *outHit,
+                         CPUWallProfile *wallProfile)
 {
+    CPUWallProfile::Scope phaseScope(wallProfile, CPUWallPhase::TraceSceneHit);
     RTCRayHit rayHit = {};
     rayHit.ray.org_x = origin.x;
     rayHit.ray.org_y = origin.y;
@@ -455,6 +576,7 @@ static bool TracePrimary(const LaunchParams &params,
 
     if (outHit)
     {
+        CPUWallProfile::Scope hitSetupScope(wallProfile, CPUWallPhase::HitSetup);
         int instanceId = static_cast<int>(rayHit.hit.geomID);
         RTCScene embreeScene = reinterpret_cast<RTCScene>(params.traversable);
         const unsigned int instId = rayHit.hit.instID[0];
@@ -525,7 +647,7 @@ bool CPUIntegratorState::TraceClosest(const ybi::render::integrator::Vec3 &origi
                                       float tMax,
                                       ybi::render::integrator::HitInfo *outHit) const
 {
-    return TracePrimary(*params, origin, direction, tMin, tMax, nullptr, outHit);
+    return TracePrimary(*params, origin, direction, tMin, tMax, nullptr, outHit, wallProfile);
 }
 
 bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3 &origin,
@@ -534,6 +656,7 @@ bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3
                                              float tMax,
                                              int lightIndex) const
 {
+    CPUWallProfile::Scope phaseScope(wallProfile, CPUWallPhase::TraceShadow);
     if (!ybi::render::integrator::LightHasShadowExcludes(*params, lightIndex))
     {
         return TraceOcclusion(origin, direction, tMin, tMax);
@@ -545,7 +668,8 @@ bool CPUIntegratorState::TraceLightOcclusion(const ybi::render::integrator::Vec3
     for (int skip = 0; skip < kMaxShadowSkips; ++skip)
     {
         ybi::render::integrator::HitInfo hit = {};
-        if (!TracePrimary(*params, currentOrigin, direction, tMin, currentMax, nullptr, &hit))
+        if (!TracePrimary(
+                *params, currentOrigin, direction, tMin, currentMax, nullptr, &hit, wallProfile))
         {
             return false;
         }
@@ -613,6 +737,9 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
     }
 
     tbb::enumerable_thread_specific<FeedbackAccumulator> feedbackTLS;
+    CPUWallProfile wallProfile = {};
+    const auto dispatchStart = std::chrono::steady_clock::now();
+    wallProfile.Start();
 
     tbb::parallel_for(
         tbb::blocked_range<uint32_t>(0, height), [&](const tbb::blocked_range<uint32_t> &range) {
@@ -620,11 +747,13 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
             CPUIntegratorState state = {};
             state.params = params;
             state.feedback = &local;
+            state.wallProfile = &wallProfile;
 
             for (uint32_t y = range.begin(); y != range.end(); ++y)
             {
                 for (uint32_t x = 0; x < width; ++x)
                 {
+                    CPUWallProfile::Scope pixelScope(&wallProfile, CPUWallPhase::KernelPixel);
                     const size_t pixelIndexRGBA8 =
                         (static_cast<size_t>(y) * static_cast<size_t>(width) +
                          static_cast<size_t>(x)) *
@@ -669,6 +798,8 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
 
                     if (pathTraceKernel)
                     {
+                        CPUWallProfile::Scope pathTraceScope(
+                            &wallProfile, CPUWallPhase::PathTrace);
                         const ybi::render::integrator::Vec3 radiance =
                             ybi::render::integrator::IntegratorPathTrace(
                                 state, origin, direction);
@@ -686,7 +817,8 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                                                            0.001f,
                                                            std::numeric_limits<float>::infinity(),
                                                            &rayDiff,
-                                                           &hit);
+                                                           &hit,
+                                                           &wallProfile);
                         if (!hitFound)
                         {
                             const ybi::render::integrator::Vec3 sky =
@@ -695,10 +827,13 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                         }
                         else if (kernelId == RenderKernelId::AO)
                         {
+                            CPUWallProfile::Scope aoScope(&wallProfile, CPUWallPhase::AO);
                             packed = ybi::render::integrator::IntegratorAO(state, hit);
                         }
                         else
                         {
+                            CPUWallProfile::Scope primaryScope(
+                                &wallProfile, CPUWallPhase::PrimaryDiffuse);
                             packed = ybi::render::integrator::IntegratorPrimaryDiffuse(state, hit);
                         }
 
@@ -712,6 +847,16 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                 }
             }
         });
+    wallProfile.Stop();
+    const double dispatchWallMs =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+            std::chrono::steady_clock::now() - dispatchStart)
+            .count();
+    const char *wallLabel = pathTraceKernel
+                                ? "cpu_dispatch_wall_path"
+                                : (kernelId == RenderKernelId::AO ? "cpu_dispatch_wall_ao"
+                                                                  : "cpu_dispatch_wall_primary");
+    wallProfile.Print(wallLabel, dispatchWallMs);
 
     if (params->feedbackStats != 0ull && params->feedbackKeys != 0ull &&
         params->feedbackCapacity > 0)

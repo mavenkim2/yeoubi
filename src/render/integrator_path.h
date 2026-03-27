@@ -38,10 +38,22 @@ YBI_DEVICE EvaluatedMaterial DefaultMaterial()
     return {};
 }
 
+struct ShadowMaterial
+{
+    float opacity = 1.0f;
+    float opacityThreshold = 0.0f;
+};
+
+YBI_DEVICE ShadowMaterial DefaultShadowMaterial()
+{
+    return {};
+}
+
 YBI_DEVICE bool DebugTraceEnabled(const LaunchParams &params, const UInt2 &launchIndex)
 {
     (void)params;
-    return launchIndex.x == 636u && launchIndex.y == 331u;
+    (void)launchIndex;
+    return false;
 }
 
 template <typename State>
@@ -185,6 +197,21 @@ YBI_DEVICE EvaluatedMaterial LoadEvaluatedMaterial(const LaunchParams &params, i
     return material;
 }
 
+YBI_DEVICE ShadowMaterial LoadShadowMaterial(const LaunchParams &params, int materialIndex)
+{
+    ShadowMaterial material = DefaultShadowMaterial();
+    const PackedMaterial *materials = GetPackedMaterials(params);
+    if (!materials || materialIndex < 0 || materialIndex >= params.materialCount)
+    {
+        return material;
+    }
+
+    const PackedMaterial &src = materials[materialIndex];
+    material.opacity = src.opacity;
+    material.opacityThreshold = src.opacityThreshold;
+    return material;
+}
+
 template <typename State>
 YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
                                               const LaunchParams::InstanceGeomRef &geomRef,
@@ -246,6 +273,24 @@ YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
     {
         material.flags |= MATERIAL_FLAG_HAS_EMISSION;
     }
+    return material;
+}
+
+template <typename State>
+YBI_DEVICE ShadowMaterial EvaluateShadowMaterial(State &state,
+                                                 const LaunchParams::InstanceGeomRef &geomRef,
+                                                 const HitInfo &hit)
+{
+    ShadowMaterial material = LoadShadowMaterial(state.Params(), geomRef.materialIndex);
+
+    Vec4 sample = {};
+    if (TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticOpacity, sample))
+    {
+        material.opacity = sample.x;
+    }
+
+    material.opacity = Clamp(material.opacity, 0.0f, 1.0f);
+    material.opacityThreshold = Clamp(material.opacityThreshold, 0.0f, 1.0f);
     return material;
 }
 
@@ -313,7 +358,18 @@ YBI_DEVICE bool ShouldAlphaCutout(const EvaluatedMaterial &material)
     return material.opacityThreshold > 0.0f && material.opacity < material.opacityThreshold;
 }
 
+YBI_DEVICE bool ShouldAlphaCutout(const ShadowMaterial &material)
+{
+    return material.opacityThreshold > 0.0f && material.opacity < material.opacityThreshold;
+}
+
 YBI_DEVICE Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
+{
+    const float transmission = Clamp(1.0f - material.opacity, 0.0f, 1.0f);
+    return Vec3(transmission, transmission, transmission);
+}
+
+YBI_DEVICE Vec3 ShadowTransmittance(const ShadowMaterial &material)
 {
     const float transmission = Clamp(1.0f - material.opacity, 0.0f, 1.0f);
     return Vec3(transmission, transmission, transmission);
@@ -363,7 +419,7 @@ YBI_DEVICE Vec3 TraceShadowTransmittance(State &state,
 
         const LaunchParams::InstanceGeomRef geomRef =
             ResolveGeomRef(params, geomRefs, hit.instanceId);
-        const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
+        const ShadowMaterial material = EvaluateShadowMaterial(state, geomRef, hit);
         if (ShouldAlphaCutout(material))
         {
             currentOrigin = OffsetRayOrigin(hitPoint, hit.geomNormal, direction);
@@ -443,6 +499,52 @@ YBI_DEVICE Vec3 AccumulateAnalyticLightRadiance(const LaunchParams &params,
     return lightRadiance;
 }
 
+enum class PathProfilePhase
+{
+    LightHit,
+    Miss,
+    MaterialEval,
+    Emissive,
+    DirectLight,
+    DomeLight,
+    BsdfSample
+};
+
+template <typename State>
+YBI_DEVICE void BeginPathProfilePhase(const State &, PathProfilePhase)
+{
+}
+
+template <typename State>
+YBI_DEVICE void EndPathProfilePhase(const State &)
+{
+}
+
+template <typename State>
+class ScopedPathPhase
+{
+public:
+    YBI_DEVICE ScopedPathPhase(const State &state, PathProfilePhase phase)
+        : m_state(&state)
+    {
+        BeginPathProfilePhase(*m_state, phase);
+    }
+
+    YBI_DEVICE ~ScopedPathPhase()
+    {
+        if (m_state)
+        {
+            EndPathProfilePhase(*m_state);
+        }
+    }
+
+    ScopedPathPhase(const ScopedPathPhase &) = delete;
+    ScopedPathPhase &operator=(const ScopedPathPhase &) = delete;
+
+private:
+    const State *m_state = nullptr;
+};
+
 template <typename State>
 YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3 &direction)
 {
@@ -469,6 +571,7 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if (depth > 0)
         {
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::LightHit);
             const float sceneDistance = hasSceneHit ? hit.t : 1.0e20f;
             const Vec3 lightRadiance = AccumulateAnalyticLightRadiance(params,
                                                                        launchIndex,
@@ -489,6 +592,7 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if (!hasSceneHit)
         {
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::Miss);
             const Vec3 missRadiance = EvaluateMissInfiniteLightRadiance(state,
                                                                         rayDir,
                                                                         currentRayHasBsdfContext,
@@ -525,12 +629,16 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         const LaunchParams::InstanceGeomRef geomRef =
             ResolveGeomRef(params, geomRefs, hit.instanceId);
-
-        const EvaluatedMaterial material = EvaluateMaterial(state, geomRef, hit);
-        const ShadingFrame shadingFrame = EvaluateShadingFrame(state, geomRef, hit);
-        const Vec3 wo = -rayDir;
-        const PreparedMaterial preparedMaterial =
-            PrepareMaterialBsdf(material, shadingFrame, throughput, wo);
+        EvaluatedMaterial material = {};
+        ShadingFrame shadingFrame = {};
+        PreparedMaterial preparedMaterial = {};
+        {
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::MaterialEval);
+            material = EvaluateMaterial(state, geomRef, hit);
+            shadingFrame = EvaluateShadingFrame(state, geomRef, hit);
+            const Vec3 wo = -rayDir;
+            preparedMaterial = PrepareMaterialBsdf(material, shadingFrame, throughput, wo);
+        }
 
         if (ShouldAlphaCutout(preparedMaterial))
         {
@@ -543,6 +651,7 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if ((preparedMaterial.flags & MATERIAL_FLAG_HAS_EMISSION) != 0u)
         {
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::Emissive);
             const Vec3 contribution = throughput * preparedMaterial.emissiveColor;
             radiance = radiance + contribution;
             DebugPrintEmissionContribution(
@@ -550,98 +659,106 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         }
 
         DirectLightSample lightSample = {};
-        if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
         {
-            const Vec3 shadowOrigin =
-                OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, lightSample.wi);
-            const float shadowMax = lightSample.distance >= 1.0e19f
-                                        ? 1.0e20f
-                                        : MaxFloat(lightSample.distance - rayBias, rayBias);
-            const Vec3 shadowTr = TraceShadowTransmittance(state,
-                                                           geomRefs,
-                                                           shadowOrigin,
-                                                           lightSample.wi,
-                                                           rayBias,
-                                                           shadowMax,
-                                                           lightSample.lightIndex);
-            if (MaxComponent(shadowTr) > 0.0f)
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::DirectLight);
+            if (SampleDirectLight(params, hitPoint, rngState, &lightSample))
             {
-                float bsdfPdf = 0.0f;
-                const Vec3 f = EvaluateBsdf(preparedMaterial, lightSample.wi, &bsdfPdf);
-                if (MaxComponent(f) > 0.0f)
+                const Vec3 shadowOrigin =
+                    OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, lightSample.wi);
+                const float shadowMax = lightSample.distance >= 1.0e19f
+                                            ? 1.0e20f
+                                            : MaxFloat(lightSample.distance - rayBias, rayBias);
+                const Vec3 shadowTr = TraceShadowTransmittance(state,
+                                                               geomRefs,
+                                                               shadowOrigin,
+                                                               lightSample.wi,
+                                                               rayBias,
+                                                               shadowMax,
+                                                               lightSample.lightIndex);
+                if (MaxComponent(shadowTr) > 0.0f)
                 {
-                    const float misWeight =
-                        lightSample.isDeltaLight
-                            ? 1.0f
-                            : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
-                    const Vec3 contribution = throughput * f * shadowTr * lightSample.radiance *
-                                              (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
-                    radiance = radiance + contribution;
-                    const PackedLight *lights = GetPackedLights(params);
-                    const unsigned int lightType =
-                        (lights && lightSample.lightIndex >= 0 && lightSample.lightIndex < params.lightCount)
-                            ? lights[lightSample.lightIndex].type
-                            : 0u;
-                    DebugPrintLightContribution(params,
-                                                launchIndex,
-                                                "direct",
-                                                depth,
-                                                lightSample.lightIndex,
-                                                lightType,
-                                                lightSample.pdf,
-                                                bsdfPdf,
-                                                misWeight,
-                                                throughput,
-                                                lightSample.radiance,
-                                                f,
-                                                shadowTr,
-                                                contribution);
+                    float bsdfPdf = 0.0f;
+                    const Vec3 f = EvaluateBsdf(preparedMaterial, lightSample.wi, &bsdfPdf);
+                    if (MaxComponent(f) > 0.0f)
+                    {
+                        const float misWeight =
+                            lightSample.isDeltaLight
+                                ? 1.0f
+                                : lightSample.pdf / MaxFloat(lightSample.pdf + bsdfPdf, 1.0e-6f);
+                        const Vec3 contribution = throughput * f * shadowTr * lightSample.radiance *
+                                                  (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
+                        radiance = radiance + contribution;
+                        const PackedLight *lights = GetPackedLights(params);
+                        const unsigned int lightType =
+                            (lights && lightSample.lightIndex >= 0 &&
+                             lightSample.lightIndex < params.lightCount)
+                                ? lights[lightSample.lightIndex].type
+                                : 0u;
+                        DebugPrintLightContribution(params,
+                                                    launchIndex,
+                                                    "direct",
+                                                    depth,
+                                                    lightSample.lightIndex,
+                                                    lightType,
+                                                    lightSample.pdf,
+                                                    bsdfPdf,
+                                                    misWeight,
+                                                    throughput,
+                                                    lightSample.radiance,
+                                                    f,
+                                                    shadowTr,
+                                                    contribution);
+                    }
                 }
             }
         }
 
         DirectLightSample domeSample = {};
-        if (SampleDomeLight(state, rngState, &domeSample))
         {
-            const Vec3 shadowOrigin =
-                OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, domeSample.wi);
-            const Vec3 shadowTr = TraceShadowTransmittance(state,
-                                                           geomRefs,
-                                                           shadowOrigin,
-                                                           domeSample.wi,
-                                                           rayBias,
-                                                           1.0e20f,
-                                                           domeSample.lightIndex);
-            if (MaxComponent(shadowTr) > 0.0f)
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::DomeLight);
+            if (SampleDomeLight(state, rngState, &domeSample))
             {
-                float bsdfPdf = 0.0f;
-                const Vec3 f = EvaluateBsdf(preparedMaterial, domeSample.wi, &bsdfPdf);
-                if (MaxComponent(f) > 0.0f)
+                const Vec3 shadowOrigin =
+                    OffsetRayOrigin(hitPoint, preparedMaterial.geomNormal, domeSample.wi);
+                const Vec3 shadowTr = TraceShadowTransmittance(state,
+                                                               geomRefs,
+                                                               shadowOrigin,
+                                                               domeSample.wi,
+                                                               rayBias,
+                                                               1.0e20f,
+                                                               domeSample.lightIndex);
+                if (MaxComponent(shadowTr) > 0.0f)
                 {
-                    const float misWeight =
-                        domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
-                    const Vec3 contribution = throughput * f * shadowTr * domeSample.radiance *
-                                              (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
-                    radiance = radiance + contribution;
-                    const PackedLight *lights = GetPackedLights(params);
-                    const unsigned int lightType =
-                        (lights && domeSample.lightIndex >= 0 && domeSample.lightIndex < params.lightCount)
-                            ? lights[domeSample.lightIndex].type
-                            : 0u;
-                    DebugPrintLightContribution(params,
-                                                launchIndex,
-                                                "dome",
-                                                depth,
-                                                domeSample.lightIndex,
-                                                lightType,
-                                                domeSample.pdf,
-                                                bsdfPdf,
-                                                misWeight,
-                                                throughput,
-                                                domeSample.radiance,
-                                                f,
-                                                shadowTr,
-                                                contribution);
+                    float bsdfPdf = 0.0f;
+                    const Vec3 f = EvaluateBsdf(preparedMaterial, domeSample.wi, &bsdfPdf);
+                    if (MaxComponent(f) > 0.0f)
+                    {
+                        const float misWeight =
+                            domeSample.pdf / MaxFloat(domeSample.pdf + bsdfPdf, 1.0e-6f);
+                        const Vec3 contribution = throughput * f * shadowTr * domeSample.radiance *
+                                                  (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
+                        radiance = radiance + contribution;
+                        const PackedLight *lights = GetPackedLights(params);
+                        const unsigned int lightType =
+                            (lights && domeSample.lightIndex >= 0 &&
+                             domeSample.lightIndex < params.lightCount)
+                                ? lights[domeSample.lightIndex].type
+                                : 0u;
+                        DebugPrintLightContribution(params,
+                                                    launchIndex,
+                                                    "dome",
+                                                    depth,
+                                                    domeSample.lightIndex,
+                                                    lightType,
+                                                    domeSample.pdf,
+                                                    bsdfPdf,
+                                                    misWeight,
+                                                    throughput,
+                                                    domeSample.radiance,
+                                                    f,
+                                                    shadowTr,
+                                                    contribution);
+                    }
                 }
             }
         }
@@ -652,9 +769,12 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         }
 
         BsdfSample bsdf = {};
-        if (!SampleBsdf(preparedMaterial, rngState, &bsdf))
         {
-            break;
+            const ScopedPathPhase<State> phaseScope(state, PathProfilePhase::BsdfSample);
+            if (!SampleBsdf(preparedMaterial, rngState, &bsdf))
+            {
+                break;
+            }
         }
 
         throughput = throughput * bsdf.weight;
