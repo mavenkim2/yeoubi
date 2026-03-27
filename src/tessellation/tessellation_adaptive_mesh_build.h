@@ -126,6 +126,20 @@ static void RecurseChildEdges(
     }
 }
 
+static int CountResolvedEdgeVertices(const SubdivisionEdgeMap &edgeMap, int v0, int v1)
+{
+    const SubdivisionEdge &edge = GetEdge(edgeMap, v0, v1);
+    if (edge.split)
+    {
+        YBI_ASSERT(edge.midpointVertex >= 0);
+        return CountResolvedEdgeVertices(edgeMap, v0, edge.midpointVertex) +
+               CountResolvedEdgeVertices(edgeMap, edge.midpointVertex, v1) - 1;
+    }
+
+    YBI_ASSERT(edge.tmaxEdgeFactor >= 1);
+    return edge.tmaxEdgeFactor + 1;
+}
+
 struct TessellationAttributeBuilder
 {
     std::string name;
@@ -279,6 +293,70 @@ static bool BuildLeafPatchStitchedMesh(const std::vector<SubdivisionPatch> &leaf
     if (outTriQuadrants)
     {
         outTriQuadrants->clear();
+    }
+
+    size_t sharedVertexCount = 0;
+    for (uint8_t init : sharedInit)
+    {
+        sharedVertexCount += init != 0 ? 1u : 0u;
+    }
+
+    size_t totalVertexCount = sharedVertexCount;
+    size_t totalTriangleCount = 0;
+    size_t totalFaceVaryingValueCount = 0;
+    for (const SubdivisionPatch &patch : leafPatches)
+    {
+        const int edgeVertexCount0 = CountResolvedEdgeVertices(edgeMap, patch.verts[0], patch.verts[1]);
+        const int edgeVertexCount1 = CountResolvedEdgeVertices(edgeMap, patch.verts[1], patch.verts[2]);
+        const int edgeVertexCount2 = CountResolvedEdgeVertices(edgeMap, patch.verts[2], patch.verts[3]);
+        const int edgeVertexCount3 = CountResolvedEdgeVertices(edgeMap, patch.verts[3], patch.verts[0]);
+
+        const int e0 = edgeVertexCount0 - 1;
+        const int e1 = edgeVertexCount1 - 1;
+        const int e2 = edgeVertexCount2 - 1;
+        const int e3 = edgeVertexCount3 - 1;
+
+        const int nu = std::max(std::max(e0, e2), 2);
+        const int nv = std::max(std::max(e1, e3), 2);
+        const int cols = nu - 1;
+        const int rows = nv - 1;
+
+        totalVertexCount += size_t(cols) * size_t(rows);
+        totalFaceVaryingValueCount +=
+            size_t(edgeVertexCount0 + edgeVertexCount1 + edgeVertexCount2 + edgeVertexCount3);
+        totalFaceVaryingValueCount += size_t(cols) * size_t(rows);
+
+        const size_t innerGridTriangleCountForPatch =
+            (cols >= 2 && rows >= 2) ? size_t(2 * (cols - 1) * (rows - 1)) : 0u;
+        const size_t stitchingTriangleCountForPatch =
+            size_t(e0 + nu - 2 + e1 + nv - 2 + e2 + nu - 2 + e3 + nv - 2);
+        totalTriangleCount += innerGridTriangleCountForPatch + stitchingTriangleCountForPatch;
+    }
+
+    const size_t totalIndexCount = totalTriangleCount * 3u;
+    positions.Reserve(totalVertexCount);
+    indices.Reserve(totalIndexCount);
+    if (outTriPatchFaceIds)
+    {
+        outTriPatchFaceIds->reserve(totalTriangleCount);
+    }
+    if (outTriCoarseFaceIds)
+    {
+        outTriCoarseFaceIds->reserve(totalTriangleCount);
+    }
+    if (outTriPtexFaceIds)
+    {
+        outTriPtexFaceIds->reserve(totalTriangleCount);
+    }
+    if (outTriQuadrants)
+    {
+        outTriQuadrants->reserve(totalTriangleCount);
+    }
+    for (TessellationAttributeBuilder &builder : attrBuilders)
+    {
+        builder.indices.Reserve(totalIndexCount);
+        const size_t valueCount = builder.isFaceVarying ? totalFaceVaryingValueCount : totalVertexCount;
+        builder.values.Reserve(valueCount * AttributeTypeGetSize(builder.type));
     }
 
     std::vector<int> sharedMeshIndex(maxVertexId, -1);
