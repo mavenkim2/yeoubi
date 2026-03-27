@@ -2,6 +2,7 @@
 #include "texture/exr_io.h"
 #include "third_party/tinyexr/tinyexr.h"
 #include "util/assert.h"
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
