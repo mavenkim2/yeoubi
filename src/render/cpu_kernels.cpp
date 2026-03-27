@@ -737,9 +737,13 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
     }
 
     tbb::enumerable_thread_specific<FeedbackAccumulator> feedbackTLS;
+    const bool cpuWallProfileEnabled = params->cpuWallProfileEnabled != 0;
     CPUWallProfile wallProfile = {};
     const auto dispatchStart = std::chrono::steady_clock::now();
-    wallProfile.Start();
+    if (cpuWallProfileEnabled)
+    {
+        wallProfile.Start();
+    }
 
     tbb::parallel_for(
         tbb::blocked_range<uint32_t>(0, height), [&](const tbb::blocked_range<uint32_t> &range) {
@@ -747,7 +751,7 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
             CPUIntegratorState state = {};
             state.params = params;
             state.feedback = &local;
-            state.wallProfile = &wallProfile;
+            state.wallProfile = cpuWallProfileEnabled ? &wallProfile : nullptr;
 
             for (uint32_t y = range.begin(); y != range.end(); ++y)
             {
@@ -847,16 +851,19 @@ bool CPUDispatchKernel(const DispatchParams &dispatchParams, RenderKernelId kern
                 }
             }
         });
-    wallProfile.Stop();
-    const double dispatchWallMs =
-        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
-            std::chrono::steady_clock::now() - dispatchStart)
-            .count();
-    const char *wallLabel = pathTraceKernel
-                                ? "cpu_dispatch_wall_path"
-                                : (kernelId == RenderKernelId::AO ? "cpu_dispatch_wall_ao"
-                                                                  : "cpu_dispatch_wall_primary");
-    wallProfile.Print(wallLabel, dispatchWallMs);
+    if (cpuWallProfileEnabled)
+    {
+        wallProfile.Stop();
+        const double dispatchWallMs =
+            std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+                std::chrono::steady_clock::now() - dispatchStart)
+                .count();
+        const char *wallLabel = pathTraceKernel
+                                    ? "cpu_dispatch_wall_path"
+                                    : (kernelId == RenderKernelId::AO ? "cpu_dispatch_wall_ao"
+                                                                      : "cpu_dispatch_wall_primary");
+        wallProfile.Print(wallLabel, dispatchWallMs);
+    }
 
     if (params->feedbackStats != 0ull && params->feedbackKeys != 0ull &&
         params->feedbackCapacity > 0)
