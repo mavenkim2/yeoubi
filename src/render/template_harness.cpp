@@ -103,7 +103,6 @@ struct CliOptions
     bool singlePixelMode = false;
     int singlePixelX = 0;
     int singlePixelY = 0;
-    bool cpuWallProfile = false;
     bool writeFeedbackFiles = false;
     std::vector<std::string> purposes = {"default", "render"};
 };
@@ -700,7 +699,6 @@ static void PrintUsage(const char *exeName)
     printf("  --vt-tail-max-dim pin mips where max(width,height)<=N into tail cache\n");
     printf("  --vt-max-page-uploads max new stream pages uploaded after each feedback pass (0=unlimited)\n");
     printf("  --pixel x y render only image-space pixel (x right, y down)\n");
-    printf("  --cpu-wall-profile enable CPU render wall-phase timing\n");
     printf("  --write-feedback dump feedback text files next to output PNG\n");
     printf("  --view diffuse|roughness|metallic|occlusion|normal|ior|emissive|opacity|specular|clearcoat|clearcoatroughness\n");
     printf("  --purposes comma-separated default,render,proxy,guide\n");
@@ -921,11 +919,6 @@ static CliOptions ParseCli(int argc, char **argv)
             options.singlePixelMode = true;
             options.singlePixelX = std::stoi(argv[++i]);
             options.singlePixelY = std::stoi(argv[++i]);
-            continue;
-        }
-        if (arg == "--cpu-wall-profile")
-        {
-            options.cpuWallProfile = true;
             continue;
         }
         if (arg == "--write-feedback")
@@ -1854,7 +1847,6 @@ RenderTraversable(Device *device,
                   uint64_t virtualTextureCacheBytes,
                   int virtualTextureTailMaxDim,
                   int virtualTextureMaxPageUploads,
-                  bool cpuWallProfile,
                   bool singlePixelMode,
                   int singlePixelX,
                   int singlePixelY,
@@ -2009,7 +2001,6 @@ RenderTraversable(Device *device,
     params.feedbackSamplePercent = 10;
     params.feedbackTileSize = 128;
     params.currentSpp = 0;
-    params.cpuWallProfileEnabled = cpuWallProfile ? 1 : 0;
     params.singlePixelEnabled = singlePixelMode ? 1 : 0;
     params.singlePixelX = singlePixelX;
     params.singlePixelY = singlePixelY;
@@ -2858,7 +2849,6 @@ static bool RenderPhase(Device *device, const CliOptions &options, const Harness
                       options.virtualTextureCacheBytes,
                       options.virtualTextureTailMaxDim,
                       options.virtualTextureMaxPageUploads,
-                      options.cpuWallProfile,
                       options.singlePixelMode,
                       options.singlePixelX,
                       options.singlePixelY,

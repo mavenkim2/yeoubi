@@ -126,7 +126,6 @@ struct LaunchParams
     int feedbackSamplePercent;
     int feedbackTileSize;
     int currentSpp;
-    int cpuWallProfileEnabled;
     int singlePixelEnabled;
     int singlePixelX;
     int singlePixelY;

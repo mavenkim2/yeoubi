@@ -999,10 +999,11 @@ YBI_DEVICE bool TrySampleMaterialTexture(State &state,
 
 template <typename State>
 YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
-                                                        const LaunchParams::InstanceGeomRef &geomRef,
-                                                        const HitInfo &hit,
-                                                        int semantic,
-                                                        Vec4 &outSample)
+                                                 const LaunchParams::InstanceGeomRef &geomRef,
+                                                 const HitInfo &hit,
+                                                 const MaterialTextureSampleInputs &inputs,
+                                                 int semantic,
+                                                 Vec4 &outSample)
 {
     const LaunchParams &params = state.Params();
     if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
@@ -1011,16 +1012,12 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
         return false;
     }
 
-    MaterialTextureSampleInputs inputs = {};
-    if (!TryComputeMaterialTextureSampleInputs(
-            geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &inputs))
-    {
-        return false;
-    }
-
     const LaunchParams::MaterialTextureRef *materialRefs = nullptr;
     int base = 0;
     int maxSlots = 0;
+    LaunchParams::MaterialTextureRef rawRef = {};
+    LaunchParams::MaterialTextureRef wrapRef = rawRef;
+    bool hasRawRef = false;
     if (!ResolveMaterialTextureRefBase(params, geomRef, semantic, &materialRefs, &base, &maxSlots))
     {
         return false;
@@ -1028,10 +1025,9 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
 
     const int rawUdimSlot =
         ybi::texture::UdimSlotFromUdim(inputs.rawUdim, params.materialTextureRefStride);
-    LaunchParams::MaterialTextureRef rawRef = {};
-    const bool hasRawRef =
+    hasRawRef =
         FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, rawUdimSlot, &rawRef);
-    LaunchParams::MaterialTextureRef wrapRef = rawRef;
+    wrapRef = rawRef;
     if (!hasRawRef || !IsUsableMaterialTextureRef(wrapRef))
     {
         if (!FindFallbackMaterialTextureRef(params, materialRefs, base, maxSlots, &wrapRef))
@@ -1054,6 +1050,8 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
     {
         Vec3 vtColor = {};
         unsigned int resolvedUdimBits = 0u;
+        LaunchParams::MaterialTextureRef vtRef = {};
+        bool hasVtRef = false;
         if (ResolveVirtualTextureUdimBits(params,
                                           geomRef,
                                           semantic,
@@ -1065,50 +1063,50 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
                                           &resolvedUdimBits,
                                           nullptr))
         {
-            LaunchParams::MaterialTextureRef vtRef = {};
             const int resolvedUdimSlot = ybi::texture::UdimSlotFromUdim(
                 1001 + int(resolvedUdimBits), params.materialTextureRefStride);
-            if (FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, resolvedUdimSlot, &vtRef) &&
-                IsUsableMaterialTextureRef(vtRef))
+            hasVtRef = FetchMaterialTextureRefForUdimSlot(
+                           materialRefs, base, maxSlots, resolvedUdimSlot, &vtRef) &&
+                       IsUsableMaterialTextureRef(vtRef);
+        }
+        if (hasVtRef)
+        {
+            unsigned int sampleMip = 0u;
+            const bool haveMip = TryComputeTextureMipLevelProfiled(
+                state, hit, vtRef.width, vtRef.height, &sampleMip);
+            if (!haveMip)
             {
-                unsigned int sampleMip = 0u;
-                const bool haveMip = TryComputeTextureMipLevelProfiled(
-                    state, hit, vtRef.width, vtRef.height, &sampleMip);
-                if (!haveMip)
-                {
-                    sampleMip = static_cast<unsigned int>(
-                        ClampInt(MaxInt(params.virtualTextureSampleMip, 0),
-                                 0,
-                                 ComputeTextureMipCount(vtRef.width, vtRef.height) - 1));
-                }
+                sampleMip = static_cast<unsigned int>(
+                    ClampInt(MaxInt(params.virtualTextureSampleMip, 0),
+                             0,
+                             ComputeTextureMipCount(vtRef.width, vtRef.height) - 1));
+            }
 
-                if (TrySampleVirtualTexture(
-                        state,
-                        geomRef,
-                        semantic,
-                        vtRef,
-                        wrappedU,
-                        wrappedV,
-                        resolvedUdimBits,
-                        sampleMip,
-                        vtColor))
+            if (TrySampleVirtualTexture(state,
+                                        geomRef,
+                                        semantic,
+                                        vtRef,
+                                        wrappedU,
+                                        wrappedV,
+                                        resolvedUdimBits,
+                                        sampleMip,
+                                        vtColor))
+            {
+                outSample = Vec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
+                if (haveMip)
                 {
-                    outSample = Vec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
-                    if (haveMip)
-                    {
-                        TryWriteTextureFeedbackProfiled(state,
-                                                        geomRef,
-                                                        semantic,
-                                                        static_cast<unsigned int>(hit.primitiveIndex),
-                                                        wrappedU,
-                                                        wrappedV,
-                                                        vtRef.width,
-                                                        vtRef.height,
-                                                        resolvedUdimBits,
-                                                        sampleMip);
-                    }
-                    return true;
+                    TryWriteTextureFeedbackProfiled(state,
+                                                    geomRef,
+                                                    semantic,
+                                                    static_cast<unsigned int>(hit.primitiveIndex),
+                                                    wrappedU,
+                                                    wrappedV,
+                                                    vtRef.width,
+                                                    vtRef.height,
+                                                    resolvedUdimBits,
+                                                    sampleMip);
                 }
+                return true;
             }
         }
     }
@@ -1142,6 +1140,22 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
                                         feedbackMip);
     }
     return true;
+}
+
+template <typename State>
+YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
+                                                 const LaunchParams::InstanceGeomRef &geomRef,
+                                                 const HitInfo &hit,
+                                                 int semantic,
+                                                 Vec4 &outSample)
+{
+    MaterialTextureSampleInputs inputs = {};
+    if (!TryComputeMaterialTextureSampleInputs(
+            geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &inputs))
+    {
+        return false;
+    }
+    return TrySampleMaterialTextureSemantic(state, geomRef, hit, inputs, semantic, outSample);
 }
 
 } // namespace integrator

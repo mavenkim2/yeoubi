@@ -27,19 +27,13 @@ YBI_DEVICE Vec3 SafeNormalizeOrDefault(const Vec3 &value, const Vec3 &fallback)
 YBI_DEVICE bool TryComputeTriangleTangentFrame(
     const LaunchParams::InstanceGeomRef &geomRef,
     const HitInfo &hit,
+    const MaterialTextureSampleInputs &inputs,
     const Vec3 &baseNormal,
     Vec3 *outTangent,
     Vec3 *outBitangent,
     float *outHandedness)
 {
     if (!outTangent || !outBitangent || !outHandedness || !hit.hasWorldTriangle || !hit.hasBarycentrics)
-    {
-        return false;
-    }
-
-    MaterialTextureSampleInputs inputs = {};
-    if (!TryComputeMaterialTextureSampleInputs(
-            geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &inputs))
     {
         return false;
     }
@@ -74,8 +68,9 @@ YBI_DEVICE bool TryComputeTriangleTangentFrame(
 
 template <typename State>
 YBI_DEVICE ShadingFrame EvaluateShadingFrame(State &state,
-                                                    const LaunchParams::InstanceGeomRef &geomRef,
-                                                    const HitInfo &hit)
+                                             const LaunchParams::InstanceGeomRef &geomRef,
+                                             const HitInfo &hit,
+                                             const MaterialTextureSampleInputs *sampleInputs = nullptr)
 {
     ShadingFrame frame = {};
     frame.geomNormal = hit.hasGeomNormal
@@ -89,8 +84,24 @@ YBI_DEVICE ShadingFrame EvaluateShadingFrame(State &state,
         baseNormal = -baseNormal;
     }
 
-    if (!TryComputeTriangleTangentFrame(
-            geomRef, hit, baseNormal, &frame.tangent, &frame.bitangent, &frame.handedness))
+    MaterialTextureSampleInputs localInputs = {};
+    const MaterialTextureSampleInputs *inputs = sampleInputs;
+    if (!inputs)
+    {
+        if (!TryComputeMaterialTextureSampleInputs(
+                geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &localInputs))
+        {
+            inputs = nullptr;
+        }
+        else
+        {
+            inputs = &localInputs;
+        }
+    }
+
+    if (!inputs ||
+        !TryComputeTriangleTangentFrame(
+            geomRef, hit, *inputs, baseNormal, &frame.tangent, &frame.bitangent, &frame.handedness))
     {
         BuildOrthonormalBasis(baseNormal, frame.tangent, frame.bitangent);
         frame.handedness = 1.0f;
@@ -104,8 +115,8 @@ YBI_DEVICE ShadingFrame EvaluateShadingFrame(State &state,
     frame.shadingNormal = baseNormal;
 
     Vec4 normalSample = {};
-    if (frame.hasTangentFrame &&
-        TrySampleMaterialTextureSemantic(state, geomRef, hit, kSemanticNormal, normalSample))
+    if (frame.hasTangentFrame && inputs &&
+        TrySampleMaterialTextureSemantic(state, geomRef, hit, *inputs, kSemanticNormal, normalSample))
     {
         if (normalSample.x == 0.0f && normalSample.y == 0.0f && normalSample.z == 0.0f &&
             normalSample.w == 0.0f)
