@@ -105,14 +105,10 @@ YBI_DEVICE OpenPBR_ResolvedInputs BuildOpenPbrResolvedInputs(const EvaluatedMate
 {
     OpenPBR_ResolvedInputs inputs = openpbr_make_default_resolved_inputs();
     const bool useSpecularWorkflow = material.useSpecularWorkflow != 0u;
-    const bool hasAuthoredUseSpecularWorkflow =
-        material.hasAuthoredUseSpecularWorkflow != 0u;
     inputs.base_color = material.baseColor;
     inputs.base_metalness = useSpecularWorkflow ? 0.0f : material.metallic;
-    inputs.specular_color = useSpecularWorkflow
-                                ? material.specularColor
-                                : (hasAuthoredUseSpecularWorkflow ? Vec3(1.0f, 1.0f, 1.0f)
-                                                                  : material.baseColor);
+    inputs.specular_color =
+        useSpecularWorkflow ? material.specularColor : Vec3(1.0f, 1.0f, 1.0f);
     inputs.specular_roughness = material.roughness;
     inputs.specular_ior = material.ior;
     inputs.coat_weight = material.clearcoat;
