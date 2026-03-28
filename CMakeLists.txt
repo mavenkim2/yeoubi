@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project (yeoubi)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard for yeoubi and subprojects" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(WITH_EMBREE "Enable Embree CPU backend" ON)
@@ -49,6 +49,10 @@ if (WITH_USD)
     # install(FILES ${OPENUSD_LIBRARIES} DESTINATION ${CMAKE_INSTALL_PREFIX})
 endif()
 
+if (OPENCOLORIO_FOUND)
+    list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES ${OPENCOLORIO_INCLUDE_DIRS})
+endif()
+
 add_executable(yeoubi_dome_light_uv_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/render/dome_light_uv_test.cpp)
 target_compile_definitions(yeoubi_dome_light_uv_test PRIVATE ${YBI_COMPILE_DEFINITIONS})
@@ -59,13 +63,19 @@ target_include_directories(yeoubi_dome_light_uv_test PRIVATE ${YBI_INCLUDE_DIREC
 target_include_directories(yeoubi_dome_light_uv_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
 
 add_executable(yeoubi_color_transform_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/render/color_transform_test.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/render/color_transform_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/color_transform.cpp)
 target_compile_definitions(yeoubi_color_transform_test PRIVATE ${YBI_COMPILE_DEFINITIONS})
 if (WIN32)
     target_compile_definitions(yeoubi_color_transform_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 target_include_directories(yeoubi_color_transform_test PRIVATE ${YBI_INCLUDE_DIRECTORIES})
 target_include_directories(yeoubi_color_transform_test SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
+if (OPENCOLORIO_FOUND)
+    target_link_libraries(yeoubi_color_transform_test PRIVATE ${OPENCOLORIO_LIBRARIES})
+else()
+    message(FATAL_ERROR "OpenColorIO submodule is required for yeoubi_color_transform_test")
+endif()
 
 add_executable(yeoubi_distant_light_angle_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/render/distant_light_angle_test.cpp)
@@ -328,6 +338,7 @@ endif()
 if (WITH_USD)
     add_executable(yeoubi_template_harness
         ${CMAKE_CURRENT_SOURCE_DIR}/src/lights/dome_cdf.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/color_transform.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/template_harness.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/scene_memory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
@@ -379,6 +390,11 @@ if (WITH_USD)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz)
     target_include_directories(yeoubi_template_harness SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_template_harness PRIVATE ${YBI_DEPENDENCIES})
+    if (OPENCOLORIO_FOUND)
+        target_link_libraries(yeoubi_template_harness PRIVATE ${OPENCOLORIO_LIBRARIES})
+    else()
+        message(FATAL_ERROR "OpenColorIO submodule is required for yeoubi_template_harness")
+    endif()
 
     if (WITH_NTC AND CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
         target_sources(yeoubi_template_harness PRIVATE

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "render/color_transform.h"
 #include "render/integrator_bsdf.h"
 #include "render/integrator_light.h"
 #include "render/integrator_texture.h"

@@ -1,7 +1,10 @@
 #include "render/color_transform.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -43,28 +46,50 @@ bool ExpectGreater(const char *label, float lhs, float rhs, float margin)
 int main()
 {
     bool ok = true;
-    ok &= ExpectFloat("LinearToSrgb(0.0)", ybi::render::LinearToSrgb(0.0f), 0.0f, 1.0e-7f);
-    ok &= ExpectFloat("LinearToSrgb(0.0031308)",
-                      ybi::render::LinearToSrgb(0.0031308f),
-                      0.04044994f,
-                      1.0e-6f);
-    ok &= ExpectFloat(
-        "LinearToSrgb(0.18)", ybi::render::LinearToSrgb(0.18f), 0.46135613f, 1.0e-6f);
+    const std::vector<float> linearRgb = {
+        0.0f, 0.0f, 0.0f,
+        0.18f, 0.18f, 0.18f,
+        4.0f, 4.0f, 4.0f,
+    };
+    std::vector<uint8_t> rgba;
+    std::string error;
+    ok &= ybi::render::ApplyAcesSdrDisplayTransform(linearRgb, 3, 1, &rgba, &error);
+    if (!ok)
+    {
+        std::fprintf(stderr, "ApplyAcesSdrDisplayTransform failed: %s\n", error.c_str());
+    }
+    else
+    {
+        ok &= ExpectFloat("black.r", static_cast<float>(rgba[0]), 0.0f, 0.5f);
+        ok &= ExpectFloat("black.g", static_cast<float>(rgba[1]), 0.0f, 0.5f);
+        ok &= ExpectFloat("black.b", static_cast<float>(rgba[2]), 0.0f, 0.5f);
 
-    const ybi::Vec3 zero = ybi::render::DisplayMapPathRadiance(ybi::Vec3(0.0f, 0.0f, 0.0f));
-    ok &= ExpectFloat("DisplayMapPathRadiance(0).x", zero.x, 0.0f, 1.0e-7f);
-    ok &= ExpectFloat("DisplayMapPathRadiance(0).y", zero.y, 0.0f, 1.0e-7f);
-    ok &= ExpectFloat("DisplayMapPathRadiance(0).z", zero.z, 0.0f, 1.0e-7f);
+        ok &= ExpectFloat("middle neutral rg",
+                          static_cast<float>(rgba[4]),
+                          static_cast<float>(rgba[5]),
+                          0.5f);
+        ok &= ExpectFloat("middle neutral gb",
+                          static_cast<float>(rgba[5]),
+                          static_cast<float>(rgba[6]),
+                          0.5f);
+        ok &= ExpectFloat("bright neutral rg",
+                          static_cast<float>(rgba[8]),
+                          static_cast<float>(rgba[9]),
+                          0.5f);
+        ok &= ExpectFloat("bright neutral gb",
+                          static_cast<float>(rgba[9]),
+                          static_cast<float>(rgba[10]),
+                          0.5f);
 
-    const float dark = 0.0f;
-    const float bright = 8.0f;
-    const float mappedAverage =
-        ybi::render::DisplayMapPathRadiance(ybi::Vec3((dark + bright) * 0.5f, 0.0f, 0.0f)).x;
-    const float averagedMapped =
-        0.5f *
-        (ybi::render::DisplayMapPathRadiance(ybi::Vec3(dark, 0.0f, 0.0f)).x +
-         ybi::render::DisplayMapPathRadiance(ybi::Vec3(bright, 0.0f, 0.0f)).x);
-    ok &= ExpectGreater("Average-before-display", mappedAverage, averagedMapped, 0.25f);
+        ok &= ExpectGreater("middle > black",
+                            static_cast<float>(rgba[4]),
+                            static_cast<float>(rgba[0]),
+                            1.0f);
+        ok &= ExpectGreater("bright > middle",
+                            static_cast<float>(rgba[8]),
+                            static_cast<float>(rgba[4]),
+                            1.0f);
+    }
 
     if (!ok)
     {

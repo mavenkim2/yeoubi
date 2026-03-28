@@ -2294,27 +2294,42 @@ RenderTraversable(Device *device,
                     std::chrono::duration<double, std::milli>(Clock::now() - passStart).count());
     }
 
-    std::vector<uint8_t> hostImage(imageSize, 0);
     const float invSpp = 1.0f / float(sppPassCount);
-    for (size_t i = 0, pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-         i < pixelCount;
-         ++i)
+    std::vector<uint8_t> hostImage(imageSize, 0);
+    if (integrator == IntegratorType::Path)
     {
-        const ybi::Vec3 avgLinear(
-            accumRgb[i * 3 + 0] * invSpp, accumRgb[i * 3 + 1] * invSpp, accumRgb[i * 3 + 2] * invSpp);
-        const ybi::Vec3 display =
-            integrator == IntegratorType::Path
-                ? ybi::render::DisplayMapPathRadiance(avgLinear)
-                : ybi::Vec3(std::min(1.0f, std::max(0.0f, avgLinear.x)),
-                            std::min(1.0f, std::max(0.0f, avgLinear.y)),
-                            std::min(1.0f, std::max(0.0f, avgLinear.z)));
-        const float r = std::min(1.0f, std::max(0.0f, display.x));
-        const float g = std::min(1.0f, std::max(0.0f, display.y));
-        const float b = std::min(1.0f, std::max(0.0f, display.z));
-        hostImage[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f + 0.5f);
-        hostImage[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f + 0.5f);
-        hostImage[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f + 0.5f);
-        hostImage[i * 4 + 3] = 255u;
+        std::vector<float> linearRgb(pixelCount * 3u, 0.0f);
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            linearRgb[i * 3u + 0u] = accumRgb[i * 3u + 0u] * invSpp;
+            linearRgb[i * 3u + 1u] = accumRgb[i * 3u + 1u] * invSpp;
+            linearRgb[i * 3u + 2u] = accumRgb[i * 3u + 2u] * invSpp;
+        }
+
+        std::string colorTransformError;
+        if (!ybi::render::ApplyAcesSdrDisplayTransform(
+                linearRgb, width, height, &hostImage, &colorTransformError))
+        {
+            fprintf(stderr, "Failed to apply OCIO ACES display transform: %s\n",
+                    colorTransformError.c_str());
+            return;
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < pixelCount; ++i)
+        {
+            const ybi::Vec3 avgLinear(accumRgb[i * 3 + 0] * invSpp,
+                                      accumRgb[i * 3 + 1] * invSpp,
+                                      accumRgb[i * 3 + 2] * invSpp);
+            const float r = std::min(1.0f, std::max(0.0f, avgLinear.x));
+            const float g = std::min(1.0f, std::max(0.0f, avgLinear.y));
+            const float b = std::min(1.0f, std::max(0.0f, avgLinear.z));
+            hostImage[i * 4 + 0] = static_cast<uint8_t>(r * 255.0f + 0.5f);
+            hostImage[i * 4 + 1] = static_cast<uint8_t>(g * 255.0f + 0.5f);
+            hostImage[i * 4 + 2] = static_cast<uint8_t>(b * 255.0f + 0.5f);
+            hostImage[i * 4 + 3] = 255u;
+        }
     }
 
     const bool writeOk = SavePNG(outputFile, hostImage, width, height);
