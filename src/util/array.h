@@ -163,6 +163,12 @@ public:
         return m_data[m_size - 1];
     }
 
+    T Pop()
+    {
+        YBI_ASSERT(m_size > 0);
+        return m_data[--m_size];
+    }
+
     T &operator[](size_t index)
     {
         YBI_ASSERT(index < m_size);
@@ -205,6 +211,7 @@ public:
     {
         return m_data + m_size;
     }
+
 private:
     // TODO: investigate performance
     T *AllocateAligned(size_t n)

@@ -16,6 +16,7 @@ enum class TextureFormat : uint32_t
     RG16_FLOAT = 4,
     RG32_FLOAT = 5,
     RGBA32_FLOAT = 6,
+    MAX = RGBA32_FLOAT + 1,
 };
 
 YBI_DEVICE uint32_t TextureFormatChannelCount(TextureFormat format)
