@@ -134,7 +134,7 @@ int main(int argc, char **argv)
     if (!udimProvided)
     {
         size_t digitPos = 0;
-        if (!ybi::usd_ntc::TryFindUdimDigits(exrPath, udim, digitPos))
+        if (!ybi::texture::TryFindUdimDigits(exrPath, udim, digitPos))
         {
             udim = kUdimMin;
         }
@@ -147,7 +147,7 @@ int main(int argc, char **argv)
             std::printf("missing tiles input: set --tiles-bin or --tiles-dir\n");
             return 1;
         }
-        tilesBinPath = tilesDir + "/" + Sanitize(ybi::usd_ntc::StripUdimFromPath(exrPath)) + ".tiles.bin";
+        tilesBinPath = tilesDir + "/" + Sanitize(ybi::texture::StripUdimFromPath(exrPath)) + ".tiles.bin";
     }
 
     std::string error;

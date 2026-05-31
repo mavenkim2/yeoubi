@@ -35,6 +35,11 @@ struct RingBuffer
     T *SynchronizedRead(std::mutex *mutex, Arena *arena, uint32_t &num);
 };
 
+template <typename T>
+bool RingBuffer<T>::Write(T *vals, uint32_t num)
+{
+}
+
 struct VirtualTextureManagerV2
 {
     struct TextureState

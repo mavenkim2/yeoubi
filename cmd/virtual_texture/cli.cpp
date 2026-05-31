@@ -57,7 +57,7 @@ bool ParsePurposeList(const std::string &csv, std::vector<std::string> &outPurpo
 void PrintUsage(const char *exe)
 {
     std::fprintf(stderr,
-                 "Usage: %s <entry.usd[a|c]> <out_dir> [--out-usd path] [--bits-per-pixel <bpp>] [--training-steps <n>] [--steps-per-iter <n>] [--cuda-device <n>] [--max-materials <n>] [--purposes <csv>] [--no-encode] [--prepare-tiles] [--tile-size <n>] [--tile-verify-count <n>] [--no-tile-verify-pass] [--tile-verify-eps <f>]\n",
+                 "Usage: %s <entry.usd[a|c]> <out_dir> [--max-materials <n>] [--purposes <csv>] [--tile-size <n>] [--tile-verify-count <n>] [--no-tile-verify-pass] [--tile-verify-eps <f>]\n",
                  exe);
 }
 
@@ -75,71 +75,6 @@ bool ParseCli(int argc, char **argv, Cli &out)
     for (int i = 3; i < argc; ++i)
     {
         const std::string arg = argv[i];
-        if (arg == "--bits-per-pixel")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --bits-per-pixel\n");
-                return false;
-            }
-            out.bitsPerPixel = std::strtof(argv[++i], nullptr);
-            if (!(out.bitsPerPixel > 0.0f))
-            {
-                std::fprintf(stderr, "Invalid --bits-per-pixel\n");
-                return false;
-            }
-            continue;
-        }
-        if (arg == "--out-usd")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --out-usd\n");
-                return false;
-            }
-            out.outUsdPath = argv[++i];
-            continue;
-        }
-        if (arg == "--training-steps")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --training-steps\n");
-                return false;
-            }
-            out.trainingSteps = std::atoi(argv[++i]);
-            if (out.trainingSteps <= 0)
-            {
-                std::fprintf(stderr, "Invalid --training-steps\n");
-                return false;
-            }
-            continue;
-        }
-        if (arg == "--steps-per-iter")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --steps-per-iter\n");
-                return false;
-            }
-            out.stepsPerIter = std::atoi(argv[++i]);
-            if (out.stepsPerIter <= 0)
-            {
-                std::fprintf(stderr, "Invalid --steps-per-iter\n");
-                return false;
-            }
-            continue;
-        }
-        if (arg == "--cuda-device")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "Missing value for --cuda-device\n");
-                return false;
-            }
-            out.cudaDevice = std::atoi(argv[++i]);
-            continue;
-        }
         if (arg == "--max-materials")
         {
             if (i + 1 >= argc)
@@ -168,16 +103,6 @@ bool ParseCli(int argc, char **argv, Cli &out)
                              "Invalid --purposes. expected comma-separated values from: default,render,proxy,guide\n");
                 return false;
             }
-            continue;
-        }
-        if (arg == "--no-encode")
-        {
-            out.noEncode = true;
-            continue;
-        }
-        if (arg == "--prepare-tiles")
-        {
-            out.prepareTiles = true;
             continue;
         }
         if (arg == "--tile-size")

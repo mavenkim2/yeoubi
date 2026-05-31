@@ -4,6 +4,7 @@
 #include "render/integrator_light.h"
 #include "render/integrator_texture.h"
 #include "render/shading_core.h"
+#include "util/math_common.h"
 
 #include <stdio.h>
 
@@ -81,7 +82,8 @@ YBI_DEVICE void DebugPrintLightContribution(const LaunchParams &params,
         return;
     }
 
-    printf("debug %s pixel=(%u,%u) spp=%d depth=%d light=%d type=%s lightPdf=%.9g bsdfPdf=%.9g mis=%.9g\n",
+    printf("debug %s pixel=(%u,%u) spp=%d depth=%d light=%d type=%s lightPdf=%.9g bsdfPdf=%.9g "
+           "mis=%.9g\n",
            label,
            launchIndex.x,
            launchIndex.y,
@@ -92,7 +94,8 @@ YBI_DEVICE void DebugPrintLightContribution(const LaunchParams &params,
            lightPdf,
            bsdfPdf,
            misWeight);
-    printf("  throughput=(%.6f %.6f %.6f) Li=(%.6f %.6f %.6f) f=(%.6f %.6f %.6f) Tr=(%.6f %.6f %.6f) contrib=(%.6f %.6f %.6f)\n",
+    printf("  throughput=(%.6f %.6f %.6f) Li=(%.6f %.6f %.6f) f=(%.6f %.6f %.6f) Tr=(%.6f %.6f "
+           "%.6f) contrib=(%.6f %.6f %.6f)\n",
            throughput.x,
            throughput.y,
            throughput.z,
@@ -212,25 +215,29 @@ YBI_DEVICE ShadowMaterial LoadShadowMaterial(const LaunchParams &params, int mat
 }
 
 template <typename State>
-YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
-                                              const LaunchParams::InstanceGeomRef &geomRef,
-                                              const HitInfo &hit,
-                                              const MaterialTextureSampleInputs *sampleInputs = nullptr)
+YBI_DEVICE EvaluatedMaterial
+EvaluateMaterial(State &state,
+                 const LaunchParams::InstanceGeomRef &geomRef,
+                 const HitInfo &hit,
+                 const MaterialTextureSampleInputs *sampleInputs = nullptr)
 {
     EvaluatedMaterial material = LoadEvaluatedMaterial(state.Params(), geomRef.materialIndex);
     MaterialTextureSampleInputs localInputs = {};
     const MaterialTextureSampleInputs *inputs = sampleInputs;
     if (!inputs)
     {
-        if (TryComputeMaterialTextureSampleInputs(
-                geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &localInputs))
+        if (TryComputeMaterialTextureSampleInputs(geomRef,
+                                                  static_cast<unsigned int>(hit.primitiveIndex),
+                                                  hit.barycentrics,
+                                                  &localInputs))
         {
             inputs = &localInputs;
         }
     }
 
     Vec4 sample = {};
-    if (inputs && TrySampleMaterialTextureSemantic(state, geomRef, hit, *inputs, kSemanticDiffuse, sample))
+    if (inputs &&
+        TrySampleMaterialTextureSemantic(state, geomRef, hit, *inputs, kSemanticDiffuse, sample))
     {
         material.baseColor = Vec3(sample.x, sample.y, sample.z);
     }
@@ -249,12 +256,13 @@ YBI_DEVICE EvaluatedMaterial EvaluateMaterial(State &state,
     {
         material.emissiveColor = Vec3(sample.x, sample.y, sample.z);
     }
-    if (inputs &&
-        TrySampleMaterialTextureSemantic(state, geomRef, hit, *inputs, kSemanticSpecularColor, sample))
+    if (inputs && TrySampleMaterialTextureSemantic(
+                      state, geomRef, hit, *inputs, kSemanticSpecularColor, sample))
     {
         material.specularColor = Vec3(sample.x, sample.y, sample.z);
     }
-    if (inputs && TrySampleMaterialTextureSemantic(state, geomRef, hit, *inputs, kSemanticIor, sample))
+    if (inputs &&
+        TrySampleMaterialTextureSemantic(state, geomRef, hit, *inputs, kSemanticIor, sample))
     {
         material.ior = sample.x;
     }
@@ -334,7 +342,8 @@ YBI_DEVICE void DebugPrintEvaluatedMaterial(const State &state,
            hit.primitiveIndex,
            geomRef.materialIndex,
            hit.t);
-    printf("  baseColor=(%.6f %.6f %.6f) emissiveColor=(%.6f %.6f %.6f) specularColor=(%.6f %.6f %.6f)\n",
+    printf("  baseColor=(%.6f %.6f %.6f) emissiveColor=(%.6f %.6f %.6f) specularColor=(%.6f %.6f "
+           "%.6f)\n",
            material.baseColor.x,
            material.baseColor.y,
            material.baseColor.z,
@@ -350,7 +359,8 @@ YBI_DEVICE void DebugPrintEvaluatedMaterial(const State &state,
            material.ior,
            material.opacity,
            material.opacityThreshold);
-    printf("  clearcoat=%.6f clearcoatRoughness=%.6f flags=%u useSpecularWorkflow=%u hasAuthoredUseSpecularWorkflow=%u\n",
+    printf("  clearcoat=%.6f clearcoatRoughness=%.6f flags=%u useSpecularWorkflow=%u "
+           "hasAuthoredUseSpecularWorkflow=%u\n",
            material.clearcoat,
            material.clearcoatRoughness,
            material.flags,
@@ -382,14 +392,12 @@ YBI_DEVICE bool ShouldAlphaCutout(const ShadowMaterial &material)
 
 YBI_DEVICE Vec3 ShadowTransmittance(const EvaluatedMaterial &material)
 {
-    const float transmission = Clamp(1.0f - material.opacity, 0.0f, 1.0f);
-    return Vec3(transmission, transmission, transmission);
+    return material.opacity >= 1.0f ? Vec3(0.0f, 0.0f, 0.0f) : Vec3(1.0f, 1.0f, 1.0f);
 }
 
 YBI_DEVICE Vec3 ShadowTransmittance(const ShadowMaterial &material)
 {
-    const float transmission = Clamp(1.0f - material.opacity, 0.0f, 1.0f);
-    return Vec3(transmission, transmission, transmission);
+    return material.opacity >= 1.0f ? Vec3(0.0f, 0.0f, 0.0f) : Vec3(1.0f, 1.0f, 1.0f);
 }
 
 template <typename State>
@@ -535,7 +543,7 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u ^
                (static_cast<unsigned int>(params.currentSpp) + 1u) * 83492791u);
 
-    for (int depth = 0; depth <= MaxInt(params.maxDepth, 0); ++depth)
+    for (int depth = 0; depth <= Max(params.maxDepth, 0); ++depth)
     {
         HitInfo hit = {};
         const bool hasSceneHit = state.TraceClosest(rayOrigin, rayDir, rayBias, 1.0e20f, &hit);
@@ -562,11 +570,8 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
 
         if (!hasSceneHit)
         {
-            const Vec3 missRadiance = EvaluateMissInfiniteLightRadiance(state,
-                                                                        rayDir,
-                                                                        currentRayHasBsdfContext,
-                                                                        currentRaySkipNeeMis,
-                                                                        currentRayBsdfPdf);
+            const Vec3 missRadiance = EvaluateMissInfiniteLightRadiance(
+                state, rayDir, currentRayHasBsdfContext, currentRaySkipNeeMis, currentRayBsdfPdf);
             const Vec3 contribution = throughput * missRadiance;
             radiance = radiance + contribution;
             const PackedLight *lights = GetPackedLights(params);
@@ -603,8 +608,10 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         PreparedMaterial preparedMaterial = {};
         MaterialTextureSampleInputs sampleInputs = {};
         MaterialTextureSampleInputs *sampleInputsPtr = nullptr;
-        if (TryComputeMaterialTextureSampleInputs(
-                geomRef, static_cast<unsigned int>(hit.primitiveIndex), hit.barycentrics, &sampleInputs))
+        if (TryComputeMaterialTextureSampleInputs(geomRef,
+                                                  static_cast<unsigned int>(hit.primitiveIndex),
+                                                  hit.barycentrics,
+                                                  &sampleInputs))
         {
             sampleInputsPtr = &sampleInputs;
         }
@@ -628,8 +635,12 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
         {
             const Vec3 contribution = throughput * preparedMaterial.emissiveColor;
             radiance = radiance + contribution;
-            DebugPrintEmissionContribution(
-                params, launchIndex, depth, throughput, preparedMaterial.emissiveColor, contribution);
+            DebugPrintEmissionContribution(params,
+                                           launchIndex,
+                                           depth,
+                                           throughput,
+                                           preparedMaterial.emissiveColor,
+                                           contribution);
         }
 
         DirectLightSample lightSample = {};
@@ -661,11 +672,10 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
                                               (misWeight / MaxFloat(lightSample.pdf, 1.0e-6f));
                     radiance = radiance + contribution;
                     const PackedLight *lights = GetPackedLights(params);
-                    const unsigned int lightType =
-                        (lights && lightSample.lightIndex >= 0 &&
-                         lightSample.lightIndex < params.lightCount)
-                            ? lights[lightSample.lightIndex].type
-                            : 0u;
+                    const unsigned int lightType = (lights && lightSample.lightIndex >= 0 &&
+                                                    lightSample.lightIndex < params.lightCount)
+                                                       ? lights[lightSample.lightIndex].type
+                                                       : 0u;
                     DebugPrintLightContribution(params,
                                                 launchIndex,
                                                 "direct",
@@ -708,11 +718,10 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
                                               (misWeight / MaxFloat(domeSample.pdf, 1.0e-6f));
                     radiance = radiance + contribution;
                     const PackedLight *lights = GetPackedLights(params);
-                    const unsigned int lightType =
-                        (lights && domeSample.lightIndex >= 0 &&
-                         domeSample.lightIndex < params.lightCount)
-                            ? lights[domeSample.lightIndex].type
-                            : 0u;
+                    const unsigned int lightType = (lights && domeSample.lightIndex >= 0 &&
+                                                    domeSample.lightIndex < params.lightCount)
+                                                       ? lights[domeSample.lightIndex].type
+                                                       : 0u;
                     DebugPrintLightContribution(params,
                                                 launchIndex,
                                                 "dome",
@@ -731,7 +740,7 @@ YBI_DEVICE Vec3 IntegratorPathTrace(State &state, const Vec3 &origin, const Vec3
             }
         }
 
-        if (depth >= MaxInt(params.maxDepth, 0))
+        if (depth >= Max(params.maxDepth, 0))
         {
             break;
         }

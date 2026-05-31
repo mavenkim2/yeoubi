@@ -30,8 +30,7 @@ uint64_t MaterialTextureInputBytes(const MaterialTextureInput &input)
 
 uint64_t MaterialInfoBytes(const MaterialInfo &material)
 {
-    uint64_t bytes = StringBytes(material.materialPath) + StringBytes(material.ntcDiffuseFile) +
-                     StringBytes(material.ntcDiffuseTextureName) + sizeof(material.packed);
+    uint64_t bytes = StringBytes(material.materialPath) + sizeof(material.packed);
     for (const MaterialTextureInput &input : material.textureInputs)
     {
         bytes += MaterialTextureInputBytes(input);

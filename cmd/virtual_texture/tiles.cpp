@@ -1,4 +1,4 @@
-#include "../usd_ntc_encode/shared.h"
+#include "shared.h"
 #include "exr_mips.h"
 #include "tile_binary_detail.h"
 #include "texture/path_utils.h"
@@ -261,7 +261,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
         {
             const std::string &inputName = kv.first;
             const std::string &texturePath = kv.second.texturePath;
-            const std::string basePathNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
+            const std::string basePathNoUdim = ybi::texture::StripUdimFromPath(texturePath);
             TextureGroup &group = groups[basePathNoUdim];
             group.basePathNoUdim = basePathNoUdim;
             if (group.texturePath.empty())
@@ -318,7 +318,7 @@ bool PrepareTexturesForStreamingTiles(const std::vector<MaterialChannels> &mater
 
         std::vector<std::pair<uint32_t, std::string>> udimPaths;
         std::string reason;
-        if (!ybi::usd_ntc::CollectUdimPaths(group.texturePath, udimPaths, reason))
+        if (!ybi::texture::CollectUdimPaths(group.texturePath, udimPaths, reason))
         {
             if (reason.rfind("missing texture file ", 0) == 0 ||
                 reason.rfind("no UDIM files found for ", 0) == 0)

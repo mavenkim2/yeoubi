@@ -16,4 +16,9 @@ YBI_DEVICE float Lerp(const float a, const float b, float t)
     return a * (1.0f - t) + b * t;
 }
 
+YBI_DEVICE int Max(int a, int b)
+{
+    return a > b ? a : b;
+}
+
 } // namespace ybi

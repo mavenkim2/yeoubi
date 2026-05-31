@@ -47,10 +47,6 @@
 #include <vector>
 #include <tbb/parallel_for.h>
 
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-#include "../../tests/bvh/optix/optix_ntc_runtime.h"
-#endif
-
 using namespace ybi;
 
 #ifndef YBI_OPTIX_PRIMARY_PTX_PATH
@@ -94,7 +90,6 @@ struct CliOptions
     std::string usdCamera;
     int spp = 1;
     int maxDepth = 4;
-    bool useNtc = false;
     bool virtualTexture = false;
     std::string virtualTextureTilesDir;
     uint64_t virtualTextureCacheBytes = 0u;
@@ -680,7 +675,7 @@ static void PrintUsage(const char *exeName)
     printf("Usage: %s [--file path] [--out path] "
            "[--integrator primary|ao|path] [--spp N] [--max-depth N] "
            "[--device gpu|cpu] [--cam-pos x y z] [--look-at x y z] [--camera path-or-name] "
-           "[--ntc] [--view name] "
+           "[--view name] "
            "[--purposes csv] [--purpose name]\n",
            exeName);
     printf("  --file USDA/USD path\n");
@@ -692,7 +687,6 @@ static void PrintUsage(const char *exeName)
     printf("  --cam-pos optional camera position override\n");
     printf("  --look-at optional look-at target (default bounds center)\n");
     printf("  --camera optional USD camera prim path or unique suffix/name\n");
-    printf("  --ntc enable USD NTC decode path (falls back to image textures)\n");
     printf("  --virtual-texture run feedback prepass raygen before beauty\n");
     printf("  --vt-tiles-dir path to *.tiles.bin directory for --virtual-texture\n");
     printf("  --vt-cache-bytes byte budget for stream-page physical cache\n");
@@ -841,11 +835,6 @@ static CliOptions ParseCli(int argc, char **argv)
         {
             PrintUsage(argv[0]);
             std::exit(0);
-        }
-        if (arg == "--ntc")
-        {
-            options.useNtc = true;
-            continue;
         }
         if (arg == "--virtual-texture")
         {
@@ -1238,7 +1227,7 @@ static bool DecodeImageTextures(const std::vector<MaterialInfo> &materials,
             std::vector<std::pair<uint32_t, std::string>> udimPaths;
             std::string udimReason;
             const auto udimStart = Clock::now();
-            if (!ybi::usd_ntc::CollectUdimPaths(input.texturePath, udimPaths, udimReason))
+            if (!ybi::texture::CollectUdimPaths(input.texturePath, udimPaths, udimReason))
             {
                 std::printf(
                     "Image runtime: failed to resolve UDIMs for material %zu input %s (%s): %s\n",
@@ -2485,11 +2474,6 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
 
     if (options.virtualTexture)
     {
-        if (options.useNtc)
-        {
-            std::fprintf(stderr,
-                         "virtual-texture: ignoring --ntc; strict VT path uses tile bins only\n");
-        }
         if (options.virtualTextureTilesDir.empty())
         {
             std::fprintf(stderr, "virtual-texture: --vt-tiles-dir is required\n");
@@ -2566,57 +2550,6 @@ static bool UploadScenePhase(Device *device, const CliOptions &options, HarnessS
             fprintf(stderr, "Image runtime decode failed.\n");
             return false;
         }
-#if defined(YBI_OPTIX_HARNESS_WITH_NTC)
-        if (options.useNtc)
-        {
-            std::vector<ybi::DecodedMaterialTexture> ntcTextures;
-            std::string ntcError;
-            if (testbvh::DecodeNtcDiffuseTextures(state->scenePool.materials, &ntcTextures, &ntcError))
-            {
-                int overrideCount = 0;
-                const size_t numMaterials =
-                    std::min(state->scenePool.materials.size(), ntcTextures.size());
-                for (size_t i = 0; i < numMaterials; ++i)
-                {
-                    if (!ntcTextures[i].valid)
-                    {
-                        continue;
-                    }
-                    const int slot =
-                        MaterialTextureSlotIndex(i, MaterialTextureSemantic::Diffuse, kUdimMin);
-                    YBI_ASSERT(slot >= 0 && static_cast<size_t>(slot) < state->decodedTextures.size());
-                    DecodedMaterialTexture &dst = state->decodedTextures[static_cast<size_t>(slot)];
-                    dst.valid = true;
-                    dst.udim = kUdimMin;
-                    dst.width = ntcTextures[i].width;
-                    dst.height = ntcTextures[i].height;
-                    dst.format = ntcTextures[i].format;
-                    dst.pixels = std::move(ntcTextures[i].pixels);
-                    dst.sourcePath = ntcTextures[i].sourcePath;
-                    dst.textureName = ntcTextures[i].textureName;
-                    const MaterialTextureInput *diffuse = FindTextureInputBySemantic(
-                        state->scenePool.materials[i], MaterialTextureSemantic::Diffuse);
-                    dst.wrapS = diffuse ? diffuse->wrapS : TEXTURE_WRAP_MODE_REPEAT;
-                    dst.wrapT = diffuse ? diffuse->wrapT : TEXTURE_WRAP_MODE_REPEAT;
-                    overrideCount++;
-                }
-                printf("NTC runtime: applied %d material overrides\n", overrideCount);
-            }
-            else
-            {
-                fprintf(stderr,
-                        "NTC runtime decode failed (continuing with image textures): %s\n",
-                        ntcError.c_str());
-            }
-        }
-#else
-        if (options.useNtc)
-        {
-            fprintf(stderr,
-                    "NTC runtime requested via --ntc, but harness built without WITH_NTC. "
-                    "Using image textures only.\n");
-        }
-#endif
         state->memoryStats.hostDecodedTextureBytes = 0u;
         for (const DecodedMaterialTexture &texture : state->decodedTextures)
         {

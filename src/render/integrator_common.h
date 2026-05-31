@@ -19,9 +19,6 @@ using ybi::Clamp;
 using ybi::Cross;
 using ybi::Dot;
 using ybi::FaceForward;
-using ybi::Vec2;
-using ybi::Vec3;
-using ybi::Vec4;
 using ybi::Length;
 using ybi::LengthSquared;
 using ybi::Lerp;
@@ -29,6 +26,9 @@ using ybi::Luminance;
 using ybi::MaxComponent;
 using ybi::Normalize;
 using ybi::Reflect;
+using ybi::Vec2;
+using ybi::Vec3;
+using ybi::Vec4;
 
 static constexpr int kSemanticDiffuse = 0;
 static constexpr int kSemanticRoughness = 1;
@@ -109,16 +109,6 @@ struct HitInfo
     bool hasTextureDifferentials = false;
 };
 
-YBI_DEVICE int ClampInt(int v, int lo, int hi)
-{
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
-YBI_DEVICE int MaxInt(int a, int b)
-{
-    return a > b ? a : b;
-}
-
 YBI_DEVICE int32_t FloatAsInt(float value)
 {
     union
@@ -149,10 +139,9 @@ YBI_DEVICE Vec3 OffsetRayOrigin(const Vec3 &point, const Vec3 &normal)
     const int32_t ofy = static_cast<int32_t>(kIntScale * normal.y);
     const int32_t ofz = static_cast<int32_t>(kIntScale * normal.z);
 
-    const Vec3 offsetPoint(
-        IntAsFloat(FloatAsInt(point.x) + (point.x < 0.0f ? -ofx : ofx)),
-        IntAsFloat(FloatAsInt(point.y) + (point.y < 0.0f ? -ofy : ofy)),
-        IntAsFloat(FloatAsInt(point.z) + (point.z < 0.0f ? -ofz : ofz)));
+    const Vec3 offsetPoint(IntAsFloat(FloatAsInt(point.x) + (point.x < 0.0f ? -ofx : ofx)),
+                           IntAsFloat(FloatAsInt(point.y) + (point.y < 0.0f ? -ofy : ofy)),
+                           IntAsFloat(FloatAsInt(point.z) + (point.z < 0.0f ? -ofz : ofz)));
 
     return Vec3(fabsf(point.x) < kOrigin ? point.x + kFloatScale * normal.x : offsetPoint.x,
                 fabsf(point.y) < kOrigin ? point.y + kFloatScale * normal.y : offsetPoint.y,
@@ -160,11 +149,10 @@ YBI_DEVICE Vec3 OffsetRayOrigin(const Vec3 &point, const Vec3 &normal)
 }
 
 YBI_DEVICE Vec3 OffsetRayOrigin(const Vec3 &point,
-                                       const Vec3 &geomNormal,
-                                       const Vec3 &rayDirection)
+                                const Vec3 &geomNormal,
+                                const Vec3 &rayDirection)
 {
-    const Vec3 offsetNormal =
-        Dot(geomNormal, rayDirection) >= 0.0f ? geomNormal : -geomNormal;
+    const Vec3 offsetNormal = Dot(geomNormal, rayDirection) >= 0.0f ? geomNormal : -geomNormal;
     return OffsetRayOrigin(point, offsetNormal);
 }
 

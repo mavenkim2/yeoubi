@@ -9,7 +9,7 @@
 
 namespace ybi
 {
-namespace usd_ntc
+namespace texture
 {
 
 static constexpr uint32_t kUdimMin = 1001;
@@ -165,5 +165,5 @@ bool CollectUdimPaths(const std::string &path,
     return false;
 }
 
-} // namespace usd_ntc
+} // namespace texture
 } // namespace ybi

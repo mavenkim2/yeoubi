@@ -64,6 +64,15 @@ struct DeviceTexture
     bool valid = false;
 };
 
+struct DeviceTextureV2
+{
+    uint64_t handle;
+    uint64_t allocation;
+    uint32_t width;
+    uint32_t height;
+    TextureFormat format;
+};
+
 struct Device
 {
     virtual ~Device() = default;
@@ -79,12 +88,10 @@ struct Device
 
     virtual DeviceMemoryView<uint8_t> AllocBytes(size_t numBytes) = 0;
     virtual void FreeBytes(DeviceMemoryView<uint8_t> &view) = 0;
-    virtual void CopyBytesToDevice(DeviceMemoryView<uint8_t> dst,
-                                   const void *src,
-                                   size_t numBytes) = 0;
-    virtual void CopyBytesToHost(void *dst,
-                                 DeviceMemoryView<const uint8_t> src,
-                                 size_t numBytes) = 0;
+    virtual void
+    CopyBytesToDevice(DeviceMemoryView<uint8_t> dst, const void *src, size_t numBytes) = 0;
+    virtual void
+    CopyBytesToHost(void *dst, DeviceMemoryView<const uint8_t> src, size_t numBytes) = 0;
     virtual bool CreateTexture(const DeviceTextureCreateInfo &info,
                                DeviceTexture *outTexture,
                                std::string *outError) = 0;

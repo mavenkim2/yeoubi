@@ -1,24 +1,15 @@
 #pragma once
 
-#include <stdint.h>
 #include <math.h>
+#include <stdint.h>
 
 #include "device/util.h"
+#include "util/math_common.h"
 
 namespace ybi
 {
 namespace texture
 {
-
-YBI_DEVICE int VtClampInt(int v, int lo, int hi)
-{
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
-YBI_DEVICE int VtMaxInt(int a, int b)
-{
-    return a > b ? a : b;
-}
 
 YBI_DEVICE unsigned long long PackVirtualTextureKey(unsigned int tileX,
                                                     unsigned int tileY,
@@ -67,12 +58,12 @@ YBI_DEVICE int UdimFromUV(float u, float v)
 
 YBI_DEVICE unsigned int UdimBitsFromUdim(int udim)
 {
-    return static_cast<unsigned int>(VtClampInt(udim - 1001, 0, 127));
+    return static_cast<unsigned int>(Clamp(udim - 1001, 0, 127));
 }
 
 YBI_DEVICE int UdimSlotFromUdim(int udim, int stride)
 {
-    return VtClampInt(udim - 1001, 0, VtMaxInt(stride - 1, 0));
+    return Clamp(udim - 1001, 0, Max(stride - 1, 0));
 }
 
 YBI_DEVICE float UnitUV(float v)
@@ -82,14 +73,14 @@ YBI_DEVICE float UnitUV(float v)
 
 YBI_DEVICE int TexelFromUnitUV(float unit, int textureSize)
 {
-    const int maxTexel = VtMaxInt(textureSize - 1, 0);
-    return VtClampInt(int(floorf(unit * float(textureSize))), 0, maxTexel);
+    const int maxTexel = Max(textureSize - 1, 0);
+    return Clamp(int(floorf(unit * float(textureSize))), 0, maxTexel);
 }
 
 YBI_DEVICE unsigned int TileCoordFromTexel(int texel, int tileSize)
 {
-    const int safeTileSize = VtMaxInt(tileSize, 1);
-    return static_cast<unsigned int>(VtClampInt(texel / safeTileSize, 0, 511));
+    const int safeTileSize = Max(tileSize, 1);
+    return static_cast<unsigned int>(Clamp(texel / safeTileSize, 0, 511));
 }
 
 } // namespace texture

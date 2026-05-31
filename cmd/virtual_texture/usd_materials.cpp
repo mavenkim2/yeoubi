@@ -1,7 +1,6 @@
 #include "shared.h"
 #include "io/usd/asset_path_resolve.h"
 
-#include <pxr/usd/sdf/valueTypeName.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/imageable.h>
@@ -230,7 +229,7 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
         pxr::UsdShadeShader surface = material.ComputeSurfaceSource();
         if (!surface)
         {
-            std::printf("NTC gather: material %s has no surface source\n", item.materialPath.c_str());
+            std::printf("Texture gather: material %s has no surface source\n", item.materialPath.c_str());
             out.push_back(std::move(item));
             continue;
         }
@@ -239,7 +238,7 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
         surface.GetShaderId(&surfaceId);
         if (surfaceId != pxr::TfToken("UsdPreviewSurface"))
         {
-            std::printf("NTC gather: material %s unsupported surface shader %s\n",
+            std::printf("Texture gather: material %s unsupported surface shader %s\n",
                         item.materialPath.c_str(),
                         surfaceId.GetText());
             out.push_back(std::move(item));
@@ -261,7 +260,7 @@ std::vector<MaterialChannels> CollectMaterialChannels(const pxr::UsdStageRefPtr 
             }
             else
             {
-                std::printf("NTC gather: material %s input %s skipped (%s)\n",
+                std::printf("Texture gather: material %s input %s skipped (%s)\n",
                             item.materialPath.c_str(),
                             input.GetBaseName().GetText(),
                             reason.c_str());
@@ -294,68 +293,3 @@ std::string Sanitize(const std::string &s)
     return out;
 }
 
-bool WriteNtcBindingsToUsd(const pxr::UsdStageRefPtr &stage,
-                           const std::unordered_map<std::string, std::string> &materialToNtcFile,
-                           const std::string &outUsdPath,
-                           std::string *outError)
-{
-    if (!stage)
-    {
-        if (outError)
-        {
-            *outError = "null USD stage";
-        }
-        return false;
-    }
-    if (outUsdPath.empty())
-    {
-        if (outError)
-        {
-            *outError = "empty output USD path";
-        }
-        return false;
-    }
-
-    const pxr::TfToken fileToken("ybi:ntc:diffuseFile");
-    const pxr::TfToken texNameToken("ybi:ntc:diffuseTextureName");
-    int authoredCount = 0;
-    for (const auto &kv : materialToNtcFile)
-    {
-        const std::string &materialPath = kv.first;
-        const std::string &ntcFile = kv.second;
-        if (materialPath.empty() || ntcFile.empty())
-        {
-            continue;
-        }
-
-        pxr::UsdPrim materialPrim = stage->GetPrimAtPath(pxr::SdfPath(materialPath));
-        if (!materialPrim || !materialPrim.IsA<pxr::UsdShadeMaterial>())
-        {
-            std::printf("NTC USD write: material missing %s\n", materialPath.c_str());
-            continue;
-        }
-
-        pxr::UsdAttribute fileAttr = materialPrim.CreateAttribute(
-            fileToken, pxr::SdfValueTypeNames->Asset, true);
-        fileAttr.Set(pxr::SdfAssetPath(ntcFile));
-
-        pxr::UsdAttribute texNameAttr = materialPrim.CreateAttribute(
-            texNameToken, pxr::SdfValueTypeNames->String, true);
-        texNameAttr.Set(std::string("diffuseColor"));
-        authoredCount++;
-    }
-
-    if (!stage->Export(outUsdPath))
-    {
-        if (outError)
-        {
-            *outError = "stage export failed: " + outUsdPath;
-        }
-        return false;
-    }
-
-std::printf("NTC USD write: authored bindings=%d exported=%s\n",
-                authoredCount,
-                outUsdPath.c_str());
-    return true;
-}

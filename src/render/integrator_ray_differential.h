@@ -299,7 +299,7 @@ YBI_DEVICE bool ApproximateDpDxy(const LaunchParams &params,
     const Float4x4 cameraFromDownZ = Transpose(downZFromCamera);
     const Vec3 dpdxCamera = TransformVectorAffine(cameraFromDownZ, px - pDownZ);
     const Vec3 dpdyCamera = TransformVectorAffine(cameraFromDownZ, py - pDownZ);
-    const float sppScale = fmaxf(0.125f, 1.0f / sqrtf(float(MaxInt(samplesPerPixel, 1))));
+    const float sppScale = fmaxf(0.125f, 1.0f / sqrtf(float(Max(samplesPerPixel, 1))));
     *outDpdx = sppScale * TransformVectorAffine(params.worldFromCamera, dpdxCamera);
     *outDpdy = sppScale * TransformVectorAffine(params.worldFromCamera, dpdyCamera);
     return IsFiniteVec3(*outDpdx) && IsFiniteVec3(*outDpdy);

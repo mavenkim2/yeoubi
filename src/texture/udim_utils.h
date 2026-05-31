@@ -7,7 +7,7 @@
 
 namespace ybi
 {
-namespace usd_ntc
+namespace texture
 {
 
 bool TryFindUdimDigits(const std::string &path, uint32_t &udim, size_t &digitPos);
@@ -16,5 +16,5 @@ bool CollectUdimPaths(const std::string &path,
                       std::vector<std::pair<uint32_t, std::string>> &out,
                       std::string &reason);
 
-} // namespace usd_ntc
+} // namespace texture
 } // namespace ybi

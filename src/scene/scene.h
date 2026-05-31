@@ -219,8 +219,6 @@ struct MaterialInfo
 {
     std::string materialPath;
     std::vector<MaterialTextureInput> textureInputs;
-    std::string ntcDiffuseFile;
-    std::string ntcDiffuseTextureName;
     PackedMaterial packed = {};
 };
 

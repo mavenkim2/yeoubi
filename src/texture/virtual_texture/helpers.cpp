@@ -34,7 +34,7 @@ std::string SanitizeTileStem(const std::string &path)
 std::string ResolveVirtualTextureTileBinPath(const std::string &tilesDir,
                                              const std::string &texturePath)
 {
-    const std::string baseNoUdim = ybi::usd_ntc::StripUdimFromPath(texturePath);
+    const std::string baseNoUdim = ybi::texture::StripUdimFromPath(texturePath);
     const std::string suffix =
         SanitizeTileStem(std::filesystem::path(baseNoUdim).filename().string()) + ".tiles.bin";
     std::filesystem::path bestMatch = {};

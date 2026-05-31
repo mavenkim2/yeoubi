@@ -171,8 +171,8 @@ if (WITH_USD)
 
     add_executable(yeoubi_usd_tile_prepare
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/main.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/cli.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/usd_ntc_encode/usd.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/cli.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/usd_materials.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tiles.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/exr_mips.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_pixels.cpp
@@ -194,27 +194,23 @@ if (WITH_USD)
     target_include_directories(yeoubi_usd_tile_prepare SYSTEM PRIVATE ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES})
     target_link_libraries(yeoubi_usd_tile_prepare PRIVATE ${OPENUSD_LIBRARIES})
 
-    if (YBI_HAS_CUDA AND WITH_NTC)
-        add_executable(yeoubi_tile_verify
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_verify.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/exr_mips.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_pixels.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary_detail.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
-        target_compile_definitions(yeoubi_tile_verify PRIVATE ${YBI_COMPILE_DEFINITIONS})
-        if (WIN32)
-            target_compile_definitions(yeoubi_tile_verify PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-        endif()
-        target_include_directories(yeoubi_tile_verify PRIVATE
-            ${YBI_INCLUDE_DIRECTORIES}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz)
-    else()
-        message(STATUS "CUDA/NTC not found; yeoubi_usd_ntc_encode disabled.")
+    add_executable(yeoubi_tile_verify
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_verify.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/exr_mips.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_pixels.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmd/virtual_texture/tile_binary_detail.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/exr_io.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/texture/udim_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz/miniz.c)
+    target_compile_definitions(yeoubi_tile_verify PRIVATE ${YBI_COMPILE_DEFINITIONS})
+    if (WIN32)
+        target_compile_definitions(yeoubi_tile_verify PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
+    target_include_directories(yeoubi_tile_verify PRIVATE
+        ${YBI_INCLUDE_DIRECTORIES}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/tinyexr/deps/miniz)
 endif()
 
 if (MESHOPTIMIZER_FOUND)
@@ -299,7 +295,6 @@ if (CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
             "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
             "-I${OPTIX_INCLUDE_DIR}"
             "-I${YBI_CUDA_INCLUDE_DIR}"
-            "-I${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/RTXNTC/libraries/RTXNTC-Library/include"
             "-I${OPENPBR_BSDF_INCLUDE_DIR}"
             "-o" "${YBI_OPTIX_PRIMARY_PTX_PATH}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_primary_programs.cu"
@@ -369,13 +364,5 @@ if (WITH_USD)
         target_link_libraries(yeoubi_template_harness PRIVATE ${OPENCOLORIO_LIBRARIES})
     else()
         message(FATAL_ERROR "OpenColorIO submodule is required for yeoubi_template_harness")
-    endif()
-
-    if (WITH_NTC AND CMAKE_CUDA_COMPILER AND OPTIX_FOUND)
-        target_sources(yeoubi_template_harness PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/bvh/optix/optix_ntc_runtime.cpp)
-        target_compile_definitions(yeoubi_template_harness PRIVATE YBI_OPTIX_HARNESS_WITH_NTC=1)
-        target_include_directories(yeoubi_template_harness PRIVATE ${NTC_INCLUDE_DIRS})
-        target_link_libraries(yeoubi_template_harness PRIVATE ${NTC_LIBRARIES})
     endif()
 endif()

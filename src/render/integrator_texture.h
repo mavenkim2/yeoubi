@@ -5,6 +5,7 @@
 #include "render/launch_params.h"
 #include "texture/virtual_texture/key.h"
 #include "util/half_float.h"
+#include "util/math_common.h"
 
 namespace ybi
 {
@@ -15,22 +16,19 @@ namespace integrator
 
 template <typename State>
 YBI_DEVICE void TryWriteTextureFeedback(State &state,
-                                               const LaunchParams::InstanceGeomRef &geomRef,
-                                               int semantic,
-                                               unsigned int primitiveIndex,
-                                               float wrappedU,
-                                               float wrappedV,
-                                               int textureWidth,
-                                               int textureHeight,
-                                               unsigned int udimBits,
-                                               unsigned int mip);
+                                        const LaunchParams::InstanceGeomRef &geomRef,
+                                        int semantic,
+                                        unsigned int primitiveIndex,
+                                        float wrappedU,
+                                        float wrappedV,
+                                        int textureWidth,
+                                        int textureHeight,
+                                        unsigned int udimBits,
+                                        unsigned int mip);
 
 template <typename State>
-YBI_DEVICE bool TryComputeTextureMipLevelProfiled(State &state,
-                                                         const HitInfo &hit,
-                                                         int textureWidth,
-                                                         int textureHeight,
-                                                         unsigned int *outMip)
+YBI_DEVICE bool TryComputeTextureMipLevelProfiled(
+    State &state, const HitInfo &hit, int textureWidth, int textureHeight, unsigned int *outMip)
 {
     const unsigned long long start = state.BeginTextureMipTiming();
     const bool result = TryComputeTextureMipLevel(hit, textureWidth, textureHeight, outMip);
@@ -40,15 +38,15 @@ YBI_DEVICE bool TryComputeTextureMipLevelProfiled(State &state,
 
 template <typename State>
 YBI_DEVICE void TryWriteTextureFeedbackProfiled(State &state,
-                                                       const LaunchParams::InstanceGeomRef &geomRef,
-                                                       int semantic,
-                                                       unsigned int primitiveIndex,
-                                                       float wrappedU,
-                                                       float wrappedV,
-                                                       int textureWidth,
-                                                       int textureHeight,
-                                                       unsigned int udimBits,
-                                                       unsigned int mip)
+                                                const LaunchParams::InstanceGeomRef &geomRef,
+                                                int semantic,
+                                                unsigned int primitiveIndex,
+                                                float wrappedU,
+                                                float wrappedV,
+                                                int textureWidth,
+                                                int textureHeight,
+                                                unsigned int udimBits,
+                                                unsigned int mip)
 {
     const unsigned long long start = state.BeginFeedbackWriteTiming();
     TryWriteTextureFeedback(state,
@@ -67,8 +65,9 @@ YBI_DEVICE void TryWriteTextureFeedbackProfiled(State &state,
 YBI_DEVICE Vec3 MaterialSampleToColorForSemantic(int semantic, const Vec4 &sample)
 {
     if (semantic == kSemanticRoughness || semantic == kSemanticMetallic ||
-        semantic == kSemanticOcclusion || semantic == kSemanticIor || semantic == kSemanticOpacity ||
-        semantic == kSemanticClearcoat || semantic == kSemanticClearcoatRoughness)
+        semantic == kSemanticOcclusion || semantic == kSemanticIor ||
+        semantic == kSemanticOpacity || semantic == kSemanticClearcoat ||
+        semantic == kSemanticClearcoatRoughness)
     {
         return Vec3(sample.x, sample.x, sample.x);
     }
@@ -112,33 +111,38 @@ YBI_DEVICE bool DecodeTypedTextureSample(TextureFormat format,
     switch (format)
     {
         case TextureFormat::RGBA8_UNORM:
-            *outSample = ExpandTextureFormatSample(format,
-                                                  float(pixels[sampleOffset + 0ull]) * (1.0f / 255.0f),
-                                                  float(pixels[sampleOffset + 1ull]) * (1.0f / 255.0f),
-                                                  float(pixels[sampleOffset + 2ull]) * (1.0f / 255.0f),
-                                                  float(pixels[sampleOffset + 3ull]) * (1.0f / 255.0f));
+            *outSample =
+                ExpandTextureFormatSample(format,
+                                          float(pixels[sampleOffset + 0ull]) * (1.0f / 255.0f),
+                                          float(pixels[sampleOffset + 1ull]) * (1.0f / 255.0f),
+                                          float(pixels[sampleOffset + 2ull]) * (1.0f / 255.0f),
+                                          float(pixels[sampleOffset + 3ull]) * (1.0f / 255.0f));
             return true;
         case TextureFormat::R16_FLOAT:
         {
             const uint16_t *src = reinterpret_cast<const uint16_t *>(pixels + sampleOffset);
-            *outSample = ExpandTextureFormatSample(format, ybi::util::HalfBitsToFloat(src[0]), 0.0f, 0.0f, 1.0f);
+            *outSample = ExpandTextureFormatSample(
+                format, ybi::util::HalfBitsToFloat(src[0]), 0.0f, 0.0f, 1.0f);
             return true;
         }
         case TextureFormat::RG16_FLOAT:
         {
             const uint16_t *src = reinterpret_cast<const uint16_t *>(pixels + sampleOffset);
-            *outSample =
-                ExpandTextureFormatSample(format, ybi::util::HalfBitsToFloat(src[0]), ybi::util::HalfBitsToFloat(src[1]), 0.0f, 1.0f);
+            *outSample = ExpandTextureFormatSample(format,
+                                                   ybi::util::HalfBitsToFloat(src[0]),
+                                                   ybi::util::HalfBitsToFloat(src[1]),
+                                                   0.0f,
+                                                   1.0f);
             return true;
         }
         case TextureFormat::RGBA16_FLOAT:
         {
             const uint16_t *src = reinterpret_cast<const uint16_t *>(pixels + sampleOffset);
             *outSample = ExpandTextureFormatSample(format,
-                                                  ybi::util::HalfBitsToFloat(src[0]),
-                                                  ybi::util::HalfBitsToFloat(src[1]),
-                                                  ybi::util::HalfBitsToFloat(src[2]),
-                                                  ybi::util::HalfBitsToFloat(src[3]));
+                                                   ybi::util::HalfBitsToFloat(src[0]),
+                                                   ybi::util::HalfBitsToFloat(src[1]),
+                                                   ybi::util::HalfBitsToFloat(src[2]),
+                                                   ybi::util::HalfBitsToFloat(src[3]));
             return true;
         }
         case TextureFormat::R32_FLOAT:
@@ -165,16 +169,17 @@ YBI_DEVICE bool DecodeTypedTextureSample(TextureFormat format,
 }
 
 YBI_DEVICE uint32_t PackVirtualTexturePageEntry(unsigned int page,
-                                                       unsigned int physicalTextureID,
-                                                       unsigned int pageType)
+                                                unsigned int physicalTextureID,
+                                                unsigned int pageType)
 {
-    return ((page & 0xffu) << 0u) | ((physicalTextureID & 0x7fffffu) << 8u) | ((pageType & 0x1u) << 31u);
+    return ((page & 0xffu) << 0u) | ((physicalTextureID & 0x7fffffu) << 8u) |
+           ((pageType & 0x1u) << 31u);
 }
 
 YBI_DEVICE void UnpackVirtualTexturePageEntry(uint32_t packed,
-                                                     unsigned int *outPage,
-                                                     unsigned int *outPhysicalTextureID,
-                                                     unsigned int *outPageType)
+                                              unsigned int *outPage,
+                                              unsigned int *outPhysicalTextureID,
+                                              unsigned int *outPageType)
 {
     if (outPage)
     {
@@ -208,18 +213,18 @@ YBI_DEVICE bool IsUsableMaterialTextureRef(const LaunchParams::MaterialTextureRe
     return ref.width > 0 && ref.height > 0;
 }
 
-YBI_DEVICE bool ResolveMaterialTextureRefBase(
-    const LaunchParams &params,
-    const LaunchParams::InstanceGeomRef &geomRef,
-    int semantic,
-    const LaunchParams::MaterialTextureRef **outMaterialRefs,
-    int *outBase,
-    int *outMaxSlots)
+YBI_DEVICE bool
+ResolveMaterialTextureRefBase(const LaunchParams &params,
+                              const LaunchParams::InstanceGeomRef &geomRef,
+                              int semantic,
+                              const LaunchParams::MaterialTextureRef **outMaterialRefs,
+                              int *outBase,
+                              int *outMaxSlots)
 {
     if (!outMaterialRefs || !outBase || !outMaxSlots || params.materialTextureRefs == 0ull ||
         params.materialTextureRefCount <= 0 || params.materialTextureRefStride <= 0 ||
-        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount || semantic < 0 ||
-        semantic >= params.materialTextureRefSemanticCount)
+        geomRef.materialIndex < 0 || geomRef.materialIndex >= params.materialTextureRefCount ||
+        semantic < 0 || semantic >= params.materialTextureRefSemanticCount)
     {
         return false;
     }
@@ -233,23 +238,23 @@ YBI_DEVICE bool ResolveMaterialTextureRefBase(
     return true;
 }
 
-YBI_DEVICE bool ResolveMaterialTextureRefBase(
-    const LaunchParams &params,
-    const LaunchParams::InstanceGeomRef &geomRef,
-    const LaunchParams::MaterialTextureRef **outMaterialRefs,
-    int *outBase,
-    int *outMaxSlots)
+YBI_DEVICE bool
+ResolveMaterialTextureRefBase(const LaunchParams &params,
+                              const LaunchParams::InstanceGeomRef &geomRef,
+                              const LaunchParams::MaterialTextureRef **outMaterialRefs,
+                              int *outBase,
+                              int *outMaxSlots)
 {
     return ResolveMaterialTextureRefBase(
         params, geomRef, params.textureViewSemantic, outMaterialRefs, outBase, outMaxSlots);
 }
 
-YBI_DEVICE bool FetchMaterialTextureRefForUdimSlot(
-    const LaunchParams::MaterialTextureRef *materialRefs,
-    int base,
-    int maxSlots,
-    int udimSlot,
-    LaunchParams::MaterialTextureRef *outRef)
+YBI_DEVICE bool
+FetchMaterialTextureRefForUdimSlot(const LaunchParams::MaterialTextureRef *materialRefs,
+                                   int base,
+                                   int maxSlots,
+                                   int udimSlot,
+                                   LaunchParams::MaterialTextureRef *outRef)
 {
     if (!materialRefs || !outRef)
     {
@@ -266,12 +271,12 @@ YBI_DEVICE bool FetchMaterialTextureRefForUdimSlot(
     return true;
 }
 
-YBI_DEVICE bool FindFallbackMaterialTextureRef(
-    const LaunchParams &params,
-    const LaunchParams::MaterialTextureRef *materialRefs,
-    int base,
-    int maxSlots,
-    LaunchParams::MaterialTextureRef *outRef)
+YBI_DEVICE bool
+FindFallbackMaterialTextureRef(const LaunchParams &params,
+                               const LaunchParams::MaterialTextureRef *materialRefs,
+                               int base,
+                               int maxSlots,
+                               LaunchParams::MaterialTextureRef *outRef)
 {
     if (!materialRefs || !outRef)
     {
@@ -281,7 +286,8 @@ YBI_DEVICE bool FindFallbackMaterialTextureRef(
     for (int udimSlot = 0; udimSlot < params.materialTextureRefStride; ++udimSlot)
     {
         LaunchParams::MaterialTextureRef candidate = {};
-        if (!FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, udimSlot, &candidate))
+        if (!FetchMaterialTextureRefForUdimSlot(
+                materialRefs, base, maxSlots, udimSlot, &candidate))
         {
             continue;
         }
@@ -303,9 +309,11 @@ YBI_DEVICE bool SampleVirtualTexturePage(State &state,
                                          Vec4 &outSample)
 {
     const LaunchParams &params = state.Params();
-    if (params.virtualTexturePhysicalTextures == 0ull || params.virtualTexturePhysicalTextureCount <= 0 ||
+    if (params.virtualTexturePhysicalTextures == 0ull ||
+        params.virtualTexturePhysicalTextureCount <= 0 ||
         params.virtualTexturePhysicalPagesPerTexture <= 0 ||
-        physicalTextureID >= static_cast<unsigned int>(params.virtualTexturePhysicalTextureCount) ||
+        physicalTextureID >=
+            static_cast<unsigned int>(params.virtualTexturePhysicalTextureCount) ||
         page >= static_cast<unsigned int>(params.virtualTexturePhysicalPagesPerTexture))
     {
         return false;
@@ -323,27 +331,26 @@ YBI_DEVICE bool SampleVirtualTexturePage(State &state,
 
     LaunchParams::MaterialTextureRef textureRef = {};
     textureRef.textureObject = handle;
-    textureRef.width = params.virtualTexturePageSize * params.virtualTexturePhysicalPagesPerTexture;
+    textureRef.width =
+        params.virtualTexturePageSize * params.virtualTexturePhysicalPagesPerTexture;
     textureRef.height = params.virtualTexturePageSize;
     textureRef.valid = 1;
     textureRef.wrapS = static_cast<int>(DeviceTextureWrapMode::Clamp);
     textureRef.wrapT = static_cast<int>(DeviceTextureWrapMode::Clamp);
     textureRef.format = static_cast<TextureFormat>(formats[physicalTextureID]);
 
-    const float u =
-        (float(page * static_cast<unsigned int>(params.virtualTexturePageSize) +
-               static_cast<unsigned int>(localX)) +
-         0.5f) /
-        float(textureRef.width);
+    const float u = (float(page * static_cast<unsigned int>(params.virtualTexturePageSize) +
+                           static_cast<unsigned int>(localX)) +
+                     0.5f) /
+                    float(textureRef.width);
     const float v = (float(localY) + 0.5f) / float(textureRef.height);
     return state.SampleTexture2D(textureRef, u, v, outSample);
 }
 
-YBI_DEVICE bool TryComputeMaterialTextureSampleInputs(
-    const LaunchParams::InstanceGeomRef &geomRef,
-    unsigned int primitiveIndex,
-    const Vec3 &barycentrics,
-    MaterialTextureSampleInputs *outInputs)
+YBI_DEVICE bool TryComputeMaterialTextureSampleInputs(const LaunchParams::InstanceGeomRef &geomRef,
+                                                      unsigned int primitiveIndex,
+                                                      const Vec3 &barycentrics,
+                                                      MaterialTextureSampleInputs *outInputs)
 {
     if (!outInputs || geomRef.texcoords == 0ull || geomRef.texcoordIndices == 0ull)
     {
@@ -381,24 +388,26 @@ YBI_DEVICE bool TryComputeMaterialTextureSampleInputs(
     return true;
 }
 
-YBI_DEVICE bool ResolveVirtualTextureTextureMeta(
-    const LaunchParams &params,
-    const LaunchParams::InstanceGeomRef &geomRef,
-    int semantic,
-    const LaunchParams::VirtualTextureTextureMeta **outMeta)
+YBI_DEVICE bool
+ResolveVirtualTextureTextureMeta(const LaunchParams &params,
+                                 const LaunchParams::InstanceGeomRef &geomRef,
+                                 int semantic,
+                                 const LaunchParams::VirtualTextureTextureMeta **outMeta)
 {
     if (params.virtualTextureTextureMeta == 0ull || geomRef.materialIndex < 0 || semantic < 0 ||
         semantic >= params.materialTextureRefSemanticCount)
     {
         return false;
     }
-    const int textureId = geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic;
+    const int textureId =
+        geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic;
     if (textureId < 0 || textureId >= params.virtualTextureTextureMetaCount)
     {
         return false;
     }
     const LaunchParams::VirtualTextureTextureMeta *textures =
-        reinterpret_cast<const LaunchParams::VirtualTextureTextureMeta *>(params.virtualTextureTextureMeta);
+        reinterpret_cast<const LaunchParams::VirtualTextureTextureMeta *>(
+            params.virtualTextureTextureMeta);
     if (outMeta)
     {
         *outMeta = &textures[textureId];
@@ -406,10 +415,10 @@ YBI_DEVICE bool ResolveVirtualTextureTextureMeta(
     return true;
 }
 
-YBI_DEVICE bool TryResolveVirtualTextureLocalUdim(
-    const LaunchParams::VirtualTextureTextureMeta &meta,
-    unsigned int udimBits,
-    unsigned int *outLocalUdim)
+YBI_DEVICE bool
+TryResolveVirtualTextureLocalUdim(const LaunchParams::VirtualTextureTextureMeta &meta,
+                                  unsigned int udimBits,
+                                  unsigned int *outLocalUdim)
 {
     if (udimBits >= 128u)
     {
@@ -427,17 +436,17 @@ YBI_DEVICE bool TryResolveVirtualTextureLocalUdim(
     return true;
 }
 
-YBI_DEVICE bool ResolveVirtualTextureUdimBits(
-    const LaunchParams &params,
-    const LaunchParams::InstanceGeomRef &geomRef,
-    int semantic,
-    float u,
-    float v,
-    float wrappedU,
-    float wrappedV,
-    const LaunchParams::VirtualTextureTextureMeta **outMeta,
-    unsigned int *outUdimBits,
-    unsigned int *outLocalUdim)
+YBI_DEVICE bool
+ResolveVirtualTextureUdimBits(const LaunchParams &params,
+                              const LaunchParams::InstanceGeomRef &geomRef,
+                              int semantic,
+                              float u,
+                              float v,
+                              float wrappedU,
+                              float wrappedV,
+                              const LaunchParams::VirtualTextureTextureMeta **outMeta,
+                              unsigned int *outUdimBits,
+                              unsigned int *outLocalUdim)
 {
     const LaunchParams::VirtualTextureTextureMeta *meta = nullptr;
     if (!ResolveVirtualTextureTextureMeta(params, geomRef, semantic, &meta) || !meta)
@@ -445,8 +454,7 @@ YBI_DEVICE bool ResolveVirtualTextureUdimBits(
         return false;
     }
 
-    const unsigned int rawBits =
-        ybi::texture::UdimBitsFromUdim(ybi::texture::UdimFromUV(u, v));
+    const unsigned int rawBits = ybi::texture::UdimBitsFromUdim(ybi::texture::UdimFromUV(u, v));
     unsigned int localUdim = 0u;
     if (TryResolveVirtualTextureLocalUdim(*meta, rawBits, &localUdim))
     {
@@ -486,17 +494,17 @@ YBI_DEVICE bool ResolveVirtualTextureUdimBits(
     return false;
 }
 
-YBI_DEVICE bool TryResolveVirtualTextureTailSample(
-    const LaunchParams::VirtualTextureTextureMeta *meta,
-    unsigned int localUdim,
-    float wrappedU,
-    float wrappedV,
-    int tileSize,
-    const unsigned char **outSamplePixels,
-    unsigned long long *outSampleOffset)
+YBI_DEVICE bool
+TryResolveVirtualTextureTailSample(const LaunchParams::VirtualTextureTextureMeta *meta,
+                                   unsigned int localUdim,
+                                   float wrappedU,
+                                   float wrappedV,
+                                   int tileSize,
+                                   const unsigned char **outSamplePixels,
+                                   unsigned long long *outSampleOffset)
 {
-    if (!meta || !outSamplePixels || !outSampleOffset || meta->tailPixels == 0ull || meta->tailPageCountX == 0u ||
-        meta->tailPageCountY == 0u)
+    if (!meta || !outSamplePixels || !outSampleOffset || meta->tailPixels == 0ull ||
+        meta->tailPageCountX == 0u || meta->tailPageCountY == 0u)
     {
         return false;
     }
@@ -508,7 +516,7 @@ YBI_DEVICE bool TryResolveVirtualTextureTailSample(
         return false;
     }
 
-    const int safeTileSize = MaxInt(tileSize, 1);
+    const int safeTileSize = Max(tileSize, 1);
     const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, safeTileSize);
     const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, safeTileSize);
     const unsigned int fallbackPageX = localUdim % meta->tailPageCountX;
@@ -519,12 +527,15 @@ YBI_DEVICE bool TryResolveVirtualTextureTailSample(
     }
 
     const unsigned long long pageIndex =
-        static_cast<unsigned long long>(fallbackPageY) * static_cast<unsigned long long>(meta->tailPageCountX) +
+        static_cast<unsigned long long>(fallbackPageY) *
+            static_cast<unsigned long long>(meta->tailPageCountX) +
         static_cast<unsigned long long>(fallbackPageX);
     const TextureFormat pixelFormat = static_cast<TextureFormat>(meta->pixelFormat);
-    const unsigned long long texelBytes = static_cast<unsigned long long>(TextureFormatPixelBytes(pixelFormat));
-    const unsigned long long pageBytes =
-        static_cast<unsigned long long>(safeTileSize) * static_cast<unsigned long long>(safeTileSize) * texelBytes;
+    const unsigned long long texelBytes =
+        static_cast<unsigned long long>(TextureFormatPixelBytes(pixelFormat));
+    const unsigned long long pageBytes = static_cast<unsigned long long>(safeTileSize) *
+                                         static_cast<unsigned long long>(safeTileSize) *
+                                         texelBytes;
     const unsigned long long sampleOffset =
         pageIndex * pageBytes +
         (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(safeTileSize) +
@@ -536,17 +547,17 @@ YBI_DEVICE bool TryResolveVirtualTextureTailSample(
 }
 
 YBI_DEVICE bool ResolveVirtualTextureInfo(const LaunchParams &params,
-                                                 const LaunchParams::InstanceGeomRef &geomRef,
-                                                 int semantic,
-                                                 unsigned int mip,
-                                                 unsigned int udimBits,
-                                                 unsigned int tileX,
-                                                 unsigned int tileY,
-                                                 const LaunchParams::VirtualTextureTextureMeta **outMeta,
-                                                 const LaunchParams::VirtualTextureMipInfo **outMipInfo,
-                                                 unsigned int *outLocalUdim,
-                                                 unsigned int *outVax,
-                                                 unsigned int *outVay)
+                                          const LaunchParams::InstanceGeomRef &geomRef,
+                                          int semantic,
+                                          unsigned int mip,
+                                          unsigned int udimBits,
+                                          unsigned int tileX,
+                                          unsigned int tileY,
+                                          const LaunchParams::VirtualTextureTextureMeta **outMeta,
+                                          const LaunchParams::VirtualTextureMipInfo **outMipInfo,
+                                          unsigned int *outLocalUdim,
+                                          unsigned int *outVax,
+                                          unsigned int *outVay)
 {
     if (params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull ||
         params.virtualTextureUdimInfos == 0ull)
@@ -571,9 +582,10 @@ YBI_DEVICE bool ResolveVirtualTextureInfo(const LaunchParams &params,
     }
 
     const LaunchParams::VirtualTextureMipInfo *mipInfos =
-        reinterpret_cast<const LaunchParams::VirtualTextureMipInfo *>(params.virtualTextureMipInfos);
+        reinterpret_cast<const LaunchParams::VirtualTextureMipInfo *>(
+            params.virtualTextureMipInfos);
     const unsigned int mipInfoIndex = meta.mipInfoOffset + mip;
-    if (mipInfoIndex >= static_cast<unsigned int>(MaxInt(params.virtualTextureMipInfoCount, 0)))
+    if (mipInfoIndex >= static_cast<unsigned int>(Max(params.virtualTextureMipInfoCount, 0)))
     {
         return false;
     }
@@ -583,14 +595,15 @@ YBI_DEVICE bool ResolveVirtualTextureInfo(const LaunchParams &params,
         return false;
     }
     const LaunchParams::VirtualTextureUdimInfo *udimInfos =
-        reinterpret_cast<const LaunchParams::VirtualTextureUdimInfo *>(params.virtualTextureUdimInfos);
-    const unsigned int udimInfoIndex = mipInfo.udimInfoOffset + static_cast<unsigned int>(localUdim);
-    if (udimInfoIndex >= static_cast<unsigned int>(MaxInt(params.virtualTextureUdimInfoCount, 0)))
+        reinterpret_cast<const LaunchParams::VirtualTextureUdimInfo *>(
+            params.virtualTextureUdimInfos);
+    const unsigned int udimInfoIndex =
+        mipInfo.udimInfoOffset + static_cast<unsigned int>(localUdim);
+    if (udimInfoIndex >= static_cast<unsigned int>(Max(params.virtualTextureUdimInfoCount, 0)))
     {
         return false;
     }
-    const LaunchParams::VirtualTextureUdimInfo &udimInfo =
-        udimInfos[udimInfoIndex];
+    const LaunchParams::VirtualTextureUdimInfo &udimInfo = udimInfos[udimInfoIndex];
     if (tileX >= udimInfo.pageCountX || tileY >= udimInfo.pageCountY)
     {
         return false;
@@ -598,7 +611,8 @@ YBI_DEVICE bool ResolveVirtualTextureInfo(const LaunchParams &params,
 
     const unsigned int vaX = udimInfo.basePageX + tileX;
     const unsigned int vaY = udimInfo.basePageY + tileY;
-    if (vaX >= udimInfo.basePageX + udimInfo.pageCountX || vaY >= udimInfo.basePageY + udimInfo.pageCountY)
+    if (vaX >= udimInfo.basePageX + udimInfo.pageCountX ||
+        vaY >= udimInfo.basePageY + udimInfo.pageCountY)
     {
         return false;
     }
@@ -627,15 +641,16 @@ YBI_DEVICE bool ResolveVirtualTextureInfo(const LaunchParams &params,
 }
 
 YBI_DEVICE bool ReadVirtualTexturePageEntry(const LaunchParams &params,
-                                                   unsigned int mip,
-                                                   unsigned int vaX,
-                                                   unsigned int vaY,
-                                                   uint32_t *outEntry)
+                                            unsigned int mip,
+                                            unsigned int vaX,
+                                            unsigned int vaY,
+                                            uint32_t *outEntry)
 {
     if (!outEntry || params.virtualTexturePageTableEntries == 0ull ||
         params.virtualTexturePageTableMipOffsets == 0ull ||
         params.virtualTexturePageTableMipWidths == 0ull ||
-        params.virtualTexturePageTableMipHeights == 0ull || mip >= uint32_t(params.virtualTexturePageTableMipCount))
+        params.virtualTexturePageTableMipHeights == 0ull ||
+        mip >= uint32_t(params.virtualTexturePageTableMipCount))
     {
         return false;
     }
@@ -661,50 +676,51 @@ YBI_DEVICE bool ReadVirtualTexturePageEntry(const LaunchParams &params,
 
 template <typename State>
 YBI_DEVICE void TryWriteTextureFeedback(State &state,
-                                               const LaunchParams::InstanceGeomRef &geomRef,
-                                               int semantic,
-                                               unsigned int primitiveIndex,
-                                               float wrappedU,
-                                               float wrappedV,
-                                               int textureWidth,
-                                               int textureHeight,
-                                               unsigned int udimBits,
-                                               unsigned int mip)
+                                        const LaunchParams::InstanceGeomRef &geomRef,
+                                        int semantic,
+                                        unsigned int primitiveIndex,
+                                        float wrappedU,
+                                        float wrappedV,
+                                        int textureWidth,
+                                        int textureHeight,
+                                        unsigned int udimBits,
+                                        unsigned int mip)
 {
     const LaunchParams &params = state.Params();
-    if (params.feedbackKeys == 0ull || params.feedbackStats == 0ull || params.feedbackCapacity <= 0 ||
-        params.feedbackSamplePercent <= 0)
+    if (params.feedbackKeys == 0ull || params.feedbackStats == 0ull ||
+        params.feedbackCapacity <= 0 || params.feedbackSamplePercent <= 0)
     {
         return;
     }
 
     const UInt2 launchIndex = state.LaunchIndex();
-    unsigned int seed =
-        Hash32((launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u ^
-               (primitiveIndex + 1u) * 83492791u ^
-               (static_cast<unsigned int>(params.currentSpp) + 1u) * 2654435761u ^
-               (static_cast<unsigned int>(ClampInt(geomRef.materialIndex, 0, int((1u << 23u) - 1u))) +
-                1u) *
-                   374761393u ^
-               (static_cast<unsigned int>(ClampInt(semantic, 0, params.materialTextureRefSemanticCount)) +
-                1u) *
-                   668265263u);
+    unsigned int seed = Hash32(
+        (launchIndex.x + 1u) * 73856093u ^ (launchIndex.y + 1u) * 19349663u ^
+        (primitiveIndex + 1u) * 83492791u ^
+        (static_cast<unsigned int>(params.currentSpp) + 1u) * 2654435761u ^
+        (static_cast<unsigned int>(Clamp(geomRef.materialIndex, 0, int((1u << 23u) - 1u))) +
+         1u) *
+            374761393u ^
+        (static_cast<unsigned int>(Clamp(semantic, 0, params.materialTextureRefSemanticCount)) +
+         1u) *
+            668265263u);
     if ((seed % 100u) >= static_cast<unsigned int>(params.feedbackSamplePercent))
     {
         return;
     }
 
-    const int tileSize = MaxInt(params.feedbackTileSize, 1);
-    const int mipInt = ClampInt(int(mip), 0, 30);
-    const int mipWidth = MaxInt(textureWidth >> mipInt, 1);
-    const int mipHeight = MaxInt(textureHeight >> mipInt, 1);
+    const int tileSize = Max(params.feedbackTileSize, 1);
+    const int mipInt = Clamp(int(mip), 0, 30);
+    const int mipWidth = Max(textureWidth >> mipInt, 1);
+    const int mipHeight = Max(textureHeight >> mipInt, 1);
     const int texelX = ybi::texture::TexelFromUnitUV(wrappedU, mipWidth);
     const int texelY = ybi::texture::TexelFromUnitUV(wrappedV, mipHeight);
     const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
     const unsigned int tileY = ybi::texture::TileCoordFromTexel(texelY, tileSize);
-    const int textureIdInt = geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic;
+    const int textureIdInt =
+        geomRef.materialIndex * params.materialTextureRefSemanticCount + semantic;
     const unsigned int textureId =
-        static_cast<unsigned int>(ClampInt(textureIdInt, 0, int((1u << 23u) - 1u)));
+        static_cast<unsigned int>(Clamp(textureIdInt, 0, int((1u << 23u) - 1u)));
     const unsigned long long key =
         ybi::texture::PackVirtualTextureKey(tileX, tileY, udimBits, textureId, mip);
 
@@ -713,14 +729,14 @@ YBI_DEVICE void TryWriteTextureFeedback(State &state,
 
 template <typename State>
 YBI_DEVICE bool TrySampleVirtualTexture(State &state,
-                                               const LaunchParams::InstanceGeomRef &geomRef,
-                                               int semantic,
-                                               const LaunchParams::MaterialTextureRef &textureRef,
-                                               float wrappedU,
-                                               float wrappedV,
-                                               unsigned int udimBits,
-                                               unsigned int mip,
-                                               Vec3 &outColor)
+                                        const LaunchParams::InstanceGeomRef &geomRef,
+                                        int semantic,
+                                        const LaunchParams::MaterialTextureRef &textureRef,
+                                        float wrappedU,
+                                        float wrappedV,
+                                        unsigned int udimBits,
+                                        unsigned int mip,
+                                        Vec3 &outColor)
 {
     const LaunchParams &params = state.Params();
     if (params.virtualTextureEnabled == 0)
@@ -728,16 +744,16 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
         return false;
     }
 
-    if (params.virtualTexturePageTableEntries == 0ull || params.virtualTextureTextureMeta == 0ull ||
-        params.virtualTextureMipInfos == 0ull)
+    if (params.virtualTexturePageTableEntries == 0ull ||
+        params.virtualTextureTextureMeta == 0ull || params.virtualTextureMipInfos == 0ull)
     {
         outColor = Vec3(0.0f, 0.0f, 0.0f);
         return true;
     }
 
-    const int mipWidth = MaxInt(textureRef.width >> int(mip), 1);
-    const int mipHeight = MaxInt(textureRef.height >> int(mip), 1);
-    const int tileSize = MaxInt(params.virtualTexturePageSize, 1);
+    const int mipWidth = Max(textureRef.width >> int(mip), 1);
+    const int mipHeight = Max(textureRef.height >> int(mip), 1);
+    const int tileSize = Max(params.virtualTexturePageSize, 1);
     const int texelX = ybi::texture::TexelFromUnitUV(wrappedU, mipWidth);
     const int texelY = ybi::texture::TexelFromUnitUV(wrappedV, mipHeight);
     const unsigned int tileX = ybi::texture::TileCoordFromTexel(texelX, tileSize);
@@ -758,8 +774,18 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
     bool haveSample = false;
     const unsigned char *samplePixels = nullptr;
     unsigned long long sampleOffset = 0ull;
-    if (!ResolveVirtualTextureInfo(
-            params, geomRef, semantic, mip, udimBits, tileX, tileY, &meta, &mipInfo, &localUdim, &vaX, &vaY))
+    if (!ResolveVirtualTextureInfo(params,
+                                   geomRef,
+                                   semantic,
+                                   mip,
+                                   udimBits,
+                                   tileX,
+                                   tileY,
+                                   &meta,
+                                   &mipInfo,
+                                   &localUdim,
+                                   &vaX,
+                                   &vaY))
     {
         if (!TryResolveVirtualTextureTailSample(
                 meta, localUdim, wrappedU, wrappedV, tileSize, &samplePixels, &sampleOffset))
@@ -787,31 +813,34 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
             unsigned int pageType = 0u;
             UnpackVirtualTexturePageEntry(packedEntry, &page, &physicalTextureID, &pageType);
 
-            const int localX = ClampInt(texelX - int(tileX) * tileSize, 0, tileSize - 1);
-            const int localY = ClampInt(texelY - int(tileY) * tileSize, 0, tileSize - 1);
+            const int localX = Clamp(texelX - int(tileX) * tileSize, 0, tileSize - 1);
+            const int localY = Clamp(texelY - int(tileY) * tileSize, 0, tileSize - 1);
             if (pageType == kVirtualTexturePageTypeStream &&
-                page < static_cast<unsigned int>(MaxInt(params.virtualTexturePhysicalPagesPerTexture, 0)) &&
+                page < static_cast<unsigned int>(
+                           Max(params.virtualTexturePhysicalPagesPerTexture, 0)) &&
                 physicalTextureID <
-                    static_cast<unsigned int>(MaxInt(params.virtualTexturePhysicalTextureCount, 0)))
+                    static_cast<unsigned int>(Max(params.virtualTexturePhysicalTextureCount, 0)))
             {
-                haveSample = SampleVirtualTexturePage(state, physicalTextureID, page, localX, localY, sample);
+                haveSample = SampleVirtualTexturePage(
+                    state, physicalTextureID, page, localX, localY, sample);
             }
             else if (pageType == kVirtualTexturePageTypeTail && meta->tailPixels != 0ull &&
                      page < meta->tailPageCountX)
             {
                 const int tailX = ybi::texture::TexelFromUnitUV(wrappedU, tileSize);
                 const int tailY = ybi::texture::TexelFromUnitUV(wrappedV, tileSize);
-                const unsigned long long pageIndex =
-                    static_cast<unsigned long long>(page);
+                const unsigned long long pageIndex = static_cast<unsigned long long>(page);
                 const TextureFormat pixelFormat = static_cast<TextureFormat>(meta->pixelFormat);
                 const unsigned long long texelBytes =
                     static_cast<unsigned long long>(TextureFormatPixelBytes(pixelFormat));
-                const unsigned long long pageBytes =
-                    static_cast<unsigned long long>(tileSize) * static_cast<unsigned long long>(tileSize) * texelBytes;
-                sampleOffset = pageIndex * pageBytes +
-                               (static_cast<unsigned long long>(tailY) * static_cast<unsigned long long>(tileSize) +
-                                static_cast<unsigned long long>(tailX)) *
-                                   texelBytes;
+                const unsigned long long pageBytes = static_cast<unsigned long long>(tileSize) *
+                                                     static_cast<unsigned long long>(tileSize) *
+                                                     texelBytes;
+                sampleOffset =
+                    pageIndex * pageBytes + (static_cast<unsigned long long>(tailY) *
+                                                 static_cast<unsigned long long>(tileSize) +
+                                             static_cast<unsigned long long>(tailX)) *
+                                                texelBytes;
                 samplePixels = reinterpret_cast<const unsigned char *>(meta->tailPixels);
             }
             else
@@ -833,8 +862,10 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
 
     if (!haveSample)
     {
-        if (!DecodeTypedTextureSample(
-                static_cast<TextureFormat>(meta->pixelFormat), samplePixels, sampleOffset, &sample))
+        if (!DecodeTypedTextureSample(static_cast<TextureFormat>(meta->pixelFormat),
+                                      samplePixels,
+                                      sampleOffset,
+                                      &sample))
         {
             outColor = Vec3(0.0f, 0.0f, 0.0f);
             return true;
@@ -846,9 +877,9 @@ YBI_DEVICE bool TrySampleVirtualTexture(State &state,
 
 template <typename State>
 YBI_DEVICE bool TrySampleMaterialTexture(State &state,
-                                                const LaunchParams::InstanceGeomRef &geomRef,
-                                                const HitInfo &hit,
-                                                Vec3 &outColor)
+                                         const LaunchParams::InstanceGeomRef &geomRef,
+                                         const HitInfo &hit,
+                                         Vec3 &outColor)
 {
     const LaunchParams &params = state.Params();
     if (params.materialTextureRefs == 0ull || params.materialTextureRefCount <= 0 ||
@@ -917,7 +948,8 @@ YBI_DEVICE bool TrySampleMaterialTexture(State &state,
         LaunchParams::MaterialTextureRef vtRef = {};
         const int resolvedUdimSlot = ybi::texture::UdimSlotFromUdim(
             1001 + int(resolvedUdimBits), params.materialTextureRefStride);
-        if (!FetchMaterialTextureRefForUdimSlot(materialRefs, base, maxSlots, resolvedUdimSlot, &vtRef) ||
+        if (!FetchMaterialTextureRefForUdimSlot(
+                materialRefs, base, maxSlots, resolvedUdimSlot, &vtRef) ||
             !IsUsableMaterialTextureRef(vtRef))
         {
             outColor = Vec3(0.0f, 0.0f, 0.0f);
@@ -930,21 +962,20 @@ YBI_DEVICE bool TrySampleMaterialTexture(State &state,
         if (!haveMip)
         {
             sampleMip = static_cast<unsigned int>(
-                ClampInt(MaxInt(params.virtualTextureSampleMip, 0),
+                Clamp(Max(params.virtualTextureSampleMip, 0),
                          0,
                          ComputeTextureMipCount(vtRef.width, vtRef.height) - 1));
         }
 
-        if (TrySampleVirtualTexture(
-                state,
-                geomRef,
-                params.textureViewSemantic,
-                vtRef,
-                wrappedU,
-                wrappedV,
-                resolvedUdimBits,
-                sampleMip,
-                outColor))
+        if (TrySampleVirtualTexture(state,
+                                    geomRef,
+                                    params.textureViewSemantic,
+                                    vtRef,
+                                    wrappedU,
+                                    wrappedV,
+                                    resolvedUdimBits,
+                                    sampleMip,
+                                    outColor))
         {
             if (haveMip)
             {
@@ -1077,7 +1108,7 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
             if (!haveMip)
             {
                 sampleMip = static_cast<unsigned int>(
-                    ClampInt(MaxInt(params.virtualTextureSampleMip, 0),
+                    Clamp(Max(params.virtualTextureSampleMip, 0),
                              0,
                              ComputeTextureMipCount(vtRef.width, vtRef.height) - 1));
             }
@@ -1092,6 +1123,21 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
                                         sampleMip,
                                         vtColor))
             {
+                const UInt2 launchIndex = state.LaunchIndex();
+                if (launchIndex.x == 1539u && launchIndex.y == 182u &&
+                    semantic == kSemanticOpacity && geomRef.materialIndex == 212)
+                {
+                    std::printf("debug opacity-vt pixel=(%u,%u) material=%d rawUdim=%d "
+                                "resolvedUdim=%d mip=%u wrapped=(%.6f,%.6f)\n",
+                                launchIndex.x,
+                                launchIndex.y,
+                                geomRef.materialIndex,
+                                inputs.rawUdim,
+                                1001 + int(resolvedUdimBits),
+                                sampleMip,
+                                wrappedU,
+                                wrappedV);
+                }
                 outSample = Vec4(vtColor.x, vtColor.y, vtColor.z, 1.0f);
                 if (haveMip)
                 {
@@ -1124,6 +1170,19 @@ YBI_DEVICE bool TrySampleMaterialTextureSemantic(State &state,
     if (!state.SampleTexture2D(rawRef, inputs.unitU, inputs.unitV, outSample))
     {
         return false;
+    }
+    const UInt2 launchIndex = state.LaunchIndex();
+    if (launchIndex.x == 1539u && launchIndex.y == 182u && semantic == kSemanticOpacity &&
+        geomRef.materialIndex == 212)
+    {
+        std::printf(
+            "debug opacity-raw pixel=(%u,%u) material=%d rawUdim=%d mip=raw wrapped=(%.6f,%.6f)\n",
+            launchIndex.x,
+            launchIndex.y,
+            geomRef.materialIndex,
+            inputs.rawUdim,
+            inputs.unitU,
+            inputs.unitV);
     }
     unsigned int feedbackMip = 0u;
     if (TryComputeTextureMipLevelProfiled(state, hit, rawRef.width, rawRef.height, &feedbackMip))

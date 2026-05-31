@@ -1,4 +1,4 @@
-#include "../usd_ntc_encode/shared.h"
+#include "shared.h"
 
 #include <pxr/usd/usd/stage.h>
 
@@ -20,9 +20,6 @@ int main(int argc, char **argv)
         LogTotalRuntime();
         return 2;
     }
-
-    cli.prepareTiles = true;
-    cli.noEncode = true;
 
     std::fprintf(stderr, "Tile stage: open USD: %s\n", cli.usdPath.c_str());
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(cli.usdPath);

@@ -217,7 +217,7 @@ YBI_DEVICE float DomeTexelSolidAngle(int width, int height, int y)
         return 0.0f;
     }
 
-    const int row = ClampInt(y, 0, height - 1);
+    const int row = Clamp(y, 0, height - 1);
     const float phiStep = ybi::kTwoPi / float(width);
     const float theta0 = ybi::kPi * (float(row) / float(height));
     const float theta1 = ybi::kPi * (float(row + 1) / float(height));
@@ -244,8 +244,8 @@ YBI_DEVICE float DomeDirectionPdf(const LaunchParams &params,
     float v = 0.5f;
     const Vec3 localDirection = WorldDirectionToLightLocal(domeLight, worldDirection);
     DirectionToLatLongUv(localDirection, &u, &v);
-    const int x = ClampInt(int(u * float(params.domeCdfWidth)), 0, params.domeCdfWidth - 1);
-    const int y = ClampInt(int(v * float(params.domeCdfHeight)), 0, params.domeCdfHeight - 1);
+    const int x = Clamp(int(u * float(params.domeCdfWidth)), 0, params.domeCdfWidth - 1);
+    const int y = Clamp(int(v * float(params.domeCdfHeight)), 0, params.domeCdfHeight - 1);
     const float pmf = sampling::EvaluateCdf2DPmf(
         conditional, marginal, params.domeCdfWidth, params.domeCdfHeight, x, y);
     const float solidAngle = DomeTexelSolidAngle(params.domeCdfWidth, params.domeCdfHeight, y);
@@ -569,7 +569,7 @@ YBI_DEVICE bool PickDirectLightWeighted(const LaunchParams &params,
             return false;
         }
         const int target =
-            ClampInt(int(Random01(rngState) * float(directCount)), 0, directCount - 1);
+            Clamp(int(Random01(rngState) * float(directCount)), 0, directCount - 1);
         int directIndex = 0;
         for (int i = 0; i < params.lightCount; ++i)
         {

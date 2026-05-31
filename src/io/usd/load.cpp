@@ -87,7 +87,6 @@ struct TextureGatherLogStats
     size_t materials = 0u;
     size_t materialsWithTextures = 0u;
     size_t materialTextureInputs = 0u;
-    size_t materialsWithNtcDiffuse = 0u;
 };
 
 static TextureGatherLogStats g_textureGatherLogStats = {};
@@ -99,11 +98,10 @@ static void ResetTextureGatherLogStats()
 
 static void PrintTextureGatherLogSummary()
 {
-    std::printf("materials: total=%zu with_textures=%zu texture_inputs=%zu ntc_diffuse=%zu\n",
+    std::printf("materials: total=%zu with_textures=%zu texture_inputs=%zu\n",
                 g_textureGatherLogStats.materials,
                 g_textureGatherLogStats.materialsWithTextures,
-                g_textureGatherLogStats.materialTextureInputs,
-                g_textureGatherLogStats.materialsWithNtcDiffuse);
+                g_textureGatherLogStats.materialTextureInputs);
 
     const size_t warningCount = g_textureGatherLogStats.subsetsNotHandled +
                                 g_textureGatherLogStats.unsupportedSourceCount +
@@ -1106,47 +1104,6 @@ static bool TryGetImageTexturePath(const pxr::UsdShadeInput &input,
     return true;
 }
 
-static void ReadNtcMaterialInfo(const pxr::UsdShadeMaterial &material,
-                                MaterialInfo *outInfo)
-{
-    YBI_ASSERT(outInfo);
-    outInfo->ntcDiffuseFile.clear();
-    outInfo->ntcDiffuseTextureName.clear();
-
-    const pxr::UsdPrim materialPrim = material.GetPrim();
-    if (!materialPrim)
-    {
-        return;
-    }
-
-    const pxr::UsdAttribute ntcFileAttr =
-        materialPrim.GetAttribute(pxr::TfToken("ybi:ntc:diffuseFile"));
-    if (ntcFileAttr)
-    {
-        pxr::SdfAssetPath assetPath;
-        if (ntcFileAttr.Get(&assetPath))
-        {
-            outInfo->ntcDiffuseFile = ResolveUsdAssetPath(ntcFileAttr, assetPath);
-        }
-        else
-        {
-            // Back-compat if authored as plain string.
-            ntcFileAttr.Get(&outInfo->ntcDiffuseFile);
-        }
-    }
-
-    const pxr::UsdAttribute ntcTextureNameAttr =
-        materialPrim.GetAttribute(pxr::TfToken("ybi:ntc:diffuseTextureName"));
-    if (ntcTextureNameAttr)
-    {
-        ntcTextureNameAttr.Get(&outInfo->ntcDiffuseTextureName);
-    }
-    if (!outInfo->ntcDiffuseFile.empty() && outInfo->ntcDiffuseTextureName.empty())
-    {
-        outInfo->ntcDiffuseTextureName = "diffuseColor";
-    }
-}
-
 static void AppendUniqueTexturePath(std::vector<std::string> &paths, const std::string &path)
 {
     if (std::find(paths.begin(), paths.end(), path) == paths.end())
@@ -1175,7 +1132,8 @@ static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
                                              const pxr::VtIntArray &faceCounts,
                                              const pxr::VtIntArray &faceIndices,
                                              int numTriangles,
-                                             Attribute *outAttribute)
+                                             Attribute *outAttribute,
+                                             pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default())
 {
     YBI_ASSERT(outAttribute);
 
@@ -1187,7 +1145,7 @@ static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
     }
 
     pxr::VtVec2fArray stValues;
-    if (!stPrimvar.Get(&stValues, 0.0))
+    if (!stPrimvar.Get(&stValues, timeCode))
     {
         return false;
     }
@@ -1197,7 +1155,8 @@ static bool BuildTriangulatedMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
     }
 
     pxr::VtIntArray stIndices;
-    const bool hasExplicitIndices = stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, 0.0);
+    const bool hasExplicitIndices =
+        stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, timeCode);
     const pxr::TfToken interpolation = stPrimvar.GetInterpolation();
 
     Array<Vec2> texcoords(stValues);
@@ -1280,12 +1239,13 @@ static bool BuildTriangulatedMeshNormalAttribute(const pxr::UsdGeomMesh &mesh,
                                                  const pxr::VtIntArray &faceCounts,
                                                  const pxr::VtIntArray &faceIndices,
                                                  int numTriangles,
-                                                 Attribute *outAttribute)
+                                                 Attribute *outAttribute,
+                                                 pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default())
 {
     YBI_ASSERT(outAttribute);
 
     pxr::VtVec3fArray normals;
-    if (!mesh.GetNormalsAttr().Get(&normals, 0.0))
+    if (!mesh.GetNormalsAttr().Get(&normals, timeCode))
     {
         return false;
     }
@@ -1381,7 +1341,8 @@ static bool BuildTriangulatedMeshNormalAttribute(const pxr::UsdGeomMesh &mesh,
 
 static bool BuildSubdivisionMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
                                             const pxr::VtIntArray &faceIndices,
-                                            Attribute *outAttribute)
+                                            Attribute *outAttribute,
+                                            pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default())
 {
     YBI_ASSERT(outAttribute);
 
@@ -1393,7 +1354,7 @@ static bool BuildSubdivisionMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
     }
 
     pxr::VtVec2fArray stValues;
-    if (!stPrimvar.Get(&stValues, 0.0))
+    if (!stPrimvar.Get(&stValues, timeCode))
     {
         return false;
     }
@@ -1403,7 +1364,8 @@ static bool BuildSubdivisionMeshSTAttribute(const pxr::UsdGeomMesh &mesh,
     }
 
     pxr::VtIntArray stIndices;
-    const bool hasExplicitIndices = stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, 0.0);
+    const bool hasExplicitIndices =
+        stPrimvar.IsIndexed() && stPrimvar.GetIndices(&stIndices, timeCode);
     const pxr::TfToken interpolation = stPrimvar.GetInterpolation();
 
     Array<Vec2> texcoords(stValues);
@@ -1665,7 +1627,7 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh,
                         Scene *scene,
                         int materialIndex,
                         const Float3x4 &parentFromLocal,
-                        pxr::UsdTimeCode timeCode = 0.0)
+                        pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default())
 {
     pxr::VtVec3fArray positions;
     pxr::VtIntArray faceIndices;
@@ -1783,15 +1745,17 @@ ProcessCatmullClarkMesh(pxr::UsdGeomMesh &mesh,
     subdivMesh.materialIndex = materialIndex;
     subdivMesh.parentFromLocal = parentFromLocal;
     Attribute stAttr;
-    if (BuildSubdivisionMeshSTAttribute(mesh, faceIndices, &stAttr))
+    if (BuildSubdivisionMeshSTAttribute(mesh, faceIndices, &stAttr, timeCode))
     {
         subdivMesh.attributes.push_back(std::move(stAttr));
     }
 }
 
-static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
+static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve,
+                                 Scene *scene,
+                                 pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default())
 {
-    size_t numCurves = curve.GetCurveCount(0.0);
+    size_t numCurves = curve.GetCurveCount(timeCode);
 
     pxr::VtIntArray curveVertexCounts;
     pxr::VtVec3fArray points;
@@ -1800,12 +1764,12 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     pxr::TfToken typeToken;
     pxr::TfToken wrapToken;
 
-    USD_ASSERT(curve.GetCurveVertexCountsAttr().Get(&curveVertexCounts, 0.0));
-    USD_ASSERT(curve.GetPointsAttr().Get(&points, 0.0));
-    USD_ASSERT(curve.GetWidthsAttr().Get(&widths, 0.0));
-    USD_ASSERT(curve.GetBasisAttr().Get(&basisToken, 0.0));
-    USD_ASSERT(curve.GetTypeAttr().Get(&typeToken, 0.0));
-    USD_ASSERT(curve.GetWrapAttr().Get(&wrapToken, 0.0));
+    USD_ASSERT(curve.GetCurveVertexCountsAttr().Get(&curveVertexCounts, timeCode));
+    USD_ASSERT(curve.GetPointsAttr().Get(&points, timeCode));
+    USD_ASSERT(curve.GetWidthsAttr().Get(&widths, timeCode));
+    USD_ASSERT(curve.GetBasisAttr().Get(&basisToken, timeCode));
+    USD_ASSERT(curve.GetTypeAttr().Get(&typeToken, timeCode));
+    USD_ASSERT(curve.GetWrapAttr().Get(&wrapToken, timeCode));
 
     uint32_t offset = 0;
     uint32_t curveIndex = 0;
@@ -1958,7 +1922,7 @@ static void ProcessUSDBasisCurve(pxr::UsdGeomBasisCurves &curve, Scene *scene)
     {
         pxr::VtVec3fArray normals;
 
-        USD_ASSERT(curve.GetNormalsAttr().Get(&normals, 0.0));
+        USD_ASSERT(curve.GetNormalsAttr().Get(&normals, timeCode));
         printf("normal %f %f %f\n", normals[0][0], normals[0][1], normals[0][2]);
         curveFlags |= CurveFlags::CURVE_FLAGS_RIBBON;
     }
@@ -1987,6 +1951,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         printf("error opening usd stage at %s\n", filePath.c_str());
         return;
     }
+
+    const pxr::UsdTimeCode sceneTimeCode(stage->GetStartTimeCode());
 
     const pxr::TfToken stageUpAxis = pxr::UsdGeomGetStageUpAxis(stage);
     scenePool->camera.upAxis = stageUpAxis == pxr::UsdGeomTokens->y ? UpAxis::Y : UpAxis::Z;
@@ -2054,7 +2020,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
     if (selectedCameraIndex >= 0)
     {
         pxr::UsdGeomCamera &camera = cameras[static_cast<size_t>(selectedCameraIndex)];
-        const pxr::UsdTimeCode timeCode(0.0);
+        const pxr::UsdTimeCode timeCode = sceneTimeCode;
         pxr::GfCamera gfCam = camera.GetCamera(timeCode);
         pxr::GfFrustum frustum = gfCam.GetFrustum();
         pxr::GfMatrix4d viewM = frustum.ComputeViewMatrix().GetTranspose();
@@ -2112,8 +2078,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         uc.path = cameraPrim.GetPath().GetString();
 
         double shutterOpen, shutterClose;
-        camera.GetShutterOpenAttr().Get(&shutterOpen, 0.0);
-        camera.GetShutterCloseAttr().Get(&shutterClose, 0.0);
+        camera.GetShutterOpenAttr().Get(&shutterOpen, timeCode);
+        camera.GetShutterCloseAttr().Get(&shutterClose, timeCode);
         printf("open: %f close: %f\n", shutterOpen, shutterClose);
     }
     else if (!cameras.empty() || !options.camera.empty())
@@ -2188,7 +2154,6 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
     {
         MaterialInfo info = {};
         info.materialPath = material.GetPath().GetString();
-        ReadNtcMaterialInfo(material, &info);
         info.packed = {};
 
         if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
@@ -2220,15 +2185,25 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
         {
             g_textureGatherLogStats.materialsWithTextures++;
         }
-        if (!info.ntcDiffuseFile.empty())
+    }
+    if (materialTextures.size() > 212u)
+    {
+        const MaterialInfo &debugMaterial = materialTextures[212];
+        std::printf("debug material[212] path=%s textureInputs=%zu\n",
+                    debugMaterial.materialPath.c_str(),
+                    debugMaterial.textureInputs.size());
+        for (const MaterialTextureInput &input : debugMaterial.textureInputs)
         {
-            g_textureGatherLogStats.materialsWithNtcDiffuse++;
+            std::printf("  input=%s texture=%s swizzle=%s\n",
+                        input.inputName.c_str(),
+                        input.texturePath.c_str(),
+                        input.swizzle.c_str());
         }
     }
     PrintTextureGatherLogSummary();
     scenePool->materials = std::move(materialTextures);
 
-    const pxr::UsdTimeCode lightTimeCode(0.0);
+    const pxr::UsdTimeCode lightTimeCode = sceneTimeCode;
     CollectUsdLights(stage, lightTimeCode, &scenePool->lights);
     std::printf("num lights: %zu\n", scenePool->lights.size());
     for (const LightInfo &light : scenePool->lights)
@@ -2266,7 +2241,7 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             }
 
             pxr::UsdGeomBasisCurves curve(prim);
-            ProcessUSDBasisCurve(curve, outScene);
+            ProcessUSDBasisCurve(curve, outScene, sceneTimeCode);
             outScene->curves.back().parentFromLocal = curveRef.parentFromLocal;
         }
 
@@ -2294,7 +2269,8 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
             mesh.GetSubdivisionSchemeAttr().Get(&scheme);
             if (scheme == pxr::UsdGeomTokens->catmullClark)
             {
-                ProcessCatmullClarkMesh(mesh, outScene, materialIndex, meshRef.parentFromLocal);
+                ProcessCatmullClarkMesh(
+                    mesh, outScene, materialIndex, meshRef.parentFromLocal, sceneTimeCode);
                 total++;
                 continue;
             }
@@ -2306,9 +2282,9 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
                 printf("%s\n", scheme.GetText());
             }
 
-            USD_ASSERT(mesh.GetPointsAttr().Get(&positions, 0.0));
-            USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, 0.0));
-            USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, 0.0));
+            USD_ASSERT(mesh.GetPointsAttr().Get(&positions, sceneTimeCode));
+            USD_ASSERT(mesh.GetFaceVertexIndicesAttr().Get(&faceIndices, sceneTimeCode));
+            USD_ASSERT(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, sceneTimeCode));
 
             int numTriangles = 0;
             for (int faceCount : faceCounts)
@@ -2372,10 +2348,10 @@ void LoadUSDScene(ScenePool *scenePool, const std::string &filePath, const USDLo
 
             Attribute stAttr;
             Attribute normalAttr;
-            const bool hasSt =
-                BuildTriangulatedMeshSTAttribute(mesh, faceCounts, faceIndices, numTriangles, &stAttr);
+            const bool hasSt = BuildTriangulatedMeshSTAttribute(
+                mesh, faceCounts, faceIndices, numTriangles, &stAttr, sceneTimeCode);
             const bool hasNormals = BuildTriangulatedMeshNormalAttribute(
-                mesh, faceCounts, faceIndices, numTriangles, &normalAttr);
+                mesh, faceCounts, faceIndices, numTriangles, &normalAttr, sceneTimeCode);
 
             outScene->meshes.emplace_back(
                 std::move(finalPositions), std::move(finalIndices), meshRef.parentFromLocal);
