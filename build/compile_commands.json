@@ -1,0 +1,14 @@
+[
+{
+  "directory": "C:/Users/maven/workspace/renderer/build",
+  "command": "C:\\PROGRA~1\\MICROS~3\\2022\\COMMUN~1\\VC\\Tools\\MSVC\\1442~1.344\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DNOMINMAX -DYBI_DEBUG -IC:\\Users\\maven\\workspace\\renderer\\src -IC:\\Users\\maven\\workspace\\yeoubi\\src\\third_party\\install\\usd\\include /DWIN32 /D_WINDOWS /GR /EHsc /Zi /O2 /Ob1 /DNDEBUG -std:c++17 -MD /FoCMakeFiles\\yeoubi.dir\\src\\core\\allocation.cpp.obj /FdCMakeFiles\\yeoubi.dir\\ /FS -c C:\\Users\\maven\\workspace\\renderer\\src\\core\\allocation.cpp",
+  "file": "C:\\Users\\maven\\workspace\\renderer\\src\\core\\allocation.cpp",
+  "output": "CMakeFiles\\yeoubi.dir\\src\\core\\allocation.cpp.obj"
+},
+{
+  "directory": "C:/Users/maven/workspace/renderer/build",
+  "command": "C:\\PROGRA~1\\MICROS~3\\2022\\COMMUN~1\\VC\\Tools\\MSVC\\1442~1.344\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DNOMINMAX -DYBI_DEBUG -IC:\\Users\\maven\\workspace\\renderer\\src -IC:\\Users\\maven\\workspace\\yeoubi\\src\\third_party\\install\\usd\\include /DWIN32 /D_WINDOWS /GR /EHsc /Zi /O2 /Ob1 /DNDEBUG -std:c++17 -MD /FoCMakeFiles\\yeoubi.dir\\src\\io\\usd.cpp.obj /FdCMakeFiles\\yeoubi.dir\\ /FS -c C:\\Users\\maven\\workspace\\renderer\\src\\io\\usd.cpp",
+  "file": "C:\\Users\\maven\\workspace\\renderer\\src\\io\\usd.cpp",
+  "output": "CMakeFiles\\yeoubi.dir\\src\\io\\usd.cpp.obj"
+}
+]
