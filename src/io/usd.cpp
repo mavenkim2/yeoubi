@@ -619,9 +619,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             auto it = prototypeToIndexMap.find(prototype.GetPath().GetString());
             YBI_ASSERT(it != prototypeToIndexMap.end());
 
+            // TODO: verify which one is correct
             bool resetsXformStack = false;
             const pxr::GfMatrix4d instanceTransform =
-                xformCache.GetLocalToWorldTransform(data.prim);
+                xformCache.GetLocalToWorldTransform(usdInstance);
             // xformCache.ComputeRelativeTransform(usdInstance, data.prim, &resetsXformStack);
 
             Instance &instance = scene->instances[dstInstanceIndex++];

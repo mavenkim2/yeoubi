@@ -1,3 +1,0 @@
-C:/Users/maven/workspace/renderer/build/CMakeFiles/yeoubi.dir
-C:/Users/maven/workspace/renderer/build/CMakeFiles/edit_cache.dir
-C:/Users/maven/workspace/renderer/build/CMakeFiles/rebuild_cache.dir
