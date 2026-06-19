@@ -84,12 +84,12 @@ public:
         return *this;
     }
 
-    template <typename OtherContainer,
-              typename = std::enable_if_t<has_data_and_size<OtherContainer>::value>>
-    Array(const OtherContainer &other) : m_data(nullptr), m_size(0), m_capacity(0)
-    {
-        CopyFrom(other);
-    }
+    // template <typename OtherContainer,
+    //           typename = std::enable_if_t<has_data_and_size<OtherContainer>::value>>
+    // Array(const OtherContainer &other) : m_data(nullptr), m_size(0), m_capacity(0)
+    // {
+    //     CopyFrom(other);
+    // }
 
     // Templated assignment operator
     template <typename OtherContainer,

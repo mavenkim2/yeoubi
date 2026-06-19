@@ -1,8 +1,11 @@
 #include "io/usd.h"
 #include "core/affine_transform.h"
 #include "core/allocation.h"
+#include "core/arena.h"
 #include "core/array.h"
 #include "core/assert.h"
+#include "io/usd.h"
+#include "scene/scene.h"
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -14,6 +17,7 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <string>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
 #include <vector>
@@ -23,105 +27,6 @@ namespace ybi
 
 #define USD_YBI_ASSERT(expr) expr
 
-enum class GeometryType
-{
-    Mesh,
-    Subdivison,
-    Curve,
-    Scene
-};
-
-struct GeometryHandle
-{
-    GeometryType type;
-    int index;
-};
-
-struct Instance
-{
-    AffineTransform transform;
-    GeometryHandle handle;
-
-    Instance() = default;
-    Instance(AffineTransform transform, GeometryHandle handle);
-};
-
-Instance::Instance(AffineTransform transform, GeometryHandle handle)
-    : transform(transform), handle(handle)
-{
-}
-
-struct DataContainer;
-
-struct Scene
-{
-    DataContainer *container;
-
-    // NOTE: handle points to geometry in DataContainer. DataContainer may be shared
-    // b/t multiple scenes
-    Array<Instance> instances;
-    // NOTE: these cannot be GeometryType::Scene
-    // Array<GeometryHandle> geometryHandles;
-
-    Scene() = default;
-    Scene(DataContainer *container);
-};
-
-Scene::Scene(DataContainer *container) : container(container) {}
-
-class Mesh
-{
-    Array<Vec3f> positions;
-    Array<int> indices;
-
-public:
-    Mesh() = default;
-    Mesh(Array<Vec3f> &&positions);
-    Mesh(Array<Vec3f> &&positions, Array<int> &&indices);
-    Mesh(Mesh &&other) = default;
-    Mesh &operator=(Mesh &&other) = default;
-
-    size_t GetNumVertices() const;
-};
-
-Mesh::Mesh(Array<Vec3f> &&positions) : positions(std::move(positions)) {}
-
-Mesh::Mesh(Array<Vec3f> &&positions, Array<int> &&indices)
-    : positions(std::move(positions)), indices(std::move(indices))
-{
-}
-
-size_t Mesh::GetNumVertices() const
-{
-    return positions.size();
-}
-
-class Curve
-{
-};
-
-class SubdivisionMesh
-{
-};
-
-struct DataContainer
-{
-    std::vector<Mesh> meshes;
-    Curve *curves;
-    SubdivisionMesh *subdivisionMeshes;
-};
-
-struct Arena
-{
-    template <typename T>
-    T *Alloc(int num)
-    {
-        return AllocateArray<T>(static_cast<size_t>(num));
-    }
-};
-
-// TODO: probably should be somewhere else
-
 struct USDPrimTraversalData
 {
     pxr::UsdPrim prim;
@@ -129,36 +34,6 @@ struct USDPrimTraversalData
     std::vector<pxr::UsdPrim> pointInstancers;
     std::vector<pxr::UsdPrim> instances;
     std::vector<pxr::UsdPrim> curves;
-};
-
-class SceneLoader
-{
-public:
-    static std::unique_ptr<SceneLoader> CreateSceneLoader(const std::string &filePath);
-    virtual Scene *LoadScene(Arena *arena, DataContainer *container) = 0;
-};
-
-class USDSceneLoader : public SceneLoader
-{
-    std::string filePath;
-
-    AffineTransform ConvertAffineTransform(const pxr::GfMatrix4d &m) const;
-    void ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
-                                const pxr::VtIntArray &faceCounts,
-                                Array<int> &triangles) const;
-    void ProcessPolygonMesh(Scene *scene,
-                            size_t meshOffset,
-                            size_t meshIndex,
-                            const pxr::UsdPrim prim,
-                            pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default()) const;
-    void TraversePrim(USDPrimTraversalData *data,
-                      pxr::UsdPrim root,
-                      bool skipPrototypePrims = true) const;
-
-public:
-    USDSceneLoader(std::string filePath);
-    ~USDSceneLoader() = default;
-    Scene *LoadScene(Arena *arena, DataContainer *container) override;
 };
 
 std::unique_ptr<SceneLoader> SceneLoader::CreateSceneLoader(const std::string &filePath)
@@ -240,9 +115,19 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     result = usdMesh.GetSubdivisionSchemeAttr().Get(&subdivisionScheme, timeCode);
     YBI_ASSERT(result);
 
-    // printf("help: %s\n", subdivisionScheme.GetString().c_str());
+    std::string topologyError;
+    if (!pxr::UsdGeomMesh::ValidateTopology(
+            faceIndices, faceCounts, usdPositions.size(), &topologyError))
+    {
+        fprintf(stderr,
+                "Invalid USD mesh topology: %s\nPrim: %s\n",
+                topologyError.c_str(),
+                prim.GetPath().GetText());
+        YBI_ASSERT(false);
+    }
 
-    Array<Vec3f> positions(usdPositions);
+    Array<Vec3f> positions(usdPositions.size());
+    memcpy(positions.data(), usdPositions.data(), sizeof(Vec3f) * usdPositions.size());
     Array<int> triangleIndices;
     ConvertMeshToTriangles(faceIndices, faceCounts, triangleIndices);
 
@@ -565,8 +450,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 
     printf("num scenes: %lli\n", traversalDatas.size());
 
-    pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default();
-    pxr::UsdGeomXformCache xformCache;
+    const pxr::UsdTimeCode timeCode(stage->GetStartTimeCode());
+    // pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default();
+    pxr::UsdGeomXformCache xformCache(timeCode);
     std::vector<Scene> scenes;
     scenes.resize(traversalDatas.size());
 
@@ -586,10 +472,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         // size_t something = data.meshes.size() + data.curves.size() + data.instances.size()
         //     + data.pointInstancers.size();
         // printf("num something: %lli\n", something);
-        printf("num instances: %lli, index: %lli, num meshes: %lli\n",
-               data.instances.size(),
-               i,
-               data.meshes.size());
+        // printf("num instances: %lli, index: %lli, num meshes: %lli\n",
+        //        data.instances.size(),
+        //        i,
+        //        data.meshes.size());
         // printf("num meshes: %lli\n", data.meshes.size());
         //
         // if (data.instances.size() == 1)
@@ -606,6 +492,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         tbb::parallel_for(tbb::blocked_range<size_t>(0, data.meshes.size()),
                           [&](const tbb::blocked_range<size_t> &range) {
                               for (size_t i = range.begin(); i != range.end(); i++)
+                              // for (size_t i = 0; i < data.meshes.size(); i++)
                               {
                                   pxr::UsdPrim prim = data.meshes[i];
                                   ProcessPolygonMesh(scene, meshOffset, i, prim, timeCode);
@@ -644,17 +531,31 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             YBI_ASSERT(result);
             result = pointInstancer.GetPrototypesRel().GetTargets(&prototypePaths);
             YBI_ASSERT(result);
+            std::vector<bool> mask = pointInstancer.ComputeMaskAtTime(timeCode);
 
             const pxr::GfMatrix4d pointInstancerLocalToWorld =
                 xformCache.GetLocalToWorldTransform(prim);
 
             pxr::VtArray<pxr::GfMatrix4d> instanceTransforms;
             result = pointInstancer.ComputeInstanceTransformsAtTime(
-                &instanceTransforms, timeCode, timeCode);
+                &instanceTransforms,
+                timeCode,
+                timeCode,
+                pxr::UsdGeomPointInstancer::IncludeProtoXform,
+                pxr::UsdGeomPointInstancer::ApplyMask);
             YBI_ASSERT(result);
 
-            printf("num instances pi: %lli, index: %lli\n", protoIndices.size(), i);
-            for (size_t i = 0; i < protoIndices.size(); i++)
+            // size_t oldSize = protoIndices.size();
+            result = pxr::UsdGeomPointInstancer::ApplyMaskToArray(mask, &protoIndices);
+            YBI_ASSERT(result);
+            // printf("num instances, old: %lli new: %lli, index: %lli\n",
+            //        oldSize,
+            //        protoIndices.size(),
+            //        i);
+
+            YBI_ASSERT(instanceTransforms.size() == protoIndices.size());
+
+            for (size_t i = 0; i < instanceTransforms.size(); i++)
             {
                 int protoIndex = protoIndices[i];
                 YBI_ASSERT(protoIndex >= 0);
@@ -670,6 +571,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 const pxr::GfMatrix4d parentFromLocal =
                     instanceTransforms[i] * pointInstancerLocalToWorld;
 
+                // YBI_ERROR(!(ConvertAffineTransform(pointInstancerLocalToWorld) ==
+                //             AffineTransform::Zero()));
+
                 Instance &instance = scene->instances[dstInstanceIndex++];
                 instance.transform = ConvertAffineTransform(parentFromLocal);
                 instance.handle.type = GeometryType::Scene;
@@ -678,10 +582,12 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 YBI_ASSERT(it->second != 0);
             }
         }
+
+        scene->instances.Resize(dstInstanceIndex);
     }
 
     // Flatten
-    Scene newScene(container);
+    Scene *newScene = new Scene(container);
 
     std::vector<std::pair<Scene *, AffineTransform>> stack;
     stack.push_back(std::make_pair(&scenes[0], AffineTransform::Identity()));
@@ -696,6 +602,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         for (Instance &instance : info.first->instances)
         {
             AffineTransform transform = info.second * instance.transform;
+
             switch (instance.handle.type)
             {
                 case GeometryType::Scene:
@@ -705,7 +612,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 }
                 case GeometryType::Mesh:
                 {
-                    newScene.instances.EmplaceBack(transform, instance.handle);
+                    newScene->instances.EmplaceBack(transform, instance.handle);
                     test++;
                     break;
                 }
@@ -719,7 +626,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         }
     }
 
-    printf("num instances: %lli, %lli\n", newScene.instances.size(), test);
+    printf("num instances: %lli, %lli\n", newScene->instances.size(), test);
 
     // NOTE: by this point all instances should be traversed
 #if 0
@@ -730,27 +637,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         printf("num vertices: %lli\n", container->meshes[meshIndex].GetNumVertices());
     }
 #endif
-    return nullptr;
+
+    return newScene;
 }
 
 } // namespace ybi
-
-using namespace ybi;
-
-int main(int argc, char **argv)
-{
-    YBI_ASSERT(argc == 2);
-
-    // char *filename = argv[0];
-
-    std::string filename(argv[1]);
-    // "D:\\Distributable_2023_Davinci_v2\\Distributable_2023_Davinci\\shot\\rt\\rt_base.usda";
-    // "D:\\ALab-2.2.0\\ALab\\entry.usda";
-    Arena arena;
-    DataContainer container;
-
-    std::unique_ptr<SceneLoader> sceneLoader = SceneLoader::CreateSceneLoader(filename);
-    YBI_ASSERT(sceneLoader);
-    Scene *scene = sceneLoader->LoadScene(&arena, &container);
-    return 0;
-}

@@ -112,6 +112,19 @@ public:
         return m[row][column];
     }
 
+    bool operator==(const AffineTransform &other) const
+    {
+        for (int r = 0; r < 3; r++)
+        {
+            for (int c = 0; c < 4; c++)
+            {
+                if (m[r][c] != other.m[r][c])
+                    return false;
+            }
+        }
+        return true;
+    }
+
     constexpr Vec3f GetTranslation() const
     {
         return Vec3f(m[0][3], m[1][3], m[2][3]);
