@@ -1,6 +1,7 @@
 #include "core/arena.h"
 #include "core/assert.h"
 #include "device/device.h"
+#include "device/kernel_params.h"
 #include "io/usd.h"
 #include "scene/scene.h"
 #include <memory>
@@ -28,6 +29,32 @@ int main(int argc, char **argv)
 
     RenderSystem system(device.get(), &container, scene);
     system.Update();
+
+    YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);
+
+    AffineTransform renderFromCamera;
+    Matrix4x4 cameraFromRaster;
+
+    const Camera &camera = scene->container->camera;
+    bool result = camera.cameraFromWorld.TryInverse(&renderFromCamera);
+    YBI_ASSERT(result);
+    result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
+    YBI_ASSERT(result);
+
+    // Image
+    DeviceBuffer imageHandle = device->Alloc(camera.width * camera.height * 4);
+
+    KernelParams params;
+    params.bvhHandle = scene->container->GetBVHs(GeometryType::Scene)[0].handle.handle;
+    params.imageHandle = reinterpret_cast<uint64_t>(imageHandle.Data());
+    params.cameraFromRaster = cameraFromRaster;
+    params.renderFromCamera = renderFromCamera;
+    params.maxDepth = 3;
+    params.lensRadius = 0.f; // TODO
+
+    DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
+    device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
+    device->DispatchKernel(1920, 1080, cudaParams);
 
     return 0;
 }

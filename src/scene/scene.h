@@ -2,6 +2,7 @@
 
 #include "core/affine_transform.h"
 #include "core/array.h"
+#include "core/matrix4x4.h"
 #include "scene/bvh.h"
 #include <array>
 #include <memory>
@@ -62,8 +63,19 @@ class SubdivisionMesh
 {
 };
 
+struct Camera
+{
+    AffineTransform cameraFromWorld;
+    Matrix4x4 clipFromCamera;
+    Matrix4x4 rasterFromCamera;
+
+    int width;
+    int height;
+};
+
 struct DataContainer
 {
+    Camera camera;
     std::vector<Mesh> meshes;
     Curve *curves;
     SubdivisionMesh *subdivisionMeshes;

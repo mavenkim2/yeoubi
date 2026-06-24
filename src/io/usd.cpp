@@ -5,15 +5,18 @@
 #include "core/array.h"
 #include "core/assert.h"
 #include "io/usd.h"
+#include "pxr/base/gf/camera.h"
 #include "scene/scene.h"
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <pxr/base/gf/frustum.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primFlags.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
+#include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/xformCache.h>
@@ -34,6 +37,8 @@ struct USDPrimTraversalData
     std::vector<pxr::UsdPrim> pointInstancers;
     std::vector<pxr::UsdPrim> instances;
     std::vector<pxr::UsdPrim> curves;
+
+    std::vector<pxr::UsdGeomCamera> cameras;
 };
 
 std::unique_ptr<SceneLoader> SceneLoader::CreateSceneLoader(const std::string &filePath)
@@ -71,6 +76,32 @@ AffineTransform USDSceneLoader::ConvertAffineTransform(const pxr::GfMatrix4d &m)
                            (float)r2[1],
                            (float)r2[2],
                            (float)r2[3]);
+}
+
+Matrix4x4 USDSceneLoader::ConvertMatrix4x4(const pxr::GfMatrix4d &m) const
+{
+    const pxr::GfMatrix4d t = m.GetTranspose();
+    const pxr::GfVec4d r0 = t.GetRow(0);
+    const pxr::GfVec4d r1 = t.GetRow(1);
+    const pxr::GfVec4d r2 = t.GetRow(2);
+    const pxr::GfVec4d r3 = t.GetRow(3);
+
+    return Matrix4x4((float)r0[0],
+                     (float)r0[1],
+                     (float)r0[2],
+                     (float)r0[3],
+                     (float)r1[0],
+                     (float)r1[1],
+                     (float)r1[2],
+                     (float)r1[3],
+                     (float)r2[0],
+                     (float)r2[1],
+                     (float)r2[2],
+                     (float)r2[3],
+                     (float)r3[0],
+                     (float)r3[1],
+                     (float)r3[2],
+                     (float)r3[3]);
 }
 
 void USDSceneLoader::ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
@@ -188,6 +219,10 @@ void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
         else if (prim.IsA<pxr::UsdGeomBasisCurves>())
         {
             data->curves.push_back(prim);
+        }
+        else if (prim.IsA<pxr::UsdGeomCamera>())
+        {
+            data->cameras.push_back(pxr::UsdGeomCamera(prim));
         }
 
         if (!pushChildren)
@@ -451,8 +486,35 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     printf("num scenes: %lli\n", traversalDatas.size());
 
     const pxr::UsdTimeCode timeCode(stage->GetStartTimeCode());
-    // pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default();
     pxr::UsdGeomXformCache xformCache(timeCode);
+
+    // Load cameras
+    USDPrimTraversalData &data = traversalDatas[0];
+    YBI_ASSERT(!data.cameras.empty());
+
+    pxr::UsdGeomCamera camera = data.cameras[0];
+    pxr::UsdPrim cameraPrim = camera.GetPrim();
+    // xformCache.GetLocalToWorldTransform(cameraPrim);
+    pxr::GfCamera gfCam = camera.GetCamera(timeCode);
+    pxr::GfFrustum frustum = gfCam.GetFrustum();
+    pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+    pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
+
+    container->camera.cameraFromWorld = ConvertAffineTransform(viewMatrix);
+    container->camera.clipFromCamera = ConvertMatrix4x4(projMatrix);
+
+    // TODO: cli option
+    const int targetWidth = 1920;
+    const int targetHeight = 1080;
+
+    float sx = targetWidth * 0.5f;
+    float sy = targetHeight * 0.5f;
+    Matrix4x4 rasterFromNDC = Matrix4x4(sx, 0, 0, sx, 0, -sy, 0, sy, 0, 0, 1, 0, 0, 0, 0, 1);
+
+    container->camera.rasterFromCamera = rasterFromNDC * container->camera.clipFromCamera;
+    container->camera.width = targetWidth;
+    container->camera.height = targetHeight;
+
     std::vector<Scene> scenes;
     scenes.resize(traversalDatas.size());
 
@@ -517,6 +579,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             instance.handle.type = GeometryType::Scene;
             instance.handle.index = it->second;
 
+            YBI_ASSERT(!(instance.transform == AffineTransform::Zero()));
             YBI_ASSERT(it->second != 0);
         }
 
@@ -571,8 +634,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 const pxr::GfMatrix4d parentFromLocal =
                     instanceTransforms[i] * pointInstancerLocalToWorld;
 
-                // YBI_ERROR(!(ConvertAffineTransform(pointInstancerLocalToWorld) ==
-                //             AffineTransform::Zero()));
+                YBI_ASSERT(!(ConvertAffineTransform(parentFromLocal) == AffineTransform::Zero()));
 
                 Instance &instance = scene->instances[dstInstanceIndex++];
                 instance.transform = ConvertAffineTransform(parentFromLocal);
@@ -592,13 +654,12 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     std::vector<std::pair<Scene *, AffineTransform>> stack;
     stack.push_back(std::make_pair(&scenes[0], AffineTransform::Identity()));
 
-    size_t test = 0;
-
     while (!stack.empty())
     {
         std::pair<Scene *, AffineTransform> info = stack.back();
         stack.pop_back();
 
+        size_t index = 0;
         for (Instance &instance : info.first->instances)
         {
             AffineTransform transform = info.second * instance.transform;
@@ -613,7 +674,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 case GeometryType::Mesh:
                 {
                     newScene->instances.EmplaceBack(transform, instance.handle);
-                    test++;
                     break;
                 }
                 default:
@@ -623,10 +683,11 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     break;
                 }
             }
+            index++;
         }
     }
 
-    printf("num instances: %lli, %lli\n", newScene->instances.size(), test);
+    printf("num instances: %lli\n", newScene->instances.size());
 
     // NOTE: by this point all instances should be traversed
 #if 0

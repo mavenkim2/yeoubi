@@ -2,6 +2,7 @@
 
 #include "core/assert.h"
 #include "core/vec3f.h"
+#include "device/cuda_compat.h"
 #include <cmath>
 #include <cstddef>
 
@@ -13,28 +14,25 @@ class AffineTransform
 public:
     float m[3][4];
 
-    constexpr AffineTransform()
-        : m{{1.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 0.0f}}
-    {
-    }
+    AffineTransform() = default;
 
-    constexpr AffineTransform(float m00,
-                              float m01,
-                              float m02,
-                              float m03,
-                              float m10,
-                              float m11,
-                              float m12,
-                              float m13,
-                              float m20,
-                              float m21,
-                              float m22,
-                              float m23)
+    YBI_CPU_GPU constexpr AffineTransform(float m00,
+                                          float m01,
+                                          float m02,
+                                          float m03,
+                                          float m10,
+                                          float m11,
+                                          float m12,
+                                          float m13,
+                                          float m20,
+                                          float m21,
+                                          float m22,
+                                          float m23)
         : m{{m00, m01, m02, m03}, {m10, m11, m12, m13}, {m20, m21, m22, m23}}
     {
     }
 
-    explicit AffineTransform(const float values[3][4])
+    YBI_CPU_GPU explicit AffineTransform(const float values[3][4])
     {
         for (size_t row = 0; row < 3; ++row)
         {
@@ -45,74 +43,74 @@ public:
         }
     }
 
-    static constexpr AffineTransform Identity()
+    YBI_CPU_GPU static constexpr AffineTransform Identity()
     {
-        return AffineTransform();
+        return AffineTransform(1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f);
     }
 
-    static constexpr AffineTransform Zero()
+    YBI_CPU_GPU static constexpr AffineTransform Zero()
     {
         return AffineTransform(
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
     }
 
-    static constexpr AffineTransform Translation(float x, float y, float z)
+    YBI_CPU_GPU static constexpr AffineTransform Translation(float x, float y, float z)
     {
         return AffineTransform(1.0f, 0.0f, 0.0f, x, 0.0f, 1.0f, 0.0f, y, 0.0f, 0.0f, 1.0f, z);
     }
 
-    static constexpr AffineTransform Translation(Vec3f translation)
+    YBI_CPU_GPU static constexpr AffineTransform Translation(Vec3f translation)
     {
         return Translation(translation.x, translation.y, translation.z);
     }
 
-    static constexpr AffineTransform Scale(float x, float y, float z)
+    YBI_CPU_GPU static constexpr AffineTransform Scale(float x, float y, float z)
     {
         return AffineTransform(x, 0.0f, 0.0f, 0.0f, 0.0f, y, 0.0f, 0.0f, 0.0f, 0.0f, z, 0.0f);
     }
 
-    static constexpr AffineTransform Scale(float value)
+    YBI_CPU_GPU static constexpr AffineTransform Scale(float value)
     {
         return Scale(value, value, value);
     }
 
-    float *Data()
+    YBI_CPU_GPU float *Data()
     {
         return &m[0][0];
     }
 
-    const float *Data() const
+    YBI_CPU_GPU const float *Data() const
     {
         return &m[0][0];
     }
 
-    float *operator[](size_t row)
+    YBI_CPU_GPU float *operator[](size_t row)
     {
         YBI_ASSERT(row < 3);
         return m[row];
     }
 
-    const float *operator[](size_t row) const
+    YBI_CPU_GPU const float *operator[](size_t row) const
     {
         YBI_ASSERT(row < 3);
         return m[row];
     }
 
-    float &operator()(size_t row, size_t column)
+    YBI_CPU_GPU float &operator()(size_t row, size_t column)
     {
         YBI_ASSERT(row < 3);
         YBI_ASSERT(column < 4);
         return m[row][column];
     }
 
-    const float &operator()(size_t row, size_t column) const
+    YBI_CPU_GPU const float &operator()(size_t row, size_t column) const
     {
         YBI_ASSERT(row < 3);
         YBI_ASSERT(column < 4);
         return m[row][column];
     }
 
-    bool operator==(const AffineTransform &other) const
+    YBI_CPU_GPU bool operator==(const AffineTransform &other) const
     {
         for (int r = 0; r < 3; r++)
         {
@@ -125,33 +123,33 @@ public:
         return true;
     }
 
-    constexpr Vec3f GetTranslation() const
+    YBI_CPU_GPU constexpr Vec3f GetTranslation() const
     {
         return Vec3f(m[0][3], m[1][3], m[2][3]);
     }
 
-    void SetTranslation(Vec3f translation)
+    YBI_CPU_GPU void SetTranslation(Vec3f translation)
     {
         m[0][3] = translation.x;
         m[1][3] = translation.y;
         m[2][3] = translation.z;
     }
 
-    constexpr Vec3f TransformPoint(Vec3f point) const
+    YBI_CPU_GPU constexpr Vec3f TransformPoint(Vec3f point) const
     {
         return Vec3f(m[0][0] * point.x + m[0][1] * point.y + m[0][2] * point.z + m[0][3],
                      m[1][0] * point.x + m[1][1] * point.y + m[1][2] * point.z + m[1][3],
                      m[2][0] * point.x + m[2][1] * point.y + m[2][2] * point.z + m[2][3]);
     }
 
-    constexpr Vec3f TransformVector(Vec3f vector) const
+    YBI_CPU_GPU constexpr Vec3f TransformVector(Vec3f vector) const
     {
         return Vec3f(m[0][0] * vector.x + m[0][1] * vector.y + m[0][2] * vector.z,
                      m[1][0] * vector.x + m[1][1] * vector.y + m[1][2] * vector.z,
                      m[2][0] * vector.x + m[2][1] * vector.y + m[2][2] * vector.z);
     }
 
-    bool TryInverse(AffineTransform *out, float epsilon = 1.0e-8f) const
+    YBI_CPU_GPU bool TryInverse(AffineTransform *out, float epsilon = 1.0e-8f) const
     {
         YBI_ASSERT(out);
 
@@ -193,7 +191,7 @@ public:
         return true;
     }
 
-    AffineTransform Inverse(float epsilon = 1.0e-8f) const
+    YBI_CPU_GPU AffineTransform Inverse(float epsilon = 1.0e-8f) const
     {
         AffineTransform inverse;
         const bool success = TryInverse(&inverse, epsilon);
@@ -202,7 +200,7 @@ public:
     }
 };
 
-constexpr AffineTransform operator*(const AffineTransform &a, const AffineTransform &b)
+YBI_CPU_GPU constexpr AffineTransform operator*(const AffineTransform &a, const AffineTransform &b)
 {
     return AffineTransform(
         a.m[0][0] * b.m[0][0] + a.m[0][1] * b.m[1][0] + a.m[0][2] * b.m[2][0],

@@ -65,6 +65,8 @@ public:
 
 struct Device
 {
+    virtual ~Device() = default;
+
     virtual DeviceBuffer Alloc(size_t bytes) = 0;
     virtual void Free(DeviceBuffer &buffer) = 0;
     virtual BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) = 0;
@@ -72,8 +74,9 @@ struct Device
                                         const Array<Instance> &instances,
                                         DataContainer *container) = 0;
     virtual std::unique_ptr<DeviceArena> CreateArena() = 0;
-
     static std::unique_ptr<Device> CreateDevice(DeviceKind kind);
+    virtual void CopyToDevice(void *dst, void *ptr, size_t size) = 0;
+    virtual bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) = 0;
 };
 
 } // namespace ybi

@@ -65,7 +65,7 @@ void GeometryManager::Update(Device *device,
 
     container->GetBVHs(GeometryType::Mesh).Reserve(container->meshes.size());
 
-    printf("num meshes: %lli\n", container->meshes.size());
+    printf("num meshes: %zu\n", container->meshes.size());
 
     std::unordered_multimap<uint64_t, size_t> meshMap;
 
@@ -75,12 +75,13 @@ void GeometryManager::Update(Device *device,
         Mesh &mesh = container->meshes[meshIndex];
         size_t meshNumVertices = mesh.GetNumVertices();
         const Array<Vec3f> &meshPositions = mesh.GetPositions();
+        const Array<int> &meshIndices = mesh.GetIndices();
 
         uint64_t hash =
             MurmurHash64A((uint8_t *)meshPositions.data(), sizeof(Vec3f) * meshNumVertices, 0);
-        // printf("%llu\n", hash);
+        hash = MurmurHash64A(
+            (uint8_t *)meshIndices.data(), sizeof(meshIndices[0]) * meshIndices.size(), hash);
 
-#if 1
         size_t duplicateIndex = ~0ull;
         auto range = meshMap.equal_range(hash);
         for (auto it = range.first; it != range.second; it++)
@@ -89,20 +90,24 @@ void GeometryManager::Update(Device *device,
             Mesh &otherMesh = container->meshes[otherMeshIndex];
 
             const Array<Vec3f> &otherPositions = otherMesh.GetPositions();
-            if (otherMesh.GetNumVertices() != meshNumVertices)
+            const Array<int> &otherIndices = otherMesh.GetIndices();
+
+            if (otherMesh.GetNumVertices() != meshNumVertices ||
+                otherIndices.size() != meshIndices.size())
                 continue;
 
-            bool repeats = true;
-            for (size_t i = 0; i < meshNumVertices; i++)
-            {
-                if (meshPositions[i] != otherPositions[i])
-                {
-                    repeats = false;
-                    break;
-                }
-            }
+            int result = memcmp(meshPositions.data(),
+                                otherPositions.data(),
+                                sizeof(meshPositions[0]) * meshNumVertices);
 
-            if (repeats)
+            if (result != 0)
+                continue;
+
+            result = memcmp(meshIndices.data(),
+                            otherIndices.data(),
+                            sizeof(meshIndices[0]) * meshIndices.size());
+
+            if (result == 0)
             {
                 duplicateIndex = otherMeshIndex;
                 break;
@@ -112,7 +117,7 @@ void GeometryManager::Update(Device *device,
         if (duplicateIndex != ~0ull)
         {
             Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
-            // TODO: this probably shouldn't be duplicated like this
+            // TODO: this is brittle. also bvhs probably shouldn't be duplicated
             bvhs.EmplaceBack(bvhs[duplicateIndex]);
         }
         else
@@ -123,13 +128,10 @@ void GeometryManager::Update(Device *device,
             container->GetBVHs(GeometryType::Mesh)
                 .EmplaceBack(device->BuildTriangleBVH(deviceArena, mesh));
         }
-#endif
-
-        // printf("mesh: %lli, verts: %lli\n", meshIndex, mesh.GetNumVertices());
     }
 
-    printf("total num vertices: %lli\n", totalNumVertices);
-    printf("num instances: %lli\n", rootScene->instances.size());
+    printf("total num vertices: %zu\n", totalNumVertices);
+    printf("num instances: %zu\n", rootScene->instances.size());
 
     // TODO: supports 2+ level scenes
     container->GetBVHs(GeometryType::Scene)

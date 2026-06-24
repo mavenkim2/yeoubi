@@ -2,6 +2,7 @@
 
 #include "core/affine_transform.h"
 #include "core/array.h"
+#include "core/matrix4x4.h"
 #include <memory>
 #include <pxr/base/vt/array.h>
 #include <pxr/usd/usd/prim.h>
@@ -27,6 +28,7 @@ class USDSceneLoader : public SceneLoader
     std::string filePath;
 
     AffineTransform ConvertAffineTransform(const pxr::GfMatrix4d &m) const;
+    Matrix4x4 ConvertMatrix4x4(const pxr::GfMatrix4d &m) const;
     void ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
                                 const pxr::VtIntArray &faceCounts,
                                 Array<int> &triangles) const;

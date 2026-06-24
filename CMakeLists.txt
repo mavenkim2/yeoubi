@@ -75,6 +75,38 @@ add_executable(yeoubi
                ${YBI_SOURCE}
 )
 
+set (YBI_KERNEL_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3f.h
+)
+
+
+if (YBI_HAS_CUDA AND OPTIX_FOUND)
+    set(YBI_OPTIX_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx")
+    add_custom_command(
+        OUTPUT "${YBI_OPTIX_PTX_PATH}"
+        COMMAND "${CMAKE_CUDA_COMPILER}"
+        --ptx
+        "--gpu-architecture=compute_75"
+        "--std=c++17"
+        # "--expt-relaxed-constexpr"
+        "--use_fast_math"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "-I${OPTIX_INCLUDE_DIR}"
+        # "-I${YBI_CUDA_INCLUDE_DIR}"
+        # "-I${OPENPBR_BSDF_INCLUDE_DIR}"
+        "-o" "${YBI_OPTIX_PTX_PATH}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
+            ${YBI_KERNEL_HEADERS}
+        VERBATIM
+    )
+    add_custom_target(yeoubi_optix_kernel DEPENDS ${YBI_OPTIX_PTX_PATH})
+    add_dependencies(yeoubi yeoubi_optix_kernel)
+
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_PTX_PATH=\"${YBI_OPTIX_PTX_PATH}\")
+endif()
+
 target_include_directories(yeoubi PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OPENUSD_INCLUDE_DIRS}
