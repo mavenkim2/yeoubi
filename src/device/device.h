@@ -76,6 +76,7 @@ struct Device
     virtual std::unique_ptr<DeviceArena> CreateArena() = 0;
     static std::unique_ptr<Device> CreateDevice(DeviceKind kind);
     virtual void CopyToDevice(void *dst, void *ptr, size_t size) = 0;
+    virtual void CopyToHost(void *dst, void *ptr, size_t size) = 0;
     virtual bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) = 0;
 };
 

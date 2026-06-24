@@ -51,6 +51,7 @@ struct CUDADevice : Device
                                 const Array<Instance> &instances,
                                 DataContainer *container) override;
     std::unique_ptr<DeviceArena> CreateArena() override;
+    void CopyToHost(void *dst, void *ptr, size_t size) override;
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
 

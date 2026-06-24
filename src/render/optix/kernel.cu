@@ -86,7 +86,7 @@ extern "C" __global__ void __raygen__kernel()
     const uint3 launchDimensions = optixGetLaunchDimensions();
 
     RNG rng;
-    Vec3f pixel(float(launchIndex.x) + 0.5f, float(launchIndex.y) + 0.5f, 1.f);
+    Vec3f pixel(float(launchIndex.x) + 0.5f, float(launchIndex.y) + 0.5f, 0.f);
 
     float filterU = rng.Uniform();
     float filterV = rng.Uniform();

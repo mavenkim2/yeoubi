@@ -3,10 +3,15 @@
 #include "core/affine_transform.h"
 #include "core/array.h"
 #include "core/matrix4x4.h"
+#include "pxr/pxr.h"
 #include <memory>
 #include <pxr/base/vt/array.h>
 #include <pxr/usd/usd/prim.h>
 #include <string>
+
+PXR_NAMESPACE_OPEN_SCOPE
+class UsdGeomXformCache;
+PXR_NAMESPACE_CLOSE_SCOPE
 
 namespace ybi
 {
@@ -36,6 +41,7 @@ class USDSceneLoader : public SceneLoader
                             size_t meshOffset,
                             size_t meshIndex,
                             const pxr::UsdPrim prim,
+                            pxr::UsdGeomXformCache &cache,
                             pxr::UsdTimeCode timeCode = pxr::UsdTimeCode::Default()) const;
     void TraversePrim(USDPrimTraversalData *data,
                       pxr::UsdPrim root,

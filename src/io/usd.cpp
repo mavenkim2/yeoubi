@@ -128,6 +128,7 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         size_t meshOffset,
                                         size_t meshIndex,
                                         const pxr::UsdPrim prim,
+                                        pxr::UsdGeomXformCache &cache,
                                         pxr::UsdTimeCode timeCode) const
 {
     pxr::UsdGeomMesh usdMesh(prim);
@@ -167,9 +168,9 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     size_t index = meshOffset + meshIndex;
     scene->container->meshes[index] = std::move(mesh);
 
-    // TODO: deal with duplicates?
+    pxr::GfMatrix4d localFromMesh = cache.GetLocalToWorldTransform(prim);
     Instance &instance = scene->instances[meshIndex];
-    instance.transform = AffineTransform::Identity();
+    instance.transform = ConvertAffineTransform(localFromMesh);
     instance.handle.type = GeometryType::Mesh;
     instance.handle.index = index;
 }
@@ -178,9 +179,8 @@ void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
                                   pxr::UsdPrim root,
                                   bool skipPrototypePrims) const
 {
-
-    // const pxr::Usd_PrimFlagsPredicate filterPredicate =
-    //     pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
+    const pxr::Usd_PrimFlagsPredicate filterPredicate =
+        pxr::UsdPrimIsActive && pxr::UsdPrimIsLoaded && !pxr::UsdPrimIsAbstract;
 
     std::vector<pxr::UsdPrim> stack;
     stack.push_back(root);
@@ -230,7 +230,7 @@ void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
             continue;
         }
 
-        for (const pxr::UsdPrim &child : prim.GetChildren())
+        for (const pxr::UsdPrim &child : prim.GetFilteredChildren(filterPredicate))
         {
             stack.push_back(child);
         }
@@ -492,6 +492,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     USDPrimTraversalData &data = traversalDatas[0];
     YBI_ASSERT(!data.cameras.empty());
 
+    printf("num cameras: %zu\n", data.cameras.size());
     pxr::UsdGeomCamera camera = data.cameras[0];
     pxr::UsdPrim cameraPrim = camera.GetPrim();
     // xformCache.GetLocalToWorldTransform(cameraPrim);
@@ -551,13 +552,17 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         scene->instances.Resize(totalInstanceCount + data.meshes.size());
         scene->container->meshes.resize(meshOffset + data.meshes.size());
 
+        tbb::enumerable_thread_specific<pxr::UsdGeomXformCache> xformCaches(
+            [&]() { return pxr::UsdGeomXformCache(timeCode); });
+
         tbb::parallel_for(tbb::blocked_range<size_t>(0, data.meshes.size()),
                           [&](const tbb::blocked_range<size_t> &range) {
+                              pxr::UsdGeomXformCache &cache = xformCaches.local();
                               for (size_t i = range.begin(); i != range.end(); i++)
                               // for (size_t i = 0; i < data.meshes.size(); i++)
                               {
                                   pxr::UsdPrim prim = data.meshes[i];
-                                  ProcessPolygonMesh(scene, meshOffset, i, prim, timeCode);
+                                  ProcessPolygonMesh(scene, meshOffset, i, prim, cache, timeCode);
                               }
                           });
 

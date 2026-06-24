@@ -90,9 +90,14 @@ std::unique_ptr<DeviceArena> CUDADevice::CreateArena()
     return std::make_unique<CUDAArena>();
 }
 
+void CUDADevice::CopyToHost(void *dst, void *ptr, size_t size)
+{
+    CUDA_ASSERT(cuMemcpyDtoH(dst, reinterpret_cast<CUdeviceptr>(ptr), size));
+}
+
 void CUDADevice::CopyToDevice(void *dst, void *ptr, size_t size)
 {
-    CUDA_ASSERT(cuMemcpyHtoD_v2(reinterpret_cast<CUdeviceptr>(dst), ptr, size));
+    CUDA_ASSERT(cuMemcpyHtoD(reinterpret_cast<CUdeviceptr>(dst), ptr, size));
 }
 
 bool CUDADevice::DispatchKernel(int width, int height, DeviceBuffer kernelParams)
@@ -764,7 +769,7 @@ BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
         OptixInstance &optixInstance = sceneInstances[index];
         SetOptixInstanceDefaults(optixInstance);
         CopyTransformMatrix(instance.transform, optixInstance.transform);
-        optixInstance.instanceId = kInvalidInstanceId;
+        optixInstance.instanceId = instance.handle.index;
         optixInstance.sbtOffset = 0;
         optixInstance.traversableHandle =
             (OptixTraversableHandle)container->GetBVHs(instance.handle.type)[instance.handle.index]

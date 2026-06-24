@@ -7,6 +7,9 @@
 #include <memory>
 #include <string>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
 using namespace ybi;
 
 int main(int argc, char **argv)
@@ -55,6 +58,11 @@ int main(int argc, char **argv)
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
     device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
     device->DispatchKernel(1920, 1080, cudaParams);
+
+    void *outBytes = malloc(1920 * 1080 * 4);
+    device->CopyToHost(outBytes, imageHandle.Data(), 1920 * 1080 * 4);
+
+    stbi_write_png("test.png", 1920, 1080, 4, outBytes, 1920 * 4);
 
     return 0;
 }
