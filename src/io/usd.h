@@ -38,6 +38,7 @@ class USDSceneLoader : public SceneLoader
                                 const pxr::VtIntArray &faceCounts,
                                 Array<int> &triangles) const;
     void ProcessPolygonMesh(Scene *scene,
+                            pxr::UsdPrim sceneRoot,
                             size_t meshOffset,
                             size_t meshIndex,
                             const pxr::UsdPrim prim,

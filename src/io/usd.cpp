@@ -125,6 +125,7 @@ void USDSceneLoader::ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
 }
 
 void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
+                                        pxr::UsdPrim sceneRoot,
                                         size_t meshOffset,
                                         size_t meshIndex,
                                         const pxr::UsdPrim prim,
@@ -168,7 +169,9 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     size_t index = meshOffset + meshIndex;
     scene->container->meshes[index] = std::move(mesh);
 
-    pxr::GfMatrix4d localFromMesh = cache.GetLocalToWorldTransform(prim);
+    bool resetsXformStack = false;
+    pxr::GfMatrix4d localFromMesh =
+        cache.ComputeRelativeTransform(prim, sceneRoot, &resetsXformStack);
     Instance &instance = scene->instances[meshIndex];
     instance.transform = ConvertAffineTransform(localFromMesh);
     instance.handle.type = GeometryType::Mesh;
@@ -495,7 +498,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     printf("num cameras: %zu\n", data.cameras.size());
     pxr::UsdGeomCamera camera = data.cameras[0];
     pxr::UsdPrim cameraPrim = camera.GetPrim();
-    // xformCache.GetLocalToWorldTransform(cameraPrim);
     pxr::GfCamera gfCam = camera.GetCamera(timeCode);
     pxr::GfFrustum frustum = gfCam.GetFrustum();
     pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
@@ -562,7 +564,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                               // for (size_t i = 0; i < data.meshes.size(); i++)
                               {
                                   pxr::UsdPrim prim = data.meshes[i];
-                                  ProcessPolygonMesh(scene, meshOffset, i, prim, cache, timeCode);
+                                  ProcessPolygonMesh(
+                                      scene, data.prim, meshOffset, i, prim, cache, timeCode);
                               }
                           });
 
@@ -573,11 +576,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             auto it = prototypeToIndexMap.find(prototype.GetPath().GetString());
             YBI_ASSERT(it != prototypeToIndexMap.end());
 
-            // TODO: verify which one is correct
             bool resetsXformStack = false;
             const pxr::GfMatrix4d instanceTransform =
-                xformCache.GetLocalToWorldTransform(usdInstance);
-            // xformCache.ComputeRelativeTransform(usdInstance, data.prim, &resetsXformStack);
+                xformCache.ComputeRelativeTransform(usdInstance, data.prim, &resetsXformStack);
 
             Instance &instance = scene->instances[dstInstanceIndex++];
             instance.transform = ConvertAffineTransform(instanceTransform);
@@ -601,8 +602,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             YBI_ASSERT(result);
             std::vector<bool> mask = pointInstancer.ComputeMaskAtTime(timeCode);
 
-            const pxr::GfMatrix4d pointInstancerLocalToWorld =
-                xformCache.GetLocalToWorldTransform(prim);
+            bool resetsXformStack = false;
+            const pxr::GfMatrix4d pointInstancerLocalToScene =
+                xformCache.ComputeRelativeTransform(prim, data.prim, &resetsXformStack);
 
             pxr::VtArray<pxr::GfMatrix4d> instanceTransforms;
             result = pointInstancer.ComputeInstanceTransformsAtTime(
@@ -635,9 +637,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                           "help: %s\n",
                           prototypePath.GetString().c_str());
 
-                // TODO: make sure this is correct
                 const pxr::GfMatrix4d parentFromLocal =
-                    instanceTransforms[i] * pointInstancerLocalToWorld;
+                    instanceTransforms[i] * pointInstancerLocalToScene;
 
                 YBI_ASSERT(!(ConvertAffineTransform(parentFromLocal) == AffineTransform::Zero()));
 
