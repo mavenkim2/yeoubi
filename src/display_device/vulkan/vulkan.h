@@ -67,7 +67,7 @@ struct Vulkan : DisplayDevice
     bool debugUtilsEnabled = false;
 
     Vulkan(GLFWwindow *window,
-           ValidationMode validationMode = ValidationMode::Disabled,
+           ValidationMode validationMode = ValidationMode::Enabled,
            GPUDevicePreference preference = GPUDevicePreference::Discrete);
     ~Vulkan();
 

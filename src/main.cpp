@@ -3,6 +3,7 @@
 #include "device/device.h"
 #include "device/kernel_params.h"
 #include "display_device/display_device.h"
+#include "input/camera_controller.h"
 #include "io/usd.h"
 #include "scene/scene.h"
 #include <cstdlib>
@@ -32,6 +33,7 @@ int main(int argc, char **argv)
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow *window = glfwCreateWindow(1920, 1080, "Yeoubi", nullptr, nullptr);
     YBI_ASSERT(window);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     std::unique_ptr<DisplayDevice> displayDevice = DisplayDevice::CreateDevice(window);
     YBI_ASSERT(displayDevice);
@@ -55,6 +57,7 @@ int main(int argc, char **argv)
     YBI_ASSERT(result);
     result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
     YBI_ASSERT(result);
+    CameraController cameraController(renderFromCamera);
 
     const size_t imageSize = static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
     const uint32_t numFramesInFlight = displayDevice->GetNumFramesInFlight();
@@ -86,10 +89,23 @@ int main(int argc, char **argv)
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
 
     uint32_t lastFrameIndex = 0;
+    double lastTime = glfwGetTime();
 
     while (!glfwWindowShouldClose(window))
     {
+        const double currentTime = glfwGetTime();
+        const float deltaTime = static_cast<float>(currentTime - lastTime);
+        lastTime = currentTime;
+
         glfwPollEvents();
+        cameraController.UpdateCamera(window, deltaTime);
+        params.renderFromCamera = cameraController.GetRenderFromCamera();
+
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+
         if (!displayDevice->BeginFrame())
         {
             continue;

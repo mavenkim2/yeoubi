@@ -509,7 +509,7 @@ Vulkan::Vulkan(GLFWwindow *window, ValidationMode validationMode, GPUDevicePrefe
     VK_CHECK(vkAllocateCommandBuffers(device, &commandBufferInfo, commandBuffers.data()));
 
     imageAvailableSemaphores.resize(numFramesInFlight);
-    renderFinishedSemaphores.resize(numFramesInFlight);
+    renderFinishedSemaphores.resize(swapchainImages.size());
     inFlightFences.resize(numFramesInFlight);
 
     VkSemaphoreCreateInfo semaphoreInfo = {};
@@ -523,9 +523,12 @@ Vulkan::Vulkan(GLFWwindow *window, ValidationMode validationMode, GPUDevicePrefe
     {
         VK_CHECK(
             vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[index]));
-        VK_CHECK(
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[index]));
         VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[index]));
+    }
+
+    for (VkSemaphore &semaphore : renderFinishedSemaphores)
+    {
+        VK_CHECK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore));
     }
 }
 
@@ -848,7 +851,7 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
     };
-    VkSemaphore signalSemaphore = renderFinishedSemaphores[currentFrame];
+    VkSemaphore signalSemaphore = renderFinishedSemaphores[currentSwapchainImageIndex];
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
