@@ -3,8 +3,10 @@
 #include "device/device.h"
 #include "scene/scene.h"
 #include <cstdint>
+#include <cuda.h>
 #include <optix_stubs.h>
 #include <string>
+#include <vector>
 
 namespace ybi
 {
@@ -29,6 +31,13 @@ struct CUDAOptixPipeline
 
 struct CUDADevice : Device
 {
+    struct ImportedExternalBuffer
+    {
+        CUdeviceptr ptr = 0;
+        size_t size = 0;
+        CUexternalMemory externalMemory = nullptr;
+    };
+
     struct ContextScope
     {
         ContextScope(CUDADevice *device);
@@ -41,11 +50,18 @@ struct CUDADevice : Device
     size_t totalAllocated;
     size_t bvhTotalAllocated;
     CUDAOptixPipeline optixPipeline;
+    std::vector<ImportedExternalBuffer> importedExternalBuffers;
 
     CUDADevice();
     ~CUDADevice() override;
     DeviceBuffer Alloc(size_t bytes) override;
     void Free(DeviceBuffer &buffer) override;
+    DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) override;
+    void FreeExternalBuffer(DeviceExternalBuffer &buffer) override;
+    DeviceExternalSemaphore
+    ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
+    void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
+    void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
     BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) override;
     BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                 const Array<Instance> &instances,

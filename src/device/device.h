@@ -3,6 +3,7 @@
 #include "core/array.h"
 #include "core/assert.h"
 #include "device/device_memory.h"
+#include "display_device/display_device.h"
 #include "scene/bvh.h"
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,7 @@ namespace ybi
 
 class Arena;
 struct DataContainer;
+struct DisplayBuffer;
 struct Instance;
 class Mesh;
 
@@ -69,6 +71,12 @@ struct Device
 
     virtual DeviceBuffer Alloc(size_t bytes) = 0;
     virtual void Free(DeviceBuffer &buffer) = 0;
+    virtual DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) = 0;
+    virtual void FreeExternalBuffer(DeviceExternalBuffer &buffer) = 0;
+    virtual DeviceExternalSemaphore
+    ImportExternalSemaphore(const DisplaySemaphore &semaphore) = 0;
+    virtual void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
+    virtual void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
     virtual BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) = 0;
     virtual BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                         const Array<Instance> &instances,

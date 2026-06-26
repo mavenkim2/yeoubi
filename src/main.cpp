@@ -2,10 +2,16 @@
 #include "core/assert.h"
 #include "device/device.h"
 #include "device/kernel_params.h"
+#include "display_device/display_device.h"
 #include "io/usd.h"
 #include "scene/scene.h"
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <vector>
+
+#define NOTHING
+#include <GLFW/glfw3.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -19,10 +25,16 @@ int main(int argc, char **argv)
     // char *filename = argv[0];
 
     std::string filename(argv[1]);
-    // "D:\\Distributable_2023_Davinci_v2\\Distributable_2023_Davinci\\shot\\rt\\rt_base.usda";
-    // "D:\\ALab-2.2.0\\ALab\\entry.usda";
     Arena arena;
     DataContainer container;
+
+    glfwInit();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow *window = glfwCreateWindow(1920, 1080, "Yeoubi", nullptr, nullptr);
+    YBI_ASSERT(window);
+
+    std::unique_ptr<DisplayDevice> displayDevice = DisplayDevice::CreateDevice(window);
+    YBI_ASSERT(displayDevice);
 
     std::unique_ptr<SceneLoader> sceneLoader = SceneLoader::CreateSceneLoader(filename);
     YBI_ASSERT(sceneLoader);
@@ -44,25 +56,86 @@ int main(int argc, char **argv)
     result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
     YBI_ASSERT(result);
 
-    // Image
-    DeviceBuffer imageHandle = device->Alloc(camera.width * camera.height * 4);
+    const size_t imageSize = static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
+    const uint32_t numFramesInFlight = displayDevice->GetNumFramesInFlight();
+    std::vector<std::unique_ptr<DisplayBuffer>> displayImageHandles;
+    std::vector<DeviceExternalBuffer> deviceImageHandles;
+    std::vector<std::unique_ptr<DisplaySemaphore>> displayFrameFinishedSemaphores;
+    std::vector<DeviceExternalSemaphore> deviceFrameFinishedSemaphores;
+    displayImageHandles.reserve(numFramesInFlight);
+    deviceImageHandles.reserve(numFramesInFlight);
+    displayFrameFinishedSemaphores.reserve(numFramesInFlight);
+    deviceFrameFinishedSemaphores.reserve(numFramesInFlight);
+
+    for (uint32_t frameIndex = 0; frameIndex < numFramesInFlight; ++frameIndex)
+    {
+        displayImageHandles.push_back(displayDevice->AllocateExternalBuffer(imageSize));
+        deviceImageHandles.push_back(device->ImportExternalBuffer(*displayImageHandles.back()));
+        displayFrameFinishedSemaphores.push_back(displayDevice->CreateDisplaySemaphore());
+        deviceFrameFinishedSemaphores.push_back(
+            device->ImportExternalSemaphore(*displayFrameFinishedSemaphores.back()));
+    }
 
     KernelParams params;
     params.bvhHandle = scene->container->GetBVHs(GeometryType::Scene)[0].handle.handle;
-    params.imageHandle = reinterpret_cast<uint64_t>(imageHandle.Data());
     params.cameraFromRaster = cameraFromRaster;
     params.renderFromCamera = renderFromCamera;
     params.maxDepth = 3;
     params.lensRadius = 0.f; // TODO
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
-    device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
-    device->DispatchKernel(1920, 1080, cudaParams);
 
-    void *outBytes = malloc(1920 * 1080 * 4);
-    device->CopyToHost(outBytes, imageHandle.Data(), 1920 * 1080 * 4);
+    uint32_t lastFrameIndex = 0;
 
-    stbi_write_png("test.png", 1920, 1080, 4, outBytes, 1920 * 4);
+    while (!glfwWindowShouldClose(window))
+    {
+        glfwPollEvents();
+        if (!displayDevice->BeginFrame())
+        {
+            continue;
+        }
+
+        const uint32_t frameIndex = displayDevice->GetCurrentFrameIndex();
+        lastFrameIndex = frameIndex;
+
+        DeviceExternalBuffer &deviceImageHandle = deviceImageHandles[frameIndex];
+        params.imageHandle = reinterpret_cast<uint64_t>(deviceImageHandle.buffer.Data());
+        device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
+        device->DispatchKernel(camera.width, camera.height, cudaParams);
+        device->SignalExternalSemaphore(deviceFrameFinishedSemaphores[frameIndex]);
+
+        displayDevice->EndFrame(*displayImageHandles[frameIndex],
+                                *displayFrameFinishedSemaphores[frameIndex],
+                                camera.width,
+                                camera.height);
+    }
+
+    const size_t outputSize =
+        static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
+    void *outBytes = malloc(outputSize);
+    device->CopyToHost(outBytes, deviceImageHandles[lastFrameIndex].buffer.Data(), outputSize);
+
+    stbi_write_png("test.png", camera.width, camera.height, 4, outBytes, camera.width * 4);
+    free(outBytes);
+
+    for (DeviceExternalSemaphore &deviceFrameFinishedSemaphore : deviceFrameFinishedSemaphores)
+    {
+        device->FreeExternalSemaphore(deviceFrameFinishedSemaphore);
+    }
+    deviceFrameFinishedSemaphores.clear();
+    displayFrameFinishedSemaphores.clear();
+
+    for (DeviceExternalBuffer &deviceImageHandle : deviceImageHandles)
+    {
+        device->FreeExternalBuffer(deviceImageHandle);
+    }
+    deviceImageHandles.clear();
+    displayImageHandles.clear();
+    displayDevice.reset();
+    device->Free(cudaParams);
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
 
     return 0;
 }

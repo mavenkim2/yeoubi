@@ -6,11 +6,13 @@
 #include "device/cuda_arena.h"
 #include "device/cuda_device.h"
 #include "device/kernel_params.h"
+#include "display_device/display_device.h"
 #include "scene/scene.h"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <cuda.h>
+#include <driver_types.h>
 #include <fstream>
 #include <ios>
 #include <istream>
@@ -79,10 +81,117 @@ void CUDADevice::Free(DeviceBuffer &buffer)
 {
     if (buffer.Data() == nullptr || buffer.SizeInBytes() == 0)
         return;
+
     // totalAllocated -= view.numBytes();
     CUDA_ASSERT(cuMemFree(CUdeviceptr(buffer.Data())));
 
     buffer = DeviceBuffer(std::nullptr_t());
+}
+
+DeviceExternalBuffer CUDADevice::ImportExternalBuffer(const DisplayBuffer &buffer)
+{
+    YBI_ASSERT(buffer.size > 0);
+    YBI_ASSERT(buffer.memory.size > 0);
+
+    CUDA_EXTERNAL_MEMORY_HANDLE_DESC desc = {};
+    switch (buffer.memory.type)
+    {
+        case ExternalMemoryHandleType::OpaqueWin32:
+        {
+            YBI_ASSERT(buffer.memory.handle);
+            desc.type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32;
+            desc.handle.win32.handle = buffer.memory.handle;
+            break;
+        }
+        default:
+        {
+            YBI_ASSERT(false);
+            break;
+        }
+    }
+
+    desc.size = buffer.memory.size;
+
+    CUexternalMemory externalMemory;
+    CUDA_ASSERT(cuImportExternalMemory(&externalMemory, &desc));
+
+    CUDA_EXTERNAL_MEMORY_BUFFER_DESC bufferDesc = {};
+    bufferDesc.offset = 0;
+    bufferDesc.size = buffer.size;
+
+    CUdeviceptr cudaPtr = 0;
+    CUDA_ASSERT(cuExternalMemoryGetMappedBuffer(&cudaPtr, externalMemory, &bufferDesc));
+
+    // importedExternalBuffers.push_back({cudaPtr, buffer.size, externalMemory});
+    DeviceExternalBuffer result;
+    result.handle = reinterpret_cast<void *>(externalMemory);
+    result.buffer = DeviceBuffer(uintptr_t(cudaPtr), buffer.size);
+    return result;
+}
+
+void CUDADevice::FreeExternalBuffer(DeviceExternalBuffer &buffer)
+{
+    if (buffer.buffer)
+    {
+        CUDA_ASSERT(cuMemFree(reinterpret_cast<CUdeviceptr>(buffer.buffer.Data())));
+        buffer.buffer = DeviceBuffer(std::nullptr_t());
+    }
+
+    if (buffer.handle)
+    {
+        CUDA_ASSERT(cuDestroyExternalMemory(reinterpret_cast<CUexternalMemory>(buffer.handle)));
+        buffer.handle = nullptr;
+    }
+}
+
+DeviceExternalSemaphore
+CUDADevice::ImportExternalSemaphore(const DisplaySemaphore &semaphore)
+{
+    CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC desc = {};
+    switch (semaphore.handle.type)
+    {
+        case ExternalMemoryHandleType::OpaqueWin32:
+        {
+            YBI_ASSERT(semaphore.handle.handle);
+            desc.type = CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32;
+            desc.handle.win32.handle = semaphore.handle.handle;
+            break;
+        }
+        default:
+        {
+            YBI_ASSERT(false);
+            break;
+        }
+    }
+
+    CUexternalSemaphore externalSemaphore = nullptr;
+    CUDA_ASSERT(cuImportExternalSemaphore(&externalSemaphore, &desc));
+
+    DeviceExternalSemaphore result;
+    result.handle = reinterpret_cast<void *>(externalSemaphore);
+    return result;
+}
+
+void CUDADevice::FreeExternalSemaphore(DeviceExternalSemaphore &semaphore)
+{
+    if (!semaphore.handle)
+    {
+        return;
+    }
+
+    CUDA_ASSERT(cuDestroyExternalSemaphore(
+        reinterpret_cast<CUexternalSemaphore>(semaphore.handle)));
+    semaphore.handle = nullptr;
+}
+
+void CUDADevice::SignalExternalSemaphore(DeviceExternalSemaphore &semaphore)
+{
+    YBI_ASSERT(semaphore.handle);
+
+    CUexternalSemaphore externalSemaphore =
+        reinterpret_cast<CUexternalSemaphore>(semaphore.handle);
+    CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS signalParams = {};
+    CUDA_ASSERT(cuSignalExternalSemaphoresAsync(&externalSemaphore, &signalParams, 1, 0));
 }
 
 std::unique_ptr<DeviceArena> CUDADevice::CreateArena()

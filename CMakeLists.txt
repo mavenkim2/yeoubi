@@ -10,6 +10,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
 
 # Compile Options
 option(WITH_CUDA "Enable CUDA backend" OFF)
+option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
 set(YBI_DEPENDENCIES)
@@ -52,6 +53,26 @@ if (WITH_CUDA)
     endif()
 endif()
 
+# Vulkan
+if (WITH_VULKAN)
+    find_package(Vulkan REQUIRED)
+    if (Vulkan_FOUND)
+        message(STATUS "Found Vulkan: ${Vulkan_INCLUDE_DIRS}")
+    endif()
+    list (APPEND YBI_DEPENDENCIES Vulkan::Vulkan)
+    list (APPEND YBI_COMPILE_DEFINITIONS WITH_VULKAN)
+    list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/vulkan/vulkan.cpp)
+endif()
+
+# GLFW
+if (WITH_VULKAN)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/glfw)
+    list(APPEND YBI_DEPENDENCIES glfw)
+endif()
+
 # USD
 set(USD_ROOT "" CACHE PATH "Path to the OpenUSD installation directory")
 if (USD_ROOT)
@@ -71,6 +92,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
                ${YBI_SOURCE}
 )
