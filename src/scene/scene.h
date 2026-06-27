@@ -4,6 +4,7 @@
 #include "core/array.h"
 #include "core/matrix4x4.h"
 #include "scene/bvh.h"
+#include "scene/texture.h"
 #include <array>
 #include <memory>
 #include <vector>
@@ -73,10 +74,12 @@ struct Camera
     int height;
 };
 
+// TODO: this is maybe getting messy
 struct DataContainer
 {
     Camera camera;
     std::vector<Mesh> meshes;
+    std::vector<Texture> textures;
     Curve *curves;
     SubdivisionMesh *subdivisionMeshes;
 

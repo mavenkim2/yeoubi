@@ -580,6 +580,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 
     std::vector<pxr::UsdShadeMaterial> materials;
 
+    tbb::enumerable_thread_specific<pxr::UsdGeomXformCache> xformCaches(
+        [&]() { return pxr::UsdGeomXformCache(timeCode); });
+
     for (size_t i = 0; i < traversalDatas.size(); i++)
     {
         Scene *scene = &scenes[i];
@@ -598,9 +601,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         scene->instances.Resize(totalInstanceCount + data.meshes.size());
         scene->container->meshes.resize(meshOffset + data.meshes.size());
 
-        tbb::enumerable_thread_specific<pxr::UsdGeomXformCache> xformCaches(
-            [&]() { return pxr::UsdGeomXformCache(timeCode); });
-
         tbb::parallel_for(tbb::blocked_range<size_t>(0, data.meshes.size()),
                           [&](const tbb::blocked_range<size_t> &range) {
                               pxr::UsdGeomXformCache &cache = xformCaches.local();
@@ -618,7 +618,12 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         {
             pxr::UsdPrim prim = data.meshes[i];
             pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
-            YBI_ERROR(material, "%s\n", prim.GetPath().GetString().c_str());
+
+            if (!material)
+            {
+                printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
+                continue;
+            }
             materials.push_back(material);
         }
 
@@ -759,10 +764,19 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 // FinalizePackedMaterial(&info.packed);
             }
         }
+        else if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource(pxr::TfToken("mdl")))
+        {
+            YBI_ASSERT(0);
+        }
         else
         {
-            YBI_LOGFATAL("%s\n", material.GetPath().GetString().c_str());
-            YBI_ASSERT(0);
+            // NOTE: empty materials???
+            for (const pxr::UsdShadeOutput &output : material.GetOutputs())
+            {
+                printf("material output: %s\n", output.GetFullName().GetText());
+            }
+            // YBI_LOGFATAL("%s\n", material.GetPath().GetString().c_str());
+            // YBI_ASSERT(0);
         }
     }
 

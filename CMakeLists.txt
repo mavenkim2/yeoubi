@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Yeoubi LANGUAGES CXX) 
+project(Yeoubi LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard for yeoubi and subprojects" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +17,7 @@ set(YBI_DEPENDENCIES)
 set(YBI_SOURCE)
 if (WIN32)
     list(APPEND YBI_COMPILE_DEFINITIONS NOMINMAX)
+    list(APPEND YBI_COMPILE_DEFINITIONS WIN32_LEAN_AND_MEAN)
 endif()
 
 # CUDA
@@ -27,7 +28,7 @@ if (WITH_CUDA)
     if (CMAKE_CUDA_COMPILER)
         set(YBI_HAS_CUDA ON)
     endif()
-    
+
     if (YBI_HAS_CUDA)
         set(YBI_MIN_OPTIX_VERSION 70300)
         find_package(CUDAToolkit REQUIRED)
@@ -35,7 +36,7 @@ if (WITH_CUDA)
         message(STATUS "CUDA Found: ${CMAKE_CUDA_COMPILER} (${CUDA_VERSION})")
         list (APPEND YBI_DEPENDENCIES CUDA::cuda_driver CUDA::cudart)
         list (APPEND YBI_COMPILE_DEFINITIONS WITH_CUDA)
-    
+
         find_package(OptiX)
         if (OPTIX_FOUND)
             if (OPTIX_VERSION VERSION_LESS ${YBI_MIN_OPTIX_VERSION})
@@ -86,7 +87,33 @@ if (USD_ROOT)
     list (APPEND YBI_DEPENDENCIES ${OPENUSD_LIBRARIES})
 endif()
 
-# Create exe
+# Virtual textures exe
+add_executable(yeoubi_virtual_textures
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/virtual_textures.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/core/string_builder.cpp
+)
+
+target_include_directories(yeoubi_virtual_textures PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OPENUSD_INCLUDE_DIRS}
+)
+
+target_include_directories(yeoubi_virtual_textures SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
+)
+
+target_link_libraries(yeoubi_virtual_textures PRIVATE
+    ${OPENUSD_LIBRARIES}
+)
+
+target_compile_definitions(yeoubi_virtual_textures PRIVATE
+    ${YBI_COMPILE_DEFINITIONS}
+    $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
+)
+
+# Renderer exe
 add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
@@ -134,7 +161,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_PTX_PATH=\"${YBI_OPTIX_PTX_PATH}\")
 endif()
 
-target_include_directories(yeoubi PRIVATE 
+target_include_directories(yeoubi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OPENUSD_INCLUDE_DIRS}
 )
@@ -143,7 +170,7 @@ target_include_directories(yeoubi SYSTEM PRIVATE
     ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES}
 )
 
-target_link_libraries(yeoubi PRIVATE 
+target_link_libraries(yeoubi PRIVATE
     ${YBI_DEPENDENCIES}
 )
 
