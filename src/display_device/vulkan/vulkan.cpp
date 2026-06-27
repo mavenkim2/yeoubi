@@ -1,13 +1,12 @@
-#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
-
-#include "core/math.h"
 #include "display_device/vulkan/vulkan.h"
+#include "core/math.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <vulkan/vulkan_core.h>
 
 namespace ybi
 {

@@ -5,11 +5,11 @@
 #include "core/array.h"
 #include "core/assert.h"
 #include "io/usd.h"
-#include "pxr/base/gf/camera.h"
 #include "scene/scene.h"
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/usd/usd/prim.h>
@@ -19,7 +19,10 @@
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
+#include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdShade/material.h>
+#include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <string>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
@@ -41,6 +44,33 @@ struct USDPrimTraversalData
     std::vector<pxr::UsdGeomCamera> cameras;
 };
 
+static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim)
+{
+    pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
+    pxr::UsdShadeMaterial material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->full);
+    if (!material)
+    {
+        material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->preview);
+    }
+    if (!material)
+    {
+        material = bindingApi.ComputeBoundMaterial(pxr::UsdShadeTokens->allPurpose);
+    }
+
+    if (material)
+    {
+        // printf("Prim %s is bound to material: %s\n",
+        //        prim.GetPath().GetText(),
+        //        material.GetPath().GetText());
+    }
+    else
+    {
+        // printf("Prim %s has no material bound.\n", prim.GetPath().GetText());
+    }
+
+    return material;
+}
+
 std::unique_ptr<SceneLoader> SceneLoader::CreateSceneLoader(const std::string &filePath)
 {
     std::string ext = std::filesystem::path(filePath).extension().string();
@@ -55,7 +85,11 @@ std::unique_ptr<SceneLoader> SceneLoader::CreateSceneLoader(const std::string &f
     }
 }
 
-USDSceneLoader::USDSceneLoader(std::string filePath) : filePath(filePath) {}
+USDSceneLoader::USDSceneLoader(std::string filePath) : filePath(filePath)
+{
+    allowedPurposes.push_back(pxr::UsdGeomTokens->default_);
+    allowedPurposes.push_back(pxr::UsdGeomTokens->render);
+}
 
 AffineTransform USDSceneLoader::ConvertAffineTransform(const pxr::GfMatrix4d &m) const
 {
@@ -124,6 +158,21 @@ void USDSceneLoader::ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
     }
 }
 
+bool USDSceneLoader::IsPurposeAllowed(pxr::UsdPrim prim) const
+{
+    pxr::UsdGeomImageable imageable(prim);
+
+    pxr::TfToken purpose = imageable.ComputePurpose();
+    for (const pxr::TfToken &allowed : allowedPurposes)
+    {
+        if (purpose == allowed)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         pxr::UsdPrim sceneRoot,
                                         size_t meshOffset,
@@ -133,6 +182,9 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         pxr::UsdTimeCode timeCode) const
 {
     pxr::UsdGeomMesh usdMesh(prim);
+
+    pxr::UsdGeomImageable imageable(prim);
+    // prim.ComputePurpo
 
     pxr::VtVec3fArray usdPositions;
     pxr::VtIntArray faceIndices;
@@ -200,6 +252,11 @@ void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
 
         pxr::UsdGeomImageable imageable(prim);
         if (imageable && imageable.ComputeVisibility() == pxr::UsdGeomTokens->invisible)
+        {
+            continue;
+        }
+
+        if (!IsPurposeAllowed(prim))
         {
             continue;
         }
@@ -521,6 +578,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     std::vector<Scene> scenes;
     scenes.resize(traversalDatas.size());
 
+    std::vector<pxr::UsdShadeMaterial> materials;
+
     for (size_t i = 0; i < traversalDatas.size(); i++)
     {
         Scene *scene = &scenes[i];
@@ -534,21 +593,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             totalInstanceCount += pointInstancer.GetInstanceCount(timeCode);
         }
 
-        // size_t something = data.meshes.size() + data.curves.size() + data.instances.size()
-        //     + data.pointInstancers.size();
-        // printf("num something: %lli\n", something);
-        // printf("num instances: %lli, index: %lli, num meshes: %lli\n",
-        //        data.instances.size(),
-        //        i,
-        //        data.meshes.size());
-        // printf("num meshes: %lli\n", data.meshes.size());
-        //
-        // if (data.instances.size() == 1)
-        // {
-        //     pxr::UsdPrim prototype = data.instances[0].GetPrototype();
-        //     printf("%s\n", prototype.GetPath().GetString().c_str());
-        // }
-
         size_t meshOffset = scene->container->meshes.size();
         size_t dstInstanceIndex = data.meshes.size();
         scene->instances.Resize(totalInstanceCount + data.meshes.size());
@@ -561,13 +605,22 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                           [&](const tbb::blocked_range<size_t> &range) {
                               pxr::UsdGeomXformCache &cache = xformCaches.local();
                               for (size_t i = range.begin(); i != range.end(); i++)
-                              // for (size_t i = 0; i < data.meshes.size(); i++)
                               {
                                   pxr::UsdPrim prim = data.meshes[i];
+
                                   ProcessPolygonMesh(
                                       scene, data.prim, meshOffset, i, prim, cache, timeCode);
                               }
                           });
+
+        // Get all materials
+        for (size_t i = 0; i < data.meshes.size(); i++)
+        {
+            pxr::UsdPrim prim = data.meshes[i];
+            pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
+            YBI_ERROR(material, "%s\n", prim.GetPath().GetString().c_str());
+            materials.push_back(material);
+        }
 
         for (pxr::UsdPrim &usdInstance : data.instances)
         {
@@ -615,13 +668,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 pxr::UsdGeomPointInstancer::ApplyMask);
             YBI_ASSERT(result);
 
-            // size_t oldSize = protoIndices.size();
             result = pxr::UsdGeomPointInstancer::ApplyMaskToArray(mask, &protoIndices);
             YBI_ASSERT(result);
-            // printf("num instances, old: %lli new: %lli, index: %lli\n",
-            //        oldSize,
-            //        protoIndices.size(),
-            //        i);
 
             YBI_ASSERT(instanceTransforms.size() == protoIndices.size());
 
@@ -652,6 +700,70 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         }
 
         scene->instances.Resize(dstInstanceIndex);
+    }
+
+    // Handle materials
+    for (pxr::UsdShadeMaterial &material : materials)
+    {
+        // MaterialInfo info = {};
+        // info.materialPath = material.GetPath().GetString();
+        // info.packed = {};
+
+        if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
+        {
+            pxr::TfToken token;
+            if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
+            {
+                for (const pxr::UsdShadeInput &input : shader.GetInputs())
+                {
+                    // std::string texturePath;
+                    // std::string swizzle;
+                    // TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
+                    // TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
+
+                    auto sources = input.GetConnectedSources();
+
+                    if (sources.size() == 0)
+                        continue;
+                    YBI_ERROR(sources.size() == 1, "Num sources: %zu\n", sources.size());
+
+                    pxr::UsdPrim sourcePrim = sources[0].source.GetPrim();
+                    YBI_ASSERT(sourcePrim.IsA<pxr::UsdShadeShader>());
+                    pxr::UsdShadeShader shader(sourcePrim);
+
+                    pxr::TfToken shaderId;
+                    shader.GetShaderId(&shaderId);
+                    YBI_ASSERT(shaderId == pxr::TfToken("UsdUVTexture"));
+
+                    pxr::UsdShadeInput fileInput = shader.GetInput(pxr::TfToken("file"));
+                    YBI_ASSERT(fileInput);
+
+                    // if (!TryGetImageTexturePath(input, texturePath, &swizzle, &wrapS, &wrapT))
+                    // {
+                    //     continue;
+                    // }
+
+                    // MaterialTextureInput textureInput = {};
+                    // textureInput.inputName = input.GetBaseName().GetString();
+                    // textureInput.texturePath = texturePath;
+                    // textureInput.swizzle = swizzle;
+                    // textureInput.wrapS = wrapS;
+                    // textureInput.wrapT = wrapT;
+                    // outInfo->textureInputs.push_back(std::move(textureInput));
+                }
+            }
+            else
+            {
+                YBI_ASSERT(0);
+                // TODO: support non-UsdPreviewSurface material networks.
+                // FinalizePackedMaterial(&info.packed);
+            }
+        }
+        else
+        {
+            YBI_LOGFATAL("%s\n", material.GetPath().GetString().c_str());
+            YBI_ASSERT(0);
+        }
     }
 
     // Flatten

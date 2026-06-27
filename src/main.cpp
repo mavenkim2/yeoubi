@@ -11,13 +11,26 @@
 #include <string>
 #include <vector>
 
-#define NOTHING
 #include <GLFW/glfw3.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
 using namespace ybi;
+
+static void ScrollCallback(GLFWwindow *window, double xOffset, double yOffset)
+{
+    (void)xOffset;
+
+    CameraController *cameraController =
+        static_cast<CameraController *>(glfwGetWindowUserPointer(window));
+    if (!cameraController)
+    {
+        return;
+    }
+
+    cameraController->AddScrollInput(yOffset);
+}
 
 int main(int argc, char **argv)
 {
@@ -58,8 +71,11 @@ int main(int argc, char **argv)
     result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
     YBI_ASSERT(result);
     CameraController cameraController(renderFromCamera);
+    glfwSetWindowUserPointer(window, &cameraController);
+    glfwSetScrollCallback(window, ScrollCallback);
 
-    const size_t imageSize = static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
+    const size_t imageSize =
+        static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
     const uint32_t numFramesInFlight = displayDevice->GetNumFramesInFlight();
     std::vector<std::unique_ptr<DisplayBuffer>> displayImageHandles;
     std::vector<DeviceExternalBuffer> deviceImageHandles;

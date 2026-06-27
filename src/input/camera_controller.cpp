@@ -83,6 +83,12 @@ void CameraController::UpdateCamera(GLFWwindow *window, float deltaTime)
     }
 }
 
+void CameraController::AddScrollInput(double yOffset)
+{
+    moveSpeed *= std::pow(1.2f, static_cast<float>(yOffset));
+    moveSpeed = Clamp(moveSpeed, 0.01f, 1000.0f);
+}
+
 AffineTransform CameraController::GetRenderFromCamera() const
 {
     const float cosPitch = std::cosf(pitch);

@@ -21,6 +21,7 @@ public:
     explicit CameraController(const AffineTransform &renderFromCamera);
 
     void UpdateCamera(GLFWwindow *window, float deltaTime);
+    void AddScrollInput(double yOffset);
     AffineTransform GetRenderFromCamera() const;
 
 private:

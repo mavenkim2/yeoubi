@@ -3,9 +3,10 @@
 #include "core/affine_transform.h"
 #include "core/array.h"
 #include "core/matrix4x4.h"
-#include "pxr/pxr.h"
 #include <memory>
+#include <pxr/base/tf/token.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/pxr.h>
 #include <pxr/usd/usd/prim.h>
 #include <string>
 
@@ -31,6 +32,7 @@ public:
 class USDSceneLoader : public SceneLoader
 {
     std::string filePath;
+    std::vector<pxr::TfToken> allowedPurposes;
 
     AffineTransform ConvertAffineTransform(const pxr::GfMatrix4d &m) const;
     Matrix4x4 ConvertMatrix4x4(const pxr::GfMatrix4d &m) const;
@@ -47,6 +49,7 @@ class USDSceneLoader : public SceneLoader
     void TraversePrim(USDPrimTraversalData *data,
                       pxr::UsdPrim root,
                       bool skipPrototypePrims = true) const;
+    bool IsPurposeAllowed(pxr::UsdPrim prim) const;
 
 public:
     USDSceneLoader(std::string filePath);
