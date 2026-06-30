@@ -743,6 +743,19 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     pxr::UsdShadeInput fileInput = shader.GetInput(pxr::TfToken("file"));
                     YBI_ASSERT(fileInput);
 
+                    pxr::TfToken wrapS, wrapT;
+                    pxr::UsdShadeInput wrapSInput = shader.GetInput(pxr::TfToken("wrapS"));
+                    pxr::UsdShadeInput wrapTInput = shader.GetInput(pxr::TfToken("wrapT"));
+
+                    if (wrapSInput && wrapSInput.Get(&wrapS))
+                    {
+                        printf("wraps: %s\n", wrapS.GetText());
+                    }
+                    if (wrapTInput && wrapTInput.Get(&wrapT))
+                    {
+                        printf("wrapt: %s\n", wrapT.GetText());
+                    }
+
                     // if (!TryGetImageTexturePath(input, texturePath, &swizzle, &wrapS, &wrapT))
                     // {
                     //     continue;

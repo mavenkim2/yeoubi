@@ -58,8 +58,7 @@ struct CUDADevice : Device
     void Free(DeviceBuffer &buffer) override;
     DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) override;
     void FreeExternalBuffer(DeviceExternalBuffer &buffer) override;
-    DeviceExternalSemaphore
-    ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
+    DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
     void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
     void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
     BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) override;
@@ -68,8 +67,11 @@ struct CUDADevice : Device
                                 DataContainer *container) override;
     std::unique_ptr<DeviceArena> CreateArena() override;
     void CopyToHost(void *dst, void *ptr, size_t size) override;
+    void CopyToHostAsync(void *dst, void *ptr, size_t size) override;
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
+
+    DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
 
     void InitializeOptix();
     bool CreateOptixPipeline(const std::string &ptx);

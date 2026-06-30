@@ -121,6 +121,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_manager.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
                ${YBI_SOURCE}
 )

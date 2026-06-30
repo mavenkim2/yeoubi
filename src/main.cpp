@@ -5,6 +5,7 @@
 #include "display_device/display_device.h"
 #include "input/camera_controller.h"
 #include "io/usd.h"
+#include "render/virtual_texture_manager.h"
 #include "scene/scene.h"
 #include <cstdlib>
 #include <memory>

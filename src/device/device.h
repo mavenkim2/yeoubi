@@ -3,6 +3,7 @@
 #include "core/array.h"
 #include "core/assert.h"
 #include "device/device_memory.h"
+#include "device/device_texture.h"
 #include "display_device/display_device.h"
 #include "scene/bvh.h"
 #include <cstddef>
@@ -73,8 +74,7 @@ struct Device
     virtual void Free(DeviceBuffer &buffer) = 0;
     virtual DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) = 0;
     virtual void FreeExternalBuffer(DeviceExternalBuffer &buffer) = 0;
-    virtual DeviceExternalSemaphore
-    ImportExternalSemaphore(const DisplaySemaphore &semaphore) = 0;
+    virtual DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) = 0;
     virtual void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
     virtual void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
     virtual BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) = 0;
@@ -85,7 +85,9 @@ struct Device
     static std::unique_ptr<Device> CreateDevice(DeviceKind kind);
     virtual void CopyToDevice(void *dst, void *ptr, size_t size) = 0;
     virtual void CopyToHost(void *dst, void *ptr, size_t size) = 0;
+    virtual void CopyToHostAsync(void *dst, void *ptr, size_t size) = 0;
     virtual bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) = 0;
+    virtual DeviceTexture CreateTexture(const DeviceTextureInfo &info) = 0;
 };
 
 } // namespace ybi

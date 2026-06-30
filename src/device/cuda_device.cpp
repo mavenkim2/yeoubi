@@ -4,7 +4,9 @@
 #include "core/bit.h"
 #include "core/thread_context.h"
 #include "device/cuda_arena.h"
+#include "device/cuda_assert.h"
 #include "device/cuda_device.h"
+#include "device/device_texture.h"
 #include "device/kernel_params.h"
 #include "display_device/display_device.h"
 #include "scene/scene.h"
@@ -12,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cuda.h>
+#include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <fstream>
 #include <ios>
@@ -144,8 +147,7 @@ void CUDADevice::FreeExternalBuffer(DeviceExternalBuffer &buffer)
     }
 }
 
-DeviceExternalSemaphore
-CUDADevice::ImportExternalSemaphore(const DisplaySemaphore &semaphore)
+DeviceExternalSemaphore CUDADevice::ImportExternalSemaphore(const DisplaySemaphore &semaphore)
 {
     CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC desc = {};
     switch (semaphore.handle.type)
@@ -179,8 +181,8 @@ void CUDADevice::FreeExternalSemaphore(DeviceExternalSemaphore &semaphore)
         return;
     }
 
-    CUDA_ASSERT(cuDestroyExternalSemaphore(
-        reinterpret_cast<CUexternalSemaphore>(semaphore.handle)));
+    CUDA_ASSERT(
+        cuDestroyExternalSemaphore(reinterpret_cast<CUexternalSemaphore>(semaphore.handle)));
     semaphore.handle = nullptr;
 }
 
@@ -202,6 +204,11 @@ std::unique_ptr<DeviceArena> CUDADevice::CreateArena()
 void CUDADevice::CopyToHost(void *dst, void *ptr, size_t size)
 {
     CUDA_ASSERT(cuMemcpyDtoH(dst, reinterpret_cast<CUdeviceptr>(ptr), size));
+}
+
+void CUDADevice::CopyToHostAsync(void *dst, void *ptr, size_t size)
+{
+    CUDA_ASSERT(cuMemcpyDtoHAsync(dst, reinterpret_cast<CUdeviceptr>(ptr), size, 0));
 }
 
 void CUDADevice::CopyToDevice(void *dst, void *ptr, size_t size)
@@ -226,6 +233,141 @@ bool CUDADevice::DispatchKernel(int width, int height, DeviceBuffer kernelParams
                              1));
     CUDA_ASSERT(cuStreamSynchronize(0));
     return true;
+}
+
+struct CUDATextureFormatInfo
+{
+    CUarray_format format = CU_AD_FORMAT_UNSIGNED_INT8;
+    uint32_t numChannels = 0;
+};
+
+static CUDATextureFormatInfo GetCUDATextureFormatInfo(TextureFormat format)
+{
+    CUDATextureFormatInfo result = {};
+
+    switch (format)
+    {
+        case TextureFormat::RGBA8_UNORM:
+        {
+            result.format = CU_AD_FORMAT_UNSIGNED_INT8;
+            result.numChannels = 4;
+            break;
+        }
+        case TextureFormat::R16_FLOAT:
+        {
+            result.format = CU_AD_FORMAT_HALF;
+            result.numChannels = 1;
+            break;
+        }
+        case TextureFormat::RG16_FLOAT:
+        {
+            result.format = CU_AD_FORMAT_HALF;
+            result.numChannels = 2;
+            break;
+        }
+        case TextureFormat::RGBA16_FLOAT:
+        {
+            result.format = CU_AD_FORMAT_HALF;
+            result.numChannels = 4;
+            break;
+        }
+        case TextureFormat::R32_FLOAT:
+        {
+            result.format = CU_AD_FORMAT_FLOAT;
+            result.numChannels = 1;
+            break;
+        }
+        case TextureFormat::RG32_FLOAT:
+        {
+            result.format = CU_AD_FORMAT_FLOAT;
+            result.numChannels = 2;
+            break;
+        }
+        case TextureFormat::RGBA32_FLOAT:
+        {
+            result.format = CU_AD_FORMAT_FLOAT;
+            result.numChannels = 4;
+            break;
+        }
+        default:
+        {
+            YBI_ASSERT(false);
+            break;
+        }
+    }
+
+    return result;
+}
+
+DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
+{
+    ContextScope contextScope(this);
+
+    YBI_ASSERT(info.width > 0);
+    YBI_ASSERT(info.height > 0);
+
+    const CUDATextureFormatInfo formatInfo = GetCUDATextureFormatInfo(info.format);
+
+    CUfilter_mode filterMode;
+    switch (info.filterType)
+    {
+        case FilterType::Point:
+        {
+            filterMode = CU_TR_FILTER_MODE_POINT;
+            break;
+        }
+        case FilterType::Linear:
+        {
+            filterMode = CU_TR_FILTER_MODE_LINEAR;
+            break;
+        }
+    }
+
+    CUarray array = nullptr;
+    CUDA_ARRAY3D_DESCRIPTOR descriptor = {};
+    descriptor.Width = info.width;
+    descriptor.Height = info.height;
+    descriptor.Depth = info.layers;
+    descriptor.Format = formatInfo.format;
+    descriptor.NumChannels = formatInfo.numChannels;
+    descriptor.Flags = info.layers ? CUDA_ARRAY3D_LAYERED : 0;
+    // if (info.enableSurfaceWrites)
+    // {
+    //     descriptor.Flags |= CUDA_ARRAY3D_SURFACE_LDST;
+    // }
+
+    CUDA_ASSERT(cuArray3DCreate(&array, &descriptor));
+
+    CUDA_RESOURCE_DESC resourceDesc = {};
+    resourceDesc.resType = CU_RESOURCE_TYPE_ARRAY;
+    resourceDesc.res.array.hArray = array;
+
+    CUDA_TEXTURE_DESC textureDesc = {};
+    textureDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
+    textureDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
+    textureDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+    textureDesc.filterMode = filterMode;
+    textureDesc.flags = CU_TRSF_NORMALIZED_COORDINATES;
+    textureDesc.maxAnisotropy = 1;
+    textureDesc.mipmapFilterMode = CU_TR_FILTER_MODE_POINT;
+    textureDesc.minMipmapLevelClamp = 0.0f;
+    textureDesc.maxMipmapLevelClamp = float(info.mips - 1);
+
+    CUtexObject textureObject = 0;
+    CUDA_ASSERT(cuTexObjectCreate(&textureObject, &resourceDesc, &textureDesc, nullptr));
+
+    // CUsurfObject surfaceObject = 0;
+    // if (info.enableSurfaceWrites)
+    // {
+    //     CUDA_ASSERT(cuSurfObjectCreate(&surfaceObject, &resourceDesc));
+    // }
+
+    DeviceTexture result = {};
+    result.array = reinterpret_cast<uintptr_t>(array);
+    result.textureObject = textureObject;
+    result.info = info;
+    // result.surfaceObject = surfaceObject;
+    return result;
 }
 
 #endif
