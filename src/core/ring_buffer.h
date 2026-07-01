@@ -18,32 +18,33 @@ struct RingBuffer
     View<T> entries;
     uint64_t readOffset;
     uint64_t writeOffset;
+    std::mutex mutex;
 
     uint32_t maxEntries;
 
     RingBuffer(Arena *arena, uint32_t maxEntries);
     bool Write(T *vals, uint32_t num);
     void WriteWithOverwrite(T *vals, uint32_t num);
-    void SynchronizedWrite(std::mutex *mutex, T *vals, uint32_t num);
+    void SynchronizedWrite(T *vals, uint32_t num);
     T *Read(Arena *arena, uint32_t &num);
-    T *SynchronizedRead(std::mutex *mutex, Arena *arena, uint32_t &num);
+    T *SynchronizedRead(Arena *arena, uint32_t &num);
 };
-
 
 template <typename T>
 RingBuffer<T>::RingBuffer(Arena *arena, uint32_t maxEntries) : maxEntries(maxEntries)
 {
     YBI_ASSERT(IsPowerOfTwo(maxEntries));
     entries = arena->PushArray<T>(maxEntries);
-    readOffset  = 0;
+    readOffset = 0;
     writeOffset = 0;
 }
 
 template <typename T>
 bool RingBuffer<T>::Write(T *vals, uint32_t num)
 {
-    bool result  = true;
+    bool result = true;
     uint32_t capacity = static_cast<uint32_t>(entries.count);
+    YBI_ASSERT(num < capacity);
     if (writeOffset + num >= readOffset + capacity)
     {
         result = false;
@@ -51,7 +52,7 @@ bool RingBuffer<T>::Write(T *vals, uint32_t num)
     else
     {
         uint32_t writeIndex = static_cast<uint32_t>(writeOffset & (capacity - 1));
-        uint32_t numToEnd   = capacity - writeIndex;
+        uint32_t numToEnd = capacity - writeIndex;
         memcpy(entries.data() + writeIndex, vals, sizeof(T) * Min(num, numToEnd));
         if (num > numToEnd)
         {
@@ -72,7 +73,7 @@ void RingBuffer<T>::WriteWithOverwrite(T *vals, uint32_t num)
         readOffset = writeOffset + num - capacity;
     }
     uint32_t writeIndex = static_cast<uint32_t>(writeOffset & (capacity - 1));
-    uint32_t numToEnd   = capacity - writeIndex;
+    uint32_t numToEnd = capacity - writeIndex;
     memcpy(entries.data() + writeIndex, vals, sizeof(T) * Min(num, numToEnd));
     if (num > numToEnd)
     {
@@ -82,12 +83,12 @@ void RingBuffer<T>::WriteWithOverwrite(T *vals, uint32_t num)
 }
 
 template <typename T>
-void RingBuffer<T>::SynchronizedWrite(std::mutex *mutex, T *vals, uint32_t num)
+void RingBuffer<T>::SynchronizedWrite(T *vals, uint32_t num)
 {
     for (;;)
     {
         {
-            std::lock_guard<std::mutex> lock(*mutex);
+            std::lock_guard<std::mutex> lock(mutex);
             if (Write(vals, num))
             {
                 break;
@@ -103,14 +104,14 @@ T *RingBuffer<T>::Read(Arena *arena, uint32_t &num)
 {
     YBI_ASSERT(readOffset <= writeOffset);
     uint32_t numToRead = static_cast<uint32_t>(writeOffset - readOffset);
-    numToRead     = num == 0 ? numToRead : Min(numToRead, num);
-    uint32_t capacity  = static_cast<uint32_t>(entries.count);
-    T *vals       = 0;
+    numToRead = num == 0 ? numToRead : Min(numToRead, num);
+    uint32_t capacity = static_cast<uint32_t>(entries.count);
+    T *vals = 0;
     if (numToRead)
     {
-        vals          = arena->PushArray<T>(numToRead).data();
+        vals = arena->PushArray<T>(numToRead).data();
         uint32_t readIndex = static_cast<uint32_t>(readOffset & (capacity - 1));
-        uint32_t numToEnd  = capacity - readIndex;
+        uint32_t numToEnd = capacity - readIndex;
         memcpy(vals, entries.data() + readIndex, sizeof(T) * Min(numToRead, numToEnd));
         if (numToRead > numToEnd)
         {
@@ -123,12 +124,11 @@ T *RingBuffer<T>::Read(Arena *arena, uint32_t &num)
 }
 
 template <typename T>
-T *RingBuffer<T>::SynchronizedRead(std::mutex *mutex, Arena *arena, uint32_t &num)
+T *RingBuffer<T>::SynchronizedRead(Arena *arena, uint32_t &num)
 {
-    std::lock_guard<std::mutex> lock(*mutex);
+    std::lock_guard<std::mutex> lock(mutex);
     T *result = Read(arena, num);
     return result;
 }
-
 
 } // namespace ybi

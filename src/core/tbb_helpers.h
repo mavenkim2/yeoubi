@@ -1,6 +1,7 @@
 #include <atomic>
 #include <tbb/task_arena.h>
 #include <tbb/task_group.h>
+#include <utility>
 
 namespace ybi
 {
@@ -36,8 +37,14 @@ struct TaskPool
 {
     tbb::task_arena arena;
     tbb::task_group group;
+    int maxThreads = 0;
 
-    explicit TaskPool(int maxThreads) : arena(maxThreads) {}
+    explicit TaskPool(int maxThreads) : arena(maxThreads), maxThreads(maxThreads) {}
+
+    int GetMaxThreads() const
+    {
+        return maxThreads;
+    }
 
     template <typename Fn>
     void Run(Fn &&fn)

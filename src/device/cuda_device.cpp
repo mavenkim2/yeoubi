@@ -20,6 +20,7 @@
 #include <ios>
 #include <istream>
 #include <iterator>
+#include <memory>
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
@@ -32,6 +33,68 @@ namespace ybi
 
 // Platform functions
 #if defined(WITH_CUDA)
+
+CUDADeviceKernel::CUDADeviceKernel(CUcontext context, CUmodule module, CUfunction function)
+    : context(context), module(module), function(function)
+{
+}
+
+CUDADeviceKernel::~CUDADeviceKernel()
+{
+    if (!module)
+    {
+        return;
+    }
+
+    CUDA_ASSERT(cuCtxPushCurrent(context));
+    CUDA_ASSERT(cuModuleUnload(module));
+    CUDA_ASSERT(cuCtxPopCurrent(nullptr));
+
+    module = nullptr;
+    function = nullptr;
+}
+
+CUDADeviceStream::CUDADeviceStream(CUcontext context) : context(context)
+{
+    CUDA_ASSERT(cuCtxPushCurrent(context));
+    CUDA_ASSERT(cuStreamCreate(&stream, CU_STREAM_DEFAULT));
+    CUDA_ASSERT(cuCtxPopCurrent(nullptr));
+}
+
+CUDADeviceStream::~CUDADeviceStream()
+{
+    if (!stream)
+    {
+        return;
+    }
+
+    CUDA_ASSERT(cuCtxPushCurrent(context));
+    CUDA_ASSERT(cuStreamDestroy(stream));
+    CUDA_ASSERT(cuCtxPopCurrent(nullptr));
+
+    stream = nullptr;
+}
+
+CUDADeviceEvent::CUDADeviceEvent(CUcontext context) : context(context)
+{
+    CUDA_ASSERT(cuCtxPushCurrent(context));
+    CUDA_ASSERT(cuEventCreate(&event, CU_EVENT_DISABLE_TIMING));
+    CUDA_ASSERT(cuCtxPopCurrent(nullptr));
+}
+
+CUDADeviceEvent::~CUDADeviceEvent()
+{
+    if (!event)
+    {
+        return;
+    }
+
+    CUDA_ASSERT(cuCtxPushCurrent(context));
+    CUDA_ASSERT(cuEventDestroy(event));
+    CUDA_ASSERT(cuCtxPopCurrent(nullptr));
+
+    event = nullptr;
+}
 
 CUDADevice::ContextScope::ContextScope(CUDADevice *device)
 {
@@ -88,6 +151,24 @@ void CUDADevice::Free(DeviceBuffer &buffer)
     // totalAllocated -= view.numBytes();
     CUDA_ASSERT(cuMemFree(CUdeviceptr(buffer.Data())));
 
+    buffer = DeviceBuffer(std::nullptr_t());
+}
+
+DeviceBuffer CUDADevice::AllocHost(size_t numBytes)
+{
+    YBI_ASSERT(numBytes != 0);
+
+    void *ptr = nullptr;
+    CUDA_ASSERT(cuMemAllocHost(&ptr, numBytes));
+    return DeviceBuffer(ptr, numBytes);
+}
+
+void CUDADevice::FreeHost(DeviceBuffer &buffer)
+{
+    if (buffer.Data() == nullptr || buffer.SizeInBytes() == 0)
+        return;
+
+    CUDA_ASSERT(cuMemFreeHost(buffer.Data()));
     buffer = DeviceBuffer(std::nullptr_t());
 }
 
@@ -216,6 +297,161 @@ void CUDADevice::CopyToDevice(void *dst, void *ptr, size_t size)
     CUDA_ASSERT(cuMemcpyHtoD(reinterpret_cast<CUdeviceptr>(dst), ptr, size));
 }
 
+void CUDADevice::CopyToDeviceAsync(void *dst, void *ptr, size_t size)
+{
+    CUDA_ASSERT(cuMemcpyHtoDAsync(reinterpret_cast<CUdeviceptr>(dst), ptr, size, 0));
+}
+
+std::unique_ptr<DeviceStream> CUDADevice::CreateDeviceStream()
+{
+    return std::make_unique<CUDADeviceStream>(cudaContext);
+}
+
+std::shared_ptr<DeviceEvent> CUDADevice::CreateDeviceEvent()
+{
+    return std::make_shared<CUDADeviceEvent>(cudaContext);
+}
+
+void CUDADevice::SyncDeviceStream(DeviceStream &stream)
+{
+    ContextScope contextScope(this);
+
+    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
+    YBI_ASSERT(cudaStream.stream);
+    CUDA_ASSERT(cuStreamSynchronize(cudaStream.stream));
+}
+
+void CUDADevice::RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event)
+{
+    ContextScope contextScope(this);
+
+    CUDADeviceEvent &cudaEvent = static_cast<CUDADeviceEvent &>(event);
+    YBI_ASSERT(cudaEvent.event);
+
+    CUstream cudaStream = nullptr;
+    if (stream)
+    {
+        CUDADeviceStream &deviceStream = static_cast<CUDADeviceStream &>(*stream);
+        YBI_ASSERT(deviceStream.stream);
+        cudaStream = deviceStream.stream;
+    }
+
+    CUDA_ASSERT(cuEventRecord(cudaEvent.event, cudaStream));
+}
+
+void CUDADevice::WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event)
+{
+    ContextScope contextScope(this);
+
+    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
+    CUDADeviceEvent &cudaEvent = static_cast<CUDADeviceEvent &>(event);
+    YBI_ASSERT(cudaStream.stream);
+    YBI_ASSERT(cudaEvent.event);
+
+    CUDA_ASSERT(cuStreamWaitEvent(cudaStream.stream, cudaEvent.event, 0));
+}
+
+void CUDADevice::CopyToDevice3DAsync(DeviceStream &stream,
+                                     DeviceTexture &texture,
+                                     const DeviceTextureCopyDesc &desc)
+{
+    ContextScope contextScope(this);
+
+    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
+    YBI_ASSERT(cudaStream.stream);
+    YBI_ASSERT(texture.array);
+    YBI_ASSERT(desc.src);
+    YBI_ASSERT(desc.srcRowPitch >= desc.widthInBytes);
+    YBI_ASSERT(desc.widthInBytes > 0);
+    YBI_ASSERT(desc.height > 0);
+    YBI_ASSERT(desc.dstLayer < texture.info.layers);
+
+    const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
+    YBI_ASSERT(elementSize > 0);
+    YBI_ASSERT(desc.widthInBytes % elementSize == 0);
+    YBI_ASSERT(desc.dstX + (desc.widthInBytes / elementSize) <= texture.info.width);
+    YBI_ASSERT(desc.dstY + desc.height <= texture.info.height);
+
+    CUDA_MEMCPY3D copy = {};
+    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+    copy.srcHost = desc.src;
+    copy.srcPitch = desc.srcRowPitch;
+    copy.srcHeight = desc.height;
+
+    copy.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+    copy.dstArray = reinterpret_cast<CUarray>(texture.array);
+    copy.dstXInBytes = desc.dstX * elementSize;
+    copy.dstY = desc.dstY;
+    copy.dstZ = desc.dstLayer;
+
+    copy.WidthInBytes = desc.widthInBytes;
+    copy.Height = desc.height;
+    copy.Depth = 1;
+
+    CUDA_ASSERT(cuMemcpy3DAsync(&copy, cudaStream.stream));
+}
+
+void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
+                                          const DeviceTextureBatchCopyDesc *descs,
+                                          size_t numDescs)
+{
+    if (numDescs == 0)
+    {
+        return;
+    }
+
+    ContextScope contextScope(this);
+
+    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
+    YBI_ASSERT(cudaStream.stream);
+    YBI_ASSERT(descs);
+
+    std::vector<CUDA_MEMCPY3D_BATCH_OP> ops(numDescs);
+    for (size_t descIndex = 0; descIndex < numDescs; descIndex++)
+    {
+        const DeviceTextureBatchCopyDesc &batchDesc = descs[descIndex];
+        YBI_ASSERT(batchDesc.texture);
+
+        DeviceTexture &texture = *batchDesc.texture;
+        const DeviceTextureCopyDesc &copyDesc = batchDesc.copy;
+
+        YBI_ASSERT(texture.array);
+        YBI_ASSERT(copyDesc.src);
+        YBI_ASSERT(copyDesc.srcRowPitch >= copyDesc.widthInBytes);
+        YBI_ASSERT(copyDesc.widthInBytes > 0);
+        YBI_ASSERT(copyDesc.height > 0);
+        YBI_ASSERT(copyDesc.dstLayer < texture.info.layers);
+
+        const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
+        YBI_ASSERT(elementSize > 0);
+        YBI_ASSERT(copyDesc.srcRowPitch % elementSize == 0);
+        YBI_ASSERT(copyDesc.widthInBytes % elementSize == 0);
+        YBI_ASSERT(copyDesc.dstX + (copyDesc.widthInBytes / elementSize) <= texture.info.width);
+        YBI_ASSERT(copyDesc.dstY + copyDesc.height <= texture.info.height);
+
+        CUDA_MEMCPY3D_BATCH_OP &op = ops[descIndex];
+        op = {};
+
+        op.src.type = CU_MEMCPY_OPERAND_TYPE_POINTER;
+        op.src.op.ptr.ptr = static_cast<CUdeviceptr>(reinterpret_cast<uintptr_t>(copyDesc.src));
+        op.src.op.ptr.rowLength = copyDesc.srcRowPitch / elementSize;
+        op.src.op.ptr.layerHeight = copyDesc.height;
+
+        op.dst.type = CU_MEMCPY_OPERAND_TYPE_ARRAY;
+        op.dst.op.array.array = reinterpret_cast<CUarray>(texture.array);
+        op.dst.op.array.offset.x = copyDesc.dstX;
+        op.dst.op.array.offset.y = copyDesc.dstY;
+        op.dst.op.array.offset.z = copyDesc.dstLayer;
+
+        op.extent.width = copyDesc.widthInBytes / elementSize;
+        op.extent.height = copyDesc.height;
+        op.extent.depth = 1;
+        op.srcAccessOrder = CU_MEMCPY_SRC_ACCESS_ORDER_STREAM;
+    }
+
+    CUDA_ASSERT(cuMemcpy3DBatchAsync(ops.size(), ops.data(), 0, cudaStream.stream));
+}
+
 bool CUDADevice::DispatchKernel(int width, int height, DeviceBuffer kernelParams)
 {
     YBI_ASSERT(width && height);
@@ -233,6 +469,59 @@ bool CUDADevice::DispatchKernel(int width, int height, DeviceBuffer kernelParams
                              1));
     CUDA_ASSERT(cuStreamSynchronize(0));
     return true;
+}
+
+std::unique_ptr<DeviceKernel> CUDADevice::CreateDeviceKernel(const DeviceKernelDesc &desc)
+{
+    ContextScope contextScope(this);
+
+    YBI_ASSERT(!desc.filename.empty());
+
+    CUmodule module = nullptr;
+    CUDA_ASSERT(cuModuleLoad(&module, desc.filename.c_str()));
+
+    CUfunction function = nullptr;
+    if (!desc.entryName.empty())
+    {
+        CUDA_ASSERT(cuModuleGetFunction(&function, module, desc.entryName.c_str()));
+    }
+    else
+    {
+        uint32_t numFunctions = 0;
+        CUDA_ASSERT(cuModuleGetFunctionCount(&numFunctions, module));
+        YBI_ASSERT(numFunctions == 1);
+
+        CUDA_ASSERT(cuModuleEnumerateFunctions(&function, 1, module));
+    }
+
+    return std::make_unique<CUDADeviceKernel>(cudaContext, module, function);
+}
+
+void CUDADevice::ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc)
+{
+    ContextScope contextScope(this);
+
+    CUDADeviceKernel &cudaKernel = static_cast<CUDADeviceKernel &>(kernel);
+    YBI_ASSERT(cudaKernel.function);
+    YBI_ASSERT(desc.arguments);
+    YBI_ASSERT(desc.gridX > 0);
+    YBI_ASSERT(desc.gridY > 0);
+    YBI_ASSERT(desc.gridZ > 0);
+    YBI_ASSERT(desc.blockX > 0);
+    YBI_ASSERT(desc.blockY > 0);
+    YBI_ASSERT(desc.blockZ > 0);
+
+    CUDA_ASSERT(cuLaunchKernel(cudaKernel.function,
+                               desc.gridX,
+                               desc.gridY,
+                               desc.gridZ,
+                               desc.blockX,
+                               desc.blockY,
+                               desc.blockZ,
+                               desc.sharedMemoryBytes,
+                               0,
+                               desc.arguments,
+                               nullptr));
 }
 
 struct CUDATextureFormatInfo
@@ -351,7 +640,7 @@ DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
     textureDesc.maxAnisotropy = 1;
     textureDesc.mipmapFilterMode = CU_TR_FILTER_MODE_POINT;
     textureDesc.minMipmapLevelClamp = 0.0f;
-    textureDesc.maxMipmapLevelClamp = float(info.mips - 1);
+    textureDesc.maxMipmapLevelClamp = info.mips ? float(info.mips - 1) : 0;
 
     CUtexObject textureObject = 0;
     CUDA_ASSERT(cuTexObjectCreate(&textureObject, &resourceDesc, &textureDesc, nullptr));

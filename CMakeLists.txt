@@ -136,6 +136,8 @@ list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES
 
 
 if (YBI_HAS_CUDA AND OPTIX_FOUND)
+    get_filename_component(YBI_CUDA_HOST_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+
     set(YBI_OPTIX_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx")
     add_custom_command(
         OUTPUT "${YBI_OPTIX_PTX_PATH}"
@@ -143,6 +145,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         --ptx
         "--gpu-architecture=compute_75"
         "--std=c++17"
+        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
         # "--expt-relaxed-constexpr"
         "--use_fast_math"
         "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -159,7 +162,28 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_optix_kernel DEPENDS ${YBI_OPTIX_PTX_PATH})
     add_dependencies(yeoubi yeoubi_optix_kernel)
 
+    set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.cubin")
+    add_custom_command(
+        OUTPUT "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
+        COMMAND "${CMAKE_CUDA_COMPILER}"
+        --cubin
+        "--gpu-architecture=sm_75"
+        "--std=c++17"
+        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
+        "--use_fast_math"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "-o" "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h"
+        VERBATIM
+    )
+    add_custom_target(yeoubi_virtual_texture_kernel DEPENDS ${YBI_VIRTUAL_TEXTURE_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_virtual_texture_kernel)
+
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_PTX_PATH=\"${YBI_OPTIX_PTX_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_VIRTUAL_TEXTURE_KERNEL_PATH=\"${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}\")
 endif()
 
 target_include_directories(yeoubi PRIVATE

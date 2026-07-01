@@ -3,10 +3,13 @@
 #include "core/math.h"
 #include "core/string_builder.h"
 #include "io/usd.h"
+#include "render/virtual_texture_file.h"
 #include "scene/scene.h"
 #include "scene/texture.h"
 
 #define STB_IMAGE_IMPLEMENTATION
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <stb_image.h>
 #include <tbb/parallel_for.h>
@@ -61,6 +64,8 @@ static void LoadEXRFile(Image *texture, std::string filename)
 
 static void ProcessTexture(Arena &arena, std::string filename)
 {
+    (void)arena;
+
     std::string ext = std::filesystem::path(filename).extension().string();
     Image texture;
 
@@ -83,15 +88,43 @@ static void ProcessTexture(Arena &arena, std::string filename)
     const int rowStride = texture.width * numBytesPerTexel;
     const int pageStride = pageSize * numBytesPerTexel;
 
-    FileBuilder fileBuilder;
+    std::filesystem::path outputPath(filename);
+    outputPath.replace_extension(".ybvt");
+
+    FileBuilder fileBuilder(outputPath.string());
 
     int xSteps = (texture.width + pageSize - 1) / pageSize;
     int ySteps = (texture.height + pageSize - 1) / pageSize;
+    uint32_t numPages = static_cast<uint32_t>(xSteps * ySteps);
+
+    const uint64_t headerOffset = fileBuilder.Allocate(sizeof(VirtualTextureFileHeader));
+    const uint64_t pageTableOffset =
+        fileBuilder.Allocate(sizeof(VirtualTexturePageEntry) * numPages);
+
+    VirtualTextureFileHeader *header =
+        reinterpret_cast<VirtualTextureFileHeader *>(fileBuilder.GetPtr(headerOffset));
+    memset(fileBuilder.GetPtr(pageTableOffset), 0, sizeof(VirtualTexturePageEntry) * numPages);
+
+    *header = {};
+    header->magic = YBVT_MAGIC;
+    header->version = 1;
+    header->pageSize = pageSize;
+    header->width = texture.width;
+    header->height = texture.height;
+    header->numMips = 1;
+    header->numChannels = texture.numChannels;
+    header->numBytesPerChannel = texture.numBytesPerChannel;
+    header->compression = 0;
+    header->numPages = numPages;
+    header->pageTableOffset = pageTableOffset;
+    header->pageDataOffset = pageTableOffset + sizeof(VirtualTexturePageEntry) * numPages;
 
     for (int y = 0; y < ySteps; y++)
     {
         for (int x = 0; x < xSteps; x++)
         {
+            const uint32_t pageIndex = static_cast<uint32_t>(y * xSteps + x);
+
             int yStart = pageSize * y;
             int yEnd = Min(texture.height, pageSize * (y + 1));
 
@@ -101,6 +134,13 @@ static void ProcessTexture(Arena &arena, std::string filename)
             int sizeToCopy = (xEnd - xStart) * numBytesPerTexel;
 
             uint64_t offset = fileBuilder.Allocate(pageNumBytes);
+            VirtualTexturePageEntry *pageEntry =
+                reinterpret_cast<VirtualTexturePageEntry *>(fileBuilder.GetPtr(pageTableOffset)) +
+                pageIndex;
+            pageEntry->offset = offset;
+            pageEntry->packedSize = pageNumBytes;
+            pageEntry->unpackedSize = pageNumBytes;
+
             uint8_t *dst = fileBuilder.GetPtr(offset);
             memset(dst, 0, pageNumBytes);
 

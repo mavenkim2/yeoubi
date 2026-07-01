@@ -1,15 +1,25 @@
 #pragma once
 
 #include "core/array.h"
+#include "core/ring_buffer.h"
 #include "core/tbb_helpers.h"
 #include "device/device_memory.h"
 #include "device/device_texture.h"
+#include "render/virtual_texture_file.h"
+#include "render/virtual_texture_interop.h"
 #include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace ybi
 {
 
 struct Device;
+struct DeviceKernel;
+struct DeviceStream;
 struct DeviceTexture;
 struct DisplayDevice;
 
@@ -27,8 +37,15 @@ struct PageAllocationInfo
     uint32_t tileY;
     uint32_t mip;
 
+    DeviceTexture texture;
     uint32_t pool;
     uint32_t layer;
+    uint32_t lruIndex;
+};
+
+struct PageUploadCompletion
+{
+    uint32_t lruIndex;
 };
 
 // NOTE: instantiated once at startup
@@ -36,18 +53,9 @@ struct TextureDescriptor
 {
     uint32_t pageDescriptorOffset;
     DeviceTextureInfo info;
-};
-
-struct PageDescriptor
-{
-    // texture, page
-    uint32_t bits;
-};
-
-struct PageDescriptorUpdateRequest
-{
-    uint32_t pageDescriptorIndex;
-    uint32_t bits;
+    std::string tileFilename;
+    VirtualTextureFileHeader tileFileHeader = {};
+    Array<VirtualTexturePageEntry> pageEntries;
 };
 
 // NOTE: 1 to 1 with CPU page descriptors
@@ -82,7 +90,6 @@ class VirtualTextureManager
     Array<LRUNode> lruNodes;
     int lruHead;
     int lruTail;
-    AsyncJob feedbackJob;
 
     Array<PagePool> pagePools;
     Array<PageDescriptor> pageDescriptors;
@@ -90,7 +97,23 @@ class VirtualTextureManager
     size_t totalPhysicalAllocation;
     size_t physicalAllocationLimit;
     int pageSize;
+
+    // Device
+    std::unique_ptr<DeviceKernel> updatePageDescriptors;
+    DeviceBuffer devicePageDescriptors;
+    std::vector<DeviceBuffer> hostPinnedUpdateRequests;
+    std::vector<DeviceBuffer> deviceUpdateRequests;
+
+    // Synchronization
+    AsyncJob feedbackJob;
     TaskPool uploadPool;
+    std::vector<std::unique_ptr<DeviceStream>> uploadStreams;
+    std::unordered_set<uint32_t> pendingPageUploads;
+    RingBuffer<FeedbackRequest> ringBufferFeedbackRequests;
+    RingBuffer<PageAllocationInfo> ringBufferPageAllocationInfos2;
+    RingBuffer<PageAllocationInfo> ringBufferPageAllocationInfos;
+    RingBuffer<PageUploadCompletion> ringBufferPageUploadCompletions;
+    RingBuffer<PageDescriptorUpdateRequest> ringBufferUpdateRequests;
 
     int CalculatePageDescriptorIndex(uint32_t textureIndex,
                                      uint32_t tileX,
@@ -101,7 +124,7 @@ class VirtualTextureManager
     bool AllocatePage(uint32_t textureIndex, uint32_t &poolIndex, uint32_t &layer);
 
 public:
-    VirtualTextureManager();
+    VirtualTextureManager(Arena &arena, Device *device, DisplayDevice *displayDevice);
     void Update();
 };
 

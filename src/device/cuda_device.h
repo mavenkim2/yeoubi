@@ -16,6 +16,34 @@ struct DeviceBVH
     BVHHandle handle;
 };
 
+struct CUDADeviceKernel : DeviceKernel
+{
+    CUcontext context;
+    CUmodule module;
+    CUfunction function;
+
+    CUDADeviceKernel(CUcontext context, CUmodule module, CUfunction function);
+    ~CUDADeviceKernel() override;
+};
+
+struct CUDADeviceStream : DeviceStream
+{
+    CUcontext context = nullptr;
+    CUstream stream = nullptr;
+
+    explicit CUDADeviceStream(CUcontext context);
+    ~CUDADeviceStream() override;
+};
+
+struct CUDADeviceEvent : DeviceEvent
+{
+    CUcontext context = nullptr;
+    CUevent event = nullptr;
+
+    explicit CUDADeviceEvent(CUcontext context);
+    ~CUDADeviceEvent() override;
+};
+
 struct CUDAOptixPipeline
 {
     OptixModule module = nullptr;
@@ -56,6 +84,8 @@ struct CUDADevice : Device
     ~CUDADevice() override;
     DeviceBuffer Alloc(size_t bytes) override;
     void Free(DeviceBuffer &buffer) override;
+    DeviceBuffer AllocHost(size_t bytes) override;
+    void FreeHost(DeviceBuffer &buffer) override;
     DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) override;
     void FreeExternalBuffer(DeviceExternalBuffer &buffer) override;
     DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
@@ -69,9 +99,23 @@ struct CUDADevice : Device
     void CopyToHost(void *dst, void *ptr, size_t size) override;
     void CopyToHostAsync(void *dst, void *ptr, size_t size) override;
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
+    void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
     bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
+    std::unique_ptr<DeviceStream> CreateDeviceStream() override;
+    std::shared_ptr<DeviceEvent> CreateDeviceEvent() override;
+    void SyncDeviceStream(DeviceStream &stream) override;
+    void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) override;
+    void WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event) override;
+    void CopyToDevice3DAsync(DeviceStream &stream,
+                             DeviceTexture &texture,
+                             const DeviceTextureCopyDesc &desc) override;
+    void CopyToDevice3DBatchAsync(DeviceStream &stream,
+                                  const DeviceTextureBatchCopyDesc *descs,
+                                  size_t numDescs) override;
+    std::unique_ptr<DeviceKernel> CreateDeviceKernel(const DeviceKernelDesc &desc) override;
+    void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) override;
 
     void InitializeOptix();
     bool CreateOptixPipeline(const std::string &ptx);

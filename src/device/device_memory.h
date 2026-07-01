@@ -57,9 +57,19 @@ struct DeviceBuffer
     {
     }
 
+    std::byte *Data()
+    {
+        return ptr.Get();
+    }
+
     std::byte *Data() const
     {
         return ptr.Get();
+    }
+
+    void *KernelArg()
+    {
+        return &ptr.ptr;
     }
 
     uintptr_t Address() const
