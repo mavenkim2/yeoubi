@@ -35,6 +35,11 @@ const Array<int> &Mesh::GetIndices() const
     return indices;
 }
 
+void Mesh::SetMaterialIndex(uint32_t index)
+{
+    materialIndex = index;
+}
+
 // Data container
 Array<BVH> &DataContainer::GetBVHs(GeometryType type)
 {

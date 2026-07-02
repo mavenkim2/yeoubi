@@ -12,6 +12,7 @@
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primFlags.h>
 #include <pxr/usd/usd/stage.h>
@@ -23,6 +24,7 @@
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/udimUtils.h>
 #include <string>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
@@ -583,6 +585,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     tbb::enumerable_thread_specific<pxr::UsdGeomXformCache> xformCaches(
         [&]() { return pxr::UsdGeomXformCache(timeCode); });
 
+    std::unordered_map<std::string, size_t> materialMap;
+
     for (size_t i = 0; i < traversalDatas.size(); i++)
     {
         Scene *scene = &scenes[i];
@@ -616,6 +620,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         // Get all materials
         for (size_t i = 0; i < data.meshes.size(); i++)
         {
+            Mesh &mesh = scene->container->meshes[meshOffset + i];
             pxr::UsdPrim prim = data.meshes[i];
             pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
 
@@ -624,7 +629,20 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
                 continue;
             }
-            materials.push_back(material);
+
+            std::string materialPath = prim.GetPath().GetString();
+            auto it = materialMap.find(materialPath);
+            if (it == materialMap.end())
+            {
+                materials.push_back(material);
+                materialMap.insert({materialPath, materials.size() - 1});
+                mesh.SetMaterialIndex(static_cast<uint32_t>(materials.size() - 1));
+            }
+            else
+            {
+                printf("duplicate material\n");
+                mesh.SetMaterialIndex(static_cast<uint32_t>(it->second));
+            }
         }
 
         for (pxr::UsdPrim &usdInstance : data.instances)
@@ -721,6 +739,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             {
                 for (const pxr::UsdShadeInput &input : shader.GetInputs())
                 {
+                    if (input.GetBaseName().GetString() != "diffuseColor")
+                        continue;
+
                     // std::string texturePath;
                     // std::string swizzle;
                     // TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
@@ -743,6 +764,53 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     pxr::UsdShadeInput fileInput = shader.GetInput(pxr::TfToken("file"));
                     YBI_ASSERT(fileInput);
 
+                    pxr::SdfAssetPath assetPath;
+                    bool result = fileInput.Get(&assetPath);
+                    YBI_ASSERT(result);
+
+                    std::string rawPathStr = assetPath.GetAssetPath();
+                    std::string resolved = assetPath.GetResolvedPath();
+
+                    Material &mat = container->materials.emplace_back();
+                    // printf("raw asset path: %s\n", rawPathStr.c_str());
+                    // printf("is udim: %d\n",
+                    if (pxr::UsdShadeUdimUtils::IsUdimIdentifier(rawPathStr))
+                    {
+                        pxr::SdfLayerHandle anchorLayer;
+                        pxr::SdfPropertySpecHandleVector stack =
+                            fileInput.GetAttr().GetPropertyStack();
+
+                        if (!stack.empty())
+                        {
+                            anchorLayer = stack.front()->GetLayer();
+                        }
+                        else
+                        {
+                            anchorLayer = shader.GetPrim().GetStage()->GetRootLayer();
+                        }
+
+                        // printf("anchor layer: %s\n", anchorLayer->GetRealPath().c_str());
+
+                        auto tiles =
+                            pxr::UsdShadeUdimUtils::ResolveUdimTilePaths(rawPathStr, anchorLayer);
+
+                        // printf("num udim tiles: %zu\n", tiles.size());
+                        for (const auto &[resolvedPath, tile] : tiles)
+                        {
+                            // printf("UDIM tile %s: %s\n", tile.c_str(), resolvedPath.c_str());
+                            mat.diffuseUdimPaths.push_back(resolvedPath);
+                        }
+                    }
+                    else if (!resolved.empty())
+                    {
+                        mat.diffuseUdimPaths.push_back(resolved);
+                    }
+                    else
+                    {
+                        YBI_ASSERT(0);
+                    }
+
+#if 0
                     pxr::TfToken wrapS, wrapT;
                     pxr::UsdShadeInput wrapSInput = shader.GetInput(pxr::TfToken("wrapS"));
                     pxr::UsdShadeInput wrapTInput = shader.GetInput(pxr::TfToken("wrapT"));
@@ -755,19 +823,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     {
                         printf("wrapt: %s\n", wrapT.GetText());
                     }
-
-                    // if (!TryGetImageTexturePath(input, texturePath, &swizzle, &wrapS, &wrapT))
-                    // {
-                    //     continue;
-                    // }
-
-                    // MaterialTextureInput textureInput = {};
-                    // textureInput.inputName = input.GetBaseName().GetString();
-                    // textureInput.texturePath = texturePath;
-                    // textureInput.swizzle = swizzle;
-                    // textureInput.wrapS = wrapS;
-                    // textureInput.wrapT = wrapT;
-                    // outInfo->textureInputs.push_back(std::move(textureInput));
+#endif
                 }
             }
             else

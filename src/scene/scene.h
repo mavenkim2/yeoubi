@@ -7,6 +7,7 @@
 #include "scene/texture.h"
 #include <array>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace ybi
@@ -14,6 +15,11 @@ namespace ybi
 
 struct Device;
 class DeviceArena;
+
+struct Material
+{
+    std::vector<std::string> diffuseUdimPaths;
+};
 
 enum class GeometryType
 {
@@ -43,6 +49,7 @@ class Mesh
 {
     Array<Vec3f> positions;
     Array<int> indices;
+    uint32_t materialIndex;
 
 public:
     Mesh() = default;
@@ -54,6 +61,7 @@ public:
     size_t GetNumVertices() const;
     const Array<Vec3f> &GetPositions() const;
     const Array<int> &GetIndices() const;
+    void SetMaterialIndex(uint32_t index);
 };
 
 class Curve
@@ -79,7 +87,7 @@ struct DataContainer
 {
     Camera camera;
     std::vector<Mesh> meshes;
-    std::vector<Texture> textures;
+    std::vector<Material> materials;
     Curve *curves;
     SubdivisionMesh *subdivisionMeshes;
 
