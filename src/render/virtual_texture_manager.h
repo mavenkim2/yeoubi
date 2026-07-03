@@ -52,7 +52,6 @@ struct PageUploadCompletion
 struct TextureDescriptor
 {
     uint32_t pageDescriptorOffset;
-    DeviceTextureInfo info;
     std::string tileFilename;
     VirtualTextureFileHeader tileFileHeader = {};
     Array<VirtualTexturePageEntry> pageEntries;
@@ -125,6 +124,7 @@ class VirtualTextureManager
 
 public:
     VirtualTextureManager(Arena &arena, Device *device, DisplayDevice *displayDevice);
+    size_t AddTexture(const std::string &filename);
     void Update();
 };
 

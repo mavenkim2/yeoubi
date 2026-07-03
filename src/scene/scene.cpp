@@ -1,6 +1,7 @@
 #include "scene/scene.h"
 #include "core/arena.h"
 #include "core/hash.h"
+#include "core/thread_context.h"
 #include "device/device.h"
 #include <memory>
 #include <unordered_map>
@@ -13,10 +14,12 @@ Instance::Instance(AffineTransform transform, GeometryHandle handle)
 {
 }
 
-Mesh::Mesh(Array<Vec3f> &&positions) : positions(std::move(positions)) {}
-
-Mesh::Mesh(Array<Vec3f> &&positions, Array<int> &&indices)
-    : positions(std::move(positions)), indices(std::move(indices))
+Mesh::Mesh(Array<Vec3f> &&positions,
+           Array<Vec2f> &&uvs,
+           AttributeType uvType,
+           Array<int> &&indices)
+    : positions(std::move(positions)), uvs(std::move(uvs)), uvType(uvType),
+      indices(std::move(indices))
 {
 }
 
@@ -25,9 +28,24 @@ size_t Mesh::GetNumVertices() const
     return positions.size();
 }
 
+size_t Mesh::GetNumUVs() const
+{
+    return uvs.size();
+}
+
+AttributeType Mesh::GetUVType() const
+{
+    return uvType;
+}
+
 const Array<Vec3f> &Mesh::GetPositions() const
 {
     return positions;
+}
+
+const Array<Vec2f> &Mesh::GetUVs() const
+{
+    return uvs;
 }
 
 const Array<int> &Mesh::GetIndices() const
@@ -59,17 +77,54 @@ void RenderSystem::Update()
 {
     YBI_ASSERT(dataContainer);
     YBI_ASSERT(rootScene);
-    geometryManager.Update(device, deviceArena.get(), dataContainer, rootScene);
+    geometryManager.Update(device, deviceArena.get(), dataContainer, rootScene, &deviceScene);
 }
 
 void GeometryManager::Update(Device *device,
                              DeviceArena *deviceArena,
                              DataContainer *container,
-                             Scene *rootScene)
+                             Scene *rootScene,
+                             DeviceScene *deviceScene)
 {
+    // TODO: this function is a bit overloaded maybe
+    ScratchArena scratch;
 
+    // Set up device scene
+    View<Object> objects = scratch.arena->PushArray<Object>(container->meshes.size());
+    size_t totalNumUVs = 0;
+    for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+    {
+        Mesh &mesh = container->meshes[meshIndex];
+        Object &object = objects[meshIndex];
+        object.uvOffset = totalNumUVs;
+        object.uvType = mesh.GetUVType();
+
+        totalNumUVs += mesh.GetNumUVs();
+    }
+
+    View<Vec2f> hostUvs = scratch.arena->PushArray<Vec2f>(totalNumUVs);
+    totalNumUVs = 0;
+    for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+    {
+        Mesh &mesh = container->meshes[meshIndex];
+        const Array<Vec2f> &uvs = mesh.GetUVs();
+        if (uvs.size())
+        {
+            memcpy(hostUvs.data() + totalNumUVs, uvs.data(), sizeof(uvs[0]) * uvs.size());
+            totalNumUVs += uvs.size();
+        }
+    }
+
+    deviceScene->float2s =
+        reinterpret_cast<Vec2f *>(device->Alloc(sizeof(Vec2f) * totalNumUVs).Data());
+    device->CopyToDevice(deviceScene->float2s, hostUvs.data(), hostUvs.numBytes());
+
+    deviceScene->objects = reinterpret_cast<Object *>(
+        device->Alloc(sizeof(Object) * container->meshes.size()).Data());
+    device->CopyToDevice(deviceScene->objects, objects.data(), objects.numBytes());
+
+    // Create BVHs
     container->GetBVHs(GeometryType::Mesh).Reserve(container->meshes.size());
-
     printf("num meshes: %zu\n", container->meshes.size());
 
     std::unordered_multimap<uint64_t, size_t> meshMap;
@@ -142,16 +197,5 @@ void GeometryManager::Update(Device *device,
     container->GetBVHs(GeometryType::Scene)
         .EmplaceBack(device->BuildInstancesBVH(deviceArena, rootScene->instances, container));
 }
-
-// you build the BVHs <-- done
-// set up optix programs
-// set up optix kernels
-// trace primary visibility and output some random color
-// then set up cross with vulkan
-// add a basic camera
-// add basic input, probably glfw?
-// interactivity
-// move
-// die
 
 } // namespace ybi

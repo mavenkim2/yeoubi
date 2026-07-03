@@ -42,6 +42,34 @@ struct DeviceTexture
     DeviceTextureInfo info;
 };
 
+inline uint32_t GetTextureFormatNumChannels(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::R16_FLOAT:
+        case TextureFormat::R32_FLOAT:
+        {
+            return 1;
+        }
+        case TextureFormat::RG16_FLOAT:
+        case TextureFormat::RG32_FLOAT:
+        {
+            return 2;
+        }
+        case TextureFormat::RGBA8_UNORM:
+        case TextureFormat::RGBA16_FLOAT:
+        case TextureFormat::RGBA32_FLOAT:
+        {
+            return 4;
+        }
+        default:
+        {
+            YBI_ASSERT(false);
+            return 0;
+        }
+    }
+}
+
 inline uint32_t GetTextureFormatSize(TextureFormat format)
 {
     switch (format)

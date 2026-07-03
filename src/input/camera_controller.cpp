@@ -7,8 +7,25 @@
 namespace ybi
 {
 
-CameraController::CameraController(const AffineTransform &renderFromCamera)
+static void ScrollCallback(GLFWwindow *window, double xOffset, double yOffset)
 {
+    (void)xOffset;
+
+    CameraController *cameraController =
+        static_cast<CameraController *>(glfwGetWindowUserPointer(window));
+    if (!cameraController)
+    {
+        return;
+    }
+
+    cameraController->AddScrollInput(yOffset);
+}
+
+CameraController::CameraController(GLFWwindow *window, const AffineTransform &renderFromCamera)
+{
+    glfwSetWindowUserPointer(window, this);
+    glfwSetScrollCallback(window, ScrollCallback);
+
     position = renderFromCamera.GetTranslation();
 
     Vec3f forward = Normalize(renderFromCamera.TransformVector(Vec3f(0.0f, 0.0f, -1.0f)));
@@ -18,6 +35,7 @@ CameraController::CameraController(const AffineTransform &renderFromCamera)
 
 void CameraController::UpdateCamera(GLFWwindow *window, float deltaTime)
 {
+
     double mouseX = 0.0;
     double mouseY = 0.0;
     glfwGetCursorPos(window, &mouseX, &mouseY);

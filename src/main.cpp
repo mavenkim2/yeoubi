@@ -19,20 +19,6 @@
 
 using namespace ybi;
 
-static void ScrollCallback(GLFWwindow *window, double xOffset, double yOffset)
-{
-    (void)xOffset;
-
-    CameraController *cameraController =
-        static_cast<CameraController *>(glfwGetWindowUserPointer(window));
-    if (!cameraController)
-    {
-        return;
-    }
-
-    cameraController->AddScrollInput(yOffset);
-}
-
 int main(int argc, char **argv)
 {
     YBI_ASSERT(argc == 2);
@@ -63,6 +49,23 @@ int main(int argc, char **argv)
 
     YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);
 
+    // Virtual textures
+    VirtualTextureManager manager(arena, device.get(), displayDevice.get());
+    // Array<std::pair<int, int>> materialTextureIndices
+    {
+        std::unordered_set<std::string> textureSet;
+        for (const Material &mat : container.materials)
+        {
+            for (const std::string &path : mat.diffuseUdimPaths)
+            {
+                if (textureSet.insert(path).second)
+                {
+                    size_t textureIndex = manager.AddTexture(path);
+                }
+            }
+        }
+    }
+
     AffineTransform renderFromCamera;
     Matrix4x4 cameraFromRaster;
 
@@ -71,9 +74,7 @@ int main(int argc, char **argv)
     YBI_ASSERT(result);
     result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
     YBI_ASSERT(result);
-    CameraController cameraController(renderFromCamera);
-    glfwSetWindowUserPointer(window, &cameraController);
-    glfwSetScrollCallback(window, ScrollCallback);
+    CameraController cameraController(window, renderFromCamera);
 
     const size_t imageSize =
         static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
@@ -101,7 +102,8 @@ int main(int argc, char **argv)
     params.cameraFromRaster = cameraFromRaster;
     params.renderFromCamera = renderFromCamera;
     params.maxDepth = 3;
-    params.lensRadius = 0.f; // TODO
+    params.lensRadius = 0.f; // TODO: initialize properly
+    params.scene = system.deviceScene;
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
 

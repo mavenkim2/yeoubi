@@ -11,12 +11,14 @@
 #include <string>
 
 PXR_NAMESPACE_OPEN_SCOPE
+class UsdGeomMesh;
 class UsdGeomXformCache;
 PXR_NAMESPACE_CLOSE_SCOPE
 
 namespace ybi
 {
 
+enum class AttributeType;
 class Arena;
 struct DataContainer;
 struct Scene;
@@ -36,9 +38,15 @@ class USDSceneLoader : public SceneLoader
 
     AffineTransform ConvertAffineTransform(const pxr::GfMatrix4d &m) const;
     Matrix4x4 ConvertMatrix4x4(const pxr::GfMatrix4d &m) const;
-    void ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
-                                const pxr::VtIntArray &faceCounts,
-                                Array<int> &triangles) const;
+    void ConvertMeshIndicesToTriangles(const pxr::VtIntArray &faceIndices,
+                                       const pxr::VtIntArray &faceCounts,
+                                       Array<int> &triangles) const;
+    void ConvertFaceVaryingUVsToTriangles(const pxr::VtVec2fArray &values,
+                                          const pxr::VtIntArray &faceCounts,
+                                          Array<Vec2f> &triangles) const;
+    AttributeType ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
+                                  pxr::VtArray<pxr::GfVec2f> *outUVs,
+                                  pxr::UsdTimeCode timeCode) const;
     void ProcessPolygonMesh(Scene *scene,
                             pxr::UsdPrim sceneRoot,
                             size_t meshOffset,

@@ -4,6 +4,7 @@
 #include "core/ring_buffer.h"
 #include "core/thread_context.h"
 #include "device/device.h"
+#include "device/device_texture.h"
 #include "display_device/display_device.h"
 #include <cstring>
 #include <fstream>
@@ -11,36 +12,6 @@
 
 namespace ybi
 {
-
-static void LoadVirtualTextureTileFile(TextureDescriptor &descriptor)
-{
-    if (descriptor.pageEntries.size() != 0)
-    {
-        return;
-    }
-
-    YBI_ASSERT(!descriptor.tileFilename.empty());
-
-    std::ifstream input(descriptor.tileFilename, std::ios::binary);
-    YBI_ERROR(input.is_open(),
-              "Failed to open virtual texture file: %s\n",
-              descriptor.tileFilename.c_str());
-
-    VirtualTextureFileHeader header = {};
-    input.read(reinterpret_cast<char *>(&header), sizeof(header));
-    YBI_ASSERT(input.good());
-    YBI_ASSERT(header.magic == YBVT_MAGIC);
-    YBI_ASSERT(header.version == 1);
-    YBI_ASSERT(header.numPages > 0);
-
-    descriptor.tileFileHeader = header;
-    descriptor.pageEntries.Resize(header.numPages);
-
-    input.seekg(static_cast<std::streamoff>(header.pageTableOffset), std::ios::beg);
-    input.read(reinterpret_cast<char *>(descriptor.pageEntries.data()),
-               sizeof(VirtualTexturePageEntry) * header.numPages);
-    YBI_ASSERT(input.good());
-}
 
 static View<uint8_t>
 LoadVirtualTextureTile(Arena *arena, const TextureDescriptor &descriptor, uint32_t pageEntryIndex)
@@ -127,7 +98,7 @@ bool VirtualTextureManager::AllocatePage(uint32_t textureIndex,
     for (size_t index = 0; index < pagePools.size(); index++)
     {
         PagePool &pool = pagePools[index];
-        if (pool.texture.info.format != descriptor.info.format)
+        if (pool.texture.info.format != descriptor.tileFileHeader.format)
         {
             continue;
         }
@@ -141,15 +112,15 @@ bool VirtualTextureManager::AllocatePage(uint32_t textureIndex,
 
     // TODO: not hardcoded
     const int physicalPoolNumLayers = 32;
-    const int physicalPoolByteSize =
-        pageSize * pageSize * physicalPoolNumLayers * GetTextureFormatSize(descriptor.info.format);
+    const int physicalPoolByteSize = pageSize * pageSize * physicalPoolNumLayers *
+                                     GetTextureFormatSize(descriptor.tileFileHeader.format);
     if (physicalPoolByteSize + totalPhysicalAllocation > physicalAllocationLimit)
     {
         return false;
     }
 
     DeviceTextureInfo info;
-    info.format = descriptor.info.format;
+    info.format = descriptor.tileFileHeader.format;
     info.filterType = FilterType::Point;
     info.width = pageSize;
     info.height = pageSize;
@@ -193,11 +164,11 @@ int VirtualTextureManager::CalculatePageDescriptorIndex(uint32_t textureIndex,
     const int pageShift = 7;
     const TextureDescriptor &textureDescriptor = textureDescriptors[textureIndex];
 
-    if (IsPowerOfTwo(textureDescriptor.info.width) && IsPowerOfTwo(textureDescriptor.info.height))
+    uint32_t width = textureDescriptor.tileFileHeader.width;
+    uint32_t height = textureDescriptor.tileFileHeader.height;
+    if (IsPowerOfTwo(width) && IsPowerOfTwo(height))
     {
         uint32_t offset = 0;
-        uint32_t width = textureDescriptor.info.width;
-        uint32_t height = textureDescriptor.info.height;
 
         for (uint32_t i = 0; i < mip; i++)
         {
@@ -213,6 +184,37 @@ int VirtualTextureManager::CalculatePageDescriptorIndex(uint32_t textureIndex,
         YBI_LOGFATAL("Non power of two textures not supported\n");
         return 0;
     }
+}
+
+size_t VirtualTextureManager::AddTexture(const std::string &filename)
+{
+    YBI_ASSERT(!filename.empty());
+
+    textureDescriptors.EmplaceBack();
+    TextureDescriptor &descriptor = textureDescriptors.Last();
+    descriptor.tileFilename = filename;
+
+    std::ifstream input(descriptor.tileFilename, std::ios::binary);
+    YBI_ERROR(input.is_open(),
+              "Failed to open virtual texture file: %s\n",
+              descriptor.tileFilename.c_str());
+
+    VirtualTextureFileHeader header = {};
+    input.read(reinterpret_cast<char *>(&header), sizeof(header));
+    YBI_ASSERT(input.good());
+    YBI_ASSERT(header.magic == YBVT_MAGIC);
+    YBI_ASSERT(header.version == 1);
+    YBI_ASSERT(header.numPages > 0);
+
+    descriptor.tileFileHeader = header;
+    descriptor.pageEntries.Resize(header.numPages);
+
+    input.seekg(static_cast<std::streamoff>(header.pageTableOffset), std::ios::beg);
+    input.read(reinterpret_cast<char *>(descriptor.pageEntries.data()),
+               sizeof(VirtualTexturePageEntry) * header.numPages);
+    YBI_ASSERT(input.good());
+
+    return textureDescriptors.size() - 1;
 }
 
 void VirtualTextureManager::Update()
@@ -505,8 +507,7 @@ void VirtualTextureManager::Update()
             View<uint8_t> tileBytes =
                 LoadVirtualTextureTile(scratch.arena, descriptor, pageEntryIndex);
 
-            const uint32_t bytesPerTexel = descriptor.tileFileHeader.numChannels *
-                                           descriptor.tileFileHeader.numBytesPerChannel;
+            const uint32_t bytesPerTexel = GetTextureFormatSize(descriptor.tileFileHeader.format);
             const uint32_t tileSize = descriptor.tileFileHeader.pageSize;
             YBI_ASSERT(tileBytes.size() ==
                        tileSize * tileSize * static_cast<size_t>(bytesPerTexel));

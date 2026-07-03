@@ -1,9 +1,10 @@
 #pragma once
 
-#include "core/matrix4x4.h"
 #include "core/affine_transform.h"
+#include "core/matrix4x4.h"
+#include "scene/device_scene.h"
 
-namespace ybi 
+namespace ybi
 {
 
 struct KernelParams
@@ -19,7 +20,8 @@ struct KernelParams
     uint64_t imageHandle;
 
     // Geometry
+    DeviceScene scene;
     int maxDepth;
 };
 
-}
+} // namespace ybi

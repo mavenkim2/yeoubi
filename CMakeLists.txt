@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Yeoubi LANGUAGES CXX)
+project(Yeoubi LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard for yeoubi and subprojects" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,11 +88,15 @@ if (USD_ROOT)
 endif()
 
 # Virtual textures exe
+set(YBI_MINIZ_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyexr/deps/miniz/miniz.c")
+
 add_executable(yeoubi_virtual_textures
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/virtual_textures.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/string_builder.cpp
+               ${YBI_MINIZ_SOURCE}
 )
 
 target_include_directories(yeoubi_virtual_textures PRIVATE
@@ -102,6 +106,7 @@ target_include_directories(yeoubi_virtual_textures PRIVATE
 
 target_include_directories(yeoubi_virtual_textures SYSTEM PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyexr/deps/miniz"
 )
 
 target_link_libraries(yeoubi_virtual_textures PRIVATE

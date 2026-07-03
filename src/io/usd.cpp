@@ -5,6 +5,7 @@
 #include "core/array.h"
 #include "core/assert.h"
 #include "io/usd.h"
+#include "pxr/base/vt/types.h"
 #include "scene/scene.h"
 #include <cmath>
 #include <filesystem>
@@ -20,6 +21,7 @@
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
+#include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdShade/material.h>
@@ -140,9 +142,9 @@ Matrix4x4 USDSceneLoader::ConvertMatrix4x4(const pxr::GfMatrix4d &m) const
                      (float)r3[3]);
 }
 
-void USDSceneLoader::ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
-                                            const pxr::VtIntArray &faceCounts,
-                                            Array<int> &triangles) const
+void USDSceneLoader::ConvertMeshIndicesToTriangles(const pxr::VtIntArray &values,
+                                                   const pxr::VtIntArray &faceCounts,
+                                                   Array<int> &triangles) const
 {
     size_t index = 0;
     for (int faceCount : faceCounts)
@@ -151,9 +153,29 @@ void USDSceneLoader::ConvertMeshToTriangles(const pxr::VtIntArray &faceIndices,
 
         for (size_t i = 1; i < faceCount - 1; i++)
         {
-            triangles.EmplaceBack(faceIndices[index]);
-            triangles.EmplaceBack(faceIndices[index + i]);
-            triangles.EmplaceBack(faceIndices[index + i + 1]);
+            triangles.EmplaceBack(values[index]);
+            triangles.EmplaceBack(values[index + i]);
+            triangles.EmplaceBack(values[index + i + 1]);
+        }
+
+        index += faceCount;
+    }
+}
+
+void USDSceneLoader::ConvertFaceVaryingUVsToTriangles(const pxr::VtVec2fArray &values,
+                                                      const pxr::VtIntArray &faceCounts,
+                                                      Array<Vec2f> &uvs) const
+{
+    size_t index = 0;
+    for (int faceCount : faceCounts)
+    {
+        YBI_ASSERT(faceCount >= 3);
+
+        for (size_t i = 1; i < faceCount - 1; i++)
+        {
+            uvs.EmplaceBack(Vec2f(values[index][0], values[index][1]));
+            uvs.EmplaceBack(Vec2f(values[index + i][0], values[index + i][1]));
+            uvs.EmplaceBack(Vec2f(values[index + i + 1][0], values[index + i + 1][1]));
         }
 
         index += faceCount;
@@ -175,6 +197,67 @@ bool USDSceneLoader::IsPurposeAllowed(pxr::UsdPrim prim) const
     return false;
 }
 
+AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
+                                              pxr::VtArray<pxr::GfVec2f> *outUVs,
+                                              pxr::UsdTimeCode timeCode) const
+{
+    pxr::UsdGeomPrimvarsAPI primvars(mesh);
+    pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
+
+    if (!stPrimvar)
+    {
+        return AttributeType::None;
+    }
+
+    pxr::VtVec2fArray stValues;
+    if (!stPrimvar.Get(&stValues, timeCode))
+    {
+        return AttributeType::None;
+    }
+    if (stValues.empty())
+    {
+        return AttributeType::None;
+    }
+
+    bool hasIndices = stPrimvar.IsIndexed();
+
+    // TODO: actually use indices?
+    // pxr::VtIntArray indices;
+    // stPrimvar.GetIndices(&indices, timeCode);
+    //
+    // printf("%zu %zu\n", stValues.size(), indices.size());
+
+    pxr::VtValue values;
+    stPrimvar.ComputeFlattened(&values, timeCode);
+
+    pxr::TfToken interpolationToken = stPrimvar.GetInterpolation();
+
+    AttributeType type = AttributeType::None;
+    if (interpolationToken == "vertex")
+    {
+        type = AttributeType::Vertex;
+    }
+    else if (interpolationToken == "faceVarying")
+    {
+        type = AttributeType::FaceVarying;
+    }
+    else
+    {
+        YBI_LOGFATAL("Need to handle other uv interpolation types\n");
+    }
+
+    if (values.IsHolding<pxr::VtArray<pxr::GfVec2f>>())
+    {
+        *outUVs = values.Get<pxr::VtArray<pxr::GfVec2f>>();
+        return type;
+    }
+    else
+    {
+        YBI_LOGFATAL("UVs are not GfVec2f\n");
+        return AttributeType::None;
+    }
+}
+
 void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         pxr::UsdPrim sceneRoot,
                                         size_t meshOffset,
@@ -186,7 +269,6 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     pxr::UsdGeomMesh usdMesh(prim);
 
     pxr::UsdGeomImageable imageable(prim);
-    // prim.ComputePurpo
 
     pxr::VtVec3fArray usdPositions;
     pxr::VtIntArray faceIndices;
@@ -213,12 +295,35 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
         YBI_ASSERT(false);
     }
 
+    pxr::VtVec2fArray usdUvs;
+    Array<Vec2f> uvs;
+    uvs.Reserve(usdUvs.size());
+    AttributeType uvType = ProcessPrimvars(usdMesh, &usdUvs, timeCode);
+    switch (uvType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            YBI_ASSERT(usdUvs.size() == faceIndices.size());
+            ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+            break;
+        }
+        case AttributeType::Vertex:
+        {
+            YBI_ASSERT(usdUvs.size() == usdPositions.size());
+            uvs.Resize(usdUvs.size());
+            memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
+            break;
+        }
+        default:
+            break;
+    }
+
     Array<Vec3f> positions(usdPositions.size());
     memcpy(positions.data(), usdPositions.data(), sizeof(Vec3f) * usdPositions.size());
     Array<int> triangleIndices;
-    ConvertMeshToTriangles(faceIndices, faceCounts, triangleIndices);
+    ConvertMeshIndicesToTriangles(faceIndices, faceCounts, triangleIndices);
 
-    Mesh mesh(std::move(positions), std::move(triangleIndices));
+    Mesh mesh(std::move(positions), std::move(uvs), uvType, std::move(triangleIndices));
 
     size_t index = meshOffset + meshIndex;
     scene->container->meshes[index] = std::move(mesh);
@@ -630,7 +735,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 continue;
             }
 
-            std::string materialPath = prim.GetPath().GetString();
+            std::string materialPath = material.GetPath().GetString();
             auto it = materialMap.find(materialPath);
             if (it == materialMap.end())
             {
@@ -640,7 +745,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             else
             {
-                printf("duplicate material\n");
                 mesh.SetMaterialIndex(static_cast<uint32_t>(it->second));
             }
         }
@@ -737,6 +841,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             pxr::TfToken token;
             if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
             {
+                Material &mat = container->materials.emplace_back();
+                mat.path = material.GetPath().GetString();
                 for (const pxr::UsdShadeInput &input : shader.GetInputs())
                 {
                     if (input.GetBaseName().GetString() != "diffuseColor")
@@ -771,7 +877,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     std::string rawPathStr = assetPath.GetAssetPath();
                     std::string resolved = assetPath.GetResolvedPath();
 
-                    Material &mat = container->materials.emplace_back();
                     // printf("raw asset path: %s\n", rawPathStr.c_str());
                     // printf("is udim: %d\n",
                     if (pxr::UsdShadeUdimUtils::IsUdimIdentifier(rawPathStr))

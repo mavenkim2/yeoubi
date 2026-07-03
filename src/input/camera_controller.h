@@ -18,7 +18,7 @@ public:
     float mouseSensitivity = 0.002f;
 
     CameraController() = default;
-    explicit CameraController(const AffineTransform &renderFromCamera);
+    explicit CameraController(GLFWwindow *window, const AffineTransform &renderFromCamera);
 
     void UpdateCamera(GLFWwindow *window, float deltaTime);
     void AddScrollInput(double yOffset);

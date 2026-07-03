@@ -3,7 +3,9 @@
 #include "core/affine_transform.h"
 #include "core/array.h"
 #include "core/matrix4x4.h"
+#include "device/device_memory.h"
 #include "scene/bvh.h"
+#include "scene/device_scene.h"
 #include "scene/texture.h"
 #include <array>
 #include <memory>
@@ -18,6 +20,7 @@ class DeviceArena;
 
 struct Material
 {
+    std::string path;
     std::vector<std::string> diffuseUdimPaths;
 };
 
@@ -48,18 +51,22 @@ struct Instance
 class Mesh
 {
     Array<Vec3f> positions;
+    Array<Vec2f> uvs;
     Array<int> indices;
     uint32_t materialIndex;
+    AttributeType uvType;
 
 public:
     Mesh() = default;
-    Mesh(Array<Vec3f> &&positions);
-    Mesh(Array<Vec3f> &&positions, Array<int> &&indices);
+    Mesh(Array<Vec3f> &&positions, Array<Vec2f> &&uvs, AttributeType uvType, Array<int> &&indices);
     Mesh(Mesh &&other) = default;
     Mesh &operator=(Mesh &&other) = default;
 
     size_t GetNumVertices() const;
+    size_t GetNumUVs() const;
+    AttributeType GetUVType() const;
     const Array<Vec3f> &GetPositions() const;
+    const Array<Vec2f> &GetUVs() const;
     const Array<int> &GetIndices() const;
     void SetMaterialIndex(uint32_t index);
 };
@@ -113,14 +120,19 @@ struct Scene
 
 struct GeometryManager
 {
-    void
-    Update(Device *device, DeviceArena *deviceArena, DataContainer *container, Scene *rootScene);
+    void Update(Device *device,
+                DeviceArena *deviceArena,
+                DataContainer *container,
+                Scene *rootScene,
+                DeviceScene *deviceScene);
 };
 
 struct RenderSystem
 {
     Scene *rootScene;
     DataContainer *dataContainer;
+
+    DeviceScene deviceScene;
 
     Device *device;
     std::unique_ptr<DeviceArena> deviceArena;

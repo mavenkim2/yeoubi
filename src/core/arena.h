@@ -63,14 +63,6 @@ struct View
         return count * sizeof(T);
     }
 
-    View<T> &operator+=(size_t offset)
-    {
-        YBI_ASSERT(offset <= count);
-        ptr += offset;
-        count -= offset;
-        return *this;
-    }
-
     View<uint8_t> CastToBytes() const
     {
         View<uint8_t> view;

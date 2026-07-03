@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vec4f.h"
+#include "device/device_texture.h"
 #include <cstdint>
 
 namespace ybi
@@ -16,10 +18,10 @@ struct VirtualTextureFileHeader
     uint32_t width;
     uint32_t height;
     uint32_t numMips;
-    uint32_t numChannels;
-    uint32_t numBytesPerChannel;
+    TextureFormat format;
     uint32_t compression;
     uint32_t numPages;
+    Vec4f fallbackColor;
 
     uint64_t pageTableOffset;
     uint64_t pageDataOffset;

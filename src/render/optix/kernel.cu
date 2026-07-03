@@ -1,4 +1,5 @@
 #include "core/affine_transform.h"
+#include "core/assert.h"
 #include "core/matrix4x4.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
@@ -41,8 +42,7 @@ enum IntersectionType
 struct IntersectionInfo
 {
     float t;
-    float u;
-    float v;
+    Vec2f bary;
     uint32_t primIndex;
     uint32_t id;
     IntersectionType type;
@@ -71,8 +71,7 @@ extern "C" __global__ void __closesthit__kernel()
         const float2 bary = optixGetTriangleBarycentrics();
         isect->id = optixGetInstanceId();
         isect->primIndex = optixGetPrimitiveIndex();
-        isect->u = bary.x;
-        isect->v = bary.y;
+        isect->bary = Vec2f(bary.x, bary.y);
         isect->type = INTERSECTION_TYPE_TRIANGLE;
     }
     else
@@ -130,6 +129,39 @@ extern "C" __global__ void __raygen__kernel()
                0,
                low,
                high);
+
+    if (info.type == INTERSECTION_TYPE_TRIANGLE)
+    {
+        const Object &object = params.scene.objects[info.id];
+
+        Vec2f uvs[3];
+        switch (object.uvType)
+        {
+            case AttributeType::FaceVarying:
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    uvs[i] = params.scene.float2s[object.uvOffset + 3 * info.primIndex + i];
+                }
+                break;
+            }
+            case AttributeType::Vertex:
+            {
+                // TODO: need triangle indices
+                // for (int i = 0; i < 3; i++)
+                // {
+                // }
+                // break;
+            }
+            default:
+                YBI_ASSERT(0);
+        }
+
+        Vec2f uv = uvs[0] * (1.f - info.bary.x - info.bary.y) + uvs[1] * info.bary.x +
+                   uvs[2] * info.bary.y;
+
+        // object.uvOffset
+    }
 
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;

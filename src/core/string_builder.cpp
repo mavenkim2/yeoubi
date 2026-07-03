@@ -8,7 +8,7 @@
 namespace ybi
 {
 
-static constexpr uint64_t kFileBuilderChunkSize = 512ull * 1024ull * 1024ull;
+static constexpr uint64_t kFileBuilderChunkSize = 32ull * 1024ull * 1024ull;
 
 FileBuilder::FileBuilder(std::string filename)
 {
