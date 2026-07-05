@@ -2,10 +2,10 @@
 
 #include "device/device_memory.h"
 
-namespace ybi 
+namespace ybi
 {
 
-enum class AttributeType 
+enum class AttributeType
 {
     None,
     Vertex,
@@ -16,6 +16,10 @@ struct Object
 {
     AttributeType uvType;
     uint32_t uvOffset;
+
+    // TODO: handle potentially 1+ uv sets
+    uint32_t udimBase;
+    uint32_t udimTableOffset;
 };
 
 struct DeviceScene
@@ -24,4 +28,4 @@ struct DeviceScene
     Vec2f *float2s;
 };
 
-}
+} // namespace ybi

@@ -1,8 +1,10 @@
 #include "core/affine_transform.h"
 #include "core/assert.h"
+#include "core/math.h"
 #include "core/matrix4x4.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
+#include "render/virtual_texture_interop.h"
 #include <optix_device.h>
 #include <optix_types.h>
 #include <vector_types.h>
@@ -47,6 +49,52 @@ struct IntersectionInfo
     uint32_t id;
     IntersectionType type;
 };
+
+YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descriptor,
+                                               uint32_t pageShift,
+                                               Vec2f uv,
+                                               uint32_t mip)
+{
+    const uint32_t pageSize = (1u << pageShift);
+    const Vec2f normalizedUv = uv - Floor(uv);
+
+    const uint32_t mipWidth = descriptor.width >> mip;
+    const uint32_t mipHeight = descriptor.height >> mip;
+
+    if (mipWidth < pageSize || mipHeight < pageSize)
+    {
+        return descriptor.fallback;
+    }
+
+    Vec2f texel = normalizedUv * Vec2f(mipWidth, mipHeight);
+    const Vec2f page = Floor(texel / float(pageSize));
+    const Vec2f texelInPage = (texel + 0.5f) - page * pageSize;
+
+    const Vec2f pageUv = texelInPage / pageSize;
+
+    const uint32_t pageIndex = descriptor.pageDescriptorOffset +
+                               CalculatePageDescriptorOffset(descriptor.width,
+                                                             descriptor.height,
+                                                             mip,
+                                                             pageShift,
+                                                             static_cast<uint32_t>(page.x),
+                                                             static_cast<uint32_t>(page.y));
+    const PageDescriptor pageDescriptor = params.pageDescriptors[pageIndex];
+
+    if (pageDescriptor.bits == ~0u)
+    {
+        return descriptor.fallback;
+    }
+
+    const uint32_t layer = pageDescriptor.bits >> 27u;
+    const uint32_t textureIndex = pageDescriptor.bits & 0x07ffffffu;
+
+    DeviceTexture texture = params.texturePools[textureIndex];
+
+    float4 value = tex2DLayered<float4>(
+        reinterpret_cast<cudaTextureObject_t>(texture.textureObject), pageUv.x, pageUv.y, layer);
+    return Vec4f(value.x, value.y, value.z, value.w);
+}
 
 extern "C" __global__ void __miss__kernel()
 {
@@ -130,6 +178,7 @@ extern "C" __global__ void __raygen__kernel()
                low,
                high);
 
+    uchar4 color = make_uchar4(0, 0, 0, 255);
     if (info.type == INTERSECTION_TYPE_TRIANGLE)
     {
         const Object &object = params.scene.objects[info.id];
@@ -160,11 +209,33 @@ extern "C" __global__ void __raygen__kernel()
         Vec2f uv = uvs[0] * (1.f - info.bary.x - info.bary.y) + uvs[1] * info.bary.x +
                    uvs[2] * info.bary.y;
 
-        // object.uvOffset
+        // Virtual texture path
+        Vec2f flooredUv = Floor(uv);
+        const uint32_t udim =
+            1001 + static_cast<uint32_t>(flooredUv.x) + 10 * static_cast<uint32_t>(flooredUv.y);
+        const uint32_t udimTableIndex = object.udimTableOffset + udim - object.udimBase;
+
+        DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
+        float lod = 0.f;
+        uint32_t baseMip = uint32_t(Floor(lod));
+        uint32_t nextMip = baseMip + 1;
+
+        // TODO: don't hardcode
+        const uint32_t pageShift = 7;
+        Vec4f lowerValue = SamplePointVirtualTexture(textureDescriptor, pageShift, uv, baseMip);
+        Vec4f higherValue = SamplePointVirtualTexture(textureDescriptor, pageShift, uv, nextMip);
+
+        float t = lod - float(baseMip);
+        Vec4f value = Lerp(lowerValue, higherValue, t);
+        color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
+                            static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
+                            static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
+                            static_cast<unsigned char>(Clamp(value.w, 0.f, 1.f) * 255.f));
     }
 
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
+#if 0
     uchar4 color = make_uchar4(0, 0, 0, 255);
     if (info.type == INTERSECTION_TYPE_TRIANGLE)
     {
@@ -179,6 +250,7 @@ extern "C" __global__ void __raygen__kernel()
         color.y = static_cast<unsigned char>(64u + ((hash >> 8u) & 0xbfu));
         color.z = static_cast<unsigned char>(64u + ((hash >> 16u) & 0xbfu));
     }
+#endif
     image[pixelIndex] = color;
 
     // for (int depth = 0; depth < maxDepth; depth++)

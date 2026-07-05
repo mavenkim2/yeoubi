@@ -84,6 +84,16 @@ YBI_CPU_GPU constexpr Vec2f operator+(Vec2f lhs, Vec2f rhs)
     return Vec2f(lhs.x + rhs.x, lhs.y + rhs.y);
 }
 
+YBI_CPU_GPU constexpr Vec2f operator+(Vec2f lhs, float rhs)
+{
+    return Vec2f(lhs.x + rhs, lhs.y + rhs);
+}
+
+YBI_CPU_GPU constexpr Vec2f operator+(float lhs, Vec2f rhs)
+{
+    return rhs + lhs;
+}
+
 YBI_CPU_GPU constexpr Vec2f operator-(Vec2f lhs, Vec2f rhs)
 {
     return Vec2f(lhs.x - rhs.x, lhs.y - rhs.y);
@@ -146,6 +156,11 @@ YBI_CPU_GPU Vec2f Normalize(Vec2f vector)
 YBI_CPU_GPU constexpr Vec2f Lerp(Vec2f a, Vec2f b, float t)
 {
     return a + (b - a) * t;
+}
+
+YBI_CPU_GPU Vec2f Floor(Vec2f a)
+{
+    return Vec2f(floorf(a.x), floorf(a.y));
 }
 
 } // namespace ybi

@@ -2,6 +2,8 @@
 
 #include "core/affine_transform.h"
 #include "core/matrix4x4.h"
+#include "device/device_texture.h"
+#include "render/virtual_texture_interop.h"
 #include "scene/device_scene.h"
 
 namespace ybi
@@ -22,6 +24,11 @@ struct KernelParams
     // Geometry
     DeviceScene scene;
     int maxDepth;
+
+    // Virtual textures
+    DeviceTextureDescriptor *textureDescriptors;
+    PageDescriptor *pageDescriptors;
+    DeviceTexture *texturePools;
 };
 
 } // namespace ybi

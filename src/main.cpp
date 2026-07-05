@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <GLFW/glfw3.h>
