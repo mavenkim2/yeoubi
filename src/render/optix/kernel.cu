@@ -53,13 +53,23 @@ struct IntersectionInfo
 YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descriptor,
                                                uint32_t pageShift,
                                                Vec2f uv,
-                                               uint32_t mip)
+                                               uint32_t mip,
+                                               UnpackedFeedbackRequest *request = nullptr)
 {
     const uint32_t pageSize = (1u << pageShift);
     const Vec2f normalizedUv = uv - Floor(uv);
 
     const uint32_t mipWidth = descriptor.width >> mip;
     const uint32_t mipHeight = descriptor.height >> mip;
+
+    if (request)
+    {
+        request->textureIndex = descriptor.textureIndex;
+        request->tileX = 0;
+        request->tileY = 0;
+        request->mip = mip;
+        request->pageDescriptorIndex = ~0u;
+    }
 
     if (mipWidth < pageSize || mipHeight < pageSize)
     {
@@ -72,13 +82,22 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
 
     const Vec2f pageUv = texelInPage / pageSize;
 
-    const uint32_t pageIndex = descriptor.pageDescriptorOffset +
-                               CalculatePageDescriptorOffset(descriptor.width,
-                                                             descriptor.height,
-                                                             mip,
-                                                             pageShift,
-                                                             static_cast<uint32_t>(page.x),
-                                                             static_cast<uint32_t>(page.y));
+    const uint32_t pageOffset = CalculatePageDescriptorOffset(descriptor.width,
+                                                              descriptor.height,
+                                                              mip,
+                                                              pageShift,
+                                                              static_cast<uint32_t>(page.x),
+                                                              static_cast<uint32_t>(page.y));
+    assert(pageOffset < descriptor.pageDescriptorCount);
+    const uint32_t pageIndex = descriptor.pageDescriptorOffset + pageOffset;
+
+    if (request)
+    {
+        request->tileX = static_cast<uint32_t>(page.x);
+        request->tileY = static_cast<uint32_t>(page.y);
+        request->pageDescriptorIndex = pageIndex;
+    }
+
     const PageDescriptor pageDescriptor = params.pageDescriptors[pageIndex];
 
     if (pageDescriptor.bits == ~0u)
@@ -89,11 +108,107 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
     const uint32_t layer = pageDescriptor.bits >> 27u;
     const uint32_t textureIndex = pageDescriptor.bits & 0x07ffffffu;
 
-    DeviceTexture texture = params.texturePools[textureIndex];
+    // DeviceTexture texture = params.texturePools[textureIndex];
+    uint64_t textureObject = pageDescriptor.textureObject;
+    if (textureObject == 0ull)
+    {
+        return descriptor.fallback;
+    }
 
     float4 value = tex2DLayered<float4>(
-        reinterpret_cast<cudaTextureObject_t>(texture.textureObject), pageUv.x, pageUv.y, layer);
+        reinterpret_cast<cudaTextureObject_t>(textureObject), pageUv.x, pageUv.y, layer);
+
     return Vec4f(value.x, value.y, value.z, value.w);
+}
+
+YBI_GPU void WriteUniqueFeedback(UnpackedFeedbackRequest request)
+{
+    const uint32_t pageDescriptorIndex = request.pageDescriptorIndex;
+    if (pageDescriptorIndex == ~0u)
+    {
+        return;
+    }
+
+    uint32_t *bits = params.pageDescriptorBits;
+
+    const uint32_t wordIndex = pageDescriptorIndex >> 5u;
+    const uint32_t bitIndex = pageDescriptorIndex & 31u;
+
+    uint32_t old = atomicOr(&bits[wordIndex], 1u << bitIndex);
+    if (((old >> bitIndex) & 1u) == 0)
+    {
+        uint32_t requestIndex = atomicAdd(&params.feedbackRequests[0].textureIndex, 1u);
+
+        params.feedbackRequests[requestIndex + 1] =
+            PackFeedbackRequest(request.textureIndex, request.tileX, request.tileY, request.mip);
+    }
+}
+
+YBI_GPU static uint32_t CalculateMaxVirtualTextureMip(DeviceTextureDescriptor descriptor,
+                                                      uint32_t pageShift)
+{
+    const uint32_t pageSize = 1u << pageShift;
+    uint32_t maxMip = 0;
+
+    while (maxMip < 15u)
+    {
+        const uint32_t nextMip = maxMip + 1u;
+        if ((descriptor.width >> nextMip) < pageSize || (descriptor.height >> nextMip) < pageSize)
+        {
+            break;
+        }
+
+        maxMip = nextMip;
+    }
+
+    return maxMip;
+}
+
+YBI_GPU static float CalculateTemporaryVirtualTextureLod(DeviceTextureDescriptor descriptor,
+                                                         Vec3f cameraPosition,
+                                                         Vec3f hitPosition,
+                                                         uint32_t pageShift)
+{
+    const uint32_t maxMip = CalculateMaxVirtualTextureMip(descriptor, pageShift);
+    const float distance = Max(Length(hitPosition - cameraPosition), 1.0f);
+    const float lod = log2f(distance);
+
+    return Clamp(lod, 0.0f, float(maxMip));
+}
+
+YBI_GPU static bool GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f &uv)
+{
+    Vec2f uvs[3];
+    switch (object.uvType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                uvs[i] = params.scene.float2s[object.uvOffset + 3 * info.primIndex + i];
+            }
+            break;
+        }
+        case AttributeType::Vertex:
+        {
+            const uint32_t triangleIndexOffset = object.triangleIndexOffset + 3 * info.primIndex;
+            for (int i = 0; i < 3; i++)
+            {
+                const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
+                uvs[i] = params.scene.float2s[object.uvOffset + vertexIndex];
+            }
+            break;
+        }
+        case AttributeType::None:
+        {
+            return false;
+        }
+        default:
+            assert(0);
+    }
+
+    uv = uvs[0] * (1.f - info.bary.x - info.bary.y) + uvs[1] * info.bary.x + uvs[2] * info.bary.y;
+    return true;
 }
 
 extern "C" __global__ void __miss__kernel()
@@ -117,6 +232,7 @@ extern "C" __global__ void __closesthit__kernel()
     if (optixIsTriangleHit())
     {
         const float2 bary = optixGetTriangleBarycentrics();
+        isect->t = optixGetRayTmax();
         isect->id = optixGetInstanceId();
         isect->primIndex = optixGetPrimitiveIndex();
         isect->bary = Vec2f(bary.x, bary.y);
@@ -183,60 +299,62 @@ extern "C" __global__ void __raygen__kernel()
     {
         const Object &object = params.scene.objects[info.id];
 
-        Vec2f uvs[3];
-        switch (object.uvType)
+        Vec2f uv;
+        bool hasUvs = GetTriangleUVs(object, info, uv);
+
+        if (hasUvs)
         {
-            case AttributeType::FaceVarying:
+            // Virtual texture path
+            Vec2f flooredUv = Floor(uv);
+
+            uint32_t udimTableIndex = 0u;
+            if (object.udimBase != ~0u)
             {
-                for (int i = 0; i < 3; i++)
-                {
-                    uvs[i] = params.scene.float2s[object.uvOffset + 3 * info.primIndex + i];
-                }
-                break;
+                const uint32_t udim = 1001 + static_cast<uint32_t>(flooredUv.x) +
+                                      10 * static_cast<uint32_t>(flooredUv.y);
+                udimTableIndex = object.udimTableOffset + udim - object.udimBase;
             }
-            case AttributeType::Vertex:
+            else
             {
-                // TODO: need triangle indices
-                // for (int i = 0; i < 3; i++)
-                // {
-                // }
-                // break;
+                udimTableIndex = object.udimTableOffset;
             }
-            default:
-                YBI_ASSERT(0);
+
+            DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
+
+            const uint32_t pageShift = 7;
+            const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
+            const Vec3f cameraPosition(
+                params.cameraPosition[0], params.cameraPosition[1], params.cameraPosition[2]);
+            float lod = CalculateTemporaryVirtualTextureLod(
+                textureDescriptor, cameraPosition, hitPosition, pageShift);
+            uint32_t baseMip = uint32_t(Floor(lod));
+            uint32_t nextMip =
+                Min(baseMip + 1, CalculateMaxVirtualTextureMip(textureDescriptor, pageShift));
+
+#if 1
+            // TODO: don't hardcode
+            UnpackedFeedbackRequest lowR, highR;
+            Vec4f lowerValue =
+                SamplePointVirtualTexture(textureDescriptor, pageShift, uv, baseMip, &lowR);
+            Vec4f higherValue =
+                SamplePointVirtualTexture(textureDescriptor, pageShift, uv, nextMip, &highR);
+
+            WriteUniqueFeedback(lowR);
+            WriteUniqueFeedback(highR);
+
+            float t = lod - float(baseMip);
+            Vec4f value = Lerp(lowerValue, higherValue, t);
+            color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
+                                static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
+                                static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
+                                static_cast<unsigned char>(Clamp(value.w, 0.f, 1.f) * 255.f));
+#endif
         }
-
-        Vec2f uv = uvs[0] * (1.f - info.bary.x - info.bary.y) + uvs[1] * info.bary.x +
-                   uvs[2] * info.bary.y;
-
-        // Virtual texture path
-        Vec2f flooredUv = Floor(uv);
-        const uint32_t udim =
-            1001 + static_cast<uint32_t>(flooredUv.x) + 10 * static_cast<uint32_t>(flooredUv.y);
-        const uint32_t udimTableIndex = object.udimTableOffset + udim - object.udimBase;
-
-        DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
-        float lod = 0.f;
-        uint32_t baseMip = uint32_t(Floor(lod));
-        uint32_t nextMip = baseMip + 1;
-
-        // TODO: don't hardcode
-        const uint32_t pageShift = 7;
-        Vec4f lowerValue = SamplePointVirtualTexture(textureDescriptor, pageShift, uv, baseMip);
-        Vec4f higherValue = SamplePointVirtualTexture(textureDescriptor, pageShift, uv, nextMip);
-
-        float t = lod - float(baseMip);
-        Vec4f value = Lerp(lowerValue, higherValue, t);
-        color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
-                            static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
-                            static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
-                            static_cast<unsigned char>(Clamp(value.w, 0.f, 1.f) * 255.f));
     }
 
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
 #if 0
-    uchar4 color = make_uchar4(0, 0, 0, 255);
     if (info.type == INTERSECTION_TYPE_TRIANGLE)
     {
         uint32_t hash = info.id;

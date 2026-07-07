@@ -22,6 +22,7 @@
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/primvarsAPI.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdShade/material.h>
@@ -267,6 +268,9 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         pxr::UsdTimeCode timeCode) const
 {
     pxr::UsdGeomMesh usdMesh(prim);
+
+    const std::vector<pxr::UsdGeomSubset> subsets = pxr::UsdGeomSubset::GetAllGeomSubsets(usdMesh);
+    YBI_ASSERT(subsets.size() == 0);
 
     pxr::UsdGeomImageable imageable(prim);
 
@@ -668,6 +672,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
 
     container->camera.cameraFromWorld = ConvertAffineTransform(viewMatrix);
+    AffineTransform renderFromCamera;
+    bool inverseResult = container->camera.cameraFromWorld.TryInverse(&renderFromCamera);
+    YBI_ASSERT(inverseResult);
+    container->camera.position = renderFromCamera.GetTranslation();
     container->camera.clipFromCamera = ConvertMatrix4x4(projMatrix);
 
     // TODO: cli option
@@ -903,12 +911,16 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                         for (const auto &[resolvedPath, tile] : tiles)
                         {
                             // printf("UDIM tile %s: %s\n", tile.c_str(), resolvedPath.c_str());
-                            mat.diffuseUdimPaths.push_back(resolvedPath);
+                            auto value = std::stoul(tile);
+                            YBI_ASSERT(value <= std::numeric_limits<uint32_t>::max());
+
+                            mat.diffuseUdimPaths.emplace_back(resolvedPath,
+                                                              static_cast<uint32_t>(value));
                         }
                     }
                     else if (!resolved.empty())
                     {
-                        mat.diffuseUdimPaths.push_back(resolved);
+                        mat.diffuseUdimPaths.emplace_back(resolved, ~0u);
                     }
                     else
                     {

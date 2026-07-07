@@ -16,8 +16,9 @@ struct Object
 {
     AttributeType uvType;
     uint32_t uvOffset;
+    uint32_t triangleIndexOffset;
 
-    // TODO: handle potentially 1+ uv sets
+    // NOTE: = ~0u if no udims
     uint32_t udimBase;
     uint32_t udimTableOffset;
 };
@@ -26,6 +27,7 @@ struct DeviceScene
 {
     Object *objects;
     Vec2f *float2s;
+    int *triangleIndices;
 };
 
 } // namespace ybi

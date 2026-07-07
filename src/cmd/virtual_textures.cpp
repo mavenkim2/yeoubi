@@ -37,6 +37,34 @@ struct Image
     int numBytesPerChannel;
 };
 
+static void FlipImageVertically(Image *image)
+{
+    YBI_ASSERT(image);
+
+    if (!image->ptr || image->height <= 1)
+    {
+        return;
+    }
+
+    const size_t rowSize = static_cast<size_t>(image->width) *
+                           static_cast<size_t>(image->numChannels) *
+                           static_cast<size_t>(image->numBytesPerChannel);
+    uint8_t *pixels = reinterpret_cast<uint8_t *>(image->ptr);
+
+    ScratchArena scratchArena;
+    View<uint8_t> scratch = scratchArena.arena->PushArray<uint8_t>(rowSize);
+
+    for (int y = 0; y < image->height / 2; y++)
+    {
+        uint8_t *topRow = pixels + rowSize * static_cast<size_t>(y);
+        uint8_t *bottomRow = pixels + rowSize * static_cast<size_t>(image->height - 1 - y);
+
+        memcpy(scratch.data(), topRow, rowSize);
+        memcpy(topRow, bottomRow, rowSize);
+        memcpy(bottomRow, scratch.data(), rowSize);
+    }
+}
+
 static float ReadChannelAsFloat(
     const void *data, int pixelIndex, int channel, int numChannels, int numBytesPerChannel)
 {
@@ -299,6 +327,9 @@ static void ProcessTexture(Arena &arena, const std::string &filename)
         YBI_LOGFATAL("Extension %s is not supported\n", ext.c_str());
     }
 
+    // Texture sampling treats v = 0 as the bottom row, so store ybvt source data bottom-up.
+    FlipImageVertically(&texture);
+
     const int pageSize = 128;
 
     uint32_t numMips = 0;
@@ -315,7 +346,6 @@ static void ProcessTexture(Arena &arena, const std::string &filename)
 
     std::filesystem::path outputPath(filename);
     outputPath.replace_extension(".ybvt");
-    // printf("%s\n", outputPath.string().c_str());
 
     FileBuilder fileBuilder(outputPath.string());
 
@@ -396,7 +426,7 @@ static void Run(const std::string &filename)
     std::unordered_map<std::string, std::string> sss;
     for (const Material &material : container.materials)
     {
-        for (const std::string &diffuseUdimPath : material.diffuseUdimPaths)
+        for (const auto &[diffuseUdimPath, udim] : material.diffuseUdimPaths)
         {
             YBI_ASSERT(!diffuseUdimPath.empty());
             auto it = sss.find(diffuseUdimPath);

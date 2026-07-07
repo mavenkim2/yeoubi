@@ -21,7 +21,9 @@ class DeviceArena;
 struct Material
 {
     std::string path;
-    std::vector<std::string> diffuseUdimPaths;
+    std::vector<std::pair<std::string, uint32_t>> diffuseUdimPaths;
+    uint32_t udimBase = 0;
+    uint32_t udimTableOffset = 0;
 };
 
 enum class GeometryType
@@ -53,8 +55,8 @@ class Mesh
     Array<Vec3f> positions;
     Array<Vec2f> uvs;
     Array<int> indices;
-    uint32_t materialIndex;
-    AttributeType uvType;
+    uint32_t materialIndex = ~0u;
+    AttributeType uvType = AttributeType::None;
 
 public:
     Mesh() = default;
@@ -65,6 +67,7 @@ public:
     size_t GetNumVertices() const;
     size_t GetNumUVs() const;
     AttributeType GetUVType() const;
+    uint32_t GetMaterialIndex() const;
     const Array<Vec3f> &GetPositions() const;
     const Array<Vec2f> &GetUVs() const;
     const Array<int> &GetIndices() const;
@@ -81,6 +84,7 @@ class SubdivisionMesh
 
 struct Camera
 {
+    Vec3f position;
     AffineTransform cameraFromWorld;
     Matrix4x4 clipFromCamera;
     Matrix4x4 rasterFromCamera;

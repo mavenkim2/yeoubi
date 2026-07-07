@@ -100,6 +100,7 @@ struct CUDADevice : Device
     void CopyToHostAsync(void *dst, void *ptr, size_t size) override;
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
+    void Memzero(void *dst, size_t size) override;
     bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;

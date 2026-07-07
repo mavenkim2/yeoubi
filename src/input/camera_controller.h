@@ -23,9 +23,12 @@ public:
     void UpdateCamera(GLFWwindow *window, float deltaTime);
     void AddScrollInput(double yOffset);
     AffineTransform GetRenderFromCamera() const;
+    void ToggleMovement();
+    void SetMovementEnabled(bool enabled);
 
 private:
     bool firstMouse = true;
+    bool enableMovement = false;
     double lastMouseX = 0.0;
     double lastMouseY = 0.0;
 };

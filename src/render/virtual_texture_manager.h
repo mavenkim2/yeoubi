@@ -7,10 +7,12 @@
 #include "device/device_texture.h"
 #include "render/virtual_texture_file.h"
 #include "render/virtual_texture_interop.h"
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -22,12 +24,12 @@ struct DeviceKernel;
 struct DeviceStream;
 struct DeviceTexture;
 struct DisplayDevice;
+struct KernelParams;
 
-struct FeedbackRequest
+struct MaterialTextureHandle
 {
-    uint32_t textureIndex;
-    // 8, 8, 4 bits
-    uint32_t tileX_tileY_mip;
+    uint32_t udimBase = 0;
+    uint32_t udimTableOffset = 0;
 };
 
 struct PageAllocationInfo
@@ -60,6 +62,7 @@ struct TextureDescriptor
 // NOTE: 1 to 1 with CPU page descriptors
 struct LRUNode
 {
+    uint64_t textureObject;
     uint32_t pagePoolIndex;
     uint32_t layer;
 
@@ -81,9 +84,9 @@ class VirtualTextureManager
     Device *device;
     DisplayDevice *displayDevice;
 
-    // NOTE: CUDA pinned memory
-    FeedbackRequest **hostFeedbackRequests;
     DeviceBuffer feedback;
+
+    std::unordered_map<std::string, uint32_t> filenameToDescriptorMap;
 
     // LRU
     Array<LRUNode> lruNodes;
@@ -93,13 +96,20 @@ class VirtualTextureManager
     Array<PagePool> pagePools;
     Array<PageDescriptor> pageDescriptors;
     Array<TextureDescriptor> textureDescriptors;
+    Array<uint32_t> udimTextureIndices;
+    Array<DeviceTextureDescriptor> hostTextureDescriptors;
     size_t totalPhysicalAllocation;
     size_t physicalAllocationLimit;
     int pageSize;
+    uint32_t feedbackCapacity;
 
     // Device
     std::unique_ptr<DeviceKernel> updatePageDescriptors;
+    DeviceBuffer deviceTextureDescriptors;
+    DeviceBuffer deviceTexturePools;
     DeviceBuffer devicePageDescriptors;
+    std::array<DeviceBuffer, 2> pageDescriptorBits;
+    std::vector<DeviceBuffer> hostPinnedFeedbackRequests;
     std::vector<DeviceBuffer> hostPinnedUpdateRequests;
     std::vector<DeviceBuffer> deviceUpdateRequests;
 
@@ -124,8 +134,12 @@ class VirtualTextureManager
 
 public:
     VirtualTextureManager(Arena &arena, Device *device, DisplayDevice *displayDevice);
-    size_t AddTexture(const std::string &filename);
-    void Update();
+    MaterialTextureHandle
+    AddTexture(const std::vector<std::pair<std::string, uint32_t>> &filenames);
+    void Finalize();
+    void Update(KernelParams *params);
+    void UpdateParams(KernelParams *params);
+    void CopyFeedback();
 };
 
 } // namespace ybi

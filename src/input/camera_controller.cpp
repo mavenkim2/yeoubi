@@ -35,6 +35,10 @@ CameraController::CameraController(GLFWwindow *window, const AffineTransform &re
 
 void CameraController::UpdateCamera(GLFWwindow *window, float deltaTime)
 {
+    if (!enableMovement)
+    {
+        return;
+    }
 
     double mouseX = 0.0;
     double mouseY = 0.0;
@@ -130,6 +134,22 @@ AffineTransform CameraController::GetRenderFromCamera() const
                            up.z,
                            cameraZ.z,
                            position.z);
+}
+
+void CameraController::ToggleMovement()
+{
+    SetMovementEnabled(!enableMovement);
+}
+
+void CameraController::SetMovementEnabled(bool enabled)
+{
+    if (enableMovement == enabled)
+    {
+        return;
+    }
+
+    enableMovement = enabled;
+    firstMouse = true;
 }
 
 } // namespace ybi

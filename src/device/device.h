@@ -141,6 +141,7 @@ struct Device
     virtual void CopyToDeviceAsync(void *dst, void *ptr, size_t size) = 0;
     virtual void CopyToHost(void *dst, void *ptr, size_t size) = 0;
     virtual void CopyToHostAsync(void *dst, void *ptr, size_t size) = 0;
+    virtual void Memzero(void *dst, size_t size) = 0;
     virtual bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) = 0;
     virtual DeviceTexture CreateTexture(const DeviceTextureInfo &info) = 0;
     virtual std::unique_ptr<DeviceStream> CreateDeviceStream() = 0;

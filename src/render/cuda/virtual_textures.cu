@@ -13,6 +13,7 @@ extern "C" __global__ void UpdatePageDescriptors(PageDescriptor *descriptors,
         return;
 
     PageDescriptorUpdateRequest request = requests[threadIndex];
+    descriptors[request.pageDescriptorIndex].textureObject = request.textureObject;
     descriptors[request.pageDescriptorIndex].bits = request.bits;
 }
 

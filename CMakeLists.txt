@@ -167,11 +167,11 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_optix_kernel DEPENDS ${YBI_OPTIX_PTX_PATH})
     add_dependencies(yeoubi yeoubi_optix_kernel)
 
-    set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.cubin")
+    set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx")
     add_custom_command(
         OUTPUT "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
-        --cubin
+        --ptx
         "--gpu-architecture=sm_75"
         "--std=c++17"
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"

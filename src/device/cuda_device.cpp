@@ -57,7 +57,7 @@ CUDADeviceKernel::~CUDADeviceKernel()
 CUDADeviceStream::CUDADeviceStream(CUcontext context) : context(context)
 {
     CUDA_ASSERT(cuCtxPushCurrent(context));
-    CUDA_ASSERT(cuStreamCreate(&stream, CU_STREAM_DEFAULT));
+    CUDA_ASSERT(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
     CUDA_ASSERT(cuCtxPopCurrent(nullptr));
 }
 
@@ -302,6 +302,11 @@ void CUDADevice::CopyToDeviceAsync(void *dst, void *ptr, size_t size)
     CUDA_ASSERT(cuMemcpyHtoDAsync(reinterpret_cast<CUdeviceptr>(dst), ptr, size, 0));
 }
 
+void CUDADevice::Memzero(void *dst, size_t size)
+{
+    CUDA_ASSERT(cuMemsetD8(reinterpret_cast<CUdeviceptr>(dst), 0, size));
+}
+
 std::unique_ptr<DeviceStream> CUDADevice::CreateDeviceStream()
 {
     return std::make_unique<CUDADeviceStream>(cudaContext);
@@ -433,7 +438,7 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
         op = {};
 
         op.src.type = CU_MEMCPY_OPERAND_TYPE_POINTER;
-        op.src.op.ptr.ptr = static_cast<CUdeviceptr>(reinterpret_cast<uintptr_t>(copyDesc.src));
+        op.src.op.ptr.ptr = reinterpret_cast<CUdeviceptr>(copyDesc.src);
         op.src.op.ptr.rowLength = copyDesc.srcRowPitch / elementSize;
         op.src.op.ptr.layerHeight = copyDesc.height;
 

@@ -14,6 +14,7 @@ struct VirtualTextureFileHeader
     uint32_t magic;
     uint32_t version;
 
+    uint32_t udim;
     uint32_t pageSize;
     uint32_t width;
     uint32_t height;

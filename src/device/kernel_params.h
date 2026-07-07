@@ -12,6 +12,7 @@ namespace ybi
 struct KernelParams
 {
     // Camera
+    Vec3f cameraPosition;
     Matrix4x4 cameraFromRaster;
     AffineTransform renderFromCamera;
     float lensRadius;
@@ -29,6 +30,8 @@ struct KernelParams
     DeviceTextureDescriptor *textureDescriptors;
     PageDescriptor *pageDescriptors;
     DeviceTexture *texturePools;
+    uint32_t *pageDescriptorBits;
+    FeedbackRequest *feedbackRequests;
 };
 
 } // namespace ybi

@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #include <GLFW/glfw3.h>
@@ -34,7 +33,7 @@ int main(int argc, char **argv)
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow *window = glfwCreateWindow(1920, 1080, "Yeoubi", nullptr, nullptr);
     YBI_ASSERT(window);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
     std::unique_ptr<DisplayDevice> displayDevice = DisplayDevice::CreateDevice(window);
     YBI_ASSERT(displayDevice);
@@ -45,27 +44,20 @@ int main(int argc, char **argv)
 
     std::unique_ptr<Device> device = Device::CreateDevice(DeviceKind::GPU);
 
+    // Virtual textures
+    VirtualTextureManager manager(arena, device.get(), displayDevice.get());
+    for (Material &mat : container.materials)
+    {
+        MaterialTextureHandle handle = manager.AddTexture(mat.diffuseUdimPaths);
+        mat.udimBase = handle.udimBase;
+        mat.udimTableOffset = handle.udimTableOffset;
+    }
+    manager.Finalize();
+
     RenderSystem system(device.get(), &container, scene);
     system.Update();
 
     YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);
-
-    // Virtual textures
-    VirtualTextureManager manager(arena, device.get(), displayDevice.get());
-    // Array<std::pair<int, int>> materialTextureIndices
-    {
-        std::unordered_set<std::string> textureSet;
-        for (const Material &mat : container.materials)
-        {
-            for (const std::string &path : mat.diffuseUdimPaths)
-            {
-                if (textureSet.insert(path).second)
-                {
-                    size_t textureIndex = manager.AddTexture(path);
-                }
-            }
-        }
-    }
 
     AffineTransform renderFromCamera;
     Matrix4x4 cameraFromRaster;
@@ -100,6 +92,7 @@ int main(int argc, char **argv)
 
     KernelParams params;
     params.bvhHandle = scene->container->GetBVHs(GeometryType::Scene)[0].handle.handle;
+    params.cameraPosition = camera.position;
     params.cameraFromRaster = cameraFromRaster;
     params.renderFromCamera = renderFromCamera;
     params.maxDepth = 3;
@@ -110,6 +103,7 @@ int main(int argc, char **argv)
 
     uint32_t lastFrameIndex = 0;
     double lastTime = glfwGetTime();
+    bool wasEscapePressed = false;
 
     while (!glfwWindowShouldClose(window))
     {
@@ -120,11 +114,22 @@ int main(int argc, char **argv)
         glfwPollEvents();
         cameraController.UpdateCamera(window, deltaTime);
         params.renderFromCamera = cameraController.GetRenderFromCamera();
+        Vec3f cameraPosition = params.renderFromCamera.GetTranslation();
+        params.cameraPosition[0] = cameraPosition.x;
+        params.cameraPosition[1] = cameraPosition.y;
+        params.cameraPosition[2] = cameraPosition.z;
 
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        const bool escapePressed = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        if (escapePressed && !wasEscapePressed)
         {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            int currentMode = glfwGetInputMode(window, GLFW_CURSOR);
+            int cursorMode =
+                currentMode == GLFW_CURSOR_DISABLED ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED;
+
+            glfwSetInputMode(window, GLFW_CURSOR, cursorMode);
+            cameraController.SetMovementEnabled(cursorMode == GLFW_CURSOR_DISABLED);
         }
+        wasEscapePressed = escapePressed;
 
         if (!displayDevice->BeginFrame())
         {
@@ -136,8 +141,11 @@ int main(int argc, char **argv)
 
         DeviceExternalBuffer &deviceImageHandle = deviceImageHandles[frameIndex];
         params.imageHandle = reinterpret_cast<uint64_t>(deviceImageHandle.buffer.Data());
+        // manager.UpdateParams(&params);
+        manager.Update(&params);
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->DispatchKernel(camera.width, camera.height, cudaParams);
+        manager.CopyFeedback();
         device->SignalExternalSemaphore(deviceFrameFinishedSemaphores[frameIndex]);
 
         displayDevice->EndFrame(*displayImageHandles[frameIndex],

@@ -38,6 +38,11 @@ AttributeType Mesh::GetUVType() const
     return uvType;
 }
 
+uint32_t Mesh::GetMaterialIndex() const
+{
+    return materialIndex;
+}
+
 const Array<Vec3f> &Mesh::GetPositions() const
 {
     return positions;
@@ -92,32 +97,60 @@ void GeometryManager::Update(Device *device,
     // Set up device scene
     View<Object> objects = scratch.arena->PushArray<Object>(container->meshes.size());
     size_t totalNumUVs = 0;
+    size_t totalNumTriangleIndices = 0;
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
         Object &object = objects[meshIndex];
         object.uvOffset = totalNumUVs;
+        object.triangleIndexOffset = static_cast<uint32_t>(totalNumTriangleIndices);
         object.uvType = mesh.GetUVType();
+        object.udimBase = ~0u;
+        object.udimTableOffset = ~0u;
+
+        uint32_t materialIndex = mesh.GetMaterialIndex();
+        if (materialIndex < container->materials.size())
+        {
+            const Material &material = container->materials[materialIndex];
+            object.udimBase = material.udimBase;
+            object.udimTableOffset = material.udimTableOffset;
+        }
 
         totalNumUVs += mesh.GetNumUVs();
+        totalNumTriangleIndices += mesh.GetIndices().size();
     }
 
     View<Vec2f> hostUvs = scratch.arena->PushArray<Vec2f>(totalNumUVs);
+    View<int> hostTriangleIndices = scratch.arena->PushArray<int>(totalNumTriangleIndices);
     totalNumUVs = 0;
+    totalNumTriangleIndices = 0;
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
         const Array<Vec2f> &uvs = mesh.GetUVs();
+        const Array<int> &indices = mesh.GetIndices();
         if (uvs.size())
         {
             memcpy(hostUvs.data() + totalNumUVs, uvs.data(), sizeof(uvs[0]) * uvs.size());
             totalNumUVs += uvs.size();
+        }
+        if (indices.size())
+        {
+            memcpy(hostTriangleIndices.data() + totalNumTriangleIndices,
+                   indices.data(),
+                   sizeof(indices[0]) * indices.size());
+            totalNumTriangleIndices += indices.size();
         }
     }
 
     deviceScene->float2s =
         reinterpret_cast<Vec2f *>(device->Alloc(sizeof(Vec2f) * totalNumUVs).Data());
     device->CopyToDevice(deviceScene->float2s, hostUvs.data(), hostUvs.numBytes());
+
+    deviceScene->triangleIndices =
+        reinterpret_cast<int *>(device->Alloc(sizeof(int) * totalNumTriangleIndices).Data());
+    device->CopyToDevice(
+        deviceScene->triangleIndices, hostTriangleIndices.data(), hostTriangleIndices.numBytes());
 
     deviceScene->objects = reinterpret_cast<Object *>(
         device->Alloc(sizeof(Object) * container->meshes.size()).Data());
