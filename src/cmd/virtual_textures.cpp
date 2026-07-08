@@ -239,7 +239,7 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
     }
 }
 
-static void LoadPNGFile(Image *texture, std::string filename)
+static void LoadImageFile(Image *texture, std::string filename)
 {
     int width, height, channels;
     unsigned char *buffer = stbi_load(filename.c_str(), &width, &height, &channels, 0);
@@ -314,7 +314,7 @@ static void ProcessTexture(Arena &arena, const std::string &filename)
 
     if (ext.find("png") != std::string::npos)
     {
-        LoadPNGFile(&texture, filename);
+        LoadImageFile(&texture, filename);
         format = TextureFormat::RGBA8_UNORM;
     }
     else if (ext.find("exr") != std::string::npos)
@@ -324,7 +324,7 @@ static void ProcessTexture(Arena &arena, const std::string &filename)
     }
     else
     {
-        YBI_LOGFATAL("Extension %s is not supported\n", ext.c_str());
+        YBI_LOGFATAL("File format is not supported: %s\n", filename.c_str());
     }
 
     // Texture sampling treats v = 0 as the bottom row, so store ybvt source data bottom-up.

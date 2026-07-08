@@ -13,9 +13,11 @@ struct KernelParams
 {
     // Camera
     Vec3f cameraPosition;
+    float fovRadians;
     Matrix4x4 cameraFromRaster;
     AffineTransform renderFromCamera;
     float lensRadius;
+    int imageHeight;
 
     // BVH
     uint64_t bvhHandle;
@@ -29,7 +31,6 @@ struct KernelParams
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;
     PageDescriptor *pageDescriptors;
-    DeviceTexture *texturePools;
     uint32_t *pageDescriptorBits;
     FeedbackRequest *feedbackRequests;
 };

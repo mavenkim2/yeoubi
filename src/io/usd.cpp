@@ -4,8 +4,11 @@
 #include "core/arena.h"
 #include "core/array.h"
 #include "core/assert.h"
+#include "core/math.h"
+#include "core/thread_context.h"
 #include "io/usd.h"
 #include "pxr/base/vt/types.h"
+#include "pxr/usd/usdShade/output.h"
 #include "scene/scene.h"
 #include <cmath>
 #include <filesystem>
@@ -16,6 +19,7 @@
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primFlags.h>
+#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdGeom/camera.h>
@@ -74,6 +78,92 @@ static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim)
     }
 
     return material;
+}
+
+static pxr::UsdShadeShader GetMaterialSurfaceSourceShader(const pxr::UsdShadeMaterial &material)
+{
+    // for (const pxr::UsdShadeOutput &output : material.GetSurfaceOutputs())
+    // {
+    //     pxr::TfToken renderContext = output.GetRenderType();
+    //
+    //     printf("surface output: %s\n", output.GetFullName().GetText());
+    //     printf("render context: %s\n",
+    //            renderContext.IsEmpty() ? "<universal>" : renderContext.GetText());
+    //
+    //     pxr::UsdShadeConnectableAPI source;
+    //     pxr::TfToken sourceName;
+    //     pxr::UsdShadeAttributeType sourceType;
+    //
+    //     if (output.GetConnectedSource(&source, &sourceName, &sourceType))
+    //     {
+    //         pxr::UsdPrim sourcePrim = source.GetPrim();
+    //         printf("source prim: %s\n", sourcePrim.GetPath().GetText());
+    //
+    //         pxr::UsdShadeShader shader(sourcePrim);
+    //         if (shader)
+    //         {
+    //             pxr::TfToken shaderId;
+    //             shader.GetShaderId(&shaderId);
+    //             printf("shader id: %s\n", shaderId.GetText());
+    //         }
+    //
+    //         printf("source output/input name: %s\n", sourceName.GetText());
+    //     }
+    // }
+    // printf("\n");
+
+#if 0
+    pxr::UsdShadeShader mdlShader = material.ComputeSurfaceSource(pxr::TfToken("mdl"));
+
+    for (const pxr::UsdShadeInput &input : mdlShader.GetInputs())
+    {
+        printf("input: %s type: %s\n",
+               input.GetFullName().GetText(),
+               input.GetTypeName().GetAsToken().GetText());
+
+        pxr::SdfAssetPath asset;
+        if (input.Get(&asset))
+        {
+            printf("asset: %s\n", asset.GetAssetPath().c_str());
+            printf("resolved: %s\n", asset.GetResolvedPath().c_str());
+        }
+
+        pxr::VtValue value;
+        if (input.Get(&value))
+        {
+            printf("value type: %s\n", value.GetTypeName().c_str());
+        }
+    }
+#endif
+
+    pxr::UsdShadeShader shader = material.ComputeSurfaceSource(pxr::UsdShadeTokens->full);
+    if (!shader)
+    {
+        shader = material.ComputeSurfaceSource(pxr::UsdShadeTokens->preview);
+    }
+    if (!shader)
+    {
+        shader = material.ComputeSurfaceSource(pxr::UsdShadeTokens->allPurpose);
+    }
+    return shader;
+}
+
+static uint32_t AddMaterialToMap(std::unordered_map<std::string, size_t> &materialMap,
+                                 std::vector<pxr::UsdShadeMaterial> &materials,
+                                 const pxr::UsdShadeMaterial &material)
+{
+    std::string materialPath = material.GetPath().GetString();
+    auto it = materialMap.find(materialPath);
+    if (it == materialMap.end())
+    {
+        materials.push_back(material);
+        materialMap.insert({materialPath, materials.size() - 1});
+        return static_cast<uint32_t>(materials.size() - 1);
+    }
+    else
+    {
+        return static_cast<uint32_t>(it->second);
+    }
 }
 
 std::unique_ptr<SceneLoader> SceneLoader::CreateSceneLoader(const std::string &filePath)
@@ -268,9 +358,6 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         pxr::UsdTimeCode timeCode) const
 {
     pxr::UsdGeomMesh usdMesh(prim);
-
-    const std::vector<pxr::UsdGeomSubset> subsets = pxr::UsdGeomSubset::GetAllGeomSubsets(usdMesh);
-    YBI_ASSERT(subsets.size() == 0);
 
     pxr::UsdGeomImageable imageable(prim);
 
@@ -590,6 +677,26 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
     pxr::UsdPrim root = stage->GetPseudoRoot();
 
+    // pxr::UsdPrimRange range = stage->Traverse();
+    // for (pxr::UsdPrimRange::iterator it = range.begin(); it != range.end(); ++it)
+    // {
+    //     pxr::UsdPrim prim = *it;
+    //     pxr::UsdVariantSets sets = prim.GetVariantSets();
+    //
+    //     for (const std::string &setName : sets.GetNames())
+    //     {
+    //         pxr::UsdVariantSet set = sets.GetVariantSet(setName);
+    //         std::vector<std::string> names = set.GetVariantNames();
+    //
+    //         for (std::string name : names)
+    //         // if (std::find(names.begin(), names.end(), "render") != names.end())
+    //         {
+    //             // set.SetVariantSelection("render");
+    //             printf("Selected %s=render on %s\n", setName.c_str(), prim.GetPath().GetText());
+    //         }
+    //     }
+    // }
+
     USDPrimTraversalData collectiveData;
 
     // std::vector<pxr::UsdPrim> traversablePrims;
@@ -667,6 +774,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     pxr::UsdGeomCamera camera = data.cameras[0];
     pxr::UsdPrim cameraPrim = camera.GetPrim();
     pxr::GfCamera gfCam = camera.GetCamera(timeCode);
+    const float verticalFovRadians =
+        DegreesToRadians(float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
     pxr::GfFrustum frustum = gfCam.GetFrustum();
     pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
     pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
@@ -676,6 +785,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     bool inverseResult = container->camera.cameraFromWorld.TryInverse(&renderFromCamera);
     YBI_ASSERT(inverseResult);
     container->camera.position = renderFromCamera.GetTranslation();
+    container->camera.verticalFovRadians = verticalFovRadians;
     container->camera.clipFromCamera = ConvertMatrix4x4(projMatrix);
 
     // TODO: cli option
@@ -735,25 +845,81 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         {
             Mesh &mesh = scene->container->meshes[meshOffset + i];
             pxr::UsdPrim prim = data.meshes[i];
-            pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
 
-            if (!material)
-            {
-                printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
-                continue;
-            }
+            pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
+            std::vector<pxr::UsdGeomSubset> subsets = bindingApi.GetMaterialBindSubsets();
 
-            std::string materialPath = material.GetPath().GetString();
-            auto it = materialMap.find(materialPath);
-            if (it == materialMap.end())
+            if (subsets.size() == 0)
             {
-                materials.push_back(material);
-                materialMap.insert({materialPath, materials.size() - 1});
-                mesh.SetMaterialIndex(static_cast<uint32_t>(materials.size() - 1));
+                pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
+
+                if (!material)
+                {
+                    printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
+                    continue;
+                }
+
+                mesh.SetMaterialIndex(AddMaterialToMap(materialMap, materials, material));
             }
             else
             {
-                mesh.SetMaterialIndex(static_cast<uint32_t>(it->second));
+                Array<int> faceMaterialIndices;
+                faceMaterialIndices.Resize(mesh.GetIndices().size() / 3);
+                for (int &index : faceMaterialIndices)
+                {
+                    index = -1;
+                }
+
+                pxr::VtIntArray faceCounts;
+                pxr::UsdGeomMesh usdMesh(prim);
+                bool result = usdMesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode);
+                YBI_ASSERT(result);
+
+                ScratchArena scratch;
+                View<int> faceOffsets =
+                    scratch.arena->PushArray<int>(faceMaterialIndices.size() + 1);
+                int faceOffset = 0;
+
+                for (int faceIndex = 0; faceIndex < faceCounts.size(); faceIndex++)
+                {
+                    faceOffsets[faceIndex] = faceOffset;
+                    // NOTE: Number of triangles per polygon is num vertices - 2
+                    faceOffset += faceCounts[faceIndex] - 2;
+                }
+                faceOffsets[faceCounts.size()] = faceOffset;
+
+                for (pxr::UsdGeomSubset subset : subsets)
+                {
+                    pxr::VtIntArray subsetFaces;
+                    subset.GetIndicesAttr().Get(&subsetFaces, timeCode);
+
+                    pxr::TfToken elementType;
+                    subset.GetElementTypeAttr().Get(&elementType, timeCode);
+                    YBI_ERROR(elementType == pxr::UsdGeomTokens->face,
+                              "Subset element type %s not supported\n",
+                              elementType.GetString().c_str());
+
+                    pxr::UsdShadeMaterial material = GetPrimMaterial(subset.GetPrim());
+
+                    if (!material)
+                    {
+                        printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
+                        continue;
+                    }
+
+                    uint32_t materialIndex = AddMaterialToMap(materialMap, materials, material);
+
+                    for (int face : subsetFaces)
+                    {
+                        for (int offset = faceOffsets[face]; offset < faceOffsets[face + 1];
+                             offset++)
+                        {
+                            YBI_ASSERT(faceMaterialIndices[offset] == -1);
+                            faceMaterialIndices[offset] = static_cast<int>(materialIndex);
+                        }
+                    }
+                }
+                mesh.SetFaceMaterialIndices(std::move(faceMaterialIndices));
             }
         }
 
@@ -843,8 +1009,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         // MaterialInfo info = {};
         // info.materialPath = material.GetPath().GetString();
         // info.packed = {};
-
-        if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource())
+        pxr::UsdShadeShader shader = GetMaterialSurfaceSourceShader(material);
+        if (shader)
         {
             pxr::TfToken token;
             if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))

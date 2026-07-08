@@ -93,10 +93,12 @@ int main(int argc, char **argv)
     KernelParams params;
     params.bvhHandle = scene->container->GetBVHs(GeometryType::Scene)[0].handle.handle;
     params.cameraPosition = camera.position;
+    params.fovRadians = camera.verticalFovRadians;
     params.cameraFromRaster = cameraFromRaster;
     params.renderFromCamera = renderFromCamera;
     params.maxDepth = 3;
     params.lensRadius = 0.f; // TODO: initialize properly
+    params.imageHeight = camera.height;
     params.scene = system.deviceScene;
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
@@ -115,9 +117,7 @@ int main(int argc, char **argv)
         cameraController.UpdateCamera(window, deltaTime);
         params.renderFromCamera = cameraController.GetRenderFromCamera();
         Vec3f cameraPosition = params.renderFromCamera.GetTranslation();
-        params.cameraPosition[0] = cameraPosition.x;
-        params.cameraPosition[1] = cameraPosition.y;
-        params.cameraPosition[2] = cameraPosition.z;
+        params.cameraPosition = cameraPosition;
 
         const bool escapePressed = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
         if (escapePressed && !wasEscapePressed)

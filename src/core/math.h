@@ -29,4 +29,14 @@ YBI_CPU_GPU float Floor(float a)
     return floorf(a);
 }
 
+YBI_CPU_GPU float Abs(float a)
+{
+    return a < 0.f ? -a : a;
+}
+
+YBI_CPU_GPU constexpr float DegreesToRadians(float degrees)
+{
+    return degrees * 0.017453292519943295769f;
+}
+
 } // namespace ybi

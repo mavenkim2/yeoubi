@@ -2,14 +2,17 @@
 
 #include "core/affine_transform.h"
 #include "core/array.h"
+#include "core/hash.h"
 #include "core/matrix4x4.h"
 #include "device/device_memory.h"
 #include "scene/bvh.h"
 #include "scene/device_scene.h"
 #include "scene/texture.h"
 #include <array>
+#include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ybi
@@ -55,6 +58,7 @@ class Mesh
     Array<Vec3f> positions;
     Array<Vec2f> uvs;
     Array<int> indices;
+    Array<int> faceMaterialIndices;
     uint32_t materialIndex = ~0u;
     AttributeType uvType = AttributeType::None;
 
@@ -71,7 +75,9 @@ public:
     const Array<Vec3f> &GetPositions() const;
     const Array<Vec2f> &GetUVs() const;
     const Array<int> &GetIndices() const;
+    const Array<int> &GetFaceMaterialIndices() const;
     void SetMaterialIndex(uint32_t index);
+    void SetFaceMaterialIndices(Array<int> &&faceMaterialIndices);
 };
 
 class Curve
@@ -88,6 +94,7 @@ struct Camera
     AffineTransform cameraFromWorld;
     Matrix4x4 clipFromCamera;
     Matrix4x4 rasterFromCamera;
+    float verticalFovRadians;
 
     int width;
     int height;
@@ -120,6 +127,43 @@ struct Scene
 
     Scene() = default;
     Scene(DataContainer *container);
+};
+
+struct DataCache
+{
+    std::unordered_multimap<uint64_t, size_t> hashToIndex;
+
+    DataCache() = default;
+    ~DataCache() = default;
+
+    template <typename T, typename GetFn>
+    size_t GetOrAddArray(const Array<T> &array, size_t storedIndex, GetFn get)
+    {
+        const size_t numBytes = sizeof(T) * array.size();
+        const uint8_t empty = 0;
+        const uint8_t *bytes = numBytes ? reinterpret_cast<const uint8_t *>(array.data()) : &empty;
+        uint64_t hash = MurmurHash64A(bytes, numBytes, 0);
+
+        auto range = hashToIndex.equal_range(hash);
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            size_t index = it->second;
+            const Array<T> &otherArray = get(index);
+            if (otherArray.size() != array.size())
+            {
+                continue;
+            }
+
+            int result = numBytes ? memcmp(array.data(), otherArray.data(), numBytes) : 0;
+            if (result == 0)
+            {
+                return index;
+            }
+        }
+
+        hashToIndex.emplace(hash, storedIndex);
+        return ~0ull;
+    }
 };
 
 struct GeometryManager

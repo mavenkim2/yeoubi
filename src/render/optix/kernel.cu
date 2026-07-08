@@ -4,6 +4,7 @@
 #include "core/matrix4x4.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
+#include "render/ray_cone.h"
 #include "render/virtual_texture_interop.h"
 #include <optix_device.h>
 #include <optix_types.h>
@@ -211,6 +212,24 @@ YBI_GPU static bool GetTriangleUVs(const Object &object, const IntersectionInfo 
     return true;
 }
 
+YBI_GPU static bool
+GetTriangleMaterial(const Object &object, const IntersectionInfo &info, DeviceMaterial &material)
+{
+    if (object.triangleMaterialOffset != ~0u)
+    {
+        int materialIndex =
+            params.scene.triangleMaterialIndices[object.triangleMaterialOffset + info.primIndex];
+        material = params.scene.materials[materialIndex];
+        return true;
+    }
+    else if (object.materialIndex != -1)
+    {
+        material = params.scene.materials[object.materialIndex];
+        return true;
+    }
+    return false;
+}
+
 extern "C" __global__ void __miss__kernel()
 {
     uint32_t low = optixGetPayload_0();
@@ -273,6 +292,10 @@ extern "C" __global__ void __raygen__kernel()
     float time = 0.f;
     uint32_t mask = 0xff;
 
+    RayCone rayCone;
+    rayCone.width = 0.f;
+    rayCone.spreadAngle = atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
+
     OptixTraversableHandle bvhHandle = static_cast<OptixTraversableHandle>(params.bvhHandle);
 
     IntersectionInfo info;
@@ -302,53 +325,67 @@ extern "C" __global__ void __raygen__kernel()
         Vec2f uv;
         bool hasUvs = GetTriangleUVs(object, info, uv);
 
-        if (hasUvs)
+        DeviceMaterial material;
+        bool hasMaterial = GetTriangleMaterial(object, info, material);
+
+        if (hasMaterial)
         {
-            // Virtual texture path
-            Vec2f flooredUv = Floor(uv);
-
-            uint32_t udimTableIndex = 0u;
-            if (object.udimBase != ~0u)
+            if (hasUvs)
             {
-                const uint32_t udim = 1001 + static_cast<uint32_t>(flooredUv.x) +
-                                      10 * static_cast<uint32_t>(flooredUv.y);
-                udimTableIndex = object.udimTableOffset + udim - object.udimBase;
-            }
-            else
-            {
-                udimTableIndex = object.udimTableOffset;
-            }
+                // Virtual texture path
+                Vec2f flooredUv = Floor(uv);
+                uint32_t udimTableIndex = 0u;
+                if (material.udimBase != ~0u)
+                {
+                    const uint32_t udim = 1001 + static_cast<uint32_t>(flooredUv.x) +
+                                          10 * static_cast<uint32_t>(flooredUv.y);
+                    udimTableIndex = material.udimTableOffset + udim - material.udimBase;
+                }
+                else
+                {
+                    udimTableIndex = material.udimTableOffset;
+                }
 
-            DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
+                DeviceTextureDescriptor textureDescriptor =
+                    params.textureDescriptors[udimTableIndex];
 
-            const uint32_t pageShift = 7;
-            const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
-            const Vec3f cameraPosition(
-                params.cameraPosition[0], params.cameraPosition[1], params.cameraPosition[2]);
-            float lod = CalculateTemporaryVirtualTextureLod(
-                textureDescriptor, cameraPosition, hitPosition, pageShift);
-            uint32_t baseMip = uint32_t(Floor(lod));
-            uint32_t nextMip =
-                Min(baseMip + 1, CalculateMaxVirtualTextureMip(textureDescriptor, pageShift));
+                const uint32_t pageShift = 7;
+                const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
+                const Vec3f cameraPosition = params.cameraPosition;
+                // float lodd = ComputeTextureLOD(hitInfo.p0,
+                //                                          hitInfo.p1,
+                //                                          hitInfo.p2,
+                //                                          hitInfo.uv0,
+                //                                          hitInfo.uv1,
+                //                                          hitInfo.uv2,
+                //                                          dir,
+                //                                          hitInfo.n,
+                //                                          dim);
+                float lod = CalculateTemporaryVirtualTextureLod(
+                    textureDescriptor, cameraPosition, hitPosition, pageShift);
+                uint32_t baseMip = uint32_t(Floor(lod));
+                uint32_t nextMip =
+                    Min(baseMip + 1, CalculateMaxVirtualTextureMip(textureDescriptor, pageShift));
 
 #if 1
-            // TODO: don't hardcode
-            UnpackedFeedbackRequest lowR, highR;
-            Vec4f lowerValue =
-                SamplePointVirtualTexture(textureDescriptor, pageShift, uv, baseMip, &lowR);
-            Vec4f higherValue =
-                SamplePointVirtualTexture(textureDescriptor, pageShift, uv, nextMip, &highR);
+                // TODO: don't hardcode
+                UnpackedFeedbackRequest lowR, highR;
+                Vec4f lowerValue =
+                    SamplePointVirtualTexture(textureDescriptor, pageShift, uv, baseMip, &lowR);
+                Vec4f higherValue =
+                    SamplePointVirtualTexture(textureDescriptor, pageShift, uv, nextMip, &highR);
 
-            WriteUniqueFeedback(lowR);
-            WriteUniqueFeedback(highR);
+                WriteUniqueFeedback(lowR);
+                WriteUniqueFeedback(highR);
 
-            float t = lod - float(baseMip);
-            Vec4f value = Lerp(lowerValue, higherValue, t);
-            color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
-                                static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
-                                static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
-                                static_cast<unsigned char>(Clamp(value.w, 0.f, 1.f) * 255.f));
+                float t = lod - float(baseMip);
+                Vec4f value = Lerp(lowerValue, higherValue, t);
+                color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
+                                    static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
+                                    static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
+                                    static_cast<unsigned char>(Clamp(value.w, 0.f, 1.f) * 255.f));
 #endif
+            }
         }
     }
 

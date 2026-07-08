@@ -1,10 +1,11 @@
 #include "scene/scene.h"
 #include "core/arena.h"
-#include "core/hash.h"
 #include "core/thread_context.h"
 #include "device/device.h"
+#include <cstdint>
+#include <cstring>
 #include <memory>
-#include <unordered_map>
+#include <vector>
 
 namespace ybi
 {
@@ -58,9 +59,19 @@ const Array<int> &Mesh::GetIndices() const
     return indices;
 }
 
+const Array<int> &Mesh::GetFaceMaterialIndices() const
+{
+    return faceMaterialIndices;
+}
+
 void Mesh::SetMaterialIndex(uint32_t index)
 {
     materialIndex = index;
+}
+
+void Mesh::SetFaceMaterialIndices(Array<int> &&indices)
+{
+    faceMaterialIndices = std::move(indices);
 }
 
 // Data container
@@ -85,6 +96,41 @@ void RenderSystem::Update()
     geometryManager.Update(device, deviceArena.get(), dataContainer, rootScene, &deviceScene);
 }
 
+constexpr size_t INVALID_INDEX = ~size_t(0);
+constexpr uint32_t INVALID_OFFSET = ~0u;
+
+template <typename T>
+struct UniqueArrayUpload
+{
+    const Array<T> *array = nullptr;
+    size_t offset = 0;
+};
+
+template <typename T>
+static void CopyUniqueArrays(View<T> dst, const std::vector<UniqueArrayUpload<T>> &uploads)
+{
+    for (const UniqueArrayUpload<T> &upload : uploads)
+    {
+        const Array<T> &array = *upload.array;
+        if (array.size())
+        {
+            memcpy(dst.data() + upload.offset, array.data(), sizeof(T) * array.size());
+        }
+    }
+}
+
+template <typename T>
+static void UploadDeviceArray(Device *device, T *&devicePtr, View<T> host)
+{
+    devicePtr = nullptr;
+    if (host.size())
+    {
+        devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * host.size()).Data());
+        device->CopyToDevice(devicePtr, host.data(), host.numBytes());
+    }
+}
+
+// GeometryManager
 void GeometryManager::Update(Device *device,
                              DeviceArena *deviceArena,
                              DataContainer *container,
@@ -96,61 +142,195 @@ void GeometryManager::Update(Device *device,
 
     // Set up device scene
     View<Object> objects = scratch.arena->PushArray<Object>(container->meshes.size());
+    View<DeviceMaterial> hostMaterials;
+    if (container->materials.size())
+    {
+        hostMaterials = scratch.arena->PushArray<DeviceMaterial>(container->materials.size());
+    }
+
+    // Prepare device materials
+    for (size_t materialIndex = 0; materialIndex < container->materials.size(); materialIndex++)
+    {
+        const Material &material = container->materials[materialIndex];
+        DeviceMaterial &deviceMaterial = hostMaterials[materialIndex];
+        deviceMaterial.udimBase = material.udimBase;
+        deviceMaterial.udimTableOffset = material.udimTableOffset;
+    }
+
+    // Prepare device objects
     size_t totalNumUVs = 0;
+    size_t totalNumTriangleMaterialIndices = 0;
+    size_t totalNumVertices = 0;
     size_t totalNumTriangleIndices = 0;
+
+    DataCache positionCache;
+    DataCache uvCache;
+    DataCache indicesCache;
+    DataCache triangleMaterialIndexCache;
+
+    std::vector<UniqueArrayUpload<Vec3f>> positionUploads;
+    std::vector<UniqueArrayUpload<Vec2f>> uvUploads;
+    std::vector<UniqueArrayUpload<int>> triangleIndexUploads;
+    std::vector<UniqueArrayUpload<int>> triangleMaterialIndexUploads;
+    std::vector<size_t> bvhSourceIndices;
+    positionUploads.reserve(container->meshes.size());
+    uvUploads.reserve(container->meshes.size());
+    triangleIndexUploads.reserve(container->meshes.size());
+    triangleMaterialIndexUploads.reserve(container->meshes.size());
+    bvhSourceIndices.reserve(container->meshes.size());
+
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
+        const Array<Vec3f> &meshPositions = mesh.GetPositions();
+        const Array<Vec2f> &meshUvs = mesh.GetUVs();
+        const Array<int> &meshIndices = mesh.GetIndices();
+        const Array<int> &faceMaterialIndices = mesh.GetFaceMaterialIndices();
+
         Object &object = objects[meshIndex];
-        object.uvOffset = totalNumUVs;
-        object.triangleIndexOffset = static_cast<uint32_t>(totalNumTriangleIndices);
+        object.positionOffset = INVALID_OFFSET;
+        object.uvOffset = INVALID_OFFSET;
+        object.triangleIndexOffset = INVALID_OFFSET;
+        object.triangleMaterialOffset = INVALID_OFFSET;
         object.uvType = mesh.GetUVType();
-        object.udimBase = ~0u;
-        object.udimTableOffset = ~0u;
+        object.materialIndex = -1;
+
+        size_t meshPositionIndex = positionCache.GetOrAddArray(
+            meshPositions, meshIndex, [&](size_t existingIndex) -> const Array<Vec3f> & {
+                return container->meshes[existingIndex].GetPositions();
+            });
+
+        if (meshPositions.size())
+        {
+            if (meshPositionIndex == INVALID_INDEX)
+            {
+                object.positionOffset = static_cast<uint32_t>(totalNumVertices);
+                positionUploads.push_back({&meshPositions, totalNumVertices});
+                totalNumVertices += meshPositions.size();
+            }
+            else
+            {
+                object.positionOffset = objects[meshPositionIndex].positionOffset;
+            }
+        }
+
+        size_t meshIndicesIndex = indicesCache.GetOrAddArray(
+            meshIndices, meshIndex, [&](size_t existingIndex) -> const Array<int> & {
+                return container->meshes[existingIndex].GetIndices();
+            });
+
+        if (meshIndices.size())
+        {
+            if (meshIndicesIndex == INVALID_INDEX)
+            {
+                object.triangleIndexOffset = static_cast<uint32_t>(totalNumTriangleIndices);
+                triangleIndexUploads.push_back({&meshIndices, totalNumTriangleIndices});
+                totalNumTriangleIndices += meshIndices.size();
+            }
+            else
+            {
+                object.triangleIndexOffset = objects[meshIndicesIndex].triangleIndexOffset;
+            }
+        }
+
+        if (meshUvs.size())
+        {
+            size_t meshUvIndex = uvCache.GetOrAddArray(
+                meshUvs, meshIndex, [&](size_t existingIndex) -> const Array<Vec2f> & {
+                    return container->meshes[existingIndex].GetUVs();
+                });
+            if (meshUvIndex == INVALID_INDEX)
+            {
+                object.uvOffset = static_cast<uint32_t>(totalNumUVs);
+                uvUploads.push_back({&meshUvs, totalNumUVs});
+                totalNumUVs += meshUvs.size();
+            }
+            else
+            {
+                object.uvOffset = objects[meshUvIndex].uvOffset;
+            }
+        }
+
+        if (faceMaterialIndices.size())
+        {
+            YBI_ASSERT(faceMaterialIndices.size() == meshIndices.size() / 3);
+            size_t faceMaterialIndex = triangleMaterialIndexCache.GetOrAddArray(
+                faceMaterialIndices, meshIndex, [&](size_t existingIndex) -> const Array<int> & {
+                    return container->meshes[existingIndex].GetFaceMaterialIndices();
+                });
+
+            if (faceMaterialIndex == INVALID_INDEX)
+            {
+                object.triangleMaterialOffset =
+                    static_cast<uint32_t>(totalNumTriangleMaterialIndices);
+                triangleMaterialIndexUploads.push_back(
+                    {&faceMaterialIndices, totalNumTriangleMaterialIndices});
+                totalNumTriangleMaterialIndices += faceMaterialIndices.size();
+            }
+            else
+            {
+                object.triangleMaterialOffset = objects[faceMaterialIndex].triangleMaterialOffset;
+            }
+        }
 
         uint32_t materialIndex = mesh.GetMaterialIndex();
         if (materialIndex < container->materials.size())
         {
-            const Material &material = container->materials[materialIndex];
-            object.udimBase = material.udimBase;
-            object.udimTableOffset = material.udimTableOffset;
+            object.materialIndex = static_cast<int>(materialIndex);
         }
 
-        totalNumUVs += mesh.GetNumUVs();
-        totalNumTriangleIndices += mesh.GetIndices().size();
+        if (meshPositions.size() && meshIndices.size() && meshPositionIndex != INVALID_INDEX &&
+            meshIndicesIndex != INVALID_INDEX && meshPositionIndex == meshIndicesIndex)
+        {
+            bvhSourceIndices.push_back(meshPositionIndex);
+        }
+        else
+        {
+            bvhSourceIndices.push_back(meshIndex);
+        }
     }
 
-    View<Vec2f> hostUvs = scratch.arena->PushArray<Vec2f>(totalNumUVs);
-    View<int> hostTriangleIndices = scratch.arena->PushArray<int>(totalNumTriangleIndices);
-    totalNumUVs = 0;
-    totalNumTriangleIndices = 0;
-    for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+    View<Vec3f> hostPositions;
+    View<Vec2f> hostUvs;
+    View<int> hostTriangleIndices;
+    View<int> hostTriangleMaterialIndices;
+    if (totalNumVertices)
     {
-        Mesh &mesh = container->meshes[meshIndex];
-        const Array<Vec2f> &uvs = mesh.GetUVs();
-        const Array<int> &indices = mesh.GetIndices();
-        if (uvs.size())
-        {
-            memcpy(hostUvs.data() + totalNumUVs, uvs.data(), sizeof(uvs[0]) * uvs.size());
-            totalNumUVs += uvs.size();
-        }
-        if (indices.size())
-        {
-            memcpy(hostTriangleIndices.data() + totalNumTriangleIndices,
-                   indices.data(),
-                   sizeof(indices[0]) * indices.size());
-            totalNumTriangleIndices += indices.size();
-        }
+        hostPositions = scratch.arena->PushArray<Vec3f>(totalNumVertices);
+    }
+    if (totalNumUVs)
+    {
+        hostUvs = scratch.arena->PushArray<Vec2f>(totalNumUVs);
+    }
+    if (totalNumTriangleIndices)
+    {
+        hostTriangleIndices = scratch.arena->PushArray<int>(totalNumTriangleIndices);
+    }
+    if (totalNumTriangleMaterialIndices)
+    {
+        hostTriangleMaterialIndices =
+            scratch.arena->PushArray<int>(totalNumTriangleMaterialIndices);
     }
 
-    deviceScene->float2s =
-        reinterpret_cast<Vec2f *>(device->Alloc(sizeof(Vec2f) * totalNumUVs).Data());
-    device->CopyToDevice(deviceScene->float2s, hostUvs.data(), hostUvs.numBytes());
+    CopyUniqueArrays(hostPositions, positionUploads);
+    CopyUniqueArrays(hostUvs, uvUploads);
+    CopyUniqueArrays(hostTriangleIndices, triangleIndexUploads);
+    CopyUniqueArrays(hostTriangleMaterialIndices, triangleMaterialIndexUploads);
 
-    deviceScene->triangleIndices =
-        reinterpret_cast<int *>(device->Alloc(sizeof(int) * totalNumTriangleIndices).Data());
-    device->CopyToDevice(
-        deviceScene->triangleIndices, hostTriangleIndices.data(), hostTriangleIndices.numBytes());
+    UploadDeviceArray(device, deviceScene->positions, hostPositions);
+    UploadDeviceArray(device, deviceScene->float2s, hostUvs);
+    UploadDeviceArray(device, deviceScene->triangleIndices, hostTriangleIndices);
+
+    deviceScene->materials = nullptr;
+    if (hostMaterials.size())
+    {
+        deviceScene->materials = reinterpret_cast<DeviceMaterial *>(
+            device->Alloc(sizeof(DeviceMaterial) * hostMaterials.size()).Data());
+        device->CopyToDevice(
+            deviceScene->materials, hostMaterials.data(), hostMaterials.numBytes());
+    }
+
+    UploadDeviceArray(device, deviceScene->triangleMaterialIndices, hostTriangleMaterialIndices);
 
     deviceScene->objects = reinterpret_cast<Object *>(
         device->Alloc(sizeof(Object) * container->meshes.size()).Data());
@@ -160,64 +340,19 @@ void GeometryManager::Update(Device *device,
     container->GetBVHs(GeometryType::Mesh).Reserve(container->meshes.size());
     printf("num meshes: %zu\n", container->meshes.size());
 
-    std::unordered_multimap<uint64_t, size_t> meshMap;
-
-    size_t totalNumVertices = 0;
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
-        size_t meshNumVertices = mesh.GetNumVertices();
-        const Array<Vec3f> &meshPositions = mesh.GetPositions();
-        const Array<int> &meshIndices = mesh.GetIndices();
+        const size_t sourceIndex = bvhSourceIndices[meshIndex];
 
-        uint64_t hash =
-            MurmurHash64A((uint8_t *)meshPositions.data(), sizeof(Vec3f) * meshNumVertices, 0);
-        hash = MurmurHash64A(
-            (uint8_t *)meshIndices.data(), sizeof(meshIndices[0]) * meshIndices.size(), hash);
-
-        size_t duplicateIndex = ~0ull;
-        auto range = meshMap.equal_range(hash);
-        for (auto it = range.first; it != range.second; it++)
-        {
-            size_t otherMeshIndex = it->second;
-            Mesh &otherMesh = container->meshes[otherMeshIndex];
-
-            const Array<Vec3f> &otherPositions = otherMesh.GetPositions();
-            const Array<int> &otherIndices = otherMesh.GetIndices();
-
-            if (otherMesh.GetNumVertices() != meshNumVertices ||
-                otherIndices.size() != meshIndices.size())
-                continue;
-
-            int result = memcmp(meshPositions.data(),
-                                otherPositions.data(),
-                                sizeof(meshPositions[0]) * meshNumVertices);
-
-            if (result != 0)
-                continue;
-
-            result = memcmp(meshIndices.data(),
-                            otherIndices.data(),
-                            sizeof(meshIndices[0]) * meshIndices.size());
-
-            if (result == 0)
-            {
-                duplicateIndex = otherMeshIndex;
-                break;
-            }
-        }
-
-        if (duplicateIndex != ~0ull)
+        if (sourceIndex != meshIndex)
         {
             Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
             // TODO: this is brittle. also bvhs probably shouldn't be duplicated
-            bvhs.EmplaceBack(bvhs[duplicateIndex]);
+            bvhs.EmplaceBack(bvhs[sourceIndex]);
         }
         else
         {
-            totalNumVertices += meshNumVertices;
-            meshMap.insert({hash, meshIndex});
-
             container->GetBVHs(GeometryType::Mesh)
                 .EmplaceBack(device->BuildTriangleBVH(deviceArena, mesh));
         }
