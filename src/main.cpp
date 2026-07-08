@@ -98,6 +98,7 @@ int main(int argc, char **argv)
     params.renderFromCamera = renderFromCamera;
     params.maxDepth = 3;
     params.lensRadius = 0.f; // TODO: initialize properly
+    params.imageWidth = camera.width;
     params.imageHeight = camera.height;
     params.scene = system.deviceScene;
 

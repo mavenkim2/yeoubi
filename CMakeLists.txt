@@ -132,7 +132,15 @@ add_executable(yeoubi
 )
 
 set (YBI_KERNEL_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/affine_transform.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/matrix4x4.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec2f.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3f.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device_texture.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/kernel_params.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/ray_cone.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_scene.h
 )
 
 list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES

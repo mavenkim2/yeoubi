@@ -56,23 +56,33 @@ struct Instance
 class Mesh
 {
     Array<Vec3f> positions;
+    Array<Vec3f> normals;
     Array<Vec2f> uvs;
     Array<int> indices;
     Array<int> faceMaterialIndices;
     uint32_t materialIndex = ~0u;
     AttributeType uvType = AttributeType::None;
+    AttributeType normalType = AttributeType::None;
 
 public:
     Mesh() = default;
-    Mesh(Array<Vec3f> &&positions, Array<Vec2f> &&uvs, AttributeType uvType, Array<int> &&indices);
+    Mesh(Array<Vec3f> &&positions,
+         Array<Vec3f> &&normals,
+         AttributeType normalType,
+         Array<Vec2f> &&uvs,
+         AttributeType uvType,
+         Array<int> &&indices);
     Mesh(Mesh &&other) = default;
     Mesh &operator=(Mesh &&other) = default;
 
     size_t GetNumVertices() const;
+    size_t GetNumNormals() const;
     size_t GetNumUVs() const;
     AttributeType GetUVType() const;
+    AttributeType GetNormalType() const;
     uint32_t GetMaterialIndex() const;
     const Array<Vec3f> &GetPositions() const;
+    const Array<Vec3f> &GetNormals() const;
     const Array<Vec2f> &GetUVs() const;
     const Array<int> &GetIndices() const;
     const Array<int> &GetFaceMaterialIndices() const;

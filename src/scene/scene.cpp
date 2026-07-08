@@ -16,17 +16,24 @@ Instance::Instance(AffineTransform transform, GeometryHandle handle)
 }
 
 Mesh::Mesh(Array<Vec3f> &&positions,
+           Array<Vec3f> &&normals,
+           AttributeType normalType,
            Array<Vec2f> &&uvs,
            AttributeType uvType,
            Array<int> &&indices)
-    : positions(std::move(positions)), uvs(std::move(uvs)), uvType(uvType),
-      indices(std::move(indices))
+    : positions(std::move(positions)), normals(std::move(normals)), uvs(std::move(uvs)),
+      indices(std::move(indices)), uvType(uvType), normalType(normalType)
 {
 }
 
 size_t Mesh::GetNumVertices() const
 {
     return positions.size();
+}
+
+size_t Mesh::GetNumNormals() const
+{
+    return normals.size();
 }
 
 size_t Mesh::GetNumUVs() const
@@ -39,6 +46,11 @@ AttributeType Mesh::GetUVType() const
     return uvType;
 }
 
+AttributeType Mesh::GetNormalType() const
+{
+    return normalType;
+}
+
 uint32_t Mesh::GetMaterialIndex() const
 {
     return materialIndex;
@@ -47,6 +59,11 @@ uint32_t Mesh::GetMaterialIndex() const
 const Array<Vec3f> &Mesh::GetPositions() const
 {
     return positions;
+}
+
+const Array<Vec3f> &Mesh::GetNormals() const
+{
+    return normals;
 }
 
 const Array<Vec2f> &Mesh::GetUVs() const
@@ -161,19 +178,23 @@ void GeometryManager::Update(Device *device,
     size_t totalNumUVs = 0;
     size_t totalNumTriangleMaterialIndices = 0;
     size_t totalNumVertices = 0;
+    size_t totalNumNormals = 0;
     size_t totalNumTriangleIndices = 0;
 
     DataCache positionCache;
+    DataCache normalCache;
     DataCache uvCache;
     DataCache indicesCache;
     DataCache triangleMaterialIndexCache;
 
     std::vector<UniqueArrayUpload<Vec3f>> positionUploads;
+    std::vector<UniqueArrayUpload<Vec3f>> normalUploads;
     std::vector<UniqueArrayUpload<Vec2f>> uvUploads;
     std::vector<UniqueArrayUpload<int>> triangleIndexUploads;
     std::vector<UniqueArrayUpload<int>> triangleMaterialIndexUploads;
     std::vector<size_t> bvhSourceIndices;
     positionUploads.reserve(container->meshes.size());
+    normalUploads.reserve(container->meshes.size());
     uvUploads.reserve(container->meshes.size());
     triangleIndexUploads.reserve(container->meshes.size());
     triangleMaterialIndexUploads.reserve(container->meshes.size());
@@ -183,16 +204,19 @@ void GeometryManager::Update(Device *device,
     {
         Mesh &mesh = container->meshes[meshIndex];
         const Array<Vec3f> &meshPositions = mesh.GetPositions();
+        const Array<Vec3f> &meshNormals = mesh.GetNormals();
         const Array<Vec2f> &meshUvs = mesh.GetUVs();
         const Array<int> &meshIndices = mesh.GetIndices();
         const Array<int> &faceMaterialIndices = mesh.GetFaceMaterialIndices();
 
         Object &object = objects[meshIndex];
         object.positionOffset = INVALID_OFFSET;
+        object.normalOffset = INVALID_OFFSET;
         object.uvOffset = INVALID_OFFSET;
         object.triangleIndexOffset = INVALID_OFFSET;
         object.triangleMaterialOffset = INVALID_OFFSET;
         object.uvType = mesh.GetUVType();
+        object.normalType = mesh.GetNormalType();
         object.materialIndex = -1;
 
         size_t meshPositionIndex = positionCache.GetOrAddArray(
@@ -211,6 +235,25 @@ void GeometryManager::Update(Device *device,
             else
             {
                 object.positionOffset = objects[meshPositionIndex].positionOffset;
+            }
+        }
+
+        if (meshNormals.size())
+        {
+            size_t meshNormalIndex = normalCache.GetOrAddArray(
+                meshNormals, meshIndex, [&](size_t existingIndex) -> const Array<Vec3f> & {
+                    return container->meshes[existingIndex].GetNormals();
+                });
+
+            if (meshNormalIndex == INVALID_INDEX)
+            {
+                object.normalOffset = static_cast<uint32_t>(totalNumNormals);
+                normalUploads.push_back({&meshNormals, totalNumNormals});
+                totalNumNormals += meshNormals.size();
+            }
+            else
+            {
+                object.normalOffset = objects[meshNormalIndex].normalOffset;
             }
         }
 
@@ -291,12 +334,17 @@ void GeometryManager::Update(Device *device,
     }
 
     View<Vec3f> hostPositions;
+    View<Vec3f> hostNormals;
     View<Vec2f> hostUvs;
     View<int> hostTriangleIndices;
     View<int> hostTriangleMaterialIndices;
     if (totalNumVertices)
     {
         hostPositions = scratch.arena->PushArray<Vec3f>(totalNumVertices);
+    }
+    if (totalNumNormals)
+    {
+        hostNormals = scratch.arena->PushArray<Vec3f>(totalNumNormals);
     }
     if (totalNumUVs)
     {
@@ -313,11 +361,13 @@ void GeometryManager::Update(Device *device,
     }
 
     CopyUniqueArrays(hostPositions, positionUploads);
+    CopyUniqueArrays(hostNormals, normalUploads);
     CopyUniqueArrays(hostUvs, uvUploads);
     CopyUniqueArrays(hostTriangleIndices, triangleIndexUploads);
     CopyUniqueArrays(hostTriangleMaterialIndices, triangleMaterialIndexUploads);
 
     UploadDeviceArray(device, deviceScene->positions, hostPositions);
+    UploadDeviceArray(device, deviceScene->normals, hostNormals);
     UploadDeviceArray(device, deviceScene->float2s, hostUvs);
     UploadDeviceArray(device, deviceScene->triangleIndices, hostTriangleIndices);
 

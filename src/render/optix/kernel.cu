@@ -165,21 +165,64 @@ YBI_GPU static uint32_t CalculateMaxVirtualTextureMip(DeviceTextureDescriptor de
     return maxMip;
 }
 
-YBI_GPU static float CalculateTemporaryVirtualTextureLod(DeviceTextureDescriptor descriptor,
-                                                         Vec3f cameraPosition,
-                                                         Vec3f hitPosition,
-                                                         uint32_t pageShift)
+template <typename T>
+YBI_GPU static T InterpolateTriangleValues(T values[3], Vec2f bary)
 {
-    const uint32_t maxMip = CalculateMaxVirtualTextureMip(descriptor, pageShift);
-    const float distance = Max(Length(hitPosition - cameraPosition), 1.0f);
-    const float lod = log2f(distance);
-
-    return Clamp(lod, 0.0f, float(maxMip));
+    return values[0] * (1.f - bary.x - bary.y) + values[1] * bary.x + values[2] * bary.y;
 }
 
-YBI_GPU static bool GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f &uv)
+YBI_GPU static void
+GetTrianglePositions(const Object &object, const IntersectionInfo &info, Vec3f positions[3])
 {
-    Vec2f uvs[3];
+    const uint32_t triangleIndexOffset = object.triangleIndexOffset + 3 * info.primIndex;
+    for (int i = 0; i < 3; i++)
+    {
+        const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
+        positions[i] = params.scene.positions[object.positionOffset + vertexIndex];
+    }
+}
+
+YBI_GPU static bool
+GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f normals[3])
+{
+    if (object.normalOffset == ~0u || params.scene.normals == nullptr)
+    {
+        return false;
+    }
+
+    switch (object.normalType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                normals[i] = params.scene.normals[object.normalOffset + 3 * info.primIndex + i];
+            }
+            return true;
+        }
+        case AttributeType::Vertex:
+        {
+            const uint32_t triangleIndexOffset = object.triangleIndexOffset + 3 * info.primIndex;
+            for (int i = 0; i < 3; i++)
+            {
+                const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
+                normals[i] = params.scene.normals[object.normalOffset + vertexIndex];
+            }
+            return true;
+        }
+        case AttributeType::None:
+        {
+            return false;
+        }
+        default:
+            assert(0);
+            return false;
+    }
+}
+
+YBI_GPU static bool
+GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f uvs[3])
+{
     switch (object.uvType)
     {
         case AttributeType::FaceVarying:
@@ -208,7 +251,6 @@ YBI_GPU static bool GetTriangleUVs(const Object &object, const IntersectionInfo 
             assert(0);
     }
 
-    uv = uvs[0] * (1.f - info.bary.x - info.bary.y) + uvs[1] * info.bary.x + uvs[2] * info.bary.y;
     return true;
 }
 
@@ -322,8 +364,25 @@ extern "C" __global__ void __raygen__kernel()
     {
         const Object &object = params.scene.objects[info.id];
 
-        Vec2f uv;
-        bool hasUvs = GetTriangleUVs(object, info, uv);
+        Vec3f positions[3];
+        Vec3f normals[3];
+
+        GetTrianglePositions(object, info, positions);
+
+        bool hasNormals = GetTriangleNormals(object, info, normals);
+
+        if (!hasNormals)
+        {
+            Vec3f n = Normalize(Cross(positions[1] - positions[0], positions[2] - positions[0]));
+
+            normals[0] = n;
+            normals[1] = n;
+            normals[2] = n;
+        }
+
+        Vec2f uvs[3];
+        bool hasUvs = GetTriangleUVs(object, info, uvs);
+        Vec2f uv = InterpolateTriangleValues(uvs, info.bary);
 
         DeviceMaterial material;
         bool hasMaterial = GetTriangleMaterial(object, info, material);
@@ -352,20 +411,39 @@ extern "C" __global__ void __raygen__kernel()
                 const uint32_t pageShift = 7;
                 const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
                 const Vec3f cameraPosition = params.cameraPosition;
-                // float lodd = ComputeTextureLOD(hitInfo.p0,
-                //                                          hitInfo.p1,
-                //                                          hitInfo.p2,
-                //                                          hitInfo.uv0,
-                //                                          hitInfo.uv1,
-                //                                          hitInfo.uv2,
-                //                                          dir,
-                //                                          hitInfo.n,
-                //                                          dim);
-                float lod = CalculateTemporaryVirtualTextureLod(
-                    textureDescriptor, cameraPosition, hitPosition, pageShift);
+
+                // Calculate LOD
+                Vec3f shadingNormal = InterpolateTriangleValues(normals, info.bary);
+
+                float surfaceSpreadAngle =
+                    CalculatePrimaryHitUnifiedSurfaceSpreadAngle(rayCone,
+                                                                 rayDirection,
+                                                                 shadingNormal,
+                                                                 positions[0],
+                                                                 positions[1],
+                                                                 positions[2],
+                                                                 normals[0],
+                                                                 normals[1],
+                                                                 normals[2]);
+                PropagateRayCone(rayCone, surfaceSpreadAngle, info.t);
+                float lod = ComputeTextureLOD(positions[0],
+                                              positions[1],
+                                              positions[2],
+                                              uvs[0],
+                                              uvs[1],
+                                              uvs[2],
+                                              rayDirection,
+                                              shadingNormal,
+                                              rayCone.width,
+                                              params.imageWidth,
+                                              params.imageHeight);
+
+                const uint32_t maxMip =
+                    CalculateMaxVirtualTextureMip(textureDescriptor, pageShift);
+                lod = Clamp(lod, 0.f, float(maxMip));
+
                 uint32_t baseMip = uint32_t(Floor(lod));
-                uint32_t nextMip =
-                    Min(baseMip + 1, CalculateMaxVirtualTextureMip(textureDescriptor, pageShift));
+                uint32_t nextMip = Min(baseMip + 1, maxMip);
 
 #if 1
                 // TODO: don't hardcode

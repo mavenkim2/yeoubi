@@ -44,9 +44,15 @@ class USDSceneLoader : public SceneLoader
     void ConvertFaceVaryingUVsToTriangles(const pxr::VtVec2fArray &values,
                                           const pxr::VtIntArray &faceCounts,
                                           Array<Vec2f> &triangles) const;
+    void ConvertFaceVaryingNormalsToTriangles(const pxr::VtVec3fArray &values,
+                                              const pxr::VtIntArray &faceCounts,
+                                              Array<Vec3f> &triangles) const;
     AttributeType ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
                                   pxr::VtArray<pxr::GfVec2f> *outUVs,
                                   pxr::UsdTimeCode timeCode) const;
+    AttributeType ProcessNormals(const pxr::UsdGeomMesh &mesh,
+                                 pxr::VtVec3fArray *outNormals,
+                                 pxr::UsdTimeCode timeCode) const;
     void ProcessPolygonMesh(Scene *scene,
                             pxr::UsdPrim sceneRoot,
                             size_t meshOffset,

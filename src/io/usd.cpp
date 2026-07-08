@@ -273,6 +273,28 @@ void USDSceneLoader::ConvertFaceVaryingUVsToTriangles(const pxr::VtVec2fArray &v
     }
 }
 
+void USDSceneLoader::ConvertFaceVaryingNormalsToTriangles(const pxr::VtVec3fArray &values,
+                                                          const pxr::VtIntArray &faceCounts,
+                                                          Array<Vec3f> &normals) const
+{
+    size_t index = 0;
+    for (int faceCount : faceCounts)
+    {
+        YBI_ASSERT(faceCount >= 3);
+
+        for (size_t i = 1; i < faceCount - 1; i++)
+        {
+            normals.EmplaceBack(Vec3f(values[index][0], values[index][1], values[index][2]));
+            normals.EmplaceBack(
+                Vec3f(values[index + i][0], values[index + i][1], values[index + i][2]));
+            normals.EmplaceBack(Vec3f(
+                values[index + i + 1][0], values[index + i + 1][1], values[index + i + 1][2]));
+        }
+
+        index += faceCount;
+    }
+}
+
 bool USDSceneLoader::IsPurposeAllowed(pxr::UsdPrim prim) const
 {
     pxr::UsdGeomImageable imageable(prim);
@@ -349,6 +371,64 @@ AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
     }
 }
 
+AttributeType USDSceneLoader::ProcessNormals(const pxr::UsdGeomMesh &mesh,
+                                             pxr::VtVec3fArray *outNormals,
+                                             pxr::UsdTimeCode timeCode) const
+{
+    pxr::TfToken interpolationToken;
+
+    pxr::UsdGeomPrimvarsAPI primvars(mesh);
+    pxr::UsdGeomPrimvar normalsPrimvar = primvars.GetPrimvar(pxr::UsdGeomTokens->normals);
+    if (normalsPrimvar)
+    {
+        pxr::VtValue values;
+        if (!normalsPrimvar.ComputeFlattened(&values, timeCode))
+        {
+            return AttributeType::None;
+        }
+        if (!values.IsHolding<pxr::VtVec3fArray>())
+        {
+            YBI_LOGFATAL("primvars:normals are not GfVec3f\n");
+            return AttributeType::None;
+        }
+
+        *outNormals = values.Get<pxr::VtVec3fArray>();
+        if (outNormals->empty())
+        {
+            return AttributeType::None;
+        }
+
+        interpolationToken = normalsPrimvar.GetInterpolation();
+    }
+    else
+    {
+        if (!mesh.GetNormalsAttr().Get(outNormals, timeCode))
+        {
+            return AttributeType::None;
+        }
+        if (outNormals->empty())
+        {
+            return AttributeType::None;
+        }
+
+        interpolationToken = mesh.GetNormalsInterpolation();
+    }
+
+    if (interpolationToken == pxr::UsdGeomTokens->vertex)
+    {
+        return AttributeType::Vertex;
+    }
+    else if (interpolationToken == pxr::UsdGeomTokens->faceVarying)
+    {
+        return AttributeType::FaceVarying;
+    }
+    else
+    {
+        YBI_LOGFATAL("Need to handle other normal interpolation types\n");
+        return AttributeType::None;
+    }
+}
+
 void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                                         pxr::UsdPrim sceneRoot,
                                         size_t meshOffset,
@@ -405,8 +485,46 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
             memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
             break;
         }
-        default:
+        case AttributeType::None:
+        {
             break;
+        }
+        default:
+        {
+            YBI_LOGFATAL("Only vertex/face varying UVs supported currently.");
+            break;
+        }
+    }
+
+    pxr::VtVec3fArray usdNormals;
+    Array<Vec3f> normals;
+    AttributeType normalType = ProcessNormals(usdMesh, &usdNormals, timeCode);
+    normals.Reserve(usdNormals.size());
+    switch (normalType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            YBI_ASSERT(usdNormals.size() == faceIndices.size());
+            ConvertFaceVaryingNormalsToTriangles(usdNormals, faceCounts, normals);
+            break;
+        }
+        case AttributeType::Vertex:
+        {
+            YBI_ASSERT(usdNormals.size() == usdPositions.size());
+            normals.Resize(usdNormals.size());
+            memcpy(normals.data(), usdNormals.data(), sizeof(Vec3f) * usdNormals.size());
+
+            break;
+        }
+        case AttributeType::None:
+        {
+            break;
+        }
+        default:
+        {
+            YBI_LOGFATAL("Only vertex/face varying normals supported currently.");
+            break;
+        }
     }
 
     Array<Vec3f> positions(usdPositions.size());
@@ -414,7 +532,12 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     Array<int> triangleIndices;
     ConvertMeshIndicesToTriangles(faceIndices, faceCounts, triangleIndices);
 
-    Mesh mesh(std::move(positions), std::move(uvs), uvType, std::move(triangleIndices));
+    Mesh mesh(std::move(positions),
+              std::move(normals),
+              normalType,
+              std::move(uvs),
+              uvType,
+              std::move(triangleIndices));
 
     size_t index = meshOffset + meshIndex;
     scene->container->meshes[index] = std::move(mesh);

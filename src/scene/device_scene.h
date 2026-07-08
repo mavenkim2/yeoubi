@@ -24,7 +24,9 @@ struct DeviceMaterial
 struct Object
 {
     AttributeType uvType;
+    AttributeType normalType;
     uint32_t uvOffset;
+    uint32_t normalOffset;
     uint32_t positionOffset;
     uint32_t triangleIndexOffset;
     uint32_t triangleMaterialOffset;
@@ -38,6 +40,7 @@ struct DeviceScene
     DeviceMaterial *materials;
 
     Vec3f *positions;
+    Vec3f *normals;
     Vec2f *float2s;
     int *triangleIndices;
     int *triangleMaterialIndices;

@@ -17,6 +17,7 @@ struct KernelParams
     Matrix4x4 cameraFromRaster;
     AffineTransform renderFromCamera;
     float lensRadius;
+    int imageWidth;
     int imageHeight;
 
     // BVH

@@ -796,6 +796,7 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     pipelineCompileOptions.numAttributeValues = 2;
     pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
+    pipelineCompileOptions.pipelineLaunchParamsSizeInBytes = sizeof(KernelParams);
 
     char log[4096] = {};
     size_t logSize = sizeof(log);
