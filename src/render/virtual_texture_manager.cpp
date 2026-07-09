@@ -582,7 +582,10 @@ void VirtualTextureManager::Update(KernelParams *params)
                 info.lruIndex = lruIndex;
             }
 
-            printf("num evivctions: %zu\n", evictRequests.size());
+            if (evictRequests.size())
+            {
+                printf("num evivctions: %zu\n", evictRequests.size());
+            }
             if (allocationInfos.size())
             {
                 ringBufferPageAllocationInfos2.SynchronizedWrite(allocationInfos.data(),

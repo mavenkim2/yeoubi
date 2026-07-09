@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
-#include "core/vec3f.h"
+#include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include <cmath>
 #include <cstddef>
@@ -30,6 +30,17 @@ public:
                                           float m23)
         : m{{m00, m01, m02, m03}, {m10, m11, m12, m13}, {m20, m21, m22, m23}}
     {
+    }
+
+    YBI_CPU_GPU explicit AffineTransform(const float values[12])
+    {
+        for (size_t row = 0; row < 3; ++row)
+        {
+            for (size_t column = 0; column < 4; ++column)
+            {
+                m[row][column] = values[row * 4 + column];
+            }
+        }
     }
 
     YBI_CPU_GPU explicit AffineTransform(const float values[3][4])
@@ -94,6 +105,12 @@ public:
     {
         YBI_ASSERT(row < 3);
         return m[row];
+    }
+
+    YBI_CPU_GPU Vec4f GetRow(size_t row) const
+    {
+        YBI_ASSERT(row < 3);
+        return Vec4f(m[row][0], m[row][1], m[row][2], m[row][3]);
     }
 
     YBI_CPU_GPU float &operator()(size_t row, size_t column)

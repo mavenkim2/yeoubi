@@ -13,6 +13,8 @@
 namespace ybi
 {
 
+// #define YBI_DEBUG_LOD_COLOR 1
+
 struct Ray
 {
     Vec3f pos;
@@ -46,6 +48,8 @@ struct IntersectionInfo
 {
     float t;
     Vec2f bary;
+    AffineTransform objectToWorld;
+    AffineTransform worldToObject;
     uint32_t primIndex;
     uint32_t id;
     IntersectionType type;
@@ -60,8 +64,8 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
     const uint32_t pageSize = (1u << pageShift);
     const Vec2f normalizedUv = uv - Floor(uv);
 
-    const uint32_t mipWidth = descriptor.width >> mip;
-    const uint32_t mipHeight = descriptor.height >> mip;
+    uint32_t mipWidth = descriptor.width >> mip;
+    uint32_t mipHeight = descriptor.height >> mip;
 
     if (request)
     {
@@ -165,6 +169,26 @@ YBI_GPU static uint32_t CalculateMaxVirtualTextureMip(DeviceTextureDescriptor de
     return maxMip;
 }
 
+YBI_GPU static Vec3f GetLodDebugColor(float lod, uint32_t maxMip)
+{
+    const float normalizedLod = maxMip ? Clamp(lod / float(maxMip), 0.f, 1.f) : 0.f;
+
+    if (normalizedLod < 0.25f)
+    {
+        return Lerp(Vec3f(0.f, 0.f, 1.f), Vec3f(0.f, 1.f, 1.f), normalizedLod * 4.f);
+    }
+    else if (normalizedLod < 0.5f)
+    {
+        return Lerp(Vec3f(0.f, 1.f, 1.f), Vec3f(0.f, 1.f, 0.f), (normalizedLod - 0.25f) * 4.f);
+    }
+    else if (normalizedLod < 0.75f)
+    {
+        return Lerp(Vec3f(0.f, 1.f, 0.f), Vec3f(1.f, 1.f, 0.f), (normalizedLod - 0.5f) * 4.f);
+    }
+
+    return Lerp(Vec3f(1.f, 1.f, 0.f), Vec3f(1.f, 0.f, 0.f), (normalizedLod - 0.75f) * 4.f);
+}
+
 template <typename T>
 YBI_GPU static T InterpolateTriangleValues(T values[3], Vec2f bary)
 {
@@ -178,25 +202,24 @@ GetTrianglePositions(const Object &object, const IntersectionInfo &info, Vec3f p
     for (int i = 0; i < 3; i++)
     {
         const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
-        positions[i] = params.scene.positions[object.positionOffset + vertexIndex];
+        Vec3f objectPosition = params.scene.positions[object.positionOffset + vertexIndex];
+        positions[i] = objectPosition;
     }
 }
 
 YBI_GPU static bool
 GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f normals[3])
 {
-    if (object.normalOffset == ~0u || params.scene.normals == nullptr)
-    {
-        return false;
-    }
-
     switch (object.normalType)
     {
         case AttributeType::FaceVarying:
         {
             for (int i = 0; i < 3; i++)
             {
-                normals[i] = params.scene.normals[object.normalOffset + 3 * info.primIndex + i];
+                Vec3f objectNormal =
+                    params.scene.normals[object.normalOffset + 3 * info.primIndex + i];
+
+                normals[i] = objectNormal;
             }
             return true;
         }
@@ -206,7 +229,8 @@ GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f nor
             for (int i = 0; i < 3; i++)
             {
                 const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
-                normals[i] = params.scene.normals[object.normalOffset + vertexIndex];
+                Vec3f objectNormal = params.scene.normals[object.normalOffset + vertexIndex];
+                normals[i] = objectNormal;
             }
             return true;
         }
@@ -293,10 +317,17 @@ extern "C" __global__ void __closesthit__kernel()
     if (optixIsTriangleHit())
     {
         const float2 bary = optixGetTriangleBarycentrics();
+        float objectToWorld[12];
+        float worldToObject[12];
+        optixGetObjectToWorldTransformMatrix(objectToWorld);
+        optixGetWorldToObjectTransformMatrix(worldToObject);
+
         isect->t = optixGetRayTmax();
         isect->id = optixGetInstanceId();
         isect->primIndex = optixGetPrimitiveIndex();
         isect->bary = Vec2f(bary.x, bary.y);
+        isect->objectToWorld = AffineTransform(objectToWorld);
+        isect->worldToObject = AffineTransform(worldToObject);
         isect->type = INTERSECTION_TYPE_TRIANGLE;
     }
     else
@@ -413,7 +444,30 @@ extern "C" __global__ void __raygen__kernel()
                 const Vec3f cameraPosition = params.cameraPosition;
 
                 // Calculate LOD
-                Vec3f shadingNormal = InterpolateTriangleValues(normals, info.bary);
+                for (int i = 0; i < 3; i++)
+                {
+                    positions[i] = info.objectToWorld.TransformPoint(positions[i]);
+                }
+
+                Vec3f r0 = info.objectToWorld.GetRow(0).xyz;
+                Vec3f r1 = info.objectToWorld.GetRow(1).xyz;
+                Vec3f r2 = info.objectToWorld.GetRow(2).xyz;
+
+                Vec3f adjugate0 = Cross(r1, r2);
+                Vec3f adjugate1 = Cross(r2, r0);
+                Vec3f adjugate2 = Cross(r0, r1);
+
+                Vec3f shadingNormal = Normalize(InterpolateTriangleValues(normals, info.bary));
+                shadingNormal = Normalize(Vec3f(Dot(adjugate0, shadingNormal),
+                                                Dot(adjugate1, shadingNormal),
+                                                Dot(adjugate2, shadingNormal)));
+
+                for (int i = 0; i < 3; i++)
+                {
+                    normals[i] = Normalize(Vec3f(Dot(adjugate0, normals[i]),
+                                                 Dot(adjugate1, normals[i]),
+                                                 Dot(adjugate2, normals[i])));
+                }
 
                 float surfaceSpreadAngle =
                     CalculatePrimaryHitUnifiedSurfaceSpreadAngle(rayCone,
@@ -442,10 +496,16 @@ extern "C" __global__ void __raygen__kernel()
                     CalculateMaxVirtualTextureMip(textureDescriptor, pageShift);
                 lod = Clamp(lod, 0.f, float(maxMip));
 
+#if YBI_DEBUG_LOD_COLOR
+                Vec3f value = GetLodDebugColor(lod, maxMip);
+                color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
+                                    static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
+                                    static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
+                                    255);
+#else
                 uint32_t baseMip = uint32_t(Floor(lod));
                 uint32_t nextMip = Min(baseMip + 1, maxMip);
 
-#if 1
                 // TODO: don't hardcode
                 UnpackedFeedbackRequest lowR, highR;
                 Vec4f lowerValue =
