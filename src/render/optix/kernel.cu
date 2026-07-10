@@ -2,6 +2,7 @@
 #include "core/assert.h"
 #include "core/math.h"
 #include "core/matrix4x4.h"
+#include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
 #include "render/ray_cone.h"
@@ -216,8 +217,8 @@ GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f nor
         {
             for (int i = 0; i < 3; i++)
             {
-                Vec3f objectNormal =
-                    params.scene.normals[object.normalOffset + 3 * info.primIndex + i];
+                Vec3f objectNormal = DecodeOctahedral(
+                    params.scene.normals[object.normalOffset + 3 * info.primIndex + i]);
 
                 normals[i] = objectNormal;
             }
@@ -229,7 +230,8 @@ GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f nor
             for (int i = 0; i < 3; i++)
             {
                 const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
-                Vec3f objectNormal = params.scene.normals[object.normalOffset + vertexIndex];
+                Vec3f objectNormal =
+                    DecodeOctahedral(params.scene.normals[object.normalOffset + vertexIndex]);
                 normals[i] = objectNormal;
             }
             return true;
@@ -253,7 +255,14 @@ GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f uvs[3])
         {
             for (int i = 0; i < 3; i++)
             {
-                uvs[i] = params.scene.float2s[object.uvOffset + 3 * info.primIndex + i];
+                const uint32_t cornerIndex = 3 * info.primIndex + i;
+                int uvIndex = cornerIndex;
+                if (object.uvIndexOffset != ~0u)
+                {
+                    uvIndex = params.scene.uvIndices[object.uvIndexOffset + cornerIndex];
+                }
+
+                uvs[i] = params.scene.float2s[object.uvOffset + uvIndex];
             }
             break;
         }
@@ -263,7 +272,13 @@ GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f uvs[3])
             for (int i = 0; i < 3; i++)
             {
                 const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
-                uvs[i] = params.scene.float2s[object.uvOffset + vertexIndex];
+                int uvIndex = vertexIndex;
+                if (object.uvIndexOffset != ~0u)
+                {
+                    uvIndex = params.scene.uvIndices[object.uvIndexOffset + vertexIndex];
+                }
+
+                uvs[i] = params.scene.float2s[object.uvOffset + uvIndex];
             }
             break;
         }

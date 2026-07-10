@@ -242,13 +242,13 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
 static void LoadImageFile(Image *texture, std::string filename)
 {
     int width, height, channels;
-    unsigned char *buffer = stbi_load(filename.c_str(), &width, &height, &channels, 0);
+    unsigned char *buffer = stbi_load(filename.c_str(), &width, &height, &channels, 4);
     YBI_ASSERT(buffer);
 
     texture->ptr = reinterpret_cast<void *>(buffer);
     texture->width = width;
     texture->height = height;
-    texture->numChannels = channels;
+    texture->numChannels = 4;
     texture->numBytesPerChannel = 1;
 }
 

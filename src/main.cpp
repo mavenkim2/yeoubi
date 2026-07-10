@@ -142,7 +142,7 @@ int main(int argc, char **argv)
 
         DeviceExternalBuffer &deviceImageHandle = deviceImageHandles[frameIndex];
         params.imageHandle = reinterpret_cast<uint64_t>(deviceImageHandle.buffer.Data());
-        // manager.UpdateParams(&params);
+        manager.UpdateParams(&params);
         manager.Update(&params);
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->DispatchKernel(camera.width, camera.height, cudaParams);

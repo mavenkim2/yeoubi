@@ -1,10 +1,13 @@
 #include "scene/scene.h"
 #include "core/arena.h"
+#include "core/octahedral.h"
 #include "core/thread_context.h"
+#include "core/vec2f.h"
 #include "device/device.h"
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <tbb/parallel_for.h>
 #include <unordered_map>
 #include <vector>
 
@@ -20,10 +23,11 @@ Mesh::Mesh(BufferHandle positions,
            BufferHandle normals,
            AttributeType normalType,
            BufferHandle uvs,
+           BufferHandle uvIndices,
            AttributeType uvType,
            BufferHandle indices)
-    : positions(positions), normals(normals), uvs(uvs), indices(indices), uvType(uvType),
-      normalType(normalType)
+    : positions(positions), normals(normals), uvs(uvs), uvIndices(uvIndices), indices(indices),
+      uvType(uvType), normalType(normalType)
 {
 }
 
@@ -40,6 +44,11 @@ BufferHandle Mesh::GetNormalsHandle() const
 BufferHandle Mesh::GetUVsHandle() const
 {
     return uvs;
+}
+
+BufferHandle Mesh::GetUVIndicesHandle() const
+{
+    return uvIndices;
 }
 
 BufferHandle Mesh::GetIndicesHandle() const
@@ -80,6 +89,11 @@ void Mesh::SetNormalsHandle(BufferHandle handle)
 void Mesh::SetUVsHandle(BufferHandle handle)
 {
     uvs = handle;
+}
+
+void Mesh::SetUVIndicesHandle(BufferHandle handle)
+{
+    uvIndices = handle;
 }
 
 void Mesh::SetIndicesHandle(BufferHandle handle)
@@ -123,24 +137,6 @@ constexpr size_t INVALID_INDEX = ~size_t(0);
 constexpr uint32_t INVALID_OFFSET = ~0u;
 
 template <typename T>
-struct UniqueArrayUpload
-{
-    const Array<T> *array = nullptr;
-    size_t offset = 0;
-};
-
-template <typename T>
-static void UploadDeviceArray(Device *device, T *&devicePtr, View<T> host)
-{
-    devicePtr = nullptr;
-    if (host.size())
-    {
-        devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * host.size()).Data());
-        device->CopyToDevice(devicePtr, host.data(), host.numBytes());
-    }
-}
-
-template <typename T>
 static size_t CalculateBufferOffsets(const std::vector<Array<T>> &buffers,
                                      std::vector<uint32_t> &offsets)
 {
@@ -161,18 +157,65 @@ static size_t CalculateBufferOffsets(const std::vector<Array<T>> &buffers,
 }
 
 template <typename T>
-static void CopyBuffers(View<T> dst,
-                        const std::vector<Array<T>> &buffers,
-                        const std::vector<uint32_t> &offsets)
+static void UploadDeviceBuffers(Device *device,
+                                T *&devicePtr,
+                                const std::vector<Array<T>> &buffers,
+                                const std::vector<uint32_t> &offsets,
+                                size_t totalSize)
 {
+    devicePtr = nullptr;
+    if (totalSize == 0)
+    {
+        return;
+    }
+
+    devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * totalSize).Data());
     for (size_t index = 0; index < buffers.size(); index++)
     {
         const Array<T> &buffer = buffers[index];
         if (buffer.size())
         {
-            memcpy(dst.data() + offsets[index], buffer.data(), sizeof(T) * buffer.size());
+            device->CopyToDevice(devicePtr + offsets[index],
+                                 const_cast<T *>(buffer.data()),
+                                 sizeof(T) * buffer.size());
         }
     }
+}
+
+static void UploadEncodedNormalBuffers(Device *device,
+                                       uint32_t *&devicePtr,
+                                       const std::vector<Array<Vec3f>> &buffers,
+                                       const std::vector<uint32_t> &offsets,
+                                       size_t totalSize)
+{
+    devicePtr = nullptr;
+    if (totalSize == 0)
+    {
+        return;
+    }
+
+    Array<uint32_t> encodedNormals(totalSize);
+    tbb::parallel_for(size_t(0), buffers.size(), [&](size_t index) {
+        const Array<Vec3f> &buffer = buffers[index];
+        if (!buffer.size())
+        {
+            return;
+        }
+
+        uint32_t *dst = encodedNormals.data() + offsets[index];
+        for (size_t i = 0; i < buffer.size(); i++)
+        {
+            Vec3f v = buffer[i];
+            if (LengthSquared(buffer[i]) < 1e-20f)
+            {
+                v = Vec3f(0.f, 0.f, 1.f);
+            }
+            dst[i] = EncodeOctahedral(Normalize(v));
+        }
+    });
+
+    devicePtr = reinterpret_cast<uint32_t *>(device->Alloc(sizeof(uint32_t) * totalSize).Data());
+    device->CopyToDevice(devicePtr, encodedNormals.data(), sizeof(uint32_t) * totalSize);
 }
 
 // GeometryManager
@@ -205,12 +248,14 @@ void GeometryManager::Update(Device *device,
     std::vector<uint32_t> positionOffsets;
     std::vector<uint32_t> normalOffsets;
     std::vector<uint32_t> uvOffsets;
+    std::vector<uint32_t> uvIndexOffsets;
     std::vector<uint32_t> triangleIndexOffsets;
     std::vector<uint32_t> triangleMaterialIndexOffsets;
 
     size_t totalNumVertices = CalculateBufferOffsets(container->meshPositions, positionOffsets);
     size_t totalNumNormals = CalculateBufferOffsets(container->meshNormals, normalOffsets);
     size_t totalNumUVs = CalculateBufferOffsets(container->meshUVs, uvOffsets);
+    size_t totalNumUVIndices = CalculateBufferOffsets(container->meshUVIndices, uvIndexOffsets);
     size_t totalNumTriangleIndices =
         CalculateBufferOffsets(container->meshTriangleIndices, triangleIndexOffsets);
     size_t totalNumTriangleMaterialIndices =
@@ -228,6 +273,7 @@ void GeometryManager::Update(Device *device,
         object.positionOffset = INVALID_OFFSET;
         object.normalOffset = INVALID_OFFSET;
         object.uvOffset = INVALID_OFFSET;
+        object.uvIndexOffset = INVALID_OFFSET;
         object.triangleIndexOffset = INVALID_OFFSET;
         object.triangleMaterialOffset = INVALID_OFFSET;
         object.uvType = mesh.GetUVType();
@@ -237,6 +283,7 @@ void GeometryManager::Update(Device *device,
         BufferHandle positionHandle = mesh.GetPositionsHandle();
         BufferHandle normalHandle = mesh.GetNormalsHandle();
         BufferHandle uvHandle = mesh.GetUVsHandle();
+        BufferHandle uvIndexHandle = mesh.GetUVIndicesHandle();
         BufferHandle indexHandle = mesh.GetIndicesHandle();
         BufferHandle triangleMaterialHandle = mesh.GetFaceMaterialIndicesHandle();
 
@@ -258,6 +305,11 @@ void GeometryManager::Update(Device *device,
         if (uvHandle.IsValid())
         {
             object.uvOffset = uvOffsets[uvHandle.index];
+        }
+
+        if (uvIndexHandle.IsValid())
+        {
+            object.uvIndexOffset = uvIndexOffsets[uvIndexHandle.index];
         }
 
         if (triangleMaterialHandle.IsValid())
@@ -292,45 +344,21 @@ void GeometryManager::Update(Device *device,
         }
     }
 
-    View<Vec3f> hostPositions;
-    View<Vec3f> hostNormals;
-    View<Vec2f> hostUvs;
-    View<int> hostTriangleIndices;
-    View<int> hostTriangleMaterialIndices;
-    if (totalNumVertices)
-    {
-        hostPositions = scratch.arena->PushArray<Vec3f>(totalNumVertices);
-    }
-    if (totalNumNormals)
-    {
-        hostNormals = scratch.arena->PushArray<Vec3f>(totalNumNormals);
-    }
-    if (totalNumUVs)
-    {
-        hostUvs = scratch.arena->PushArray<Vec2f>(totalNumUVs);
-    }
-    if (totalNumTriangleIndices)
-    {
-        hostTriangleIndices = scratch.arena->PushArray<int>(totalNumTriangleIndices);
-    }
-    if (totalNumTriangleMaterialIndices)
-    {
-        hostTriangleMaterialIndices =
-            scratch.arena->PushArray<int>(totalNumTriangleMaterialIndices);
-    }
-
-    CopyBuffers(hostPositions, container->meshPositions, positionOffsets);
-    CopyBuffers(hostNormals, container->meshNormals, normalOffsets);
-    CopyBuffers(hostUvs, container->meshUVs, uvOffsets);
-    CopyBuffers(hostTriangleIndices, container->meshTriangleIndices, triangleIndexOffsets);
-    CopyBuffers(hostTriangleMaterialIndices,
-                container->meshFaceMaterialIndices,
-                triangleMaterialIndexOffsets);
-
-    UploadDeviceArray(device, deviceScene->positions, hostPositions);
-    UploadDeviceArray(device, deviceScene->normals, hostNormals);
-    UploadDeviceArray(device, deviceScene->float2s, hostUvs);
-    UploadDeviceArray(device, deviceScene->triangleIndices, hostTriangleIndices);
+    UploadDeviceBuffers(device,
+                        deviceScene->positions,
+                        container->meshPositions,
+                        positionOffsets,
+                        totalNumVertices);
+    UploadEncodedNormalBuffers(
+        device, deviceScene->normals, container->meshNormals, normalOffsets, totalNumNormals);
+    UploadDeviceBuffers(device, deviceScene->float2s, container->meshUVs, uvOffsets, totalNumUVs);
+    UploadDeviceBuffers(
+        device, deviceScene->uvIndices, container->meshUVIndices, uvIndexOffsets, totalNumUVIndices);
+    UploadDeviceBuffers(device,
+                        deviceScene->triangleIndices,
+                        container->meshTriangleIndices,
+                        triangleIndexOffsets,
+                        totalNumTriangleIndices);
 
     deviceScene->materials = nullptr;
     if (hostMaterials.size())
@@ -341,7 +369,11 @@ void GeometryManager::Update(Device *device,
             deviceScene->materials, hostMaterials.data(), hostMaterials.numBytes());
     }
 
-    UploadDeviceArray(device, deviceScene->triangleMaterialIndices, hostTriangleMaterialIndices);
+    UploadDeviceBuffers(device,
+                        deviceScene->triangleMaterialIndices,
+                        container->meshFaceMaterialIndices,
+                        triangleMaterialIndexOffsets,
+                        totalNumTriangleMaterialIndices);
 
     deviceScene->objects = reinterpret_cast<Object *>(
         device->Alloc(sizeof(Object) * container->meshes.size()).Data());

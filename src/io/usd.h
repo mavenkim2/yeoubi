@@ -65,6 +65,7 @@ struct MeshBufferInternStates
     MeshBufferInternState<Vec3f> positions;
     MeshBufferInternState<Vec3f> normals;
     MeshBufferInternState<Vec2f> uvs;
+    MeshBufferInternState<int> uvIndices;
     MeshBufferInternState<int> indices;
     MeshBufferInternState<int> faceMaterialIndices;
 
@@ -89,6 +90,7 @@ class USDSceneLoader : public SceneLoader
                                               Array<Vec3f> &triangles) const;
     AttributeType ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
                                   pxr::VtArray<pxr::GfVec2f> *outUVs,
+                                  pxr::VtIntArray *outUVIndices,
                                   pxr::UsdTimeCode timeCode) const;
     AttributeType ProcessNormals(const pxr::UsdGeomMesh &mesh,
                                  pxr::VtVec3fArray *outNormals,

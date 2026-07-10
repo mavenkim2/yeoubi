@@ -167,7 +167,7 @@ YBI_CPU_GPU float Length(Vec3f vector)
 YBI_CPU_GPU Vec3f Normalize(Vec3f vector)
 {
     const float length = Length(vector);
-    YBI_ASSERT(length != 0.0f);
+    YBI_ERROR(length != 0.0f, "%f %f %f\n", vector.x, vector.y, vector.z);
     return vector / length;
 }
 

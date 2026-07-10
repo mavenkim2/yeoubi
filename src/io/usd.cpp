@@ -50,6 +50,8 @@ namespace ybi
 constexpr size_t INVALID_INDEX = ~size_t(0);
 constexpr uint32_t INVALID_OFFSET = ~0u;
 
+static std::atomic<size_t> uvFlattenWastedBytes{0};
+
 struct USDPrimTraversalData
 {
     pxr::UsdPrim prim;
@@ -168,7 +170,8 @@ uint32_t MeshBufferInternState<T>::ResolveIndex(size_t index) const
 
 MeshBufferInternStates::MeshBufferInternStates(Arena *arena, size_t numMeshes)
     : positions(arena, numMeshes), normals(arena, numMeshes), uvs(arena, numMeshes),
-      indices(arena, numMeshes), faceMaterialIndices(arena, numMeshes)
+      uvIndices(arena, numMeshes), indices(arena, numMeshes),
+      faceMaterialIndices(arena, numMeshes)
 {
 }
 
@@ -431,8 +434,12 @@ bool USDSceneLoader::IsPurposeAllowed(pxr::UsdPrim prim) const
 
 AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
                                               pxr::VtArray<pxr::GfVec2f> *outUVs,
+                                              pxr::VtIntArray *outUVIndices,
                                               pxr::UsdTimeCode timeCode) const
 {
+    outUVs->clear();
+    outUVIndices->clear();
+
     pxr::UsdGeomPrimvarsAPI primvars(mesh);
     pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
 
@@ -451,16 +458,9 @@ AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
         return AttributeType::None;
     }
 
-    bool hasIndices = stPrimvar.IsIndexed();
-
-    // TODO: actually use indices?
-    // pxr::VtIntArray indices;
-    // stPrimvar.GetIndices(&indices, timeCode);
-    //
-    // printf("%zu %zu\n", stValues.size(), indices.size());
-
-    pxr::VtValue values;
-    stPrimvar.ComputeFlattened(&values, timeCode);
+    pxr::VtIntArray indices;
+    const bool hasIndices =
+        stPrimvar.IsIndexed() && stPrimvar.GetIndices(&indices, timeCode) && !indices.empty();
 
     pxr::TfToken interpolationToken = stPrimvar.GetInterpolation();
 
@@ -478,16 +478,37 @@ AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
         YBI_LOGFATAL("Need to handle other uv interpolation types\n");
     }
 
-    if (values.IsHolding<pxr::VtArray<pxr::GfVec2f>>())
+    *outUVs = stValues;
+    if (hasIndices)
     {
-        *outUVs = values.Get<pxr::VtArray<pxr::GfVec2f>>();
-        return type;
+        *outUVIndices = indices;
+
+        const size_t flattenedBytes = indices.size() * sizeof(pxr::GfVec2f);
+        const size_t indexedBytes =
+            stValues.size() * sizeof(pxr::GfVec2f) + indices.size() * sizeof(int);
+        if (flattenedBytes > indexedBytes)
+        {
+            uvFlattenWastedBytes.fetch_add(flattenedBytes - indexedBytes,
+                                           std::memory_order_relaxed);
+        }
     }
-    else
+
+    return type;
+}
+
+static bool HasAllZeroNormals(const pxr::VtVec3fArray &normals)
+{
+    for (const pxr::GfVec3f &normal : normals)
     {
-        YBI_LOGFATAL("UVs are not GfVec2f\n");
-        return AttributeType::None;
+        const float lengthSquared =
+            normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+        if (lengthSquared > 1e-20f)
+        {
+            return false;
+        }
     }
+
+    return true;
 }
 
 AttributeType USDSceneLoader::ProcessNormals(const pxr::UsdGeomMesh &mesh,
@@ -498,16 +519,8 @@ AttributeType USDSceneLoader::ProcessNormals(const pxr::UsdGeomMesh &mesh,
 
     pxr::UsdGeomPrimvarsAPI primvars(mesh);
     pxr::UsdGeomPrimvar normalsPrimvar = primvars.GetPrimvar(pxr::UsdGeomTokens->normals);
-    if (mesh.GetNormalsAttr().Get(outNormals, timeCode))
-    {
-        if (outNormals->empty())
-        {
-            return AttributeType::None;
-        }
 
-        interpolationToken = mesh.GetNormalsInterpolation();
-    }
-    else if (normalsPrimvar)
+    if (normalsPrimvar)
     {
         pxr::VtValue values;
         if (!normalsPrimvar.ComputeFlattened(&values, timeCode))
@@ -521,14 +534,23 @@ AttributeType USDSceneLoader::ProcessNormals(const pxr::UsdGeomMesh &mesh,
         }
 
         *outNormals = values.Get<pxr::VtVec3fArray>();
-        if (outNormals->empty())
+        if (outNormals->empty() || HasAllZeroNormals(*outNormals))
         {
             return AttributeType::None;
         }
 
         interpolationToken = normalsPrimvar.GetInterpolation();
     }
-    else
+
+    if (interpolationToken.IsEmpty() && mesh.GetNormalsAttr().Get(outNormals, timeCode))
+    {
+        if (!outNormals->empty() && !HasAllZeroNormals(*outNormals))
+        {
+            interpolationToken = mesh.GetNormalsInterpolation();
+        }
+    }
+
+    if (interpolationToken.IsEmpty())
     {
         return AttributeType::None;
     }
@@ -586,22 +608,43 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     }
 
     pxr::VtVec2fArray usdUvs;
+    pxr::VtIntArray usdUvIndices;
     Array<Vec2f> uvs;
+    Array<int> uvIndices;
+    AttributeType uvType = ProcessPrimvars(usdMesh, &usdUvs, &usdUvIndices, timeCode);
     uvs.Reserve(usdUvs.size());
-    AttributeType uvType = ProcessPrimvars(usdMesh, &usdUvs, timeCode);
     switch (uvType)
     {
         case AttributeType::FaceVarying:
         {
-            YBI_ASSERT(usdUvs.size() == faceIndices.size());
-            ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+            if (usdUvIndices.size())
+            {
+                YBI_ASSERT(usdUvIndices.size() == faceIndices.size());
+                uvs.Resize(usdUvs.size());
+                memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
+                ConvertMeshIndicesToTriangles(usdUvIndices, faceCounts, uvIndices);
+            }
+            else
+            {
+                YBI_ASSERT(usdUvs.size() == faceIndices.size());
+                ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+            }
             break;
         }
         case AttributeType::Vertex:
         {
-            YBI_ASSERT(usdUvs.size() == usdPositions.size());
             uvs.Resize(usdUvs.size());
             memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
+            if (usdUvIndices.size())
+            {
+                YBI_ASSERT(usdUvIndices.size() == usdPositions.size());
+                uvIndices.Resize(usdUvIndices.size());
+                memcpy(uvIndices.data(), usdUvIndices.data(), sizeof(int) * usdUvIndices.size());
+            }
+            else
+            {
+                YBI_ASSERT(usdUvs.size() == usdPositions.size());
+            }
             break;
         }
         case AttributeType::None:
@@ -670,10 +713,17 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
         scene->container->meshUVs.push_back(std::move(uvs));
     }
 
+    BufferHandle uvIndexHandle;
+    if (uvIndices.size())
+    {
+        uvIndexHandle.index = static_cast<uint32_t>(scene->container->meshUVIndices.size());
+        scene->container->meshUVIndices.push_back(std::move(uvIndices));
+    }
+
     BufferHandle indexHandle{static_cast<uint32_t>(scene->container->meshTriangleIndices.size())};
     scene->container->meshTriangleIndices.push_back(std::move(triangleIndices));
 
-    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvType, indexHandle);
+    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvIndexHandle, uvType, indexHandle);
     scene->container->meshes[index] = std::move(mesh);
 
     bool resetsXformStack = false;
@@ -732,22 +782,43 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
     }
 
     pxr::VtVec2fArray usdUvs;
+    pxr::VtIntArray usdUvIndices;
     Array<Vec2f> uvs;
+    Array<int> uvIndices;
+    AttributeType uvType = ProcessPrimvars(usdMesh, &usdUvs, &usdUvIndices, timeCode);
     uvs.Reserve(usdUvs.size());
-    AttributeType uvType = ProcessPrimvars(usdMesh, &usdUvs, timeCode);
     switch (uvType)
     {
         case AttributeType::FaceVarying:
         {
-            YBI_ASSERT(usdUvs.size() == faceIndices.size());
-            ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+            if (usdUvIndices.size())
+            {
+                YBI_ASSERT(usdUvIndices.size() == faceIndices.size());
+                uvs.Resize(usdUvs.size());
+                memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
+                ConvertMeshIndicesToTriangles(usdUvIndices, faceCounts, uvIndices);
+            }
+            else
+            {
+                YBI_ASSERT(usdUvs.size() == faceIndices.size());
+                ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+            }
             break;
         }
         case AttributeType::Vertex:
         {
-            YBI_ASSERT(usdUvs.size() == usdPositions.size());
             uvs.Resize(usdUvs.size());
             memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
+            if (usdUvIndices.size())
+            {
+                YBI_ASSERT(usdUvIndices.size() == usdPositions.size());
+                uvIndices.Resize(usdUvIndices.size());
+                memcpy(uvIndices.data(), usdUvIndices.data(), sizeof(int) * usdUvIndices.size());
+            }
+            else
+            {
+                YBI_ASSERT(usdUvs.size() == usdPositions.size());
+            }
             break;
         }
         case AttributeType::None:
@@ -802,10 +873,12 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
         static_cast<uint32_t>(internStates->normals.Intern(arena, std::move(normals), index))};
     BufferHandle uvHandle{
         static_cast<uint32_t>(internStates->uvs.Intern(arena, std::move(uvs), index))};
+    BufferHandle uvIndexHandle{static_cast<uint32_t>(
+        internStates->uvIndices.Intern(arena, std::move(uvIndices), index))};
     BufferHandle indexHandle{static_cast<uint32_t>(
         internStates->indices.Intern(arena, std::move(triangleIndices), index))};
 
-    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvType, indexHandle);
+    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvIndexHandle, uvType, indexHandle);
     scene->container->meshes[index] = std::move(mesh);
 
     bool resetsXformStack = false;
@@ -1250,6 +1323,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 
     std::unordered_map<std::string, size_t> materialMap;
     std::vector<size_t> sceneMeshOffsets(traversalDatas.size());
+    uvFlattenWastedBytes.store(0, std::memory_order_relaxed);
 
     // Set up concurrent hash map for deduplicated buffers while loading
     ScratchArena scratch;
@@ -1301,6 +1375,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                                                                cache,
                                                                timeCode);
 #else
+                                  // TODO IMPORTANT: this doesn't work multithreaded anymore
                                   ProcessPolygonMesh(scene, data.prim, meshOffset, i, prim, cache, timeCode);
 #endif
                               }
@@ -1390,6 +1465,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     internStates.positions.MoveSortedBuffersTo(&container->meshPositions);
     internStates.normals.MoveSortedBuffersTo(&container->meshNormals);
     internStates.uvs.MoveSortedBuffersTo(&container->meshUVs);
+    internStates.uvIndices.MoveSortedBuffersTo(&container->meshUVIndices);
     internStates.indices.MoveSortedBuffersTo(&container->meshTriangleIndices);
 
     for (Mesh &mesh : container->meshes)
@@ -1398,9 +1474,13 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             {internStates.positions.ResolveIndex(mesh.GetPositionsHandle().index)});
         mesh.SetNormalsHandle({internStates.normals.ResolveIndex(mesh.GetNormalsHandle().index)});
         mesh.SetUVsHandle({internStates.uvs.ResolveIndex(mesh.GetUVsHandle().index)});
+        mesh.SetUVIndicesHandle(
+            {internStates.uvIndices.ResolveIndex(mesh.GetUVIndicesHandle().index)});
         mesh.SetIndicesHandle({internStates.indices.ResolveIndex(mesh.GetIndicesHandle().index)});
     }
 #endif
+
+    printf("uv flatten wasted bytes: %zu\n", uvFlattenWastedBytes.load(std::memory_order_relaxed));
 
     // Get all materials
     for (size_t sceneIndex = 0; sceneIndex < traversalDatas.size(); sceneIndex++)

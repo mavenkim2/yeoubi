@@ -134,6 +134,7 @@ add_executable(yeoubi
 set (YBI_KERNEL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/affine_transform.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/matrix4x4.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/octahedral.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec2f.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3f.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device_texture.h

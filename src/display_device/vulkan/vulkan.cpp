@@ -878,7 +878,9 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
     {
         return false;
     }
-    YBI_ASSERT(presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR);
+    YBI_ERROR(presentResult == VK_SUCCESS || presentResult == VK_SUBOPTIMAL_KHR,
+              "Error: %i\n",
+              presentResult);
 
     swapchainImageLayouts[currentSwapchainImageIndex] = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     currentFrame = (currentFrame + 1) % numFramesInFlight;

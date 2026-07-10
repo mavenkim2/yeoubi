@@ -68,6 +68,7 @@ class Mesh
     BufferHandle positions;
     BufferHandle normals;
     BufferHandle uvs;
+    BufferHandle uvIndices;
     BufferHandle indices;
     BufferHandle faceMaterialIndices;
     uint32_t materialIndex = ~0u;
@@ -80,12 +81,14 @@ public:
          BufferHandle normals,
          AttributeType normalType,
          BufferHandle uvs,
+         BufferHandle uvIndices,
          AttributeType uvType,
          BufferHandle indices);
 
     BufferHandle GetPositionsHandle() const;
     BufferHandle GetNormalsHandle() const;
     BufferHandle GetUVsHandle() const;
+    BufferHandle GetUVIndicesHandle() const;
     BufferHandle GetIndicesHandle() const;
     BufferHandle GetFaceMaterialIndicesHandle() const;
     AttributeType GetUVType() const;
@@ -94,6 +97,7 @@ public:
     void SetPositionsHandle(BufferHandle handle);
     void SetNormalsHandle(BufferHandle handle);
     void SetUVsHandle(BufferHandle handle);
+    void SetUVIndicesHandle(BufferHandle handle);
     void SetIndicesHandle(BufferHandle handle);
     void SetFaceMaterialIndicesHandle(BufferHandle handle);
     void SetMaterialIndex(uint32_t index);
@@ -127,6 +131,7 @@ struct DataContainer
     std::vector<Array<Vec3f>> meshPositions;
     std::vector<Array<Vec3f>> meshNormals;
     std::vector<Array<Vec2f>> meshUVs;
+    std::vector<Array<int>> meshUVIndices;
     std::vector<Array<int>> meshTriangleIndices;
     std::vector<Array<int>> meshFaceMaterialIndices;
     std::vector<Material> materials;
