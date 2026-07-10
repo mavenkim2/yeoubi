@@ -83,7 +83,7 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
 
     Vec2f texel = normalizedUv * Vec2f(mipWidth, mipHeight);
     const Vec2f page = Floor(texel / float(pageSize));
-    const Vec2f texelInPage = (texel + 0.5f) - page * pageSize;
+    const Vec2f texelInPage = texel - page * pageSize;
 
     const Vec2f pageUv = texelInPage / pageSize;
 

@@ -1124,11 +1124,17 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
 
 static OptixBuildInput GetOptiXTriangleBuildInput(Arena *hostArena,
                                                   CUDAArena *deviceArena,
+                                                  DataContainer *container,
                                                   Mesh &mesh,
                                                   uint32_t numMotionKeys)
 {
-    const Array<Vec3f> &positions = mesh.GetPositions();
-    const Array<int> &indices = mesh.GetIndices();
+    BufferHandle positionHandle = mesh.GetPositionsHandle();
+    BufferHandle indexHandle = mesh.GetIndicesHandle();
+    YBI_ASSERT(positionHandle.IsValid());
+    YBI_ASSERT(indexHandle.IsValid());
+
+    const Array<Vec3f> &positions = container->meshPositions[positionHandle.index];
+    const Array<int> &indices = container->meshTriangleIndices[indexHandle.index];
     const uint32_t numVertices = static_cast<uint32_t>(positions.size());
     const uint32_t numIndices = static_cast<uint32_t>(indices.size());
 
@@ -1276,7 +1282,9 @@ static OptixBuildInput GetOptiXInstanceBuildInput(CUDAArena *deviceArena,
     return input;
 }
 
-BVHHandle CUDADevice::BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh)
+BVHHandle CUDADevice::BuildTriangleBVH(DeviceArena *deviceArena,
+                                       DataContainer *container,
+                                       Mesh &mesh)
 {
     ContextScope contextScope(this);
     ScratchArena scratch;
@@ -1288,7 +1296,7 @@ BVHHandle CUDADevice::BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh)
     OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
 
     OptixBuildInput buildInput =
-        GetOptiXTriangleBuildInput(scratch.arena, cudaArena, mesh, numMotionKeys);
+        GetOptiXTriangleBuildInput(scratch.arena, cudaArena, container, mesh, numMotionKeys);
     OptixTraversableHandle handle = BuildOptixBVH(this, cudaArena, options, &buildInput, 1);
 
     return BVHHandle(handle);

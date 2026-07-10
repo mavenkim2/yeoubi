@@ -4,13 +4,16 @@
 #include "core/arena.h"
 #include "core/array.h"
 #include "core/assert.h"
+#include "core/bit.h"
 #include "core/math.h"
 #include "core/thread_context.h"
-#include "io/usd.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/usdShade/output.h"
 #include "scene/scene.h"
+#include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <pxr/base/gf/camera.h>
@@ -35,12 +38,17 @@
 #include <string>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace ybi
 {
 
+#define USD_CONCURRENT_MESH_LOAD
 #define USD_YBI_ASSERT(expr) expr
+
+constexpr size_t INVALID_INDEX = ~size_t(0);
+constexpr uint32_t INVALID_OFFSET = ~0u;
 
 struct USDPrimTraversalData
 {
@@ -52,6 +60,117 @@ struct USDPrimTraversalData
 
     std::vector<pxr::UsdGeomCamera> cameras;
 };
+
+template <typename T>
+MeshBufferInternState<T>::MeshBufferInternState(Arena *arena, size_t numMeshes)
+    : map(arena, Max<size_t>(1, NextPowerOfTwo(Max<size_t>(1, numMeshes)))), bufferOffset(0),
+      buffers(numMeshes)
+{
+    indices.Resize(numMeshes);
+    for (size_t i = 0; i < indices.size(); i++)
+    {
+        indices[i] = INVALID_INDEX;
+    }
+}
+
+template <typename T>
+size_t MeshBufferInternState<T>::Intern(Arena *arena, Array<T> &&buffer, size_t bufferIndex)
+{
+    if (buffer.size() == 0)
+    {
+        indices[bufferIndex] = INVALID_INDEX;
+        return INVALID_INDEX;
+    }
+
+    uint64_t hash = MurmurHash64A(
+        reinterpret_cast<const uint8_t *>(buffer.data()), buffer.size() * sizeof(T), 0);
+    size_t duplicateIndex = map.GetOrAdd(
+        arena,
+        bufferIndex,
+        hash,
+        [&](size_t index) {
+            YBI_ERROR(index < buffers.size(), "%zu %zu\n", index, buffers.size());
+            const InternedMeshBuffer<T> &other = buffers[index];
+
+            if (hash != other.hash || other.buffer.size() != buffer.size())
+                return false;
+
+            return memcmp(buffer.data(), other.buffer.data(), sizeof(T) * buffer.size()) == 0;
+        },
+        [&](size_t index) {
+            InternedMeshBuffer<T> &entry = buffers[index];
+            entry.hash = hash;
+            entry.buffer = std::move(buffer);
+            bufferOffset.fetch_add(1, std::memory_order_relaxed);
+        });
+
+    indices[bufferIndex] = duplicateIndex;
+    return duplicateIndex;
+}
+
+template <typename T>
+void MeshBufferInternState<T>::MoveSortedBuffersTo(std::vector<Array<T>> *dst)
+{
+    struct SortEntry
+    {
+        uint64_t hash;
+        size_t oldIndex;
+        Array<T> buffer;
+    };
+
+    std::vector<SortEntry> sortedBuffers;
+    sortedBuffers.reserve(bufferOffset.load(std::memory_order_relaxed));
+
+    oldToNew.Resize(buffers.size());
+    for (int i = 0; i < buffers.size(); i++)
+    {
+        oldToNew[i] = INVALID_OFFSET;
+    }
+
+    for (size_t oldIndex = 0; oldIndex < buffers.size(); oldIndex++)
+    {
+        InternedMeshBuffer<T> &entry = buffers[oldIndex];
+        if (entry.buffer.size())
+        {
+            sortedBuffers.push_back({entry.hash, oldIndex, std::move(entry.buffer)});
+        }
+    }
+
+    std::sort(
+        sortedBuffers.begin(), sortedBuffers.end(), [](const SortEntry &a, const SortEntry &b) {
+            if (a.hash != b.hash)
+                return a.hash < b.hash;
+            return a.oldIndex < b.oldIndex;
+        });
+
+    dst->clear();
+    dst->reserve(sortedBuffers.size());
+    for (uint32_t newIndex = 0; newIndex < sortedBuffers.size(); newIndex++)
+    {
+        SortEntry &entry = sortedBuffers[newIndex];
+        oldToNew[entry.oldIndex] = newIndex;
+        dst->push_back(std::move(entry.buffer));
+    }
+}
+
+template <typename T>
+uint32_t MeshBufferInternState<T>::ResolveIndex(size_t index) const
+{
+    if (index == INVALID_INDEX || index == INVALID_OFFSET)
+    {
+        return INVALID_OFFSET;
+    }
+
+    uint32_t newIndex = oldToNew[index];
+    YBI_ASSERT(newIndex != INVALID_OFFSET);
+    return newIndex;
+}
+
+MeshBufferInternStates::MeshBufferInternStates(Arena *arena, size_t numMeshes)
+    : positions(arena, numMeshes), normals(arena, numMeshes), uvs(arena, numMeshes),
+      indices(arena, numMeshes), faceMaterialIndices(arena, numMeshes)
+{
+}
 
 static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim)
 {
@@ -379,7 +498,16 @@ AttributeType USDSceneLoader::ProcessNormals(const pxr::UsdGeomMesh &mesh,
 
     pxr::UsdGeomPrimvarsAPI primvars(mesh);
     pxr::UsdGeomPrimvar normalsPrimvar = primvars.GetPrimvar(pxr::UsdGeomTokens->normals);
-    if (normalsPrimvar)
+    if (mesh.GetNormalsAttr().Get(outNormals, timeCode))
+    {
+        if (outNormals->empty())
+        {
+            return AttributeType::None;
+        }
+
+        interpolationToken = mesh.GetNormalsInterpolation();
+    }
+    else if (normalsPrimvar)
     {
         pxr::VtValue values;
         if (!normalsPrimvar.ComputeFlattened(&values, timeCode))
@@ -402,16 +530,7 @@ AttributeType USDSceneLoader::ProcessNormals(const pxr::UsdGeomMesh &mesh,
     }
     else
     {
-        if (!mesh.GetNormalsAttr().Get(outNormals, timeCode))
-        {
-            return AttributeType::None;
-        }
-        if (outNormals->empty())
-        {
-            return AttributeType::None;
-        }
-
-        interpolationToken = mesh.GetNormalsInterpolation();
+        return AttributeType::None;
     }
 
     if (interpolationToken == pxr::UsdGeomTokens->vertex)
@@ -532,14 +651,29 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     Array<int> triangleIndices;
     ConvertMeshIndicesToTriangles(faceIndices, faceCounts, triangleIndices);
 
-    Mesh mesh(std::move(positions),
-              std::move(normals),
-              normalType,
-              std::move(uvs),
-              uvType,
-              std::move(triangleIndices));
-
+    printf("%zu %zu %zu\n", positions.size(), normals.size(), uvs.size());
     size_t index = meshOffset + meshIndex;
+    BufferHandle positionHandle{static_cast<uint32_t>(scene->container->meshPositions.size())};
+    scene->container->meshPositions.push_back(std::move(positions));
+
+    BufferHandle normalHandle;
+    if (normals.size())
+    {
+        normalHandle.index = static_cast<uint32_t>(scene->container->meshNormals.size());
+        scene->container->meshNormals.push_back(std::move(normals));
+    }
+
+    BufferHandle uvHandle;
+    if (uvs.size())
+    {
+        uvHandle.index = static_cast<uint32_t>(scene->container->meshUVs.size());
+        scene->container->meshUVs.push_back(std::move(uvs));
+    }
+
+    BufferHandle indexHandle{static_cast<uint32_t>(scene->container->meshTriangleIndices.size())};
+    scene->container->meshTriangleIndices.push_back(std::move(triangleIndices));
+
+    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvType, indexHandle);
     scene->container->meshes[index] = std::move(mesh);
 
     bool resetsXformStack = false;
@@ -549,6 +683,189 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     instance.transform = ConvertAffineTransform(localFromMesh);
     instance.handle.type = GeometryType::Mesh;
     instance.handle.index = index;
+}
+
+// NOTE: Meshes may have duplicated buffers (positions, indices, etc). This minimizes
+// final mesh allocation size.
+void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
+                                                  Scene *scene,
+                                                  pxr::UsdPrim sceneRoot,
+                                                  size_t meshOffset,
+                                                  size_t meshIndex,
+                                                  const pxr::UsdPrim prim,
+                                                  MeshBufferInternStates *internStates,
+                                                  pxr::UsdGeomXformCache &cache,
+                                                  pxr::UsdTimeCode timeCode)
+{
+    pxr::UsdGeomMesh usdMesh(prim);
+
+    pxr::UsdGeomImageable imageable(prim);
+
+    pxr::VtVec3fArray usdPositions;
+    pxr::VtIntArray faceIndices;
+    pxr::VtIntArray faceCounts;
+    pxr::TfToken subdivisionScheme;
+
+    bool result = usdMesh.GetPointsAttr().Get(&usdPositions, timeCode);
+    YBI_ASSERT(result);
+    YBI_ASSERT(usdPositions.size());
+
+    Array<Vec3f> positions(usdPositions.size());
+    memcpy(positions.data(), usdPositions.data(), sizeof(Vec3f) * usdPositions.size());
+
+    result = usdMesh.GetFaceVertexIndicesAttr().Get(&faceIndices, timeCode);
+    YBI_ASSERT(result);
+    result = usdMesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode);
+    YBI_ASSERT(result);
+    result = usdMesh.GetSubdivisionSchemeAttr().Get(&subdivisionScheme, timeCode);
+    YBI_ASSERT(result);
+
+    std::string topologyError;
+    if (!pxr::UsdGeomMesh::ValidateTopology(
+            faceIndices, faceCounts, usdPositions.size(), &topologyError))
+    {
+        fprintf(stderr,
+                "Invalid USD mesh topology: %s\nPrim: %s\n",
+                topologyError.c_str(),
+                prim.GetPath().GetText());
+        YBI_ASSERT(false);
+    }
+
+    pxr::VtVec2fArray usdUvs;
+    Array<Vec2f> uvs;
+    uvs.Reserve(usdUvs.size());
+    AttributeType uvType = ProcessPrimvars(usdMesh, &usdUvs, timeCode);
+    switch (uvType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            YBI_ASSERT(usdUvs.size() == faceIndices.size());
+            ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+            break;
+        }
+        case AttributeType::Vertex:
+        {
+            YBI_ASSERT(usdUvs.size() == usdPositions.size());
+            uvs.Resize(usdUvs.size());
+            memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
+            break;
+        }
+        case AttributeType::None:
+        {
+            break;
+        }
+        default:
+        {
+            YBI_LOGFATAL("Only vertex/face varying UVs supported currently.");
+            break;
+        }
+    }
+
+    pxr::VtVec3fArray usdNormals;
+    Array<Vec3f> normals;
+    AttributeType normalType = ProcessNormals(usdMesh, &usdNormals, timeCode);
+    normals.Reserve(usdNormals.size());
+    switch (normalType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            YBI_ASSERT(usdNormals.size() == faceIndices.size());
+            ConvertFaceVaryingNormalsToTriangles(usdNormals, faceCounts, normals);
+            break;
+        }
+        case AttributeType::Vertex:
+        {
+            YBI_ASSERT(usdNormals.size() == usdPositions.size());
+            normals.Resize(usdNormals.size());
+            memcpy(normals.data(), usdNormals.data(), sizeof(Vec3f) * usdNormals.size());
+
+            break;
+        }
+        case AttributeType::None:
+        {
+            break;
+        }
+        default:
+        {
+            YBI_LOGFATAL("Only vertex/face varying normals supported currently.");
+            break;
+        }
+    }
+
+    Array<int> triangleIndices;
+    ConvertMeshIndicesToTriangles(faceIndices, faceCounts, triangleIndices);
+
+    size_t index = meshOffset + meshIndex;
+    BufferHandle positionHandle{
+        static_cast<uint32_t>(internStates->positions.Intern(arena, std::move(positions), index))};
+    BufferHandle normalHandle{
+        static_cast<uint32_t>(internStates->normals.Intern(arena, std::move(normals), index))};
+    BufferHandle uvHandle{
+        static_cast<uint32_t>(internStates->uvs.Intern(arena, std::move(uvs), index))};
+    BufferHandle indexHandle{static_cast<uint32_t>(
+        internStates->indices.Intern(arena, std::move(triangleIndices), index))};
+
+    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvType, indexHandle);
+    scene->container->meshes[index] = std::move(mesh);
+
+    bool resetsXformStack = false;
+    pxr::GfMatrix4d localFromMesh =
+        cache.ComputeRelativeTransform(prim, sceneRoot, &resetsXformStack);
+    Instance &instance = scene->instances[meshIndex];
+    instance.transform = ConvertAffineTransform(localFromMesh);
+    instance.handle.type = GeometryType::Mesh;
+    instance.handle.index = index;
+}
+
+void USDSceneLoader::GetFaceMaterialIndices(Array<int> &faceMaterialIndices,
+                                            const pxr::VtIntArray &faceCounts,
+                                            const std::vector<pxr::UsdGeomSubset> &subsets,
+                                            std::unordered_map<std::string, size_t> &materialMap,
+                                            std::vector<pxr::UsdShadeMaterial> &materials,
+                                            pxr::UsdTimeCode timeCode) const
+{
+    ScratchArena faceOffsetScratch;
+    View<int> faceOffsets =
+        faceOffsetScratch.arena->PushArray<int>(faceMaterialIndices.size() + 1);
+    int faceOffset = 0;
+
+    for (int faceIndex = 0; faceIndex < faceCounts.size(); faceIndex++)
+    {
+        faceOffsets[faceIndex] = faceOffset;
+        faceOffset += faceCounts[faceIndex] - 2;
+    }
+    faceOffsets[faceCounts.size()] = faceOffset;
+
+    for (pxr::UsdGeomSubset subset : subsets)
+    {
+        pxr::VtIntArray subsetFaces;
+        subset.GetIndicesAttr().Get(&subsetFaces, timeCode);
+
+        pxr::TfToken elementType;
+        subset.GetElementTypeAttr().Get(&elementType, timeCode);
+        YBI_ERROR(elementType == pxr::UsdGeomTokens->face,
+                  "Subset element type %s not supported\n",
+                  elementType.GetString().c_str());
+
+        pxr::UsdShadeMaterial material = GetPrimMaterial(subset.GetPrim());
+
+        if (!material)
+        {
+            // printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
+            continue;
+        }
+
+        uint32_t materialIndex = AddMaterialToMap(materialMap, materials, material);
+
+        for (int face : subsetFaces)
+        {
+            for (int offset = faceOffsets[face]; offset < faceOffsets[face + 1]; offset++)
+            {
+                YBI_ASSERT(faceMaterialIndices[offset] == -1);
+                faceMaterialIndices[offset] = static_cast<int>(materialIndex);
+            }
+        }
+    }
 }
 
 void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
@@ -932,6 +1249,20 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         [&]() { return pxr::UsdGeomXformCache(timeCode); });
 
     std::unordered_map<std::string, size_t> materialMap;
+    std::vector<size_t> sceneMeshOffsets(traversalDatas.size());
+
+    // Set up concurrent hash map for deduplicated buffers while loading
+    ScratchArena scratch;
+    size_t totalNumMeshes = 0;
+    for (size_t i = 0; i < traversalDatas.size(); i++)
+    {
+        totalNumMeshes += traversalDatas[i].meshes.size();
+    }
+
+#ifdef USD_CONCURRENT_MESH_LOAD
+    tbb::enumerable_thread_specific<Arena> threadArenas([&]() { return Arena(); });
+    MeshBufferInternStates internStates(scratch.arena, totalNumMeshes);
+#endif
 
     for (size_t i = 0; i < traversalDatas.size(); i++)
     {
@@ -947,6 +1278,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         }
 
         size_t meshOffset = scene->container->meshes.size();
+        sceneMeshOffsets[i] = meshOffset;
         size_t dstInstanceIndex = data.meshes.size();
         scene->instances.Resize(totalInstanceCount + data.meshes.size());
         scene->container->meshes.resize(meshOffset + data.meshes.size());
@@ -958,93 +1290,21 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                               {
                                   pxr::UsdPrim prim = data.meshes[i];
 
-                                  ProcessPolygonMesh(
-                                      scene, data.prim, meshOffset, i, prim, cache, timeCode);
+#ifdef USD_CONCURRENT_MESH_LOAD
+                                  ProcessPolygonMeshConcurrent(&threadArenas.local(),
+                                                               scene,
+                                                               data.prim,
+                                                               meshOffset,
+                                                               i,
+                                                               prim,
+                                                               &internStates,
+                                                               cache,
+                                                               timeCode);
+#else
+                                  ProcessPolygonMesh(scene, data.prim, meshOffset, i, prim, cache, timeCode);
+#endif
                               }
                           });
-
-        // Get all materials
-        for (size_t i = 0; i < data.meshes.size(); i++)
-        {
-            Mesh &mesh = scene->container->meshes[meshOffset + i];
-            pxr::UsdPrim prim = data.meshes[i];
-
-            pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
-            std::vector<pxr::UsdGeomSubset> subsets = bindingApi.GetMaterialBindSubsets();
-
-            if (subsets.size() == 0)
-            {
-                pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
-
-                if (!material)
-                {
-                    printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
-                    continue;
-                }
-
-                mesh.SetMaterialIndex(AddMaterialToMap(materialMap, materials, material));
-            }
-            else
-            {
-                Array<int> faceMaterialIndices;
-                faceMaterialIndices.Resize(mesh.GetIndices().size() / 3);
-                for (int &index : faceMaterialIndices)
-                {
-                    index = -1;
-                }
-
-                pxr::VtIntArray faceCounts;
-                pxr::UsdGeomMesh usdMesh(prim);
-                bool result = usdMesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode);
-                YBI_ASSERT(result);
-
-                ScratchArena scratch;
-                View<int> faceOffsets =
-                    scratch.arena->PushArray<int>(faceMaterialIndices.size() + 1);
-                int faceOffset = 0;
-
-                for (int faceIndex = 0; faceIndex < faceCounts.size(); faceIndex++)
-                {
-                    faceOffsets[faceIndex] = faceOffset;
-                    // NOTE: Number of triangles per polygon is num vertices - 2
-                    faceOffset += faceCounts[faceIndex] - 2;
-                }
-                faceOffsets[faceCounts.size()] = faceOffset;
-
-                for (pxr::UsdGeomSubset subset : subsets)
-                {
-                    pxr::VtIntArray subsetFaces;
-                    subset.GetIndicesAttr().Get(&subsetFaces, timeCode);
-
-                    pxr::TfToken elementType;
-                    subset.GetElementTypeAttr().Get(&elementType, timeCode);
-                    YBI_ERROR(elementType == pxr::UsdGeomTokens->face,
-                              "Subset element type %s not supported\n",
-                              elementType.GetString().c_str());
-
-                    pxr::UsdShadeMaterial material = GetPrimMaterial(subset.GetPrim());
-
-                    if (!material)
-                    {
-                        printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
-                        continue;
-                    }
-
-                    uint32_t materialIndex = AddMaterialToMap(materialMap, materials, material);
-
-                    for (int face : subsetFaces)
-                    {
-                        for (int offset = faceOffsets[face]; offset < faceOffsets[face + 1];
-                             offset++)
-                        {
-                            YBI_ASSERT(faceMaterialIndices[offset] == -1);
-                            faceMaterialIndices[offset] = static_cast<int>(materialIndex);
-                        }
-                    }
-                }
-                mesh.SetFaceMaterialIndices(std::move(faceMaterialIndices));
-            }
-        }
 
         for (pxr::UsdPrim &usdInstance : data.instances)
         {
@@ -1126,6 +1386,93 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         scene->instances.Resize(dstInstanceIndex);
     }
 
+#ifdef USD_CONCURRENT_MESH_LOAD
+    internStates.positions.MoveSortedBuffersTo(&container->meshPositions);
+    internStates.normals.MoveSortedBuffersTo(&container->meshNormals);
+    internStates.uvs.MoveSortedBuffersTo(&container->meshUVs);
+    internStates.indices.MoveSortedBuffersTo(&container->meshTriangleIndices);
+
+    for (Mesh &mesh : container->meshes)
+    {
+        mesh.SetPositionsHandle(
+            {internStates.positions.ResolveIndex(mesh.GetPositionsHandle().index)});
+        mesh.SetNormalsHandle({internStates.normals.ResolveIndex(mesh.GetNormalsHandle().index)});
+        mesh.SetUVsHandle({internStates.uvs.ResolveIndex(mesh.GetUVsHandle().index)});
+        mesh.SetIndicesHandle({internStates.indices.ResolveIndex(mesh.GetIndicesHandle().index)});
+    }
+#endif
+
+    // Get all materials
+    for (size_t sceneIndex = 0; sceneIndex < traversalDatas.size(); sceneIndex++)
+    {
+        USDPrimTraversalData &data = traversalDatas[sceneIndex];
+        size_t meshOffset = sceneMeshOffsets[sceneIndex];
+
+        for (size_t i = 0; i < data.meshes.size(); i++)
+        {
+            const size_t meshIndex = meshOffset + i;
+            Mesh &mesh = container->meshes[meshIndex];
+            pxr::UsdPrim prim = data.meshes[i];
+
+            pxr::UsdShadeMaterialBindingAPI bindingApi(prim);
+            std::vector<pxr::UsdGeomSubset> subsets = bindingApi.GetMaterialBindSubsets();
+
+            if (subsets.size() == 0)
+            {
+                pxr::UsdShadeMaterial material = GetPrimMaterial(prim);
+
+                if (!material)
+                {
+                    printf("%s is missing a material\n", prim.GetPath().GetString().c_str());
+                    continue;
+                }
+
+                mesh.SetMaterialIndex(AddMaterialToMap(materialMap, materials, material));
+            }
+            else
+            {
+                BufferHandle indexHandle = mesh.GetIndicesHandle();
+                YBI_ASSERT(indexHandle.IsValid());
+                const Array<int> &triangleIndices =
+                    container->meshTriangleIndices[indexHandle.index];
+
+                Array<int> faceMaterialIndices;
+                faceMaterialIndices.Resize(triangleIndices.size() / 3);
+                for (int &index : faceMaterialIndices)
+                {
+                    index = -1;
+                }
+
+                pxr::VtIntArray faceCounts;
+                pxr::UsdGeomMesh usdMesh(prim);
+                bool result = usdMesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode);
+                YBI_ASSERT(result);
+
+                GetFaceMaterialIndices(
+                    faceMaterialIndices, faceCounts, subsets, materialMap, materials, timeCode);
+#ifdef USD_CONCURRENT_MESH_LOAD
+                size_t provisionalIndex = internStates.faceMaterialIndices.Intern(
+                    scratch.arena, std::move(faceMaterialIndices), meshIndex);
+                mesh.SetFaceMaterialIndicesHandle({static_cast<uint32_t>(provisionalIndex)});
+#else
+                BufferHandle faceMaterialHandle{
+                    static_cast<uint32_t>(container->meshFaceMaterialIndices.size())};
+                container->meshFaceMaterialIndices.push_back(std::move(faceMaterialIndices));
+                mesh.SetFaceMaterialIndicesHandle(faceMaterialHandle);
+#endif
+            }
+        }
+    }
+
+#ifdef USD_CONCURRENT_MESH_LOAD
+    internStates.faceMaterialIndices.MoveSortedBuffersTo(&container->meshFaceMaterialIndices);
+    for (Mesh &mesh : container->meshes)
+    {
+        mesh.SetFaceMaterialIndicesHandle({internStates.faceMaterialIndices.ResolveIndex(
+            mesh.GetFaceMaterialIndicesHandle().index)});
+    }
+#endif
+
     // Handle materials
     for (pxr::UsdShadeMaterial &material : materials)
     {
@@ -1191,7 +1538,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                             anchorLayer = shader.GetPrim().GetStage()->GetRootLayer();
                         }
 
-                        // printf("anchor layer: %s\n", anchorLayer->GetRealPath().c_str());
+                        // printf("anchor layer: %s\n",
+                        // anchorLayer->GetRealPath().c_str());
 
                         auto tiles =
                             pxr::UsdShadeUdimUtils::ResolveUdimTilePaths(rawPathStr, anchorLayer);
@@ -1199,7 +1547,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                         // printf("num udim tiles: %zu\n", tiles.size());
                         for (const auto &[resolvedPath, tile] : tiles)
                         {
-                            // printf("UDIM tile %s: %s\n", tile.c_str(), resolvedPath.c_str());
+                            // printf("UDIM tile %s: %s\n", tile.c_str(),
+                            // resolvedPath.c_str());
                             auto value = std::stoul(tile);
                             YBI_ASSERT(value <= std::numeric_limits<uint32_t>::max());
 

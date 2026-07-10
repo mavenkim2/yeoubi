@@ -5,6 +5,7 @@
 #include "core/assert.h"
 #include "core/bit.h"
 #include <cstdint>
+#include <cstring>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -233,6 +234,15 @@ public:
         current->used = newUsed;
         return {dest, count};
     }
+
+    template <typename T>
+    View<T> PushArrayZero(size_t count, size_t alignment = 0)
+    {
+        View<T> result = PushArray<T>(count, alignment);
+        memset(result.data(), 0, result.numBytes());
+        return result;
+    }
+
     void Clear()
     {
         Arena *curr = current;

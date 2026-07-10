@@ -312,7 +312,7 @@ static void ProcessTexture(Arena &arena, const std::string &filename)
     Image texture;
     TextureFormat format;
 
-    if (ext.find("png") != std::string::npos)
+    if (ext.find("png") != std::string::npos || ext.find("jpg") != std::string::npos)
     {
         LoadImageFile(&texture, filename);
         format = TextureFormat::RGBA8_UNORM;

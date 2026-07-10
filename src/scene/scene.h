@@ -44,6 +44,16 @@ struct GeometryHandle
     int index;
 };
 
+struct BufferHandle
+{
+    uint32_t index = ~0u;
+
+    bool IsValid() const
+    {
+        return index != ~0u;
+    }
+};
+
 struct Instance
 {
     AffineTransform transform;
@@ -55,39 +65,38 @@ struct Instance
 
 class Mesh
 {
-    Array<Vec3f> positions;
-    Array<Vec3f> normals;
-    Array<Vec2f> uvs;
-    Array<int> indices;
-    Array<int> faceMaterialIndices;
+    BufferHandle positions;
+    BufferHandle normals;
+    BufferHandle uvs;
+    BufferHandle indices;
+    BufferHandle faceMaterialIndices;
     uint32_t materialIndex = ~0u;
     AttributeType uvType = AttributeType::None;
     AttributeType normalType = AttributeType::None;
 
 public:
     Mesh() = default;
-    Mesh(Array<Vec3f> &&positions,
-         Array<Vec3f> &&normals,
+    Mesh(BufferHandle positions,
+         BufferHandle normals,
          AttributeType normalType,
-         Array<Vec2f> &&uvs,
+         BufferHandle uvs,
          AttributeType uvType,
-         Array<int> &&indices);
-    Mesh(Mesh &&other) = default;
-    Mesh &operator=(Mesh &&other) = default;
+         BufferHandle indices);
 
-    size_t GetNumVertices() const;
-    size_t GetNumNormals() const;
-    size_t GetNumUVs() const;
+    BufferHandle GetPositionsHandle() const;
+    BufferHandle GetNormalsHandle() const;
+    BufferHandle GetUVsHandle() const;
+    BufferHandle GetIndicesHandle() const;
+    BufferHandle GetFaceMaterialIndicesHandle() const;
     AttributeType GetUVType() const;
     AttributeType GetNormalType() const;
     uint32_t GetMaterialIndex() const;
-    const Array<Vec3f> &GetPositions() const;
-    const Array<Vec3f> &GetNormals() const;
-    const Array<Vec2f> &GetUVs() const;
-    const Array<int> &GetIndices() const;
-    const Array<int> &GetFaceMaterialIndices() const;
+    void SetPositionsHandle(BufferHandle handle);
+    void SetNormalsHandle(BufferHandle handle);
+    void SetUVsHandle(BufferHandle handle);
+    void SetIndicesHandle(BufferHandle handle);
+    void SetFaceMaterialIndicesHandle(BufferHandle handle);
     void SetMaterialIndex(uint32_t index);
-    void SetFaceMaterialIndices(Array<int> &&faceMaterialIndices);
 };
 
 class Curve
@@ -115,6 +124,11 @@ struct DataContainer
 {
     Camera camera;
     std::vector<Mesh> meshes;
+    std::vector<Array<Vec3f>> meshPositions;
+    std::vector<Array<Vec3f>> meshNormals;
+    std::vector<Array<Vec2f>> meshUVs;
+    std::vector<Array<int>> meshTriangleIndices;
+    std::vector<Array<int>> meshFaceMaterialIndices;
     std::vector<Material> materials;
     Curve *curves;
     SubdivisionMesh *subdivisionMeshes;

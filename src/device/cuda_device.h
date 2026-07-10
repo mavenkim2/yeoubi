@@ -91,7 +91,9 @@ struct CUDADevice : Device
     DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
     void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
     void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
-    BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) override;
+    BVHHandle BuildTriangleBVH(DeviceArena *deviceArena,
+                               DataContainer *container,
+                               Mesh &mesh) override;
     BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                 const Array<Instance> &instances,
                                 DataContainer *container) override;

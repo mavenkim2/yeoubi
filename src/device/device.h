@@ -131,7 +131,9 @@ struct Device
     virtual DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) = 0;
     virtual void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
     virtual void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
-    virtual BVHHandle BuildTriangleBVH(DeviceArena *deviceArena, Mesh &mesh) = 0;
+    virtual BVHHandle BuildTriangleBVH(DeviceArena *deviceArena,
+                                       DataContainer *container,
+                                       Mesh &mesh) = 0;
     virtual BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                         const Array<Instance> &instances,
                                         DataContainer *container) = 0;

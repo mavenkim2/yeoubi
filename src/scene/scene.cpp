@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace ybi
@@ -15,30 +16,40 @@ Instance::Instance(AffineTransform transform, GeometryHandle handle)
 {
 }
 
-Mesh::Mesh(Array<Vec3f> &&positions,
-           Array<Vec3f> &&normals,
+Mesh::Mesh(BufferHandle positions,
+           BufferHandle normals,
            AttributeType normalType,
-           Array<Vec2f> &&uvs,
+           BufferHandle uvs,
            AttributeType uvType,
-           Array<int> &&indices)
-    : positions(std::move(positions)), normals(std::move(normals)), uvs(std::move(uvs)),
-      indices(std::move(indices)), uvType(uvType), normalType(normalType)
+           BufferHandle indices)
+    : positions(positions), normals(normals), uvs(uvs), indices(indices), uvType(uvType),
+      normalType(normalType)
 {
 }
 
-size_t Mesh::GetNumVertices() const
+BufferHandle Mesh::GetPositionsHandle() const
 {
-    return positions.size();
+    return positions;
 }
 
-size_t Mesh::GetNumNormals() const
+BufferHandle Mesh::GetNormalsHandle() const
 {
-    return normals.size();
+    return normals;
 }
 
-size_t Mesh::GetNumUVs() const
+BufferHandle Mesh::GetUVsHandle() const
 {
-    return uvs.size();
+    return uvs;
+}
+
+BufferHandle Mesh::GetIndicesHandle() const
+{
+    return indices;
+}
+
+BufferHandle Mesh::GetFaceMaterialIndicesHandle() const
+{
+    return faceMaterialIndices;
 }
 
 AttributeType Mesh::GetUVType() const
@@ -56,39 +67,34 @@ uint32_t Mesh::GetMaterialIndex() const
     return materialIndex;
 }
 
-const Array<Vec3f> &Mesh::GetPositions() const
+void Mesh::SetPositionsHandle(BufferHandle handle)
 {
-    return positions;
+    positions = handle;
 }
 
-const Array<Vec3f> &Mesh::GetNormals() const
+void Mesh::SetNormalsHandle(BufferHandle handle)
 {
-    return normals;
+    normals = handle;
 }
 
-const Array<Vec2f> &Mesh::GetUVs() const
+void Mesh::SetUVsHandle(BufferHandle handle)
 {
-    return uvs;
+    uvs = handle;
 }
 
-const Array<int> &Mesh::GetIndices() const
+void Mesh::SetIndicesHandle(BufferHandle handle)
 {
-    return indices;
+    indices = handle;
 }
 
-const Array<int> &Mesh::GetFaceMaterialIndices() const
+void Mesh::SetFaceMaterialIndicesHandle(BufferHandle handle)
 {
-    return faceMaterialIndices;
+    faceMaterialIndices = handle;
 }
 
 void Mesh::SetMaterialIndex(uint32_t index)
 {
     materialIndex = index;
-}
-
-void Mesh::SetFaceMaterialIndices(Array<int> &&indices)
-{
-    faceMaterialIndices = std::move(indices);
 }
 
 // Data container
@@ -124,19 +130,6 @@ struct UniqueArrayUpload
 };
 
 template <typename T>
-static void CopyUniqueArrays(View<T> dst, const std::vector<UniqueArrayUpload<T>> &uploads)
-{
-    for (const UniqueArrayUpload<T> &upload : uploads)
-    {
-        const Array<T> &array = *upload.array;
-        if (array.size())
-        {
-            memcpy(dst.data() + upload.offset, array.data(), sizeof(T) * array.size());
-        }
-    }
-}
-
-template <typename T>
 static void UploadDeviceArray(Device *device, T *&devicePtr, View<T> host)
 {
     devicePtr = nullptr;
@@ -144,6 +137,41 @@ static void UploadDeviceArray(Device *device, T *&devicePtr, View<T> host)
     {
         devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * host.size()).Data());
         device->CopyToDevice(devicePtr, host.data(), host.numBytes());
+    }
+}
+
+template <typename T>
+static size_t CalculateBufferOffsets(const std::vector<Array<T>> &buffers,
+                                     std::vector<uint32_t> &offsets)
+{
+    offsets.resize(buffers.size(), INVALID_OFFSET);
+
+    size_t totalSize = 0;
+    for (size_t index = 0; index < buffers.size(); index++)
+    {
+        const Array<T> &buffer = buffers[index];
+        if (buffer.size())
+        {
+            offsets[index] = static_cast<uint32_t>(totalSize);
+            totalSize += buffer.size();
+        }
+    }
+
+    return totalSize;
+}
+
+template <typename T>
+static void CopyBuffers(View<T> dst,
+                        const std::vector<Array<T>> &buffers,
+                        const std::vector<uint32_t> &offsets)
+{
+    for (size_t index = 0; index < buffers.size(); index++)
+    {
+        const Array<T> &buffer = buffers[index];
+        if (buffer.size())
+        {
+            memcpy(dst.data() + offsets[index], buffer.data(), sizeof(T) * buffer.size());
+        }
     }
 }
 
@@ -174,40 +202,27 @@ void GeometryManager::Update(Device *device,
         deviceMaterial.udimTableOffset = material.udimTableOffset;
     }
 
-    // Prepare device objects
-    size_t totalNumUVs = 0;
-    size_t totalNumTriangleMaterialIndices = 0;
-    size_t totalNumVertices = 0;
-    size_t totalNumNormals = 0;
-    size_t totalNumTriangleIndices = 0;
+    std::vector<uint32_t> positionOffsets;
+    std::vector<uint32_t> normalOffsets;
+    std::vector<uint32_t> uvOffsets;
+    std::vector<uint32_t> triangleIndexOffsets;
+    std::vector<uint32_t> triangleMaterialIndexOffsets;
 
-    DataCache positionCache;
-    DataCache normalCache;
-    DataCache uvCache;
-    DataCache indicesCache;
-    DataCache triangleMaterialIndexCache;
+    size_t totalNumVertices = CalculateBufferOffsets(container->meshPositions, positionOffsets);
+    size_t totalNumNormals = CalculateBufferOffsets(container->meshNormals, normalOffsets);
+    size_t totalNumUVs = CalculateBufferOffsets(container->meshUVs, uvOffsets);
+    size_t totalNumTriangleIndices =
+        CalculateBufferOffsets(container->meshTriangleIndices, triangleIndexOffsets);
+    size_t totalNumTriangleMaterialIndices =
+        CalculateBufferOffsets(container->meshFaceMaterialIndices, triangleMaterialIndexOffsets);
 
-    std::vector<UniqueArrayUpload<Vec3f>> positionUploads;
-    std::vector<UniqueArrayUpload<Vec3f>> normalUploads;
-    std::vector<UniqueArrayUpload<Vec2f>> uvUploads;
-    std::vector<UniqueArrayUpload<int>> triangleIndexUploads;
-    std::vector<UniqueArrayUpload<int>> triangleMaterialIndexUploads;
     std::vector<size_t> bvhSourceIndices;
-    positionUploads.reserve(container->meshes.size());
-    normalUploads.reserve(container->meshes.size());
-    uvUploads.reserve(container->meshes.size());
-    triangleIndexUploads.reserve(container->meshes.size());
-    triangleMaterialIndexUploads.reserve(container->meshes.size());
     bvhSourceIndices.reserve(container->meshes.size());
+    std::unordered_map<uint64_t, size_t> bvhPairToMeshIndex;
 
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
-        const Array<Vec3f> &meshPositions = mesh.GetPositions();
-        const Array<Vec3f> &meshNormals = mesh.GetNormals();
-        const Array<Vec2f> &meshUvs = mesh.GetUVs();
-        const Array<int> &meshIndices = mesh.GetIndices();
-        const Array<int> &faceMaterialIndices = mesh.GetFaceMaterialIndices();
 
         Object &object = objects[meshIndex];
         object.positionOffset = INVALID_OFFSET;
@@ -219,101 +234,36 @@ void GeometryManager::Update(Device *device,
         object.normalType = mesh.GetNormalType();
         object.materialIndex = -1;
 
-        size_t meshPositionIndex = positionCache.GetOrAddArray(
-            meshPositions, meshIndex, [&](size_t existingIndex) -> const Array<Vec3f> & {
-                return container->meshes[existingIndex].GetPositions();
-            });
+        BufferHandle positionHandle = mesh.GetPositionsHandle();
+        BufferHandle normalHandle = mesh.GetNormalsHandle();
+        BufferHandle uvHandle = mesh.GetUVsHandle();
+        BufferHandle indexHandle = mesh.GetIndicesHandle();
+        BufferHandle triangleMaterialHandle = mesh.GetFaceMaterialIndicesHandle();
 
-        if (meshPositions.size())
+        if (positionHandle.IsValid())
         {
-            if (meshPositionIndex == INVALID_INDEX)
-            {
-                object.positionOffset = static_cast<uint32_t>(totalNumVertices);
-                positionUploads.push_back({&meshPositions, totalNumVertices});
-                totalNumVertices += meshPositions.size();
-            }
-            else
-            {
-                object.positionOffset = objects[meshPositionIndex].positionOffset;
-            }
+            object.positionOffset = positionOffsets[positionHandle.index];
         }
 
-        if (meshNormals.size())
+        if (normalHandle.IsValid())
         {
-            size_t meshNormalIndex = normalCache.GetOrAddArray(
-                meshNormals, meshIndex, [&](size_t existingIndex) -> const Array<Vec3f> & {
-                    return container->meshes[existingIndex].GetNormals();
-                });
-
-            if (meshNormalIndex == INVALID_INDEX)
-            {
-                object.normalOffset = static_cast<uint32_t>(totalNumNormals);
-                normalUploads.push_back({&meshNormals, totalNumNormals});
-                totalNumNormals += meshNormals.size();
-            }
-            else
-            {
-                object.normalOffset = objects[meshNormalIndex].normalOffset;
-            }
+            object.normalOffset = normalOffsets[normalHandle.index];
         }
 
-        size_t meshIndicesIndex = indicesCache.GetOrAddArray(
-            meshIndices, meshIndex, [&](size_t existingIndex) -> const Array<int> & {
-                return container->meshes[existingIndex].GetIndices();
-            });
-
-        if (meshIndices.size())
+        if (indexHandle.IsValid())
         {
-            if (meshIndicesIndex == INVALID_INDEX)
-            {
-                object.triangleIndexOffset = static_cast<uint32_t>(totalNumTriangleIndices);
-                triangleIndexUploads.push_back({&meshIndices, totalNumTriangleIndices});
-                totalNumTriangleIndices += meshIndices.size();
-            }
-            else
-            {
-                object.triangleIndexOffset = objects[meshIndicesIndex].triangleIndexOffset;
-            }
+            object.triangleIndexOffset = triangleIndexOffsets[indexHandle.index];
         }
 
-        if (meshUvs.size())
+        if (uvHandle.IsValid())
         {
-            size_t meshUvIndex = uvCache.GetOrAddArray(
-                meshUvs, meshIndex, [&](size_t existingIndex) -> const Array<Vec2f> & {
-                    return container->meshes[existingIndex].GetUVs();
-                });
-            if (meshUvIndex == INVALID_INDEX)
-            {
-                object.uvOffset = static_cast<uint32_t>(totalNumUVs);
-                uvUploads.push_back({&meshUvs, totalNumUVs});
-                totalNumUVs += meshUvs.size();
-            }
-            else
-            {
-                object.uvOffset = objects[meshUvIndex].uvOffset;
-            }
+            object.uvOffset = uvOffsets[uvHandle.index];
         }
 
-        if (faceMaterialIndices.size())
+        if (triangleMaterialHandle.IsValid())
         {
-            YBI_ASSERT(faceMaterialIndices.size() == meshIndices.size() / 3);
-            size_t faceMaterialIndex = triangleMaterialIndexCache.GetOrAddArray(
-                faceMaterialIndices, meshIndex, [&](size_t existingIndex) -> const Array<int> & {
-                    return container->meshes[existingIndex].GetFaceMaterialIndices();
-                });
-
-            if (faceMaterialIndex == INVALID_INDEX)
-            {
-                object.triangleMaterialOffset =
-                    static_cast<uint32_t>(totalNumTriangleMaterialIndices);
-                triangleMaterialIndexUploads.push_back(
-                    {&faceMaterialIndices, totalNumTriangleMaterialIndices});
-                totalNumTriangleMaterialIndices += faceMaterialIndices.size();
-            }
-            else
-            {
-                object.triangleMaterialOffset = objects[faceMaterialIndex].triangleMaterialOffset;
-            }
+            object.triangleMaterialOffset =
+                triangleMaterialIndexOffsets[triangleMaterialHandle.index];
         }
 
         uint32_t materialIndex = mesh.GetMaterialIndex();
@@ -322,10 +272,19 @@ void GeometryManager::Update(Device *device,
             object.materialIndex = static_cast<int>(materialIndex);
         }
 
-        if (meshPositions.size() && meshIndices.size() && meshPositionIndex != INVALID_INDEX &&
-            meshIndicesIndex != INVALID_INDEX && meshPositionIndex == meshIndicesIndex)
+        if (positionHandle.IsValid() && indexHandle.IsValid())
         {
-            bvhSourceIndices.push_back(meshPositionIndex);
+            uint64_t key = (uint64_t(positionHandle.index) << 32) | uint64_t(indexHandle.index);
+            auto it = bvhPairToMeshIndex.find(key);
+            if (it == bvhPairToMeshIndex.end())
+            {
+                bvhPairToMeshIndex.insert({key, meshIndex});
+                bvhSourceIndices.push_back(meshIndex);
+            }
+            else
+            {
+                bvhSourceIndices.push_back(it->second);
+            }
         }
         else
         {
@@ -360,11 +319,13 @@ void GeometryManager::Update(Device *device,
             scratch.arena->PushArray<int>(totalNumTriangleMaterialIndices);
     }
 
-    CopyUniqueArrays(hostPositions, positionUploads);
-    CopyUniqueArrays(hostNormals, normalUploads);
-    CopyUniqueArrays(hostUvs, uvUploads);
-    CopyUniqueArrays(hostTriangleIndices, triangleIndexUploads);
-    CopyUniqueArrays(hostTriangleMaterialIndices, triangleMaterialIndexUploads);
+    CopyBuffers(hostPositions, container->meshPositions, positionOffsets);
+    CopyBuffers(hostNormals, container->meshNormals, normalOffsets);
+    CopyBuffers(hostUvs, container->meshUVs, uvOffsets);
+    CopyBuffers(hostTriangleIndices, container->meshTriangleIndices, triangleIndexOffsets);
+    CopyBuffers(hostTriangleMaterialIndices,
+                container->meshFaceMaterialIndices,
+                triangleMaterialIndexOffsets);
 
     UploadDeviceArray(device, deviceScene->positions, hostPositions);
     UploadDeviceArray(device, deviceScene->normals, hostNormals);
@@ -404,7 +365,7 @@ void GeometryManager::Update(Device *device,
         else
         {
             container->GetBVHs(GeometryType::Mesh)
-                .EmplaceBack(device->BuildTriangleBVH(deviceArena, mesh));
+                .EmplaceBack(device->BuildTriangleBVH(deviceArena, container, mesh));
         }
     }
 
