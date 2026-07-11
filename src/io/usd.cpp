@@ -50,8 +50,6 @@ namespace ybi
 constexpr size_t INVALID_INDEX = ~size_t(0);
 constexpr uint32_t INVALID_OFFSET = ~0u;
 
-static std::atomic<size_t> uvFlattenWastedBytes{0};
-
 struct USDPrimTraversalData
 {
     pxr::UsdPrim prim;
@@ -170,8 +168,7 @@ uint32_t MeshBufferInternState<T>::ResolveIndex(size_t index) const
 
 MeshBufferInternStates::MeshBufferInternStates(Arena *arena, size_t numMeshes)
     : positions(arena, numMeshes), normals(arena, numMeshes), uvs(arena, numMeshes),
-      uvIndices(arena, numMeshes), indices(arena, numMeshes),
-      faceMaterialIndices(arena, numMeshes)
+      uvIndices(arena, numMeshes), indices(arena, numMeshes), faceMaterialIndices(arena, numMeshes)
 {
 }
 
@@ -482,15 +479,6 @@ AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
     if (hasIndices)
     {
         *outUVIndices = indices;
-
-        const size_t flattenedBytes = indices.size() * sizeof(pxr::GfVec2f);
-        const size_t indexedBytes =
-            stValues.size() * sizeof(pxr::GfVec2f) + indices.size() * sizeof(int);
-        if (flattenedBytes > indexedBytes)
-        {
-            uvFlattenWastedBytes.fetch_add(flattenedBytes - indexedBytes,
-                                           std::memory_order_relaxed);
-        }
     }
 
     return type;
@@ -723,7 +711,8 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
     BufferHandle indexHandle{static_cast<uint32_t>(scene->container->meshTriangleIndices.size())};
     scene->container->meshTriangleIndices.push_back(std::move(triangleIndices));
 
-    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvIndexHandle, uvType, indexHandle);
+    Mesh mesh(
+        positionHandle, normalHandle, normalType, uvHandle, uvIndexHandle, uvType, indexHandle);
     scene->container->meshes[index] = std::move(mesh);
 
     bool resetsXformStack = false;
@@ -873,12 +862,13 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
         static_cast<uint32_t>(internStates->normals.Intern(arena, std::move(normals), index))};
     BufferHandle uvHandle{
         static_cast<uint32_t>(internStates->uvs.Intern(arena, std::move(uvs), index))};
-    BufferHandle uvIndexHandle{static_cast<uint32_t>(
-        internStates->uvIndices.Intern(arena, std::move(uvIndices), index))};
+    BufferHandle uvIndexHandle{
+        static_cast<uint32_t>(internStates->uvIndices.Intern(arena, std::move(uvIndices), index))};
     BufferHandle indexHandle{static_cast<uint32_t>(
         internStates->indices.Intern(arena, std::move(triangleIndices), index))};
 
-    Mesh mesh(positionHandle, normalHandle, normalType, uvHandle, uvIndexHandle, uvType, indexHandle);
+    Mesh mesh(
+        positionHandle, normalHandle, normalType, uvHandle, uvIndexHandle, uvType, indexHandle);
     scene->container->meshes[index] = std::move(mesh);
 
     bool resetsXformStack = false;
@@ -1323,7 +1313,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 
     std::unordered_map<std::string, size_t> materialMap;
     std::vector<size_t> sceneMeshOffsets(traversalDatas.size());
-    uvFlattenWastedBytes.store(0, std::memory_order_relaxed);
 
     // Set up concurrent hash map for deduplicated buffers while loading
     ScratchArena scratch;
@@ -1479,8 +1468,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         mesh.SetIndicesHandle({internStates.indices.ResolveIndex(mesh.GetIndicesHandle().index)});
     }
 #endif
-
-    printf("uv flatten wasted bytes: %zu\n", uvFlattenWastedBytes.load(std::memory_order_relaxed));
 
     // Get all materials
     for (size_t sceneIndex = 0; sceneIndex < traversalDatas.size(); sceneIndex++)

@@ -142,6 +142,8 @@ struct DataContainer
     std::array<Array<BVH>, int(GeometryType::Max)> bvhHandles;
 
     Array<BVH> &GetBVHs(GeometryType type);
+    const Array<Vec3f> &GetMeshPositions(const Mesh &mesh) const;
+    const Array<int> &GetMeshIndices(const Mesh &mesh) const;
 };
 
 struct Scene

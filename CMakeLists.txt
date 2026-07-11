@@ -74,6 +74,16 @@ if (WITH_VULKAN)
     list(APPEND YBI_DEPENDENCIES glfw)
 endif()
 
+# meshoptimizer
+set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(MESHOPT_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/meshoptimizer EXCLUDE_FROM_ALL)
+list(APPEND YBI_DEPENDENCIES meshoptimizer)
+
+list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/meshoptimizer/src")
+
 # USD
 set(USD_ROOT "" CACHE PATH "Path to the OpenUSD installation directory")
 if (USD_ROOT)
@@ -127,6 +137,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_manager.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
                ${YBI_SOURCE}
 )

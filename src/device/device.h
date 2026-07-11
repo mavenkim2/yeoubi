@@ -131,9 +131,8 @@ struct Device
     virtual DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) = 0;
     virtual void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
     virtual void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) = 0;
-    virtual BVHHandle BuildTriangleBVH(DeviceArena *deviceArena,
-                                       DataContainer *container,
-                                       Mesh &mesh) = 0;
+    virtual BVHHandle
+    BuildTriangleBVH(DeviceArena *deviceArena, DataContainer *container, Mesh &mesh) = 0;
     virtual BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                         const Array<Instance> &instances,
                                         DataContainer *container) = 0;
@@ -159,6 +158,11 @@ struct Device
                                           size_t numDescs) = 0;
     virtual std::unique_ptr<DeviceKernel> CreateDeviceKernel(const DeviceKernelDesc &desc) = 0;
     virtual void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) = 0;
+
+    virtual bool SupportsClusterBVHs() const = 0;
+    virtual BVHHandle BuildClusterBVH(DeviceArena *deviceArena,
+                                      const DataContainer *container,
+                                      const Mesh &mesh) const = 0;
 };
 
 } // namespace ybi

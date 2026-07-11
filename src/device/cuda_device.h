@@ -79,6 +79,7 @@ struct CUDADevice : Device
     size_t bvhTotalAllocated;
     CUDAOptixPipeline optixPipeline;
     std::vector<ImportedExternalBuffer> importedExternalBuffers;
+    bool supportsClusterBVHs;
 
     CUDADevice();
     ~CUDADevice() override;
@@ -91,9 +92,8 @@ struct CUDADevice : Device
     DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
     void FreeExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
     void SignalExternalSemaphore(DeviceExternalSemaphore &semaphore) override;
-    BVHHandle BuildTriangleBVH(DeviceArena *deviceArena,
-                               DataContainer *container,
-                               Mesh &mesh) override;
+    BVHHandle
+    BuildTriangleBVH(DeviceArena *deviceArena, DataContainer *container, Mesh &mesh) override;
     BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                 const Array<Instance> &instances,
                                 DataContainer *container) override;
@@ -123,6 +123,12 @@ struct CUDADevice : Device
     void InitializeOptix();
     bool CreateOptixPipeline(const std::string &ptx);
     void DestroyOptixPipeline();
+
+    // CLAS BVHs
+    bool SupportsClusterBVHs() const override;
+    BVHHandle BuildClusterBVH(DeviceArena *deviceArena,
+                              const DataContainer *container,
+                              const Mesh &mesh) const override;
 };
 
 } // namespace ybi

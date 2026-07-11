@@ -4,12 +4,15 @@
 #include "core/thread_context.h"
 #include "core/vec2f.h"
 #include "device/device.h"
+#include "scene/clusterizer.h"
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <tbb/parallel_for.h>
 #include <unordered_map>
 #include <vector>
+
+#define YBI_USE_CLUSTERS
 
 namespace ybi
 {
@@ -115,6 +118,16 @@ void Mesh::SetMaterialIndex(uint32_t index)
 Array<BVH> &DataContainer::GetBVHs(GeometryType type)
 {
     return bvhHandles[(int)type];
+}
+
+const Array<Vec3f> &DataContainer::GetMeshPositions(const Mesh &mesh) const
+{
+    return meshPositions[mesh.GetPositionsHandle().index];
+}
+
+const Array<int> &DataContainer::GetMeshIndices(const Mesh &mesh) const
+{
+    return meshTriangleIndices[mesh.GetIndicesHandle().index];
 }
 
 // Scene
@@ -344,6 +357,23 @@ void GeometryManager::Update(Device *device,
         }
     }
 
+#ifdef YBI_USE_CLUSTERS
+    if (device->SupportsClusterBVHs())
+    {
+        for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+        {
+            Mesh &mesh = container->meshes[meshIndex];
+            const size_t sourceIndex = bvhSourceIndices[meshIndex];
+
+            if (sourceIndex != meshIndex)
+                continue;
+
+            MeshletClustersResult result;
+            ClusterizeMesh(container, mesh, result);
+        }
+    }
+#endif
+
     UploadDeviceBuffers(device,
                         deviceScene->positions,
                         container->meshPositions,
@@ -352,8 +382,11 @@ void GeometryManager::Update(Device *device,
     UploadEncodedNormalBuffers(
         device, deviceScene->normals, container->meshNormals, normalOffsets, totalNumNormals);
     UploadDeviceBuffers(device, deviceScene->float2s, container->meshUVs, uvOffsets, totalNumUVs);
-    UploadDeviceBuffers(
-        device, deviceScene->uvIndices, container->meshUVIndices, uvIndexOffsets, totalNumUVIndices);
+    UploadDeviceBuffers(device,
+                        deviceScene->uvIndices,
+                        container->meshUVIndices,
+                        uvIndexOffsets,
+                        totalNumUVIndices);
     UploadDeviceBuffers(device,
                         deviceScene->triangleIndices,
                         container->meshTriangleIndices,
@@ -383,6 +416,15 @@ void GeometryManager::Update(Device *device,
     container->GetBVHs(GeometryType::Mesh).Reserve(container->meshes.size());
     printf("num meshes: %zu\n", container->meshes.size());
 
+    // #ifdef YBI_USE_CLUSTERS
+
+    // how do i want to do this?
+    // 1. clusterize here.
+    // 2. build the bvhs (if CLAS is supported)
+    // 3. upload the cluster to kernel params
+    // 4. access on kernel.cu
+
+    // #else
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
@@ -400,6 +442,8 @@ void GeometryManager::Update(Device *device,
                 .EmplaceBack(device->BuildTriangleBVH(deviceArena, container, mesh));
         }
     }
+
+    // #endif
 
     printf("total num vertices: %zu\n", totalNumVertices);
     printf("num instances: %zu\n", rootScene->instances.size());

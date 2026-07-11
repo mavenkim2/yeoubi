@@ -765,6 +765,24 @@ void CUDADevice::InitializeOptix()
                                                   contextOptions.logCallbackData,
                                                   contextOptions.logCallbackLevel));
 
+#if (OPTIX_VERSION >= 90000)
+    uint32_t clusterAccelFlags = OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL_FLAG_NONE;
+    const OptixResult propertyResult =
+        optixDeviceContextGetProperty(optixDeviceContext,
+                                      OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL,
+                                      &clusterAccelFlags,
+                                      sizeof(clusterAccelFlags));
+    if (propertyResult == OPTIX_SUCCESS)
+    {
+        supportsClusterBVHs =
+            (clusterAccelFlags & OPTIX_DEVICE_PROPERTY_CLUSTER_ACCEL_FLAG_STANDARD) != 0;
+    }
+    else
+#endif
+    {
+        supportsClusterBVHs = false;
+    }
+
     const std::string ptxFilename = YBI_OPTIX_PTX_PATH;
 
     std::ifstream input(ptxFilename, std::ios::binary);
@@ -776,6 +794,11 @@ void CUDADevice::InitializeOptix()
 
     const bool result = CreateOptixPipeline(ptx);
     YBI_ASSERT(result);
+}
+
+bool CUDADevice::SupportsClusterBVHs() const
+{
+    return supportsClusterBVHs;
 }
 
 bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
@@ -1282,9 +1305,8 @@ static OptixBuildInput GetOptiXInstanceBuildInput(CUDAArena *deviceArena,
     return input;
 }
 
-BVHHandle CUDADevice::BuildTriangleBVH(DeviceArena *deviceArena,
-                                       DataContainer *container,
-                                       Mesh &mesh)
+BVHHandle
+CUDADevice::BuildTriangleBVH(DeviceArena *deviceArena, DataContainer *container, Mesh &mesh)
 {
     ContextScope contextScope(this);
     ScratchArena scratch;
@@ -1335,6 +1357,27 @@ BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
     OptixAccelBuildOptions options = GetDefaultBuildOptions(numMotionKeys);
     OptixTraversableHandle sceneHandle = BuildOptixBVH(this, cudaArena, options, &buildInput, 1);
     return BVHHandle(sceneHandle);
+}
+
+BVHHandle CUDADevice::BuildClusterBVH(DeviceArena *deviceArena,
+                                      const DataContainer *container,
+                                      const Mesh &mesh) const override
+{
+#if (OPTIX_VERSION >= 90000)
+    YBI_ASSERT(SupportsClusterAccel());
+
+    CUDA_ASSERT(cuCtxPushCurrent(cudaContext));
+    YBI_ASSERT(clusterResult.meshletCount > 0);
+    size_t totalOutputSize = 0;
+    OptixTraversableHandle handle = {};
+    BuildMeshCLAS(cudaDevice, hostArena, mesh, clusterResult, totalOutputSize, handle);
+    (void)totalOutputSize;
+    CUDA_ASSERT(cuCtxPopCurrent(0));
+    return handle;
+#else
+    YBI_LOGFATAL("");
+    return {};
+#endif
 }
 
 #if 0
