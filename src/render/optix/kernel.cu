@@ -339,7 +339,7 @@ YBI_GPU static bool GetTriangleUVs(const Object &object,
                     uvIndex = params.scene.uvIndices[object.uvIndexOffset + cornerIndex];
                 }
 
-                uvs[i] = params.scene.float2s[object.uvOffset + uvIndex];
+                uvs[i] = params.scene.uvs[object.uvOffset + uvIndex];
             }
             break;
         }
@@ -353,7 +353,7 @@ YBI_GPU static bool GetTriangleUVs(const Object &object,
                     uvIndex = params.scene.uvIndices[object.uvIndexOffset + vertexIndices[i]];
                 }
 
-                uvs[i] = params.scene.float2s[object.uvOffset + uvIndex];
+                uvs[i] = params.scene.uvs[object.uvOffset + uvIndex];
             }
             break;
         }

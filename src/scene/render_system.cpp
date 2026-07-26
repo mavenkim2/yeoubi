@@ -132,6 +132,19 @@ static void UploadEncodedNormalBuffers(Device *device,
     device->CopyToDevice(devicePtr, encodedNormals.data(), sizeof(uint32_t) * totalSize);
 }
 
+static void
+BuildTLAS(Device *device, DeviceArena *deviceArena, DataContainer *container, Scene *rootScene)
+{
+    YBI_ASSERT(device);
+    YBI_ASSERT(deviceArena);
+    YBI_ASSERT(container);
+    YBI_ASSERT(rootScene);
+
+    // TODO: supports 2+ level scenes
+    container->GetBVHs(GeometryType::Scene)
+        .EmplaceBack(device->BuildInstancesBVH(deviceArena, rootScene->instances, container));
+}
+
 // GeometryManager
 void GeometryManager::Update(Device *device,
                              DeviceArena *deviceArena,
@@ -381,7 +394,14 @@ void GeometryManager::Update(Device *device,
             bvhs.EmplaceBack(device->BuildClusterBVH(deviceArena, container, mesh, result));
         }
 
+        BuildTLAS(device, deviceArena, container, rootScene);
+
+        deviceScene->positions = nullptr;
+        deviceScene->normals = nullptr;
+        deviceScene->uvs = nullptr;
+        deviceScene->uvIndices = nullptr;
         deviceScene->triangleIndices = nullptr;
+        deviceScene->triangleMaterialIndices = nullptr;
         UploadDeviceBuffers(device,
                             deviceScene->compressedClusters,
                             compressedMeshClusters,
@@ -414,11 +434,31 @@ void GeometryManager::Update(Device *device,
             }
         }
 
+        BuildTLAS(device, deviceArena, container, rootScene);
+
         UploadDeviceBuffers(device,
                             deviceScene->triangleIndices,
                             container->meshTriangleIndices,
                             triangleIndexOffsets,
                             totalNumTriangleIndices);
+        UploadDeviceBuffers(device,
+                            deviceScene->positions,
+                            container->meshPositions,
+                            positionOffsets,
+                            totalNumVertices);
+        UploadEncodedNormalBuffers(
+            device, deviceScene->normals, container->meshNormals, normalOffsets, totalNumNormals);
+        UploadDeviceBuffers(device, deviceScene->uvs, container->meshUVs, uvOffsets, totalNumUVs);
+        UploadDeviceBuffers(device,
+                            deviceScene->uvIndices,
+                            container->meshUVIndices,
+                            uvIndexOffsets,
+                            totalNumUVIndices);
+        UploadDeviceBuffers(device,
+                            deviceScene->triangleMaterialIndices,
+                            container->meshFaceMaterialIndices,
+                            triangleMaterialIndexOffsets,
+                            totalNumTriangleMaterialIndices);
         deviceScene->compressedClusters = nullptr;
         deviceScene->compressedClusterBytes = nullptr;
     }
@@ -428,24 +468,6 @@ void GeometryManager::Update(Device *device,
     printf("total num vertices: %zu\n", totalNumVertices);
     printf("num instances: %zu\n", rootScene->instances.size());
 
-    // TODO: supports 2+ level scenes
-    container->GetBVHs(GeometryType::Scene)
-        .EmplaceBack(device->BuildInstancesBVH(deviceArena, rootScene->instances, container));
-
-    UploadDeviceBuffers(device,
-                        deviceScene->positions,
-                        container->meshPositions,
-                        positionOffsets,
-                        totalNumVertices);
-    UploadEncodedNormalBuffers(
-        device, deviceScene->normals, container->meshNormals, normalOffsets, totalNumNormals);
-    UploadDeviceBuffers(device, deviceScene->float2s, container->meshUVs, uvOffsets, totalNumUVs);
-    UploadDeviceBuffers(device,
-                        deviceScene->uvIndices,
-                        container->meshUVIndices,
-                        uvIndexOffsets,
-                        totalNumUVIndices);
-
     deviceScene->materials = nullptr;
     if (hostMaterials.size())
     {
@@ -454,12 +476,6 @@ void GeometryManager::Update(Device *device,
         device->CopyToDevice(
             deviceScene->materials, hostMaterials.data(), hostMaterials.numBytes());
     }
-
-    UploadDeviceBuffers(device,
-                        deviceScene->triangleMaterialIndices,
-                        container->meshFaceMaterialIndices,
-                        triangleMaterialIndexOffsets,
-                        totalNumTriangleMaterialIndices);
 
     deviceScene->objects = reinterpret_cast<Object *>(
         device->Alloc(sizeof(Object) * container->meshes.size()).Data());

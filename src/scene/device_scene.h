@@ -45,7 +45,7 @@ struct DeviceScene
 
     Vec3f *positions;
     uint32_t *normals;
-    Vec2f *float2s;
+    Vec2f *uvs;
     int *uvIndices;
     int *triangleIndices;
     int *triangleMaterialIndices;
