@@ -2,10 +2,10 @@
 #include "core/bit.h"
 #include "core/octahedral.h"
 #include "core/thread_context.h"
+#include "core/time.h"
 #include "device/device.h"
 #include "scene/clusterizer.h"
 #include "scene/scene.h"
-#include <chrono>
 #include <tbb/parallel_for.h>
 
 #define YBI_USE_CLUSTERS
@@ -327,7 +327,7 @@ void GeometryManager::Update(Device *device,
 
         container->compressedClusterBytes.clear();
         container->compressedClusterBytes.resize(totalNumClusters);
-        const auto compressClustersStart = std::chrono::steady_clock::now();
+        const Timer compressClustersTimer = StartTimer();
         tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
             if (!compressClusterMeshes[meshIndex])
             {
@@ -341,10 +341,7 @@ void GeometryManager::Update(Device *device,
                              compressedMeshClusters[meshIndex],
                              clusterOffsets[meshIndex]);
         });
-        const auto compressClustersEnd = std::chrono::steady_clock::now();
-        const double compressClustersMilliseconds =
-            std::chrono::duration<double, std::milli>(compressClustersEnd - compressClustersStart)
-                .count();
+        const double compressClustersMilliseconds = StopTimer(compressClustersTimer);
         printf("CompressClusters parallel_for: %.3f ms\n", compressClustersMilliseconds);
 
         std::vector<uint32_t> compressedClusterByteOffsets;
@@ -378,6 +375,7 @@ void GeometryManager::Update(Device *device,
         }
 
         Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
+        const Timer buildClusterBVHsTimer = StartTimer();
         for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
         {
             Mesh &mesh = container->meshes[meshIndex];
@@ -393,6 +391,8 @@ void GeometryManager::Update(Device *device,
             YBI_ASSERT(result.meshlets.size());
             bvhs.EmplaceBack(device->BuildClusterBVH(deviceArena, container, mesh, result));
         }
+        const double buildClusterBVHsMilliseconds = StopTimer(buildClusterBVHsTimer);
+        printf("BuildClusterBVHs: %.3f ms\n", buildClusterBVHsMilliseconds);
 
         BuildTLAS(device, deviceArena, container, rootScene);
 
@@ -416,6 +416,7 @@ void GeometryManager::Update(Device *device,
     else
 #endif
     {
+        const Timer buildTriangleBVHsTimer = StartTimer();
         for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
         {
             Mesh &mesh = container->meshes[meshIndex];
@@ -433,6 +434,8 @@ void GeometryManager::Update(Device *device,
                     .EmplaceBack(device->BuildTriangleBVH(deviceArena, container, mesh));
             }
         }
+        const double buildTriangleBVHsMilliseconds = StopTimer(buildTriangleBVHsTimer);
+        printf("BuildTriangleBVHs: %.3f ms\n", buildTriangleBVHsMilliseconds);
 
         BuildTLAS(device, deviceArena, container, rootScene);
 
