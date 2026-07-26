@@ -6,6 +6,7 @@
 #include "device/device.h"
 #include "scene/clusterizer.h"
 #include "scene/scene.h"
+#include <cstring>
 #include <tbb/parallel_for.h>
 
 #define YBI_USE_CLUSTERS
@@ -82,17 +83,24 @@ static void UploadDeviceBuffers(Device *device,
         return;
     }
 
-    devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * totalSize).Data());
-    for (size_t index = 0; index < buffers.size(); index++)
-    {
+    YBI_ASSERT(offsets.size() == buffers.size());
+
+    Array<T> flattenedBuffers(totalSize);
+    memset(flattenedBuffers.data(), 0, sizeof(T) * flattenedBuffers.size());
+    tbb::parallel_for(size_t(0), buffers.size(), [&](size_t index) {
         const Array<T> &buffer = buffers[index];
-        if (buffer.size())
+        if (!buffer.size())
         {
-            device->CopyToDevice(devicePtr + offsets[index],
-                                 const_cast<T *>(buffer.data()),
-                                 sizeof(T) * buffer.size());
+            return;
         }
-    }
+
+        YBI_ASSERT(offsets[index] != INVALID_OFFSET);
+        YBI_ASSERT(static_cast<size_t>(offsets[index]) + buffer.size() <= totalSize);
+        memcpy(flattenedBuffers.data() + offsets[index], buffer.data(), sizeof(T) * buffer.size());
+    });
+
+    devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * totalSize).Data());
+    device->CopyToDevice(devicePtr, flattenedBuffers.data(), sizeof(T) * flattenedBuffers.size());
 }
 
 static void UploadEncodedNormalBuffers(Device *device,
@@ -281,7 +289,6 @@ void GeometryManager::Update(Device *device,
     {
         std::vector<MeshletClustersResult> clusterResults(container->meshes.size());
         std::vector<Array<DeviceCluster>> compressedMeshClusters(container->meshes.size());
-        std::vector<uint8_t> compressClusterMeshes(container->meshes.size(), 0);
 
         tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
             Mesh &mesh = container->meshes[meshIndex];
@@ -297,27 +304,27 @@ void GeometryManager::Update(Device *device,
                 return;
             }
 
-            MeshletClustersResult &result = clusterResults[meshIndex];
-            ClusterizeMesh(container, mesh, result);
-
             const Array<int> &sourceIndices =
                 container->meshTriangleIndices[mesh.GetIndicesHandle().index];
-
-            bool hasDegenerateTriangles = false;
             YBI_ASSERT(sourceIndices.size() % 3 == 0);
+
+            Array<int> filteredIndices;
+            filteredIndices.Reserve(sourceIndices.size());
             for (size_t i = 0; i < sourceIndices.size(); i += 3)
             {
                 const int index0 = sourceIndices[i + 0];
                 const int index1 = sourceIndices[i + 1];
                 const int index2 = sourceIndices[i + 2];
-                if (index0 == index1 || index1 == index2 || index2 == index0)
+                if (index0 != index1 && index1 != index2 && index2 != index0)
                 {
-                    hasDegenerateTriangles = true;
-                    break;
+                    filteredIndices.EmplaceBack(index0);
+                    filteredIndices.EmplaceBack(index1);
+                    filteredIndices.EmplaceBack(index2);
                 }
             }
 
-            compressClusterMeshes[meshIndex] = !hasDegenerateTriangles;
+            MeshletClustersResult &result = clusterResults[meshIndex];
+            ClusterizeMesh(container, mesh, filteredIndices, result);
             compressedMeshClusters[meshIndex].Resize(result.meshlets.size());
         });
 
@@ -329,7 +336,7 @@ void GeometryManager::Update(Device *device,
         container->compressedClusterBytes.resize(totalNumClusters);
         const Timer compressClustersTimer = StartTimer();
         tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
-            if (!compressClusterMeshes[meshIndex])
+            if (bvhSourceIndices[meshIndex] != meshIndex)
             {
                 return;
             }
@@ -350,11 +357,12 @@ void GeometryManager::Update(Device *device,
 
         for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
         {
-            if (clusterOffsets[meshIndex] == INVALID_OFFSET)
+            if (bvhSourceIndices[meshIndex] != meshIndex)
             {
                 continue;
             }
 
+            YBI_ASSERT(clusterOffsets[meshIndex] != INVALID_OFFSET);
             Array<DeviceCluster> &clusters = compressedMeshClusters[meshIndex];
             for (size_t clusterIndex = 0; clusterIndex < clusters.size(); clusterIndex++)
             {

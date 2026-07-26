@@ -161,6 +161,7 @@ set (YBI_KERNEL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/kernel_params.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/ray_cone.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_cluster.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_scene.h
 )
 

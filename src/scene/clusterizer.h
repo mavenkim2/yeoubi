@@ -29,6 +29,7 @@ struct MeshletClustersResult
 
 void ClusterizeMesh(const DataContainer *container,
                     const Mesh &mesh,
+                    const Array<int> &meshIndices,
                     MeshletClustersResult &result);
 void BuildMeshletTriangleBuffer(const MeshletClustersResult &clusters,
                                 const Array<int> &sourceIndices,

@@ -35,10 +35,10 @@ void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
 
 void ClusterizeMesh(const DataContainer *container,
                     const Mesh &mesh,
+                    const Array<int> &meshIndices,
                     MeshletClustersResult &result)
 {
     const Array<Vec3f> &meshPositions = container->GetMeshPositions(mesh);
-    const Array<int> &meshIndices = container->GetMeshIndices(mesh);
     const size_t indexCount = meshIndices.size();
     const size_t vertexCount = meshPositions.size();
 
@@ -138,7 +138,7 @@ void BuildMeshletTriangleBuffer(const MeshletClustersResult &clusters,
     {
         clusteredTriangleCount += meshlet.triangleCount;
     }
-    YBI_ASSERT(clusteredTriangleCount == sourceTriangleCount);
+    YBI_ASSERT(clusteredTriangleCount <= sourceTriangleCount);
     triangles.Resize(clusteredTriangleCount);
 
     size_t outputTriangleIndex = 0;
@@ -648,7 +648,12 @@ static uint32_t WriteMaterialIDs(const DataContainer *container,
     if (!faceMaterialHandle.IsValid())
     {
         const uint32_t materialIndex = mesh.GetMaterialIndex();
-        YBI_ASSERT(materialIndex <= 0x7fffffffu);
+        if (materialIndex == DEVICE_CLUSTER_INVALID_MATERIAL_ID)
+        {
+            return DEVICE_CLUSTER_INVALID_MATERIAL_ID;
+        }
+
+        YBI_ASSERT(materialIndex < DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID);
         return materialIndex | 0x80000000u;
     }
 
@@ -668,19 +673,23 @@ static uint32_t WriteMaterialIDs(const DataContainer *container,
         YBI_ASSERT(meshTriangle >= 0 &&
                    static_cast<size_t>(meshTriangle) < faceMaterialIndices.size());
 
-        const int materialIndex = faceMaterialIndices[meshTriangle];
-        YBI_ASSERT(materialIndex >= 0);
-        materialIndices.EmplaceBack(static_cast<uint32_t>(materialIndex));
+        const int sourceMaterialIndex = faceMaterialIndices[meshTriangle];
+        YBI_ASSERT(sourceMaterialIndex < 0 || static_cast<uint32_t>(sourceMaterialIndex) <
+                                                  DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID);
+        const uint32_t materialIndex = sourceMaterialIndex < 0
+                                           ? DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID
+                                           : static_cast<uint32_t>(sourceMaterialIndex);
+        materialIndices.EmplaceBack(materialIndex);
     }
 
     YBI_ASSERT(materialIndices.size());
     const uint32_t firstMaterialIndex = materialIndices[0];
-    YBI_ASSERT(firstMaterialIndex <= 0x7fffffffu);
+    YBI_ASSERT(firstMaterialIndex <= DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID);
 
     bool constantMaterialID = true;
     for (uint32_t materialIndex : materialIndices)
     {
-        YBI_ASSERT(materialIndex <= 0x7fffffffu);
+        YBI_ASSERT(materialIndex <= DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID);
         if (materialIndex != firstMaterialIndex)
         {
             constantMaterialID = false;
@@ -1361,12 +1370,10 @@ void CompressClusters(MeshletClustersResult &clusters,
         Array<unsigned char> reorderedTriangles(meshlet.triangleCount * 3u);
         const unsigned char *sourceTriangles =
             clusters.meshletTriangles.data() + meshlet.triangleOffset;
-        for (uint32_t outputTriangleIndex = 0;
-             outputTriangleIndex < meshlet.triangleCount;
+        for (uint32_t outputTriangleIndex = 0; outputTriangleIndex < meshlet.triangleCount;
              outputTriangleIndex++)
         {
-            const uint32_t sourceTriangleIndex =
-                orderingInfo.triangleOrder[outputTriangleIndex];
+            const uint32_t sourceTriangleIndex = orderingInfo.triangleOrder[outputTriangleIndex];
             const int rotation = orderingInfo.rotations[outputTriangleIndex];
             YBI_ASSERT(rotation >= 0 && rotation < 3);
             const int *order = rotationsTable + rotation;

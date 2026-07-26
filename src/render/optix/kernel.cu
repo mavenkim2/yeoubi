@@ -431,6 +431,11 @@ YBI_GPU static bool GetClusteredTriangleMaterial(const IntersectionInfo &info,
 {
     const uint32_t materialIndex =
         cluster.DecodeMaterialID(clusterData, info.primIndex);
+    if (materialIndex == DEVICE_CLUSTER_INVALID_MATERIAL_ID)
+    {
+        return false;
+    }
+
     material = params.scene.materials[materialIndex];
     return true;
 }

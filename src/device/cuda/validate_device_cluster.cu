@@ -216,9 +216,9 @@ void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
             const int meshTriangle = meshletTriangleToMeshTriangle[localTriangle];
             YBI_ASSERT(meshTriangle >= 0);
             const int materialID = sourceMaterialIDs[meshTriangle];
-            YBI_ASSERT(materialID >= 0);
             expectedMaterialIDs[outputTriangleIndex] =
-                static_cast<uint32_t>(materialID);
+                materialID < 0 ? DEVICE_CLUSTER_INVALID_MATERIAL_ID
+                               : static_cast<uint32_t>(materialID);
         }
         else
         {

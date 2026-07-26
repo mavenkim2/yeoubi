@@ -11,17 +11,22 @@
 namespace ybi
 {
 
-#define DEVICE_CLUSTER_MAX_TRIANGLES_SHIFT 7u
-#define DEVICE_CLUSTER_MAX_TRIANGLES (1u << DEVICE_CLUSTER_MAX_TRIANGLES_SHIFT)
-#define DEVICE_CLUSTER_MAX_VERTICES_SHIFT 8u
-#define DEVICE_CLUSTER_MAX_VERTICES (1u << DEVICE_CLUSTER_MAX_VERTICES_SHIFT)
-#define DEVICE_CLUSTER_CONTROL_DWORD_COUNT (1u << (DEVICE_CLUSTER_MAX_VERTICES_SHIFT - 5u))
-#define DEVICE_CLUSTER_FIRST_USE_DWORD_COUNT (1u << (DEVICE_CLUSTER_MAX_VERTICES_SHIFT - 5u))
+#define DEVICE_CLUSTER_MAX_TRIANGLES_NUM_BITS 7u
+#define DEVICE_CLUSTER_MAX_TRIANGLES (1u << DEVICE_CLUSTER_MAX_TRIANGLES_NUM_BITS)
+#define DEVICE_CLUSTER_MAX_VERTICES_NUM_BITS 8u
+#define DEVICE_CLUSTER_MAX_VERTICES (1u << DEVICE_CLUSTER_MAX_VERTICES_NUM_BITS)
+#define DEVICE_CLUSTER_CONTROL_DWORD_COUNT (1u << (DEVICE_CLUSTER_MAX_VERTICES_NUM_BITS - 5u))
+#define DEVICE_CLUSTER_FIRST_USE_DWORD_COUNT \
+    ((3u * DEVICE_CLUSTER_MAX_TRIANGLES + 31u) >> 5u)
 
 #define DEVICE_CLUSTER_REUSE_BUFFER_NUM_BITS_SIZE 3u
 #define DEVICE_CLUSTER_UV_INDEXED_FLAG 1u
 #define DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_SHIFT 1u
-#define DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_MASK 0x3fu
+#define DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_NUM_BITS 4u
+#define DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_MASK \
+    ((1u << DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_NUM_BITS) - 1u)
+#define DEVICE_CLUSTER_INVALID_MATERIAL_ID 0xffffffffu
+#define DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID 0x7fffffffu
 
 // TODO: maybe don't want interop functions in src/scene
 struct PackedDeviceCluster
@@ -277,7 +282,7 @@ struct DeviceCluster
         {
             const uint32_t uvIndexBitWidth =
                 ExtractBits(uvInfo,
-                            6u,
+                            DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_NUM_BITS,
                             DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_SHIFT);
             valueIndex = ReadClusterBits(
                 clusterPageData,
@@ -300,6 +305,11 @@ struct DeviceCluster
     {
         YBI_ASSERT(clusterPageData);
         YBI_ASSERT(triangleIndex < triangleCount);
+
+        if (materialInfo == DEVICE_CLUSTER_INVALID_MATERIAL_ID)
+        {
+            return DEVICE_CLUSTER_INVALID_MATERIAL_ID;
+        }
 
         // Constant mode
         if (ExtractBits(materialInfo, 1u, 31u))
@@ -330,7 +340,10 @@ struct DeviceCluster
 
         const uint32_t lowBits = ReadClusterBits(
             clusterPageData, entriesBitOffset + entryIndex * numLowOrderBits, numLowOrderBits);
-        return (commonPrefix << numLowOrderBits) | lowBits;
+        const uint32_t materialID = (commonPrefix << numLowOrderBits) | lowBits;
+        return materialID == DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID
+                   ? DEVICE_CLUSTER_INVALID_MATERIAL_ID
+                   : materialID;
     }
 };
 
