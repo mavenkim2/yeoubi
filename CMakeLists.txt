@@ -15,6 +15,7 @@ option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
 set(YBI_COMPILE_DEFINITIONS)
 set(YBI_DEPENDENCIES)
 set(YBI_SOURCE)
+set(YBI_USE_GPU)
 if (WIN32)
     list(APPEND YBI_COMPILE_DEFINITIONS NOMINMAX)
     list(APPEND YBI_COMPILE_DEFINITIONS WIN32_LEAN_AND_MEAN)
@@ -22,6 +23,7 @@ endif()
 
 # CUDA
 if (WITH_CUDA)
+    set(YBI_USE_GPU ON)
     include(CheckLanguage)
     check_language(CUDA)
     set(YBI_HAS_CUDA OFF)
@@ -46,6 +48,9 @@ if (WITH_CUDA)
             list (APPEND YBI_COMPILE_DEFINITIONS WITH_OPTIX OPTIX_VERSION=${OPTIX_VERSION})
             list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES "${OPTIX_INCLUDE_DIR}")
             list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp)
+            list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/clusters.cu)
+            list (APPEND YBI_SOURCE
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/validate_device_cluster.cu)
             # list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp)
             message (STATUS "OptiX Found: ${OPTIX_INCLUDE_DIR} ${OPTIX_VERSION}")
         else()
@@ -133,6 +138,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
@@ -147,7 +153,10 @@ set (YBI_KERNEL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/matrix4x4.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/octahedral.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec2f.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec2u.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3f.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3i.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3u.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device_texture.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/kernel_params.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/ray_cone.h
@@ -173,6 +182,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
         # "--expt-relaxed-constexpr"
         "--use_fast_math"
+        "-DOPTIX_VERSION=${OPTIX_VERSION}"
         "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
         "-I${OPTIX_INCLUDE_DIR}"
         # "-I${YBI_CUDA_INCLUDE_DIR}"

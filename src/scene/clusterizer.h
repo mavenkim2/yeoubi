@@ -8,6 +8,7 @@ namespace ybi
 {
 
 struct DataContainer;
+struct DeviceCluster;
 class Mesh;
 
 struct Meshlet
@@ -29,6 +30,14 @@ struct MeshletClustersResult
 void ClusterizeMesh(const DataContainer *container,
                     const Mesh &mesh,
                     MeshletClustersResult &result);
-void BuildMeshletIndexBuffer(const MeshletClustersResult &clusters, Array<int> &indices);
+void BuildMeshletTriangleBuffer(const MeshletClustersResult &clusters,
+                                const Array<int> &sourceIndices,
+                                Array<int> &triangles);
+void CompressClusters(MeshletClustersResult &clusters,
+                      const Mesh &mesh,
+                      DataContainer *container,
+                      Array<DeviceCluster> &deviceClusters,
+                      size_t clusterOffset);
+void Help();
 
 } // namespace ybi

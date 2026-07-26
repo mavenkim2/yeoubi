@@ -3,7 +3,9 @@
 #include <cstdio>
 
 #ifdef YBI_DEBUG
-#if defined(_MSC_VER)
+#if defined(__CUDA_ARCH__)
+#define BREAK_IN_DEBUGGER() asm("trap;");
+#elif defined(_MSC_VER)
 #include <intrin.h>
 #define BREAK_IN_DEBUGGER() __debugbreak()
 #elif defined(__GNUC__) || defined(__clang__)
@@ -14,7 +16,7 @@
 #endif
 
 #define LOG_ERROR_INTERNAL(type, expr, message) \
-    fprintf(stderr, "[%s] %s:%d\nEXPR: %s\n%s", type, __FILE__, __LINE__, #expr, message)
+    printf("[%s] %s:%d\nEXPR: %s\n%s", type, __FILE__, __LINE__, #expr, message)
 
 #define YBI_ASSERT(expr) \
     do \

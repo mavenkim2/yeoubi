@@ -39,4 +39,12 @@ YBI_CPU_GPU constexpr float DegreesToRadians(float degrees)
     return degrees * 0.017453292519943295769f;
 }
 
+template <typename T>
+YBI_CPU_GPU void Swap(T &a, T &b)
+{
+    T temp = a;
+    a = b;
+    b = temp;
+}
+
 } // namespace ybi

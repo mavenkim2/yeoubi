@@ -9,6 +9,7 @@
 #include "device/device_texture.h"
 #include "device/kernel_params.h"
 #include "display_device/display_device.h"
+#include "scene/clusterizer.h"
 #include "scene/scene.h"
 #include <cstddef>
 #include <cstdio>
@@ -30,6 +31,12 @@
 
 namespace ybi
 {
+
+void BuildMeshCLAS(CUDADevice *cudaDevice,
+                   DataContainer *container,
+                   const Mesh &mesh,
+                   const MeshletClustersResult &clusterResult,
+                   OptixTraversableHandle &outputHandleOut);
 
 // Platform functions
 #if defined(WITH_CUDA)
@@ -821,6 +828,11 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
     pipelineCompileOptions.pipelineLaunchParamsSizeInBytes = sizeof(KernelParams);
 
+    if (SupportsClusterBVHs())
+    {
+        pipelineCompileOptions.allowClusteredGeometry = 1;
+    }
+
     char log[4096] = {};
     size_t logSize = sizeof(log);
     if (!CheckOptixResult(CreateOptixModuleCompat(optixDeviceContext,
@@ -1360,24 +1372,30 @@ BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
 }
 
 BVHHandle CUDADevice::BuildClusterBVH(DeviceArena *deviceArena,
-                                      const DataContainer *container,
-                                      const Mesh &mesh) const override
+                                      DataContainer *container,
+                                      const Mesh &mesh,
+                                      const MeshletClustersResult &clusterResult)
 {
+    (void)deviceArena;
 #if (OPTIX_VERSION >= 90000)
-    YBI_ASSERT(SupportsClusterAccel());
+    YBI_ASSERT(SupportsClusterBVHs());
 
     CUDA_ASSERT(cuCtxPushCurrent(cudaContext));
-    YBI_ASSERT(clusterResult.meshletCount > 0);
-    size_t totalOutputSize = 0;
+    YBI_ASSERT(clusterResult.meshlets.size() > 0);
     OptixTraversableHandle handle = {};
-    BuildMeshCLAS(cudaDevice, hostArena, mesh, clusterResult, totalOutputSize, handle);
-    (void)totalOutputSize;
+    BuildMeshCLAS(this, container, mesh, clusterResult, handle);
+
     CUDA_ASSERT(cuCtxPopCurrent(0));
-    return handle;
+    return BVHHandle(handle);
 #else
     YBI_LOGFATAL("");
     return {};
 #endif
+}
+
+size_t CUDADevice::GetBVHAllocationSize() const
+{
+    return bvhTotalAllocated;
 }
 
 #if 0

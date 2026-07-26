@@ -3,6 +3,8 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "device/device_memory.h"
+#include "scene/device_cluster.h"
+#include <cstdint>
 
 namespace ybi
 {
@@ -31,6 +33,7 @@ struct Object
     uint32_t positionOffset;
     uint32_t triangleIndexOffset;
     uint32_t triangleMaterialOffset;
+    uint32_t clusterOffset;
 
     int materialIndex;
 };
@@ -46,6 +49,9 @@ struct DeviceScene
     int *uvIndices;
     int *triangleIndices;
     int *triangleMaterialIndices;
+
+    DeviceCluster *compressedClusters;
+    uint8_t *compressedClusterBytes;
 };
 
 } // namespace ybi

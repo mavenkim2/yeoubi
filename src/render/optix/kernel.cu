@@ -52,6 +52,7 @@ struct IntersectionInfo
     AffineTransform objectToWorld;
     AffineTransform worldToObject;
     uint32_t primIndex;
+    uint32_t clusterId;
     uint32_t id;
     IntersectionType type;
 };
@@ -196,20 +197,60 @@ YBI_GPU static T InterpolateTriangleValues(T values[3], Vec2f bary)
     return values[0] * (1.f - bary.x - bary.y) + values[1] * bary.x + values[2] * bary.y;
 }
 
-YBI_GPU static void
-GetTrianglePositions(const Object &object, const IntersectionInfo &info, Vec3f positions[3])
+struct ShadingInfo
 {
-    const uint32_t triangleIndexOffset = object.triangleIndexOffset + 3 * info.primIndex;
-    for (int i = 0; i < 3; i++)
+    Vec3f positions[3];
+    Vec3f normals[3];
+    Vec2f uvs[3];
+    DeviceMaterial material;
+    bool hasNormals;
+    bool hasUvs;
+    bool hasMaterial;
+};
+
+YBI_GPU static Vec3u GetTriangleVertexIndices(const Object &object,
+                                              const IntersectionInfo &info)
+{
+    const uint32_t offset = object.triangleIndexOffset + 3u * info.primIndex;
+    return Vec3u(static_cast<uint32_t>(params.scene.triangleIndices[offset]),
+                 static_cast<uint32_t>(params.scene.triangleIndices[offset + 1u]),
+                 static_cast<uint32_t>(params.scene.triangleIndices[offset + 2u]));
+}
+
+YBI_GPU static void GetTrianglePositions(const Object &object,
+                                         const Vec3u &vertexIndices,
+                                         Vec3f positions[3])
+{
+    for (uint32_t i = 0; i < 3u; i++)
     {
-        const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
-        Vec3f objectPosition = params.scene.positions[object.positionOffset + vertexIndex];
-        positions[i] = objectPosition;
+        positions[i] = params.scene.positions[object.positionOffset + vertexIndices[i]];
     }
 }
 
-YBI_GPU static bool
-GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f normals[3])
+YBI_GPU static bool IsClusteredTriangle(const Object &object, const IntersectionInfo &info)
+{
+#if OPTIX_VERSION >= 90000
+    return object.clusterOffset != ~0u && info.clusterId != OPTIX_CLUSTER_ID_INVALID;
+#else
+    return false;
+#endif
+}
+
+YBI_GPU static void GetClusteredTrianglePositions(const DeviceCluster &cluster,
+                                                  const uint8_t *clusterData,
+                                                  const Vec3u &vertexIndices,
+                                                  Vec3f positions[3])
+{
+    for (uint32_t i = 0; i < 3u; i++)
+    {
+        positions[i] = cluster.DecodePosition(clusterData, vertexIndices[i]);
+    }
+}
+
+YBI_GPU static bool GetTriangleNormals(const Object &object,
+                                       const IntersectionInfo &info,
+                                       const Vec3u &vertexIndices,
+                                       Vec3f normals[3])
 {
     switch (object.normalType)
     {
@@ -226,12 +267,10 @@ GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f nor
         }
         case AttributeType::Vertex:
         {
-            const uint32_t triangleIndexOffset = object.triangleIndexOffset + 3 * info.primIndex;
-            for (int i = 0; i < 3; i++)
+            for (uint32_t i = 0; i < 3u; i++)
             {
-                const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
                 Vec3f objectNormal =
-                    DecodeOctahedral(params.scene.normals[object.normalOffset + vertexIndex]);
+                    DecodeOctahedral(params.scene.normals[object.normalOffset + vertexIndices[i]]);
                 normals[i] = objectNormal;
             }
             return true;
@@ -246,8 +285,46 @@ GetTriangleNormals(const Object &object, const IntersectionInfo &info, Vec3f nor
     }
 }
 
-YBI_GPU static bool
-GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f uvs[3])
+YBI_GPU static bool GetClusteredTriangleNormals(const Object &object,
+                                                const IntersectionInfo &info,
+                                                const DeviceCluster &cluster,
+                                                const uint8_t *clusterData,
+                                                const Vec3u &vertexIndices,
+                                                Vec3f normals[3])
+{
+    switch (object.normalType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                const uint32_t normalIndex = 3u * info.primIndex + static_cast<uint32_t>(i);
+                normals[i] = cluster.DecodeNormal(clusterData, normalIndex);
+            }
+            return true;
+        }
+        case AttributeType::Vertex:
+        {
+            for (uint32_t i = 0; i < 3u; i++)
+            {
+                normals[i] = cluster.DecodeNormal(clusterData, vertexIndices[i]);
+            }
+            return true;
+        }
+        case AttributeType::None:
+        {
+            return false;
+        }
+        default:
+            assert(0);
+            return false;
+    }
+}
+
+YBI_GPU static bool GetTriangleUVs(const Object &object,
+                                   const IntersectionInfo &info,
+                                   const Vec3u &vertexIndices,
+                                   Vec2f uvs[3])
 {
     switch (object.uvType)
     {
@@ -268,14 +345,12 @@ GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f uvs[3])
         }
         case AttributeType::Vertex:
         {
-            const uint32_t triangleIndexOffset = object.triangleIndexOffset + 3 * info.primIndex;
-            for (int i = 0; i < 3; i++)
+            for (uint32_t i = 0; i < 3u; i++)
             {
-                const int vertexIndex = params.scene.triangleIndices[triangleIndexOffset + i];
-                int uvIndex = vertexIndex;
+                int uvIndex = static_cast<int>(vertexIndices[i]);
                 if (object.uvIndexOffset != ~0u)
                 {
-                    uvIndex = params.scene.uvIndices[object.uvIndexOffset + vertexIndex];
+                    uvIndex = params.scene.uvIndices[object.uvIndexOffset + vertexIndices[i]];
                 }
 
                 uvs[i] = params.scene.float2s[object.uvOffset + uvIndex];
@@ -293,13 +368,51 @@ GetTriangleUVs(const Object &object, const IntersectionInfo &info, Vec2f uvs[3])
     return true;
 }
 
-YBI_GPU static bool
-GetTriangleMaterial(const Object &object, const IntersectionInfo &info, DeviceMaterial &material)
+YBI_GPU static bool GetClusteredTriangleUVs(const Object &object,
+                                            const IntersectionInfo &info,
+                                            const DeviceCluster &cluster,
+                                            const uint8_t *clusterData,
+                                            const Vec3u &vertexIndices,
+                                            Vec2f uvs[3])
+{
+    switch (object.uvType)
+    {
+        case AttributeType::FaceVarying:
+        {
+            for (uint32_t i = 0; i < 3u; i++)
+            {
+                const uint32_t uvIndex = 3u * info.primIndex + i;
+                uvs[i] = cluster.DecodeUV(clusterData, uvIndex);
+            }
+            break;
+        }
+        case AttributeType::Vertex:
+        {
+            for (uint32_t i = 0; i < 3u; i++)
+            {
+                uvs[i] = cluster.DecodeUV(clusterData, vertexIndices[i]);
+            }
+            break;
+        }
+        case AttributeType::None:
+        {
+            return false;
+        }
+        default:
+            assert(0);
+    }
+
+    return true;
+}
+
+YBI_GPU static bool GetTriangleMaterial(const Object &object,
+                                        uint32_t triangleIndex,
+                                        DeviceMaterial &material)
 {
     if (object.triangleMaterialOffset != ~0u)
     {
         int materialIndex =
-            params.scene.triangleMaterialIndices[object.triangleMaterialOffset + info.primIndex];
+            params.scene.triangleMaterialIndices[object.triangleMaterialOffset + triangleIndex];
         material = params.scene.materials[materialIndex];
         return true;
     }
@@ -309,6 +422,65 @@ GetTriangleMaterial(const Object &object, const IntersectionInfo &info, DeviceMa
         return true;
     }
     return false;
+}
+
+YBI_GPU static bool GetClusteredTriangleMaterial(const IntersectionInfo &info,
+                                                 const DeviceCluster &cluster,
+                                                 const uint8_t *clusterData,
+                                                 DeviceMaterial &material)
+{
+    const uint32_t materialIndex =
+        cluster.DecodeMaterialID(clusterData, info.primIndex);
+    material = params.scene.materials[materialIndex];
+    return true;
+}
+
+YBI_GPU static void GetTriangleShadingInfo(const Object &object,
+                                           const IntersectionInfo &info,
+                                           ShadingInfo &shadingInfo)
+{
+    const Vec3u vertexIndices = GetTriangleVertexIndices(object, info);
+    GetTrianglePositions(object, vertexIndices, shadingInfo.positions);
+    shadingInfo.hasNormals =
+        GetTriangleNormals(object, info, vertexIndices, shadingInfo.normals);
+    shadingInfo.hasUvs = GetTriangleUVs(object, info, vertexIndices, shadingInfo.uvs);
+    shadingInfo.hasMaterial =
+        GetTriangleMaterial(object, info.primIndex, shadingInfo.material);
+}
+
+YBI_GPU static void GetClusteredShadingInfo(const Object &object,
+                                            const IntersectionInfo &info,
+                                            const DeviceCluster &cluster,
+                                            const uint8_t *clusterData,
+                                            const Vec3u &vertexIndices,
+                                            ShadingInfo &shadingInfo)
+{
+    GetClusteredTrianglePositions(cluster, clusterData, vertexIndices, shadingInfo.positions);
+    shadingInfo.hasNormals = GetClusteredTriangleNormals(
+        object, info, cluster, clusterData, vertexIndices, shadingInfo.normals);
+    shadingInfo.hasUvs = GetClusteredTriangleUVs(
+        object, info, cluster, clusterData, vertexIndices, shadingInfo.uvs);
+    shadingInfo.hasMaterial =
+        GetClusteredTriangleMaterial(info, cluster, clusterData, shadingInfo.material);
+}
+
+YBI_GPU static void
+GetShadingInfo(const Object &object, const IntersectionInfo &info, ShadingInfo &shadingInfo)
+{
+    shadingInfo = {};
+    if (IsClusteredTriangle(object, info))
+    {
+        const uint32_t clusterIndex = object.clusterOffset + info.clusterId;
+        const DeviceCluster &cluster = params.scene.compressedClusters[clusterIndex];
+        const uint8_t *clusterData = params.scene.compressedClusterBytes + cluster.byteOffset;
+        const Vec3u vertexIndices = cluster.DecodeTriangle(clusterData, info.primIndex);
+        GetClusteredShadingInfo(
+            object, info, cluster, clusterData, vertexIndices, shadingInfo);
+    }
+    else
+    {
+        GetTriangleShadingInfo(object, info, shadingInfo);
+    }
 }
 
 extern "C" __global__ void __miss__kernel()
@@ -340,6 +512,10 @@ extern "C" __global__ void __closesthit__kernel()
         isect->t = optixGetRayTmax();
         isect->id = optixGetInstanceId();
         isect->primIndex = optixGetPrimitiveIndex();
+        isect->clusterId = ~0u;
+#if OPTIX_VERSION >= 90000
+        isect->clusterId = optixGetClusterId();
+#endif
         isect->bary = Vec2f(bary.x, bary.y);
         isect->objectToWorld = AffineTransform(objectToWorld);
         isect->worldToObject = AffineTransform(worldToObject);
@@ -408,16 +584,15 @@ extern "C" __global__ void __raygen__kernel()
     uchar4 color = make_uchar4(0, 0, 0, 255);
     if (info.type == INTERSECTION_TYPE_TRIANGLE)
     {
+#if 1
         const Object &object = params.scene.objects[info.id];
 
-        Vec3f positions[3];
-        Vec3f normals[3];
+        ShadingInfo shadingInfo;
+        GetShadingInfo(object, info, shadingInfo);
+        Vec3f *positions = shadingInfo.positions;
+        Vec3f *normals = shadingInfo.normals;
 
-        GetTrianglePositions(object, info, positions);
-
-        bool hasNormals = GetTriangleNormals(object, info, normals);
-
-        if (!hasNormals)
+        if (!shadingInfo.hasNormals)
         {
             Vec3f n = Normalize(Cross(positions[1] - positions[0], positions[2] - positions[0]));
 
@@ -426,16 +601,14 @@ extern "C" __global__ void __raygen__kernel()
             normals[2] = n;
         }
 
-        Vec2f uvs[3];
-        bool hasUvs = GetTriangleUVs(object, info, uvs);
+        Vec2f *uvs = shadingInfo.uvs;
         Vec2f uv = InterpolateTriangleValues(uvs, info.bary);
 
-        DeviceMaterial material;
-        bool hasMaterial = GetTriangleMaterial(object, info, material);
+        DeviceMaterial &material = shadingInfo.material;
 
-        if (hasMaterial)
+        if (shadingInfo.hasMaterial)
         {
-            if (hasUvs)
+            if (shadingInfo.hasUvs)
             {
                 // Virtual texture path
                 Vec2f flooredUv = Floor(uv);
@@ -540,25 +713,22 @@ extern "C" __global__ void __raygen__kernel()
 #endif
             }
         }
-    }
-
-    uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
-    const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
-#if 0
-    if (info.type == INTERSECTION_TYPE_TRIANGLE)
-    {
-        uint32_t hash = info.id;
-        hash ^= hash >> 16;
+#else
+        uint32_t hash = info.clusterId;
+        hash ^= hash >> 16u;
         hash *= 0x7feb352du;
-        hash ^= hash >> 15;
+        hash ^= hash >> 15u;
         hash *= 0x846ca68bu;
-        hash ^= hash >> 16;
+        hash ^= hash >> 16u;
 
         color.x = static_cast<unsigned char>(64u + (hash & 0xbfu));
         color.y = static_cast<unsigned char>(64u + ((hash >> 8u) & 0xbfu));
         color.z = static_cast<unsigned char>(64u + ((hash >> 16u) & 0xbfu));
-    }
 #endif
+    }
+
+    uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
+    const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
     image[pixelIndex] = color;
 
     // for (int depth = 0; depth < maxDepth; depth++)

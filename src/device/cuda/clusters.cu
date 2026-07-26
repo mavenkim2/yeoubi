@@ -37,13 +37,11 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                    DataContainer *container,
                    const Mesh &mesh,
                    const MeshletClustersResult &clusterResult,
-                   size_t &totalOutputSizeOut,
                    OptixTraversableHandle &outputHandleOut)
 {
     YBI_ASSERT(cudaDevice);
     YBI_ASSERT(container);
 
-    totalOutputSizeOut = 0;
     outputHandleOut = {};
 
     const BufferHandle positionHandle = mesh.GetPositionsHandle();
@@ -51,7 +49,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     YBI_ASSERT(positionHandle.index < container->meshPositions.size());
 
     const Array<Vec3f> &positions = container->meshPositions[positionHandle.index];
-    const size_t meshletCount = clusterResult.meshletCount;
+    const size_t meshletCount = clusterResult.meshlets.size();
     const uint32_t vertexCount = static_cast<uint32_t>(positions.size());
     if (meshletCount == 0 || vertexCount == 0)
     {
@@ -62,8 +60,8 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     size_t totalIndexBound = 0;
     for (size_t i = 0; i < meshletCount; i++)
     {
-        totalVertexBound += clusterResult.meshlets[i].vertex_count;
-        totalIndexBound += clusterResult.meshlets[i].triangle_count * 3u;
+        totalVertexBound += clusterResult.meshlets[i].vertexCount;
+        totalIndexBound += clusterResult.meshlets[i].triangleCount * 3u;
     }
 
     std::vector<DeviceBuffer> temporaryBuffers;
@@ -77,15 +75,6 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(devicePositions.Data()), positions.data(), vertexCount * sizeof(Vec3f)));
 
-    std::vector<Meshlet> hostMeshletDescs(meshletCount);
-    for (size_t i = 0; i < meshletCount; i++)
-    {
-        hostMeshletDescs[i].vertexOffset = clusterResult.meshlets[i].vertex_offset;
-        hostMeshletDescs[i].triangleOffset = clusterResult.meshlets[i].triangle_offset;
-        hostMeshletDescs[i].vertexCount = clusterResult.meshlets[i].vertex_count;
-        hostMeshletDescs[i].triangleCount = clusterResult.meshlets[i].triangle_count;
-    }
-
     const size_t meshletVerticesSize = clusterResult.meshletVertices.size();
     const size_t meshletTrianglesSize = clusterResult.meshletTriangles.size();
 
@@ -97,7 +86,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     DeviceBuffer nextIndexOffset = allocTemporary(sizeof(unsigned int));
 
     CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceMeshlets.Data()),
-                             hostMeshletDescs.data(),
+                             clusterResult.meshlets.data(),
                              meshletCount * sizeof(Meshlet)));
     CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceMeshletVertices.Data()),
                              clusterResult.meshletVertices.data(),
@@ -115,7 +104,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
         allocTemporary(meshletCount * sizeof(OptixClusterAccelBuildInputTrianglesArgs));
 
     WriteTriangleClusterDescriptors<<<static_cast<unsigned int>(meshletCount), 256>>>(
-        deviceMeshlets.As<MeshletDesc>().Get(),
+        deviceMeshlets.As<Meshlet>().Get(),
         deviceMeshletVertices.As<unsigned int>().Get(),
         deviceMeshletTriangles.As<uint8_t>().Get(),
         devicePositions.As<Vec3f>().Get(),
@@ -305,7 +294,6 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 
     cudaDevice->bvhTotalAllocated += gasSize;
     cudaDevice->bvhTotalAllocated += totalSize;
-    totalOutputSizeOut = totalSize;
 
     for (DeviceBuffer &buffer : temporaryBuffers)
     {
@@ -314,7 +302,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 }
 
 __global__ void
-WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
+WriteTriangleClusterDescriptors(const Meshlet *meshlets,
                                 const unsigned int *meshletVertices,
                                 const uint8_t *meshletTriangles,
                                 const Vec3f *sourcePositions,
@@ -330,7 +318,7 @@ WriteTriangleClusterDescriptors(const MeshletDesc *meshlets,
 
     for (uint32_t clusterIdx = blockIdx.x; clusterIdx < numClusters; clusterIdx += gridDim.x)
     {
-        const MeshletDesc meshlet = meshlets[clusterIdx];
+        const Meshlet meshlet = meshlets[clusterIdx];
         const unsigned int vertexCount = meshlet.vertexCount;
         const unsigned int triangleCount = meshlet.triangleCount;
 

@@ -7,8 +7,6 @@
 #include "core/bit.h"
 #include "core/math.h"
 #include "core/thread_context.h"
-#include "pxr/base/vt/types.h"
-#include "pxr/usd/usdShade/output.h"
 #include "scene/scene.h"
 #include <algorithm>
 #include <atomic>
@@ -19,7 +17,9 @@
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/frustum.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/base/vt/types.h>
 #include <pxr/usd/sdf/assetPath.h>
+#include <pxr/usd/usd/attributeQuery.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primFlags.h>
 #include <pxr/usd/usd/primRange.h>
@@ -34,6 +34,7 @@
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/output.h>
 #include <pxr/usd/usdShade/udimUtils.h>
 #include <string>
 #include <tbb/parallel_for.h>
@@ -745,9 +746,80 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
     pxr::VtIntArray faceCounts;
     pxr::TfToken subdivisionScheme;
 
-    bool result = usdMesh.GetPointsAttr().Get(&usdPositions, timeCode);
+    pxr::UsdAttribute pointsAttr = usdMesh.GetPointsAttr();
+    pxr::UsdAttributeQuery pointsQuery(pointsAttr);
+    bool isMaybeTimeVarying = pointsQuery.ValueMightBeTimeVarying();
+
+    bool result = pointsAttr.Get(&usdPositions, timeCode);
     YBI_ASSERT(result);
     YBI_ASSERT(usdPositions.size());
+
+#if 0
+    if (isMaybeTimeVarying)
+    {
+        std::vector<double> times;
+        bool noError = pointsAttr.GetTimeSamples(&times);
+        printf("num samples: %zu\n", times.size());
+        if (noError)
+        {
+            for (double time : times)
+            {
+                int maxDeltaXorA = 0;
+                int maxDeltaXorB = 0;
+                int maxDeltaXorC = 0;
+
+                uint32_t maxDeltaDeltaA = 0;
+                uint32_t maxDeltaDeltaB = 0;
+                uint32_t maxDeltaDeltaC = 0;
+
+                printf("time: %f\n", time);
+                pxr::VtVec3fArray usdTimePositions;
+                result = pointsAttr.Get(&usdTimePositions, pxr::UsdTimeCode(time));
+                YBI_ASSERT(result);
+
+                YBI_ASSERT(usdTimePositions.size() == usdPositions.size());
+                for (int i = 0; i < usdTimePositions.size(); i++)
+                {
+                    pxr::GfVec3f p0 = usdPositions[i];
+                    pxr::GfVec3f p1 = usdTimePositions[i];
+
+                    pxr::GfVec3f test = p1 - p0;
+
+                    int a = FloatToBits(p0[0]);
+                    int b = FloatToBits(p0[1]);
+                    int c = FloatToBits(p0[2]);
+
+                    int d = FloatToBits(p1[0]);
+                    int e = FloatToBits(p1[1]);
+                    int f = FloatToBits(p1[2]);
+
+                    // printf("%f %f %f\n", test[0], test[1], test[2]);
+                    // printf("%u %u %u\n", a ^ d, b ^ e, c ^ f);
+                    // printf("%u %u %u\n",
+                    //        ZigZagEncode(d - a),
+                    //        ZigZagEncode(e - b),
+                    //        ZigZagEncode(f - c));
+
+                    maxDeltaXorA = Max(maxDeltaXorA, a ^ d);
+                    maxDeltaXorB = Max(maxDeltaXorB, b ^ e);
+                    maxDeltaXorC = Max(maxDeltaXorC, c ^ f);
+
+                    maxDeltaDeltaA = Max(maxDeltaDeltaA, ZigZagEncode(d - a));
+                    maxDeltaDeltaB = Max(maxDeltaDeltaB, ZigZagEncode(e - b));
+                    maxDeltaDeltaC = Max(maxDeltaDeltaC, ZigZagEncode(f - c));
+                }
+                printf("xor: %i %i %i, delta: %u %u %u\n",
+                       maxDeltaXorA,
+                       maxDeltaXorB,
+                       maxDeltaXorC,
+                       maxDeltaDeltaA,
+                       maxDeltaDeltaB,
+                       maxDeltaDeltaC);
+            }
+        }
+        printf("end\n");
+    }
+#endif
 
     Array<Vec3f> positions(usdPositions.size());
     memcpy(positions.data(), usdPositions.data(), sizeof(Vec3f) * usdPositions.size());

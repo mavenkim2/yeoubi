@@ -30,7 +30,7 @@ struct View
 
     T &operator[](size_t index)
     {
-        YBI_ASSERT(index < count);
+        YBI_ERROR(index < count, "index: %zu, count: %zu\n", index, count);
         return ptr[index];
     }
     T &operator[](size_t index) const

@@ -127,8 +127,10 @@ struct CUDADevice : Device
     // CLAS BVHs
     bool SupportsClusterBVHs() const override;
     BVHHandle BuildClusterBVH(DeviceArena *deviceArena,
-                              const DataContainer *container,
-                              const Mesh &mesh) const override;
+                              DataContainer *container,
+                              const Mesh &mesh,
+                              const MeshletClustersResult &clusterResult) override;
+    size_t GetBVHAllocationSize() const override;
 };
 
 } // namespace ybi

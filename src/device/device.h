@@ -20,6 +20,7 @@ struct DataContainer;
 struct DisplayBuffer;
 struct Instance;
 class Mesh;
+struct MeshletClustersResult;
 
 enum class DeviceKind
 {
@@ -161,8 +162,11 @@ struct Device
 
     virtual bool SupportsClusterBVHs() const = 0;
     virtual BVHHandle BuildClusterBVH(DeviceArena *deviceArena,
-                                      const DataContainer *container,
-                                      const Mesh &mesh) const = 0;
+                                      DataContainer *container,
+                                      const Mesh &mesh,
+                                      const MeshletClustersResult &clusterResult) = 0;
+
+    virtual size_t GetBVHAllocationSize() const = 0;
 };
 
 } // namespace ybi

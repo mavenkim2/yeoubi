@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
+#include "core/math.h"
 #include "device/cuda_compat.h"
 #include <cmath>
 #include <cstddef>
@@ -174,6 +175,21 @@ YBI_CPU_GPU Vec3f Normalize(Vec3f vector)
 YBI_CPU_GPU constexpr Vec3f Lerp(Vec3f a, Vec3f b, float t)
 {
     return a + (b - a) * t;
+}
+
+YBI_CPU_GPU constexpr Vec3f Min(Vec3f a, Vec3f b)
+{
+    return Vec3f(ybi::Min<float>(a.x, b.x), ybi::Min<float>(a.y, b.y), ybi::Min<float>(a.z, b.z));
+}
+
+YBI_CPU_GPU constexpr Vec3f Max(Vec3f a, Vec3f b)
+{
+    return Vec3f(ybi::Max<float>(a.x, b.x), ybi::Max<float>(a.y, b.y), ybi::Max<float>(a.z, b.z));
+}
+
+YBI_CPU_GPU constexpr Vec3f Abs(Vec3f v)
+{
+    return Vec3f(ybi::Abs(v.x), ybi::Abs(v.y), ybi::Abs(v.z));
 }
 
 } // namespace ybi

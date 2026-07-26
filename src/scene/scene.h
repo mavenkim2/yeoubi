@@ -134,6 +134,7 @@ struct DataContainer
     std::vector<Array<int>> meshUVIndices;
     std::vector<Array<int>> meshTriangleIndices;
     std::vector<Array<int>> meshFaceMaterialIndices;
+    std::vector<Array<uint8_t>> compressedClusterBytes;
     std::vector<Material> materials;
     Curve *curves;
     SubdivisionMesh *subdivisionMeshes;
@@ -143,7 +144,9 @@ struct DataContainer
 
     Array<BVH> &GetBVHs(GeometryType type);
     const Array<Vec3f> &GetMeshPositions(const Mesh &mesh) const;
+    const Array<Vec3f> &GetMeshNormals(const Mesh &mesh) const;
     const Array<int> &GetMeshIndices(const Mesh &mesh) const;
+    const Array<int> &GetMeshUVIndices(const Mesh &mesh) const;
 };
 
 struct Scene
@@ -195,32 +198,6 @@ struct DataCache
         hashToIndex.emplace(hash, storedIndex);
         return ~0ull;
     }
-};
-
-struct GeometryManager
-{
-    void Update(Device *device,
-                DeviceArena *deviceArena,
-                DataContainer *container,
-                Scene *rootScene,
-                DeviceScene *deviceScene);
-};
-
-struct RenderSystem
-{
-    Scene *rootScene;
-    DataContainer *dataContainer;
-
-    DeviceScene deviceScene;
-
-    Device *device;
-    std::unique_ptr<DeviceArena> deviceArena;
-
-    // Data managers
-    GeometryManager geometryManager;
-
-    RenderSystem(Device *device, DataContainer *container, Scene *rootScene);
-    void Update();
 };
 
 } // namespace ybi
