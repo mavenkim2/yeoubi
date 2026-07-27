@@ -44,7 +44,7 @@
         if (!(expr)) \
         { \
             LOG_ERROR_INTERNAL("FATAL ERROR", expr, ""); \
-            fprintf(stderr, msg, ##__VA_ARGS__); \
+            printf(msg, ##__VA_ARGS__); \
             BREAK_IN_DEBUGGER(); \
         } \
     } while (0)
@@ -52,8 +52,8 @@
 #define YBI_LOGFATAL(msg, ...) \
     do \
     { \
-        fprintf(stderr, "[%s] %s:%d\n", "FATAL ERROR", __FILE__, __LINE__); \
-        fprintf(stderr, msg, ##__VA_ARGS__); \
+        printf("[%s] %s:%d\n", "FATAL ERROR", __FILE__, __LINE__); \
+        printf(msg, ##__VA_ARGS__); \
         BREAK_IN_DEBUGGER(); \
     } while (0)
 

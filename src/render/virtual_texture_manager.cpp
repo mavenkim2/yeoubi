@@ -175,30 +175,15 @@ int VirtualTextureManager::CalculatePageDescriptorIndex(uint32_t textureIndex,
                                                         uint32_t tileY,
                                                         uint32_t mip) const
 {
-    // TODO
     const int pageShift = 7;
     const TextureDescriptor &textureDescriptor = textureDescriptors[textureIndex];
+    const VirtualTextureFileHeader &header = textureDescriptor.tileFileHeader;
+    YBI_ASSERT(mip < header.numMips);
 
-    uint32_t width = textureDescriptor.tileFileHeader.width;
-    uint32_t height = textureDescriptor.tileFileHeader.height;
-    if (IsPowerOfTwo(width) && IsPowerOfTwo(height))
-    {
-        uint32_t offset = 0;
-
-        for (uint32_t i = 0; i < mip; i++)
-        {
-            offset += (width >> pageShift) * (height >> pageShift);
-            width >>= 1;
-            height >>= 1;
-        }
-        offset += tileY * (width >> pageShift) + tileX;
-        return textureDescriptor.pageDescriptorOffset + offset;
-    }
-    else
-    {
-        YBI_LOGFATAL("Non power of two textures not supported\n");
-        return 0;
-    }
+    const uint32_t offset =
+        CalculatePageDescriptorOffset(header.width, header.height, mip, pageShift, tileX, tileY);
+    YBI_ASSERT(offset < header.numPages);
+    return static_cast<int>(textureDescriptor.pageDescriptorOffset + offset);
 }
 
 MaterialTextureHandle
@@ -251,6 +236,12 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
         YBI_ASSERT(header.magic == YBVT_MAGIC);
         YBI_ASSERT(header.version == 1);
         YBI_ASSERT(header.numPages > 0);
+        YBI_ASSERT(header.width > 0);
+        YBI_ASSERT(header.height > 0);
+        YBI_ASSERT(header.pageSize == static_cast<uint32_t>(pageSize));
+        YBI_ASSERT(header.numMips > 0 && header.numMips <= 16);
+        YBI_ASSERT(CalculateVirtualTexturePageCount(header.width, 7) <= 256);
+        YBI_ASSERT(CalculateVirtualTexturePageCount(header.height, 7) <= 256);
 
         descriptor.tileFileHeader = header;
         descriptor.pageEntries.Resize(header.numPages);

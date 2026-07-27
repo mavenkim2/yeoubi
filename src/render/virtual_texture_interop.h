@@ -49,6 +49,20 @@ struct FeedbackRequest
     uint32_t tileX_tileY_mip;
 };
 
+YBI_CPU_GPU uint32_t CalculateVirtualTexturePageCount(uint32_t dimension, uint32_t pageShift)
+{
+    YBI_ASSERT(pageShift < 32u);
+    YBI_ASSERT(dimension > 0u);
+
+    if (dimension == 0u)
+    {
+        return 0u;
+    }
+
+    // Ceiling division by the power-of-two page size without overflowing dimension.
+    return (dimension + (1u << pageShift) - 1u) >> pageShift;
+}
+
 YBI_CPU_GPU uint32_t CalculatePageDescriptorOffset(uint32_t width,
                                                    uint32_t height,
                                                    uint32_t mip,
@@ -56,17 +70,27 @@ YBI_CPU_GPU uint32_t CalculatePageDescriptorOffset(uint32_t width,
                                                    uint32_t pageX,
                                                    uint32_t pageY)
 {
-    YBI_ASSERT(IsPowerOfTwo(width) && IsPowerOfTwo(height));
+    YBI_ASSERT(width > 0u && height > 0u);
+
+    uint32_t initialWidth = width;
+    uint32_t initialHeight = height;
 
     uint32_t offset = 0;
     for (uint32_t i = 0; i < mip; i++)
     {
-        offset += (width >> pageShift) * (height >> pageShift);
-        width >>= 1;
-        height >>= 1;
+        const uint32_t pagesX = CalculateVirtualTexturePageCount(width, pageShift);
+        const uint32_t pagesY = CalculateVirtualTexturePageCount(height, pageShift);
+        offset += pagesX * pagesY;
+        width = width > 1u ? width >> 1u : 1u;
+        height = height > 1u ? height >> 1u : 1u;
     }
 
-    return offset + pageY * (width >> pageShift) + pageX;
+    const uint32_t pagesX = CalculateVirtualTexturePageCount(width, pageShift);
+    const uint32_t pagesY = CalculateVirtualTexturePageCount(height, pageShift);
+    YBI_ERROR(pageX < pagesX, "%u %u, %u %u %u\n", pageX, pagesX, initialWidth, initialHeight, mip);
+    YBI_ERROR(pageY < pagesY, "%u %u, %u %u\n", pageY, pagesY);
+
+    return offset + pageY * pagesX + pageX;
 }
 
 YBI_CPU_GPU FeedbackRequest PackFeedbackRequest(uint32_t textureIndex,

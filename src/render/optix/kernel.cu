@@ -64,7 +64,13 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
                                                UnpackedFeedbackRequest *request = nullptr)
 {
     const uint32_t pageSize = (1u << pageShift);
-    const Vec2f normalizedUv = uv - Floor(uv);
+    Vec2f normalizedUv = uv - Floor(uv);
+    // Floating-point cancellation can make fract(uv) exactly 1 for values just below an
+    // integer, particularly for negative or large UVs. Keep the repeated coordinate in
+    // [0, 1) so it cannot produce a one-past-the-end texel or page.
+    constexpr float maxNormalizedUv = 0x1.fffffep-1f;
+    normalizedUv.x = Clamp(normalizedUv.x, 0.f, maxNormalizedUv);
+    normalizedUv.y = Clamp(normalizedUv.y, 0.f, maxNormalizedUv);
 
     uint32_t mipWidth = descriptor.width >> mip;
     uint32_t mipHeight = descriptor.height >> mip;
@@ -95,7 +101,11 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
                                                               pageShift,
                                                               static_cast<uint32_t>(page.x),
                                                               static_cast<uint32_t>(page.y));
-    assert(pageOffset < descriptor.pageDescriptorCount);
+    if (pageOffset >= descriptor.pageDescriptorCount)
+    {
+        printf("%u %u\n", pageOffset, descriptor.pageDescriptorCount);
+        assert(pageOffset < descriptor.pageDescriptorCount);
+    }
     const uint32_t pageIndex = descriptor.pageDescriptorOffset + pageOffset;
 
     if (request)
@@ -208,8 +218,7 @@ struct ShadingInfo
     bool hasMaterial;
 };
 
-YBI_GPU static Vec3u GetTriangleVertexIndices(const Object &object,
-                                              const IntersectionInfo &info)
+YBI_GPU static Vec3u GetTriangleVertexIndices(const Object &object, const IntersectionInfo &info)
 {
     const uint32_t offset = object.triangleIndexOffset + 3u * info.primIndex;
     return Vec3u(static_cast<uint32_t>(params.scene.triangleIndices[offset]),
@@ -217,9 +226,8 @@ YBI_GPU static Vec3u GetTriangleVertexIndices(const Object &object,
                  static_cast<uint32_t>(params.scene.triangleIndices[offset + 2u]));
 }
 
-YBI_GPU static void GetTrianglePositions(const Object &object,
-                                         const Vec3u &vertexIndices,
-                                         Vec3f positions[3])
+YBI_GPU static void
+GetTrianglePositions(const Object &object, const Vec3u &vertexIndices, Vec3f positions[3])
 {
     for (uint32_t i = 0; i < 3u; i++)
     {
@@ -405,9 +413,8 @@ YBI_GPU static bool GetClusteredTriangleUVs(const Object &object,
     return true;
 }
 
-YBI_GPU static bool GetTriangleMaterial(const Object &object,
-                                        uint32_t triangleIndex,
-                                        DeviceMaterial &material)
+YBI_GPU static bool
+GetTriangleMaterial(const Object &object, uint32_t triangleIndex, DeviceMaterial &material)
 {
     if (object.triangleMaterialOffset != ~0u)
     {
@@ -429,8 +436,7 @@ YBI_GPU static bool GetClusteredTriangleMaterial(const IntersectionInfo &info,
                                                  const uint8_t *clusterData,
                                                  DeviceMaterial &material)
 {
-    const uint32_t materialIndex =
-        cluster.DecodeMaterialID(clusterData, info.primIndex);
+    const uint32_t materialIndex = cluster.DecodeMaterialID(clusterData, info.primIndex);
     if (materialIndex == DEVICE_CLUSTER_INVALID_MATERIAL_ID)
     {
         return false;
@@ -446,11 +452,9 @@ YBI_GPU static void GetTriangleShadingInfo(const Object &object,
 {
     const Vec3u vertexIndices = GetTriangleVertexIndices(object, info);
     GetTrianglePositions(object, vertexIndices, shadingInfo.positions);
-    shadingInfo.hasNormals =
-        GetTriangleNormals(object, info, vertexIndices, shadingInfo.normals);
+    shadingInfo.hasNormals = GetTriangleNormals(object, info, vertexIndices, shadingInfo.normals);
     shadingInfo.hasUvs = GetTriangleUVs(object, info, vertexIndices, shadingInfo.uvs);
-    shadingInfo.hasMaterial =
-        GetTriangleMaterial(object, info.primIndex, shadingInfo.material);
+    shadingInfo.hasMaterial = GetTriangleMaterial(object, info.primIndex, shadingInfo.material);
 }
 
 YBI_GPU static void GetClusteredShadingInfo(const Object &object,
@@ -479,8 +483,7 @@ GetShadingInfo(const Object &object, const IntersectionInfo &info, ShadingInfo &
         const DeviceCluster &cluster = params.scene.compressedClusters[clusterIndex];
         const uint8_t *clusterData = params.scene.compressedClusterBytes + cluster.byteOffset;
         const Vec3u vertexIndices = cluster.DecodeTriangle(clusterData, info.primIndex);
-        GetClusteredShadingInfo(
-            object, info, cluster, clusterData, vertexIndices, shadingInfo);
+        GetClusteredShadingInfo(object, info, cluster, clusterData, vertexIndices, shadingInfo);
     }
     else
     {
@@ -682,8 +685,8 @@ extern "C" __global__ void __raygen__kernel()
                                               rayDirection,
                                               shadingNormal,
                                               rayCone.width,
-                                              params.imageWidth,
-                                              params.imageHeight);
+                                              textureDescriptor.width,
+                                              textureDescriptor.height);
 
                 const uint32_t maxMip =
                     CalculateMaxVirtualTextureMip(textureDescriptor, pageShift);
@@ -735,14 +738,6 @@ extern "C" __global__ void __raygen__kernel()
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
     image[pixelIndex] = color;
-
-    // for (int depth = 0; depth < maxDepth; depth++)
-    // {
-    // optixTraverse(, );
-    // }
-
-    // Generate a ray from the camera
-    // Intersect the scene using the ray
 }
 
 } // namespace ybi
