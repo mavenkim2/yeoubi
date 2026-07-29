@@ -21,6 +21,8 @@ struct DeviceMaterial
     // NOTE: = ~0u if no udims
     uint32_t udimBase;
     uint32_t udimTableOffset;
+
+    bool valid;
 };
 
 struct Object

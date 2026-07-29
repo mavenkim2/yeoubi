@@ -52,6 +52,9 @@ int main(int argc, char **argv)
         MaterialTextureHandle handle = manager.AddTexture(mat.diffuseUdimPaths);
         mat.udimBase = handle.udimBase;
         mat.udimTableOffset = handle.udimTableOffset;
+
+        // TODO: this disables materials with no diffuse map. support actual materials
+        mat.valid = mat.udimBase != 0u;
     }
     manager.Finalize();
 

@@ -27,6 +27,8 @@ struct Material
     std::vector<std::pair<std::string, uint32_t>> diffuseUdimPaths;
     uint32_t udimBase = 0;
     uint32_t udimTableOffset = 0;
+
+    bool valid;
 };
 
 enum class GeometryType

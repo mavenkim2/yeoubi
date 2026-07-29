@@ -45,9 +45,9 @@ void ClusterizeMesh(const DataContainer *container,
     YBI_ASSERT(indexCount);
     YBI_ASSERT(vertexCount);
 
-    const size_t maxVertices = 256;
-    const size_t minTriangles = 64;
-    const size_t maxTriangles = 128;
+    const size_t maxVertices = DEVICE_CLUSTER_MAX_VERTICES;
+    const size_t minTriangles = DEVICE_CLUSTER_MAX_TRIANGLES / 2u;
+    const size_t maxTriangles = DEVICE_CLUSTER_MAX_TRIANGLES;
     const float fillWeight = 0.5f;
 
     const size_t meshletCountBound =
@@ -433,23 +433,6 @@ struct TriangleOrderingResult
     Array<int> rotations;
     Array<TriangleStripType> stripTypes;
 };
-
-static bool TempTest(unsigned char a, unsigned char b, unsigned char c)
-{
-    if (a == 54 && b == 13)
-    {
-        return true;
-    }
-    else if (b == 54 && c == 13)
-    {
-        return true;
-    }
-    else if (c == 54 && a == 13)
-    {
-        return true;
-    }
-    return false;
-}
 
 static void CalculateTriangleStripOrder(TriangleAdjacency &adjacency,
                                         const MeshletClustersResult &clusters,

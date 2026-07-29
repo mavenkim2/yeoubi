@@ -72,9 +72,6 @@ YBI_CPU_GPU uint32_t CalculatePageDescriptorOffset(uint32_t width,
 {
     YBI_ASSERT(width > 0u && height > 0u);
 
-    uint32_t initialWidth = width;
-    uint32_t initialHeight = height;
-
     uint32_t offset = 0;
     for (uint32_t i = 0; i < mip; i++)
     {
@@ -87,8 +84,8 @@ YBI_CPU_GPU uint32_t CalculatePageDescriptorOffset(uint32_t width,
 
     const uint32_t pagesX = CalculateVirtualTexturePageCount(width, pageShift);
     const uint32_t pagesY = CalculateVirtualTexturePageCount(height, pageShift);
-    YBI_ERROR(pageX < pagesX, "%u %u, %u %u %u\n", pageX, pagesX, initialWidth, initialHeight, mip);
-    YBI_ERROR(pageY < pagesY, "%u %u, %u %u\n", pageY, pagesY);
+    YBI_ASSERT(pageX < pagesX);
+    YBI_ASSERT(pageY < pagesY);
 
     return offset + pageY * pagesX + pageX;
 }

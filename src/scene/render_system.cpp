@@ -1,4 +1,5 @@
 #include "scene/render_system.h"
+#include "core/assert.h"
 #include "core/bit.h"
 #include "core/octahedral.h"
 #include "core/thread_context.h"
@@ -178,6 +179,7 @@ void GeometryManager::Update(Device *device,
         DeviceMaterial &deviceMaterial = hostMaterials[materialIndex];
         deviceMaterial.udimBase = material.udimBase;
         deviceMaterial.udimTableOffset = material.udimTableOffset;
+        deviceMaterial.valid = material.valid;
     }
 
     std::vector<uint32_t> positionOffsets;

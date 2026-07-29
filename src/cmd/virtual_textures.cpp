@@ -8,7 +8,7 @@
 #include "render/virtual_texture_file.h"
 #include "scene/scene.h"
 #include "scene/texture.h"
-#include <unordered_set>
+#include <unordered_map>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define TINYEXR_IMPLEMENTATION
@@ -306,7 +306,7 @@ static void LoadEXRFile(Image *texture, std::string filename)
     texture->numBytesPerChannel = 4;
 }
 
-static void ProcessTexture(Arena &arena, const std::string &filename)
+static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t udim)
 {
     std::string ext = std::filesystem::path(filename).extension().string();
     Image texture;
@@ -360,6 +360,7 @@ static void ProcessTexture(Arena &arena, const std::string &filename)
     *header = {};
     header->magic = YBVT_MAGIC;
     header->version = 1;
+    header->udim = udim;
     header->pageSize = pageSize;
     header->width = texture.width;
     header->height = texture.height;
@@ -422,30 +423,30 @@ static void Run(const std::string &filename)
     Scene *scene = sceneLoader->LoadScene(&arena, &container);
     (void)scene;
 
-    std::vector<std::string> filenames;
-    std::unordered_map<std::string, std::string> sss;
+    std::vector<std::pair<std::string, uint32_t>> textures;
+    std::unordered_map<std::string, uint32_t> filenameToUdim;
     for (const Material &material : container.materials)
     {
         for (const auto &[diffuseUdimPath, udim] : material.diffuseUdimPaths)
         {
             YBI_ASSERT(!diffuseUdimPath.empty());
-            auto it = sss.find(diffuseUdimPath);
-            if (it == sss.end())
+            auto [it, inserted] = filenameToUdim.emplace(diffuseUdimPath, udim);
+            if (inserted)
             {
-                filenames.push_back(diffuseUdimPath);
-                sss.insert({diffuseUdimPath, material.path});
+                textures.emplace_back(diffuseUdimPath, udim);
             }
             else
             {
-                // printf("%s %s %s\n\n",
-                //        diffuseUdimPath.c_str(),
-                //        material.path.c_str(),
-                //        it->second.c_str());
+                YBI_ERROR(it->second == udim,
+                          "Texture has conflicting UDIM values: %s (%u and %u)\n",
+                          diffuseUdimPath.c_str(),
+                          it->second,
+                          udim);
             }
         }
     }
 
-    const size_t totalTextures = filenames.size();
+    const size_t totalTextures = textures.size();
     printf("Num materials: %zu\n", container.materials.size());
     printf("Virtual textures: 0/%zu\n", totalTextures);
     if (totalTextures == 0)
@@ -456,9 +457,10 @@ static void Run(const std::string &filename)
     std::atomic<size_t> numFinished = 0;
     std::mutex progressMutex;
 
-    tbb::parallel_for(size_t(0), filenames.size(), [&](size_t i) {
+    tbb::parallel_for(size_t(0), textures.size(), [&](size_t i) {
         ScratchArena scratch;
-        ProcessTexture(*scratch.arena, filenames[i]);
+        const auto &[textureFilename, udim] = textures[i];
+        ProcessTexture(*scratch.arena, textureFilename, udim);
 
         const size_t finished = numFinished.fetch_add(1) + 1;
         {

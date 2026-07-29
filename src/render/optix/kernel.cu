@@ -61,7 +61,10 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
                                                uint32_t pageShift,
                                                Vec2f uv,
                                                uint32_t mip,
-                                               UnpackedFeedbackRequest *request = nullptr)
+                                               UnpackedFeedbackRequest *request = nullptr,
+                                               uint32_t udimTableIndex = 0,
+                                               uint32_t base = 0,
+                                               uint32_t offset = 0)
 {
     const uint32_t pageSize = (1u << pageShift);
     Vec2f normalizedUv = uv - Floor(uv);
@@ -103,7 +106,18 @@ YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descripto
                                                               static_cast<uint32_t>(page.y));
     if (pageOffset >= descriptor.pageDescriptorCount)
     {
-        printf("%u %u\n", pageOffset, descriptor.pageDescriptorCount);
+        printf("%u %u, %u: %u %u %f %f %f %f, %u %u\n",
+               pageOffset,
+               descriptor.pageDescriptorCount,
+               udimTableIndex,
+               descriptor.width,
+               descriptor.height,
+               page.x,
+               page.y,
+               uv.x,
+               uv.y,
+               base,
+               offset);
         assert(pageOffset < descriptor.pageDescriptorCount);
     }
     const uint32_t pageIndex = descriptor.pageDescriptorOffset + pageOffset;
@@ -614,7 +628,7 @@ extern "C" __global__ void __raygen__kernel()
 
         DeviceMaterial &material = shadingInfo.material;
 
-        if (shadingInfo.hasMaterial)
+        if (shadingInfo.hasMaterial && material.valid)
         {
             if (shadingInfo.hasUvs)
             {
@@ -704,10 +718,22 @@ extern "C" __global__ void __raygen__kernel()
 
                 // TODO: don't hardcode
                 UnpackedFeedbackRequest lowR, highR;
-                Vec4f lowerValue =
-                    SamplePointVirtualTexture(textureDescriptor, pageShift, uv, baseMip, &lowR);
-                Vec4f higherValue =
-                    SamplePointVirtualTexture(textureDescriptor, pageShift, uv, nextMip, &highR);
+                Vec4f lowerValue = SamplePointVirtualTexture(textureDescriptor,
+                                                             pageShift,
+                                                             uv,
+                                                             baseMip,
+                                                             &lowR,
+                                                             udimTableIndex,
+                                                             material.udimBase,
+                                                             material.udimTableOffset);
+                Vec4f higherValue = SamplePointVirtualTexture(textureDescriptor,
+                                                              pageShift,
+                                                              uv,
+                                                              nextMip,
+                                                              &highR,
+                                                              udimTableIndex,
+                                                              material.udimBase,
+                                                              material.udimTableOffset);
 
                 WriteUniqueFeedback(lowR);
                 WriteUniqueFeedback(highR);

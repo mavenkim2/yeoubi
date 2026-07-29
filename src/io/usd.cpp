@@ -11,11 +11,13 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <pxr/base/gf/camera.h>
 #include <pxr/base/gf/frustum.h>
+#include <pxr/base/tf/stringUtils.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/base/vt/types.h>
 #include <pxr/usd/sdf/assetPath.h>
@@ -32,10 +34,14 @@
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdShade/connectableAPI.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
+#include <pxr/usd/usdShade/nodeGraph.h>
 #include <pxr/usd/usdShade/output.h>
+#include <pxr/usd/usdShade/shader.h>
 #include <pxr/usd/usdShade/udimUtils.h>
+#include <pxr/usd/usdShade/utils.h>
 #include <string>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
@@ -44,6 +50,13 @@
 
 namespace ybi
 {
+
+static const pxr::TfToken stToken("st", pxr::TfToken::Immortal);
+static const pxr::TfToken map1Token("map1", pxr::TfToken::Immortal);
+static const pxr::TfToken usdTransform2dToken("UsdTransform2d", pxr::TfToken::Immortal);
+static const pxr::TfToken usdPrimvarReaderFloat2Token("UsdPrimvarReader_float2",
+                                                      pxr::TfToken::Immortal);
+static const pxr::TfToken varnameToken("varname", pxr::TfToken::Immortal);
 
 #define USD_CONCURRENT_MESH_LOAD
 #define USD_YBI_ASSERT(expr) expr
@@ -268,6 +281,125 @@ static pxr::UsdShadeShader GetMaterialSurfaceSourceShader(const pxr::UsdShadeMat
     return shader;
 }
 
+static std::string DebugMaterialValue(const pxr::UsdShadeInput &input)
+{
+    pxr::VtValue value;
+    if (!input.Get(&value))
+    {
+        return {};
+    }
+
+    std::string result = pxr::TfStringify(value);
+    constexpr size_t maxLength = 160;
+    if (result.size() > maxLength)
+    {
+        result.resize(maxLength);
+        result += "...";
+    }
+    return result;
+}
+
+static void DumpMaterialShader(const pxr::UsdShadeShader &shader,
+                               int depth,
+                               std::unordered_set<std::string> &visitedShaders)
+{
+    if (!shader)
+    {
+        return;
+    }
+
+    const std::string shaderPath = shader.GetPath().GetString();
+    pxr::TfToken shaderId;
+    shader.GetShaderId(&shaderId);
+
+    printf("%*sShader %s [%s]", depth * 2, "", shaderPath.c_str(), shaderId.GetText());
+    if (!visitedShaders.insert(shaderPath).second)
+    {
+        printf(" (already shown)\n");
+        return;
+    }
+    printf("\n");
+
+    for (const pxr::UsdShadeInput &input : shader.GetInputs())
+    {
+        const std::string value = DebugMaterialValue(input);
+        const pxr::UsdShadeSourceInfoVector sources = input.GetConnectedSources();
+
+        printf("%*s+- input %s : %s",
+               (depth + 1) * 2,
+               "",
+               input.GetBaseName().GetText(),
+               input.GetTypeName().GetAsToken().GetText());
+        if (!value.empty())
+        {
+            printf(" = %s", value.c_str());
+        }
+
+        if (sources.empty())
+        {
+            printf("\n");
+            continue;
+        }
+        printf("\n");
+
+        for (const pxr::UsdShadeConnectionSourceInfo &source : sources)
+        {
+            const pxr::UsdPrim sourcePrim = source.source.GetPrim();
+            printf("%*s<- %s.%s (%s)\n",
+                   (depth + 2) * 2,
+                   "",
+                   sourcePrim.GetPath().GetText(),
+                   source.sourceName.GetText(),
+                   source.sourceType == pxr::UsdShadeAttributeType::Output ? "output" : "input");
+
+            if (sourcePrim.IsA<pxr::UsdShadeShader>())
+            {
+                DumpMaterialShader(pxr::UsdShadeShader(sourcePrim), depth + 3, visitedShaders);
+                continue;
+            }
+
+            if (sourcePrim.IsA<pxr::UsdShadeNodeGraph>())
+            {
+                const pxr::UsdShadeNodeGraph nodeGraph(sourcePrim);
+                const pxr::UsdShadeOutput output = nodeGraph.GetOutput(source.sourceName);
+                for (const pxr::UsdAttribute &attribute :
+                     pxr::UsdShadeUtils::GetValueProducingAttributes(output))
+                {
+                    const pxr::UsdPrim producerPrim = attribute.GetPrim();
+                    if (producerPrim.IsA<pxr::UsdShadeShader>())
+                    {
+                        DumpMaterialShader(
+                            pxr::UsdShadeShader(producerPrim), depth + 3, visitedShaders);
+                    }
+                }
+                continue;
+            }
+
+            if (source.sourceType == pxr::UsdShadeAttributeType::Input)
+            {
+                const pxr::UsdShadeInput sourceInput = source.source.GetInput(source.sourceName);
+                const std::string sourceValue = DebugMaterialValue(sourceInput);
+                if (!sourceValue.empty())
+                {
+                    printf("%*svalue = %s\n", (depth + 3) * 2, "", sourceValue.c_str());
+                }
+            }
+        }
+    }
+}
+
+static void DumpMaterialGraph(const pxr::UsdShadeMaterial &material,
+                              const pxr::UsdShadeShader &surfaceShader)
+{
+    printf("\n========== USD MATERIAL GRAPH ==========\n");
+    printf("Material %s\n", material.GetPath().GetText());
+
+    std::unordered_set<std::string> visitedShaders;
+    DumpMaterialShader(surfaceShader, 1, visitedShaders);
+
+    printf("========================================\n\n");
+}
+
 static uint32_t AddMaterialToMap(std::unordered_map<std::string, size_t> &materialMap,
                                  std::vector<pxr::UsdShadeMaterial> &materials,
                                  const pxr::UsdShadeMaterial &material)
@@ -439,7 +571,8 @@ AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
     outUVIndices->clear();
 
     pxr::UsdGeomPrimvarsAPI primvars(mesh);
-    pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(pxr::TfToken("st"));
+
+    pxr::UsdGeomPrimvar stPrimvar = primvars.GetPrimvar(stToken);
 
     if (!stPrimvar)
     {
@@ -1205,6 +1338,51 @@ static void ProcessCatmullClarkMesh(DataContainer *container,
 #endif
 }
 
+static void ParseSTInput(const pxr::UsdShadeShader &shader)
+{
+    pxr::UsdShadeInput stInput = shader.GetInput(stToken);
+    if (!stInput)
+    {
+        for (pxr::UsdShadeInput input : shader.GetInputs())
+        {
+            printf("%s\n", input.GetFullName().GetText());
+        }
+        return;
+    }
+
+    pxr::UsdShadeConnectableAPI sourceNode;
+    pxr::TfToken sourceOutputName;
+    pxr::UsdShadeAttributeType sourceType;
+
+    if (stInput.GetConnectedSource(&sourceNode, &sourceOutputName, &sourceType))
+    {
+        pxr::UsdPrim sourcePrim = sourceNode.GetPrim();
+        pxr::UsdShadeShader connectedShader(sourcePrim);
+
+        pxr::TfToken idToken;
+        connectedShader.GetShaderId(&idToken);
+
+        if (idToken == usdPrimvarReaderFloat2Token)
+        {
+            pxr::UsdShadeInput varnameInput = connectedShader.GetInput(varnameToken);
+
+            pxr::TfToken varname;
+            varnameInput.Get(&varname);
+
+            // for (auto &source : connectedShader.GetInput(varnameToken).GetConnectedSources())
+            // {
+            //     printf("boom: %s\n", source.sourceName.GetText());
+            //     // pxr::UsdShadeShader s = pxr::UsdShadeShader(source.source.GetPrim());
+            //     // printf("boom %s\n", s.GetInput(source.sourceName);
+            // }
+        }
+        if (idToken == usdTransform2dToken)
+        {
+            printf("woohoo\n");
+        }
+    }
+}
+
 static void PrintMatrix(const pxr::GfMatrix4d &d)
 {
     printf("%f %f %f %f\n % f % f % f % f\n % f % f % f % f\n % f % f % f % f\n ",
@@ -1613,18 +1791,30 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 #endif
 
     // Handle materials
+    bool dumpedDebugMaterial = false;
+    const char *debugMaterialFilter = std::getenv("YBI_DEBUG_MATERIAL");
     for (pxr::UsdShadeMaterial &material : materials)
     {
         // MaterialInfo info = {};
         // info.materialPath = material.GetPath().GetString();
         // info.packed = {};
+        Material &mat = container->materials.emplace_back();
+
         pxr::UsdShadeShader shader = GetMaterialSurfaceSourceShader(material);
         if (shader)
         {
+            const std::string materialPath = material.GetPath().GetString();
+            // if (!dumpedDebugMaterial &&
+            //     (!debugMaterialFilter ||
+            //      materialPath.find(debugMaterialFilter) != std::string::npos))
+            // {
+            //     DumpMaterialGraph(material, shader);
+            //     dumpedDebugMaterial = true;
+            // }
+
             pxr::TfToken token;
             if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
             {
-                Material &mat = container->materials.emplace_back();
                 mat.path = material.GetPath().GetString();
                 for (const pxr::UsdShadeInput &input : shader.GetInputs())
                 {
@@ -1652,6 +1842,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 
                     pxr::UsdShadeInput fileInput = shader.GetInput(pxr::TfToken("file"));
                     YBI_ASSERT(fileInput);
+
+                    ParseSTInput(shader);
 
                     pxr::SdfAssetPath assetPath;
                     bool result = fileInput.Get(&assetPath);

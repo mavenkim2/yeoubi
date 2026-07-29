@@ -218,6 +218,8 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
             const TextureDescriptor &descriptor = textureDescriptors[itr->second];
             YBI_ASSERT(descriptor.tileFileHeader.udim == udim);
             pendingTextures[count++] = {descriptor.tileFileHeader.udim, itr->second};
+            minUdim = Min(minUdim, udim);
+            maxUdim = Max(maxUdim, udim);
             continue;
         }
 
@@ -238,6 +240,7 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
         YBI_ASSERT(header.numPages > 0);
         YBI_ASSERT(header.width > 0);
         YBI_ASSERT(header.height > 0);
+        YBI_ASSERT(header.udim == udim);
         YBI_ASSERT(header.pageSize == static_cast<uint32_t>(pageSize));
         YBI_ASSERT(header.numMips > 0 && header.numMips <= 16);
         YBI_ASSERT(CalculateVirtualTexturePageCount(header.width, 7) <= 256);
@@ -252,10 +255,11 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
         YBI_ASSERT(input.good());
 
         const uint32_t textureIndex = static_cast<uint32_t>(textureDescriptors.size() - 1);
+        filenameToDescriptorMap.emplace(filename, textureIndex);
 
         pendingTextures[count++] = {udim, textureIndex};
-        minUdim = std::min(minUdim, udim);
-        maxUdim = std::max(maxUdim, udim);
+        minUdim = Min(minUdim, udim);
+        maxUdim = Max(maxUdim, udim);
     }
 
     handle.udimBase = minUdim;
