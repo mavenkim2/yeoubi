@@ -7,6 +7,7 @@
 #include "core/bit.h"
 #include "core/math.h"
 #include "core/thread_context.h"
+#include "io/usd_material.h"
 #include "scene/scene.h"
 #include <algorithm>
 #include <atomic>
@@ -39,7 +40,6 @@
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdShade/nodeGraph.h>
 #include <pxr/usd/usdShade/output.h>
-#include <pxr/usd/usdShade/shader.h>
 #include <pxr/usd/usdShade/udimUtils.h>
 #include <pxr/usd/usdShade/utils.h>
 #include <string>
@@ -211,74 +211,6 @@ static pxr::UsdShadeMaterial GetPrimMaterial(const pxr::UsdPrim &prim)
     }
 
     return material;
-}
-
-static pxr::UsdShadeShader GetMaterialSurfaceSourceShader(const pxr::UsdShadeMaterial &material)
-{
-    // for (const pxr::UsdShadeOutput &output : material.GetSurfaceOutputs())
-    // {
-    //     pxr::TfToken renderContext = output.GetRenderType();
-    //
-    //     printf("surface output: %s\n", output.GetFullName().GetText());
-    //     printf("render context: %s\n",
-    //            renderContext.IsEmpty() ? "<universal>" : renderContext.GetText());
-    //
-    //     pxr::UsdShadeConnectableAPI source;
-    //     pxr::TfToken sourceName;
-    //     pxr::UsdShadeAttributeType sourceType;
-    //
-    //     if (output.GetConnectedSource(&source, &sourceName, &sourceType))
-    //     {
-    //         pxr::UsdPrim sourcePrim = source.GetPrim();
-    //         printf("source prim: %s\n", sourcePrim.GetPath().GetText());
-    //
-    //         pxr::UsdShadeShader shader(sourcePrim);
-    //         if (shader)
-    //         {
-    //             pxr::TfToken shaderId;
-    //             shader.GetShaderId(&shaderId);
-    //             printf("shader id: %s\n", shaderId.GetText());
-    //         }
-    //
-    //         printf("source output/input name: %s\n", sourceName.GetText());
-    //     }
-    // }
-    // printf("\n");
-
-#if 0
-    pxr::UsdShadeShader mdlShader = material.ComputeSurfaceSource(pxr::TfToken("mdl"));
-
-    for (const pxr::UsdShadeInput &input : mdlShader.GetInputs())
-    {
-        printf("input: %s type: %s\n",
-               input.GetFullName().GetText(),
-               input.GetTypeName().GetAsToken().GetText());
-
-        pxr::SdfAssetPath asset;
-        if (input.Get(&asset))
-        {
-            printf("asset: %s\n", asset.GetAssetPath().c_str());
-            printf("resolved: %s\n", asset.GetResolvedPath().c_str());
-        }
-
-        pxr::VtValue value;
-        if (input.Get(&value))
-        {
-            printf("value type: %s\n", value.GetTypeName().c_str());
-        }
-    }
-#endif
-
-    pxr::UsdShadeShader shader = material.ComputeSurfaceSource(pxr::UsdShadeTokens->full);
-    if (!shader)
-    {
-        shader = material.ComputeSurfaceSource(pxr::UsdShadeTokens->preview);
-    }
-    if (!shader)
-    {
-        shader = material.ComputeSurfaceSource(pxr::UsdShadeTokens->allPurpose);
-    }
-    return shader;
 }
 
 static std::string DebugMaterialValue(const pxr::UsdShadeInput &input)
@@ -1802,7 +1734,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         // info.packed = {};
         Material &mat = container->materials.emplace_back();
 
-        pxr::UsdShadeShader shader = GetMaterialSurfaceSourceShader(material);
+        pxr::UsdShadeShader shader = GetMaterialSurfaceShader(material);
+        ProcessUsdShader(shader, timeCode);
+
         if (shader)
         {
             const std::string materialPath = material.GetPath().GetString();
@@ -1913,6 +1847,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     }
 #endif
                 }
+            }
+            else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
+            {
+                // TODO
             }
             else
             {

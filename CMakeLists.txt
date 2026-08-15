@@ -11,6 +11,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
 # Compile Options
 option(WITH_CUDA "Enable CUDA backend" OFF)
 option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
+option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
 set(YBI_DEPENDENCIES)
@@ -102,12 +103,22 @@ if (USD_ROOT)
     list (APPEND YBI_DEPENDENCIES ${OPENUSD_LIBRARIES})
 endif()
 
+# OpenPGL
+if (WITH_PATH_GUIDING)
+    find_package(openpgl CONFIG REQUIRED)
+    if (openpgl_FOUND)
+        list (APPEND YBI_DEPENDENCIES openpgl::openpgl)
+        list (APPEND YBI_COMPILE_DEFINITIONS WITH_PATH_GUIDING)
+    endif()
+endif()
+
 # Virtual textures exe
 set(YBI_MINIZ_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyexr/deps/miniz/miniz.c")
 
 add_executable(yeoubi_virtual_textures
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/virtual_textures.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/string_builder.cpp
@@ -133,10 +144,26 @@ target_compile_definitions(yeoubi_virtual_textures PRIVATE
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
 )
 
+# Generate pmj tables exe
+add_executable(yeoubi_pmj_tables
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/generate_pmj02_tables.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/pmj02.cpp
+)
+
+target_include_directories(yeoubi_pmj_tables PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_definitions(yeoubi_pmj_tables PRIVATE
+    ${YBI_COMPILE_DEFINITIONS}
+    $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
+)
+
 # Renderer exe
 add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
@@ -225,6 +252,7 @@ endif()
 target_include_directories(yeoubi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OPENUSD_INCLUDE_DIRS}
+    ${YBI_INCLUDE_DIRS}
 )
 
 target_include_directories(yeoubi SYSTEM PRIVATE
