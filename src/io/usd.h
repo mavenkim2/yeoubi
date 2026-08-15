@@ -20,6 +20,7 @@ class UsdGeomMesh;
 class UsdGeomSubset;
 class UsdGeomXformCache;
 class UsdShadeMaterial;
+class UsdShadeMaterialBindingAPI;
 PXR_NAMESPACE_CLOSE_SCOPE
 
 namespace ybi
@@ -117,6 +118,7 @@ class USDSceneLoader : public SceneLoader
                                 std::unordered_map<std::string, size_t> &materialMap,
                                 std::vector<pxr::UsdShadeMaterial> &materials,
                                 pxr::UsdTimeCode timeCode) const;
+
     void TraversePrim(USDPrimTraversalData *data,
                       pxr::UsdPrim root,
                       bool skipPrototypePrims = true) const;

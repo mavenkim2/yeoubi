@@ -1092,9 +1092,9 @@ void USDSceneLoader::GetFaceMaterialIndices(Array<int> &faceMaterialIndices,
                                             std::vector<pxr::UsdShadeMaterial> &materials,
                                             pxr::UsdTimeCode timeCode) const
 {
+
     ScratchArena faceOffsetScratch;
-    View<int> faceOffsets =
-        faceOffsetScratch.arena->PushArray<int>(faceMaterialIndices.size() + 1);
+    View<int> faceOffsets = faceOffsetScratch.arena->PushArray<int>(faceCounts.size() + 1);
     int faceOffset = 0;
 
     for (int faceIndex = 0; faceIndex < faceCounts.size(); faceIndex++)
@@ -1103,6 +1103,11 @@ void USDSceneLoader::GetFaceMaterialIndices(Array<int> &faceMaterialIndices,
         faceOffset += faceCounts[faceIndex] - 2;
     }
     faceOffsets[faceCounts.size()] = faceOffset;
+    faceMaterialIndices.Resize(faceOffset);
+    for (int &index : faceMaterialIndices)
+    {
+        index = -1;
+    }
 
     for (pxr::UsdGeomSubset subset : subsets)
     {
@@ -1129,7 +1134,8 @@ void USDSceneLoader::GetFaceMaterialIndices(Array<int> &faceMaterialIndices,
         {
             for (int offset = faceOffsets[face]; offset < faceOffsets[face + 1]; offset++)
             {
-                YBI_ASSERT(faceMaterialIndices[offset] == -1);
+                YBI_ASSERT(faceMaterialIndices[offset] == -1 ||
+                           faceMaterialIndices[offset] == materialIndex);
                 faceMaterialIndices[offset] = static_cast<int>(materialIndex);
             }
         }
@@ -1525,6 +1531,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
 
     printf("num cameras: %zu\n", data.cameras.size());
     pxr::UsdGeomCamera camera = data.cameras[0];
+
+    printf("camera name: %s\n", camera.GetPath().GetText());
     pxr::UsdPrim cameraPrim = camera.GetPrim();
     pxr::GfCamera gfCam = camera.GetCamera(timeCode);
     const float verticalFovRadians =
@@ -1532,6 +1540,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     pxr::GfFrustum frustum = gfCam.GetFrustum();
     pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
     pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
+
+    printf("fov: %f %f\n",
+           verticalFovRadians,
+           float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
 
     container->camera.cameraFromWorld = ConvertAffineTransform(viewMatrix);
     AffineTransform renderFromCamera;
@@ -1748,17 +1760,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             else
             {
-                BufferHandle indexHandle = mesh.GetIndicesHandle();
-                YBI_ASSERT(indexHandle.IsValid());
-                const Array<int> &triangleIndices =
-                    container->meshTriangleIndices[indexHandle.index];
-
                 Array<int> faceMaterialIndices;
-                faceMaterialIndices.Resize(triangleIndices.size() / 3);
-                for (int &index : faceMaterialIndices)
-                {
-                    index = -1;
-                }
 
                 pxr::VtIntArray faceCounts;
                 pxr::UsdGeomMesh usdMesh(prim);
@@ -1921,7 +1923,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         }
         else if (pxr::UsdShadeShader shader = material.ComputeSurfaceSource(pxr::TfToken("mdl")))
         {
-            YBI_ASSERT(0);
+            // YBI_ASSERT(0);
         }
         else
         {
