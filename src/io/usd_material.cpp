@@ -1,68 +1,81 @@
 #include "io/usd_material.h"
+#include "scene/openpbr_parameters.h"
 #include <pxr/base/gf/vec3f.h>
+#include <pxr/base/vt/value.h>
 #include <pxr/usd/sdr/shaderNode.h>
 #include <pxr/usd/sdr/shaderProperty.h>
 #include <pxr/usd/usdShade/material.h>
-#include <pxr/usd/usdShade/nodeGraph.h>
 #include <pxr/usd/usdShade/output.h>
 
 namespace ybi
 {
 
 static const pxr::TfToken mtlxToken("mtlx", pxr::TfToken::Immortal);
-static const pxr::TfToken previewSurfaceToken("UsdPreviewSurface", pxr::TfToken::Immortal);
 static const pxr::TfToken mtlxOpenPbr("ND_open_pbr_surface_surfaceshader", pxr::TfToken::Immortal);
 
-static const pxr::TfToken openPbrParameterTokens[] = {
-    pxr::TfToken("base_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("base_color", pxr::TfToken::Immortal),
-    pxr::TfToken("base_metalness", pxr::TfToken::Immortal),
-    pxr::TfToken("base_diffuse_roughness", pxr::TfToken::Immortal),
+struct OpenPbrParameterDescriptor
+{
+    pxr::TfToken token;
 
-    pxr::TfToken("specular_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("specular_color", pxr::TfToken::Immortal),
-    pxr::TfToken("specular_roughness", pxr::TfToken::Immortal),
-    pxr::TfToken("specular_roughness_anisotropy", pxr::TfToken::Immortal),
-    pxr::TfToken("specular_ior", pxr::TfToken::Immortal),
+    bool (*assignConstant)(OpenPbrMaterial &, const pxr::VtValue &);
 
-    pxr::TfToken("transmission_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("transmission_color", pxr::TfToken::Immortal),
-    pxr::TfToken("transmission_depth", pxr::TfToken::Immortal),
-    pxr::TfToken("transmission_scatter", pxr::TfToken::Immortal),
-    pxr::TfToken("transmission_scatter_anisotropy", pxr::TfToken::Immortal),
-    pxr::TfToken("transmission_dispersion_scale", pxr::TfToken::Immortal),
-    pxr::TfToken("transmission_dispersion_abbe_number", pxr::TfToken::Immortal),
+    void (*assignTexture)(OpenPbrMaterial &, uint32_t);
+};
 
-    pxr::TfToken("subsurface_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("subsurface_color", pxr::TfToken::Immortal),
-    pxr::TfToken("subsurface_radius", pxr::TfToken::Immortal),
-    pxr::TfToken("subsurface_radius_scale", pxr::TfToken::Immortal),
-    pxr::TfToken("subsurface_scatter_anisotropy", pxr::TfToken::Immortal),
+static bool AssignConstant(OpenPbrInput<float> &input, const pxr::VtValue &value)
+{
+    if (!value.IsHolding<float>())
+        return false;
 
-    pxr::TfToken("coat_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("coat_color", pxr::TfToken::Immortal),
-    pxr::TfToken("coat_roughness", pxr::TfToken::Immortal),
-    pxr::TfToken("coat_roughness_anisotropy", pxr::TfToken::Immortal),
-    pxr::TfToken("coat_ior", pxr::TfToken::Immortal),
-    pxr::TfToken("coat_darkening", pxr::TfToken::Immortal),
+    input.constant = value.UncheckedGet<float>();
+    input.textureIndex = kInvalidOpenPbrTextureIndex;
+    input.source = OpenPbrInputSource::Constant;
+    return true;
+}
 
-    pxr::TfToken("fuzz_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("fuzz_color", pxr::TfToken::Immortal),
-    pxr::TfToken("fuzz_roughness", pxr::TfToken::Immortal),
+static bool AssignConstant(OpenPbrInput<bool> &input, const pxr::VtValue &value)
+{
+    if (!value.IsHolding<bool>())
+        return false;
 
-    pxr::TfToken("emission_luminance", pxr::TfToken::Immortal),
-    pxr::TfToken("emission_color", pxr::TfToken::Immortal),
+    input.constant = value.UncheckedGet<bool>();
+    input.textureIndex = kInvalidOpenPbrTextureIndex;
+    input.source = OpenPbrInputSource::Constant;
+    return true;
+}
 
-    pxr::TfToken("thin_film_weight", pxr::TfToken::Immortal),
-    pxr::TfToken("thin_film_thickness", pxr::TfToken::Immortal),
-    pxr::TfToken("thin_film_ior", pxr::TfToken::Immortal),
+static bool AssignConstant(OpenPbrInput<Vec3f> &input, const pxr::VtValue &value)
+{
+    if (!value.IsHolding<pxr::GfVec3f>())
+        return false;
 
-    pxr::TfToken("geometry_opacity", pxr::TfToken::Immortal),
-    pxr::TfToken("geometry_thin_walled", pxr::TfToken::Immortal),
-    pxr::TfToken("geometry_normal", pxr::TfToken::Immortal),
-    pxr::TfToken("geometry_tangent", pxr::TfToken::Immortal),
-    pxr::TfToken("geometry_coat_normal", pxr::TfToken::Immortal),
-    pxr::TfToken("geometry_coat_tangent", pxr::TfToken::Immortal),
+    const pxr::GfVec3f &v = value.UncheckedGet<pxr::GfVec3f>();
+    input.constant = Vec3f(v[0], v[1], v[2]);
+    input.textureIndex = kInvalidOpenPbrTextureIndex;
+    input.source = OpenPbrInputSource::Constant;
+    return true;
+}
+
+template <typename T>
+static void AssignTexture(OpenPbrInput<T> &input, uint32_t textureIndex)
+{
+    input.textureIndex = textureIndex;
+    input.source = OpenPbrInputSource::Texture;
+}
+
+static const OpenPbrParameterDescriptor openPbrParameterDescriptors[] = {
+#define MAKE_PARAMETER_DESCRIPTOR(usdName, type) \
+    { \
+        pxr::TfToken(#usdName, pxr::TfToken::Immortal), \
+        [](OpenPbrMaterial &material, const pxr::VtValue &value) { \
+            return AssignConstant(material.usdName, value); \
+        }, \
+        [](OpenPbrMaterial &material, uint32_t textureIndex) { \
+            AssignTexture(material.usdName, textureIndex); \
+        }, \
+    },
+    OPENPBR_PARAMETERS(MAKE_PARAMETER_DESCRIPTOR)
+#undef MAKE_PARAMETER_DESCRIPTOR
 };
 
 pxr::UsdShadeShader GetMaterialSurfaceShader(const pxr::UsdShadeMaterial &material)
@@ -83,119 +96,87 @@ pxr::UsdShadeShader GetMaterialSurfaceShader(const pxr::UsdShadeMaterial &materi
     return shader;
 }
 
-static void ProcessOpenPBRMaterial(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
+static void AssignDefinitionFallback(const pxr::SdrShaderNodeConstPtr &definition,
+                                     const OpenPbrParameterDescriptor &descriptor,
+                                     OpenPbrMaterial *material)
 {
-    const size_t numParameters =
-        sizeof(openPbrParameterTokens) / sizeof(openPbrParameterTokens[0]);
+    if (!definition)
+        return;
 
-    for (size_t i = 0; i < numParameters; i++)
-    {
-        if (pxr::UsdShadeInput input = shader.GetInput(openPbrParameterTokens[i]))
-        {
-            auto sources = input.GetConnectedSources();
-
-            // for (auto &source : sources)
-            // {
-            //     pxr::UsdPrim sourcePrim = source.source.GetPrim();
-            //     if (sourcePrim.IsA<pxr::UsdShadeShader>())
-            //     {
-            //         pxr::UsdShadeShader sourceShader(sourcePrim);
-            //
-            //         pxr::TfToken shaderId;
-            //         sourceShader.GetShaderId(&shaderId);
-            //
-            //         printf("%s\n", shaderId.GetText());
-            //     }
-            //     else if (sourcePrim.IsA<pxr::UsdShadeNodeGraph>())
-            //     {
-            //         pxr::UsdShadeNodeGraph nodeGraph(sourcePrim);
-            //         sourcePrim.pxr::UsdShadeShader sourceShader(sourcePrim);
-            //
-            //         pxr::TfToken shaderId;
-            //         sourceShader.GetShaderId(&shaderId);
-            //         printf("sigh\n");
-            //     }
-            //     else
-            //     {
-            //         printf("why\n");
-            //     }
-            // }
-
-            const pxr::UsdShadeAttributeVector producers = input.GetValueProducingAttributes();
-            if (producers.size())
-            {
-                for (const pxr::UsdAttribute &producer : producers)
-                {
-                    printf("%s\n", producer.GetName().GetText());
-                    pxr::VtValue value;
-                    if (producer.GetPrim().IsA<pxr::UsdShadeShader>())
-                    {
-                        pxr::UsdShadeShader sourceShader(producer.GetPrim());
-                        pxr::TfToken shaderId;
-                        sourceShader.GetShaderId(&shaderId);
-                        printf("%s\n", shaderId.GetText());
-                    }
-                    else if (producer.Get(&value, timeCode))
-                    {
-                        if (value.IsHolding<float>())
-                        {
-                            if (i == 21)
-                            {
-                                printf("%f\n", value.UncheckedGet<float>());
-                            }
-                        }
-                        else if (value.IsHolding<pxr::GfVec3f>())
-                        {
-                            pxr::GfVec3f v = value.UncheckedGet<pxr::GfVec3f>();
-                            // printf("%f %f %f\n", v[0], v[1], v[2]);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                pxr::SdrShaderNodeConstPtr definition =
-                    shader.GetShaderNodeForSourceType(mtlxToken);
-
-                if (definition)
-                {
-                    pxr::SdrShaderPropertyConstPtr property =
-                        definition->GetShaderInput(input.GetBaseName());
-
-                    if (property)
-                    {
-                        const pxr::VtValue &defaultValue = property->GetDefaultValueAsSdfType();
-
-                        if (defaultValue.IsHolding<float>())
-                        {
-                            // printf("%f\n", defaultValue.UncheckedGet<float>());
-                        }
-                        else if (defaultValue.IsHolding<pxr::GfVec3f>())
-                        {
-                            pxr::GfVec3f v = defaultValue.UncheckedGet<pxr::GfVec3f>();
-                            // printf("%f %f %f\n", v[0], v[1], v[2]);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    printf("\n");
+    const pxr::SdrShaderPropertyConstPtr property = definition->GetShaderInput(descriptor.token);
+    if (property)
+        descriptor.assignConstant(*material, property->GetDefaultValueAsSdfType());
 }
 
-void ProcessUsdShader(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
+bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
+                         pxr::UsdTimeCode timeCode,
+                         OpenPbrMaterial *material)
 {
+    if (!shader || !material)
+        return false;
+
     pxr::TfToken idToken;
-    if (shader && shader.GetShaderId(&idToken))
+    if (!shader.GetShaderId(&idToken) || idToken != mtlxOpenPbr)
+        return false;
+
+    *material = OpenPbrMaterial{};
+    const pxr::SdrShaderNodeConstPtr definition = shader.GetShaderNodeForSourceType(mtlxToken);
+
+    for (const OpenPbrParameterDescriptor &descriptor : openPbrParameterDescriptors)
     {
-        if (idToken == previewSurfaceToken)
+        AssignDefinitionFallback(definition, descriptor, material);
+
+        const pxr::UsdShadeInput input = shader.GetInput(descriptor.token);
+        if (!input)
+            continue;
+
+        const pxr::UsdShadeAttributeVector producers = input.GetValueProducingAttributes();
+        if (producers.empty())
         {
+            pxr::VtValue value;
+            if (input.Get(&value, timeCode))
+                descriptor.assignConstant(*material, value);
+
+            continue;
         }
-        else if (idToken == mtlxOpenPbr)
+
+        for (const pxr::UsdAttribute &producer : producers)
         {
-            ProcessOpenPBRMaterial(shader, timeCode);
+            pxr::VtValue value;
+            if (producer.GetPrim().IsA<pxr::UsdShadeShader>())
+            {
+                pxr::UsdShadeShader sourceShader(producer.GetPrim());
+                pxr::TfToken shaderId;
+                sourceShader.GetShaderId(&shaderId);
+                printf("%s\n", shaderId.GetText());
+            }
+            else if (producer.Get(&value, timeCode) && descriptor.assignConstant(*material, value))
+            {
+                break;
+            }
         }
     }
+
+    return true;
+}
+
+bool SetOpenPbrTexture(OpenPbrMaterial *material,
+                       const pxr::TfToken &parameterName,
+                       uint32_t textureIndex)
+{
+    if (!material || textureIndex == kInvalidOpenPbrTextureIndex)
+        return false;
+
+    for (const OpenPbrParameterDescriptor &descriptor : openPbrParameterDescriptors)
+    {
+        if (descriptor.token == parameterName)
+        {
+            descriptor.assignTexture(*material, textureIndex);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace ybi

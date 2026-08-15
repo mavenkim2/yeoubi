@@ -1735,7 +1735,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         Material &mat = container->materials.emplace_back();
 
         pxr::UsdShadeShader shader = GetMaterialSurfaceShader(material);
-        ProcessUsdShader(shader, timeCode);
 
         if (shader)
         {
@@ -1850,7 +1849,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {
-                // TODO
+                mat.path = material.GetPath().GetString();
+                mat.hasOpenPbr = LoadOpenPbrMaterial(shader, timeCode, &mat.openPbr);
             }
             else
             {

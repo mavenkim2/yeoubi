@@ -1,6 +1,8 @@
 #pragma once
 
+#include "scene/openpbr_parameters.h"
 #include <pxr/pxr.h>
+#include <pxr/base/tf/token.h>
 #include <pxr/usd/usdShade/shader.h>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -11,6 +13,11 @@ namespace ybi
 {
 
 pxr::UsdShadeShader GetMaterialSurfaceShader(const pxr::UsdShadeMaterial &material);
-void ProcessUsdShader(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode);
+bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
+                         pxr::UsdTimeCode timeCode,
+                         OpenPbrMaterial *material);
+bool SetOpenPbrTexture(OpenPbrMaterial *material,
+                       const pxr::TfToken &parameterName,
+                       uint32_t textureIndex);
 
 } // namespace ybi
