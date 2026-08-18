@@ -53,6 +53,7 @@ enum class MaterialInputType
 
 enum class MtlxNodeType
 {
+    None,
 #define ENUM(name, type) name,
     MATERIALX_DEFINITIONS(ENUM)
 #undef ENUM
@@ -96,6 +97,8 @@ static MtlxNodeType ConvertTokenToMtlxNodeType(const pxr::TfToken &token)
         return MtlxNodeType::name;
 
     MATERIALX_DEFINITIONS(SWITCH)
+    YBI_LOGFATAL("MaterialX node %s not supported\n", token.GetText());
+    return MtlxNodeType::None;
 #undef SWITCH
 }
 
@@ -462,10 +465,13 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
         {
             const pxr::UsdShadeInput input = shader.GetInput(inputName);
             printf("input name: %s\n", inputName.GetText());
+            bool useDefault = true;
 
             if (input)
             {
                 const auto producers = input.GetValueProducingAttributes();
+                YBI_ASSERT(producers.size() <= 1 &&
+                           "MaterialX inputs with multiple value producers are unsupported");
                 pxr::VtValue value;
 
                 if (producers.empty())
@@ -474,6 +480,7 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
                     if (input.Get(&value, timeCode))
                     {
                         materialInputs.push_back({inputName, LoadConstant(value)});
+                        useDefault = false;
                         DebugPrintConstant(materialInputs.back());
                     }
                 }
@@ -488,6 +495,7 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
                         pxr::UsdShadeShader sourceShader(producer.GetPrim());
                         pxr::TfToken shaderId;
                         sourceShader.GetShaderId(&shaderId);
+                        printf("%s\n", shaderId.GetText());
 
                         if (auto found = nodeMap.find(sourceShader.GetPath().GetString());
                             found == nodeMap.end())
@@ -499,11 +507,12 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
                         YBI_ASSERT(found != nodeMap.end());
 
                         materialInputs.push_back({inputName, found->second});
-                        printf("%s\n", shaderId.GetText());
+                        useDefault = false;
                     }
                     else if (producer.Get(&value, timeCode))
                     {
                         materialInputs.push_back({inputName, LoadConstant(value)});
+                        useDefault = false;
                         DebugPrintConstant(materialInputs.back());
                         break;
                     }
@@ -513,7 +522,8 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
                     }
                 }
             }
-            else
+
+            if (useDefault)
             {
                 // The USD prim did not provide this input.
                 const pxr::SdrShaderPropertyConstPtr property =
@@ -534,6 +544,8 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
         std::shared_ptr materialNode = std::make_shared<MaterialNode>();
         materialNode->inputs = std::move(materialInputs);
         materialNode->type = ConvertTokenToMtlxNodeType(shaderId);
+
+        nodeMap[path] = materialNode;
         return materialNode;
     }
     return nullptr;
@@ -543,7 +555,9 @@ static std::shared_ptr<MaterialNode> LoadMtlxShader(const pxr::UsdShadeShader &s
                                                     pxr::UsdTimeCode timeCode)
 {
     NodeMap nodeMap;
-    return LoadMtlxShaderHelper(shader, nodeMap, timeCode);
+    std::shared_ptr<MaterialNode> result = LoadMtlxShaderHelper(shader, nodeMap, timeCode);
+    printf("\n");
+    return result;
 }
 
 bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
