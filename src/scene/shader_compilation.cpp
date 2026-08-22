@@ -3,7 +3,8 @@
 #include "core/bit_vector.h"
 #include "core/thread_context.h"
 #include "render/material_types.h"
-#include "scene/mtlx.h"
+#include "render/material_opcodes.h"
+#include "scene/material.h"
 #include <unordered_map>
 #include <vector>
 
@@ -12,7 +13,7 @@ namespace ybi
 
 // struct CompileNode
 // {
-//     MtlxNodeType type;
+//     MaterialOpcode type;
 //     std::vector<MaterialInput> inputs;
 //     int in = 0;
 //     bool constantFolded;
@@ -127,8 +128,7 @@ void CompileShader(std::shared_ptr<MaterialNode> outputNode)
 
     for (MaterialNode *node : outputList)
     {
-        size_t size = GetMtlxNodeOutputSize(node->type);
-        size_t numWords = (size + 3) / 4;
+        size_t numWords = GetMaterialOpcodeOutputRegisterCount(node->type);
 
 #if 0
         // See if node computes a constant
@@ -151,7 +151,7 @@ void CompileShader(std::shared_ptr<MaterialNode> outputNode)
 
         if (constant)
         {
-            printf("%s\n", ConvertMtlxNodeTypeToString(node->type));
+            printf("%s\n", ConvertMaterialOpcodeToString(node->type));
         }
 #endif
 
@@ -176,7 +176,7 @@ void CompileShader(std::shared_ptr<MaterialNode> outputNode)
 
         YBI_ERROR(freeSlot != SHADER_NUM_REGISTERS,
                   "Shader %s ran out of registers during compilation\n",
-                  ConvertMtlxNodeTypeToString(outputNode->type));
+                  ConvertMaterialOpcodeToString(outputNode->type));
 
         // Free slots from any parents whose output is no longer used
         IterateMaterialNodeInputs(node, [&](MaterialNode *parent) {
@@ -204,7 +204,7 @@ void CompileShader(std::shared_ptr<MaterialNode> outputNode)
 
     for (MaterialNode *node : outputList)
     {
-        printf("%s ", ConvertMtlxNodeTypeToString(node->type));
+        printf("%s ", ConvertMaterialOpcodeToString(node->type));
         NodeInfo &info = nodeMap[node];
 
         printf("output slot: %i\n", info.outputSlotOffset);

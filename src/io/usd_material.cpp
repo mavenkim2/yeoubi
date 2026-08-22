@@ -4,8 +4,9 @@
 #include "core/matrix4x4.h"
 #include "core/vec2f.h"
 #include "core/vec4f.h"
-#include "scene/mtlx.h"
+#include "render/material_opcodes.h"
 #include "scene/openpbr_parameters.h"
+#include "scene/material.h"
 #include "scene/shader_compilation.h"
 #include <memory>
 #include <pxr/base/gf/matrix3d.h>
@@ -29,23 +30,23 @@ static const pxr::TfToken mtlxOpenPbr("ND_open_pbr_surface_surfaceshader", pxr::
 
 namespace mtlxTokens
 {
-#define MTLX_TOKENS(name, type) \
-    static const pxr::TfToken name("ND_" #name, pxr::TfToken::Immortal);
+#define MTLX_TOKENS(mtlxName, rendererOpcode) \
+    static const pxr::TfToken mtlxName("ND_" #mtlxName, pxr::TfToken::Immortal);
 
 MATERIALX_DEFINITIONS(MTLX_TOKENS)
 #undef MTLX_TOKENS
 
 } // namespace mtlxTokens
 
-static MtlxNodeType ConvertTokenToMtlxNodeType(const pxr::TfToken &token)
+static MaterialOpcode ConvertTokenToMaterialOpcode(const pxr::TfToken &token)
 {
-#define SWITCH(name, type) \
-    if (token == mtlxTokens::name) \
-        return MtlxNodeType::name;
+#define SWITCH(mtlxName, rendererOpcode) \
+    if (token == mtlxTokens::mtlxName) \
+        return MaterialOpcode::rendererOpcode;
 
     MATERIALX_DEFINITIONS(SWITCH)
     YBI_LOGFATAL("MaterialX node %s not supported\n", token.GetText());
-    return MtlxNodeType::None;
+    return MaterialOpcode::Invalid;
 #undef SWITCH
 }
 
@@ -490,7 +491,7 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
 
         std::shared_ptr materialNode = std::make_shared<MaterialNode>();
         materialNode->inputs = std::move(materialInputs);
-        materialNode->type = ConvertTokenToMtlxNodeType(shaderId);
+        materialNode->type = ConvertTokenToMaterialOpcode(shaderId);
 
         nodeMap[path] = materialNode;
         return materialNode;
