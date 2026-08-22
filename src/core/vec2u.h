@@ -74,6 +74,13 @@ public:
         y /= scalar;
         return *this;
     }
+
+    YBI_CPU_GPU Vec2u &operator^=(uint32_t scalar)
+    {
+        x ^= scalar;
+        y ^= scalar;
+        return *this;
+    }
 };
 
 YBI_CPU_GPU constexpr Vec2u operator+(Vec2u lhs, Vec2u rhs)
@@ -115,6 +122,11 @@ YBI_CPU_GPU Vec2u operator/(Vec2u vector, uint32_t scalar)
 {
     vector /= scalar;
     return vector;
+}
+
+YBI_CPU_GPU Vec2u operator^(Vec2u lhs, uint32_t rhs)
+{
+    return Vec2u(lhs.x ^ rhs, lhs.y ^ rhs);
 }
 
 YBI_CPU_GPU constexpr bool operator==(Vec2u lhs, Vec2u rhs)

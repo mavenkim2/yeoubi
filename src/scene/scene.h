@@ -7,6 +7,7 @@
 #include "device/device_memory.h"
 #include "scene/bvh.h"
 #include "scene/device_scene.h"
+#include "scene/openpbr_parameters.h"
 #include "scene/texture.h"
 #include <array>
 #include <cstring>
@@ -25,9 +26,11 @@ struct Material
 {
     std::string path;
     std::vector<std::pair<std::string, uint32_t>> diffuseUdimPaths;
+    OpenPbrMaterial openPbr;
     uint32_t udimBase = 0;
     uint32_t udimTableOffset = 0;
 
+    bool hasOpenPbr = false;
     bool valid;
 };
 

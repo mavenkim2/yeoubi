@@ -18,29 +18,30 @@ struct BitVector
     void WriteBits(uint32_t &position, uint32_t value, uint32_t numBits);
 };
 
-BitVector::BitVector(Arena *arena, uint32_t maxNumBits) : maxNumBits(maxNumBits)
+inline BitVector::BitVector(Arena *arena, uint32_t maxNumBits) : maxNumBits(maxNumBits)
 {
     bits = arena->PushArrayZero<uint32_t>((maxNumBits + 31) >> 5);
 }
-void BitVector::SetBit(uint32_t bit)
+
+inline void BitVector::SetBit(uint32_t bit)
 {
     YBI_ERROR(bit < maxNumBits, "bit: %u, maxNumBits: %u\n", bit, maxNumBits);
     bits[bit >> 5] |= 1ull << (bit & 31);
 }
 
-void BitVector::UnsetBit(uint32_t bit)
+inline void BitVector::UnsetBit(uint32_t bit)
 {
     YBI_ASSERT(bit < maxNumBits);
     bits[bit >> 5] &= ~(1ull << (bit & 31));
 }
 
-bool BitVector::GetBit(uint32_t bit) const
+inline bool BitVector::GetBit(uint32_t bit) const
 {
     YBI_ASSERT(bit < maxNumBits);
     return bits[bit >> 5] & (1 << (bit & 31));
 }
 
-void BitVector::WriteBits(uint32_t &position, uint32_t value, uint32_t numBits)
+inline void BitVector::WriteBits(uint32_t &position, uint32_t value, uint32_t numBits)
 {
     YBI_ASSERT(position + numBits <= maxNumBits);
     ybi::WriteBits(bits.data(), position, value, numBits);

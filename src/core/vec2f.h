@@ -99,6 +99,11 @@ YBI_CPU_GPU constexpr Vec2f operator-(Vec2f lhs, Vec2f rhs)
     return Vec2f(lhs.x - rhs.x, lhs.y - rhs.y);
 }
 
+YBI_CPU_GPU constexpr Vec2f operator-(Vec2f lhs, float rhs)
+{
+    return Vec2f(lhs.x - rhs, lhs.y - rhs);
+}
+
 YBI_CPU_GPU constexpr Vec2f operator*(Vec2f lhs, Vec2f rhs)
 {
     return Vec2f(lhs.x * rhs.x, lhs.y * rhs.y);

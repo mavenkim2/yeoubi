@@ -3,6 +3,10 @@
 #include "device/cuda_compat.h"
 #include <cmath>
 
+#define YBI_PI 3.14159265358979323846f
+#define YBI_PI_OVER_2 1.57079632679489661923f
+#define YBI_PI_OVER_4 0.78539816339744830962f
+
 namespace ybi
 {
 
@@ -34,9 +38,19 @@ YBI_CPU_GPU float Abs(float a)
     return a < 0.f ? -a : a;
 }
 
+YBI_CPU_GPU float Cos(float a)
+{
+    return cosf(a);
+}
+
+YBI_CPU_GPU float Sin(float a)
+{
+    return sinf(a);
+}
+
 YBI_CPU_GPU constexpr float DegreesToRadians(float degrees)
 {
-    return degrees * 0.017453292519943295769f;
+    return degrees * (YBI_PI / 180.f);
 }
 
 template <typename T>

@@ -4,8 +4,9 @@
 #include "core/matrix4x4.h"
 #include "core/vec2f.h"
 #include "core/vec4f.h"
-#include "io/mtlx.h"
+#include "scene/mtlx.h"
 #include "scene/openpbr_parameters.h"
+#include "scene/shader_compilation.h"
 #include <memory>
 #include <pxr/base/gf/matrix3d.h>
 #include <pxr/base/gf/matrix4d.h>
@@ -35,60 +36,6 @@ MATERIALX_DEFINITIONS(MTLX_TOKENS)
 #undef MTLX_TOKENS
 
 } // namespace mtlxTokens
-
-enum class MaterialInputType
-{
-    Shader,
-    Bool,
-    Int,
-    Float,
-    Vec2f,
-    Vec3f,
-    Vec4f,
-    Matrix3x3,
-    Matrix4x4,
-    String,
-    Asset,
-};
-
-enum class MtlxNodeType
-{
-    None,
-#define ENUM(name, type) name,
-    MATERIALX_DEFINITIONS(ENUM)
-#undef ENUM
-};
-
-struct MaterialNode;
-
-struct Matrix3x3
-{
-    float m[3][3];
-};
-
-using MaterialInputValue = std::variant<std::shared_ptr<MaterialNode>,
-                                        bool,
-                                        int,
-                                        float,
-                                        Vec2f,
-                                        Vec3f,
-                                        Vec4f,
-                                        Matrix3x3,
-                                        Matrix4x4,
-                                        std::string,
-                                        pxr::SdfAssetPath>;
-
-struct MaterialInput
-{
-    pxr::TfToken name;
-    MaterialInputValue value;
-};
-
-struct MaterialNode
-{
-    MtlxNodeType type;
-    std::vector<MaterialInput> inputs;
-};
 
 static MtlxNodeType ConvertTokenToMtlxNodeType(const pxr::TfToken &token)
 {
@@ -301,14 +248,14 @@ static MaterialInputValue LoadConstant(const pxr::VtValue &value)
         const pxr::GfVec4f &v = value.UncheckedGet<pxr::GfVec4f>();
         return Vec4f(v[0], v[1], v[2], v[3]);
     }
-    else if (value.IsHolding<pxr::GfMatrix3d>())
-    {
-        const double *m = value.UncheckedGet<pxr::GfMatrix3d>().GetArray();
-        return Matrix3x3{
-            {{static_cast<float>(m[0]), static_cast<float>(m[1]), static_cast<float>(m[2])},
-             {static_cast<float>(m[3]), static_cast<float>(m[4]), static_cast<float>(m[5])},
-             {static_cast<float>(m[6]), static_cast<float>(m[7]), static_cast<float>(m[8])}}};
-    }
+    // else if (value.IsHolding<pxr::GfMatrix3d>())
+    // {
+    //     const double *m = value.UncheckedGet<pxr::GfMatrix3d>().GetArray();
+    //     return Matrix3x3{
+    //         {{static_cast<float>(m[0]), static_cast<float>(m[1]), static_cast<float>(m[2])},
+    //          {static_cast<float>(m[3]), static_cast<float>(m[4]), static_cast<float>(m[5])},
+    //          {static_cast<float>(m[6]), static_cast<float>(m[7]), static_cast<float>(m[8])}}};
+    // }
     else if (value.IsHolding<pxr::GfMatrix4d>())
     {
         const double *m = value.UncheckedGet<pxr::GfMatrix4d>().GetArray();
@@ -335,7 +282,7 @@ static MaterialInputValue LoadConstant(const pxr::VtValue &value)
     }
     else if (value.IsHolding<pxr::SdfAssetPath>())
     {
-        return value.UncheckedGet<pxr::SdfAssetPath>();
+        return value.UncheckedGet<pxr::SdfAssetPath>().GetAssetPath();
     }
     else if (value.IsHolding<pxr::TfToken>())
     {
@@ -350,7 +297,7 @@ static MaterialInputValue LoadConstant(const pxr::VtValue &value)
 
 static void DebugPrintConstant(const MaterialInput &input)
 {
-    printf("%s: ", input.name.GetText());
+    printf("%s: ", input.name.c_str());
 
     std::visit(
         [](const auto &value) {
@@ -393,21 +340,21 @@ static void DebugPrintConstant(const MaterialInput &input)
                        static_cast<double>(value.z),
                        static_cast<double>(value.w));
             }
-            else if constexpr (std::is_same_v<T, Matrix3x3>)
-            {
-                printf("Matrix3x3: ((%.9g, %.9g, %.9g), "
-                       "(%.9g, %.9g, %.9g), "
-                       "(%.9g, %.9g, %.9g))\n",
-                       static_cast<double>(value.m[0][0]),
-                       static_cast<double>(value.m[0][1]),
-                       static_cast<double>(value.m[0][2]),
-                       static_cast<double>(value.m[1][0]),
-                       static_cast<double>(value.m[1][1]),
-                       static_cast<double>(value.m[1][2]),
-                       static_cast<double>(value.m[2][0]),
-                       static_cast<double>(value.m[2][1]),
-                       static_cast<double>(value.m[2][2]));
-            }
+            // else if constexpr (std::is_same_v<T, Matrix3x3>)
+            // {
+            //     printf("Matrix3x3: ((%.9g, %.9g, %.9g), "
+            //            "(%.9g, %.9g, %.9g), "
+            //            "(%.9g, %.9g, %.9g))\n",
+            //            static_cast<double>(value.m[0][0]),
+            //            static_cast<double>(value.m[0][1]),
+            //            static_cast<double>(value.m[0][2]),
+            //            static_cast<double>(value.m[1][0]),
+            //            static_cast<double>(value.m[1][1]),
+            //            static_cast<double>(value.m[1][2]),
+            //            static_cast<double>(value.m[2][0]),
+            //            static_cast<double>(value.m[2][1]),
+            //            static_cast<double>(value.m[2][2]));
+            // }
             else if constexpr (std::is_same_v<T, Matrix4x4>)
             {
                 printf("Matrix4x4: ((%.9g, %.9g, %.9g, %.9g), "
@@ -556,7 +503,9 @@ static std::shared_ptr<MaterialNode> LoadMtlxShader(const pxr::UsdShadeShader &s
 {
     NodeMap nodeMap;
     std::shared_ptr<MaterialNode> result = LoadMtlxShaderHelper(shader, nodeMap, timeCode);
+    CompileShader(result);
     printf("\n");
+
     return result;
 }
 
@@ -652,5 +601,13 @@ bool SetOpenPbrTexture(OpenPbrMaterial *material,
 
     return false;
 }
+
+// Shader graph
+
+struct Shader
+{
+    int inputOffset;
+    int outputOffset;
+};
 
 } // namespace ybi

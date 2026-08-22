@@ -119,6 +119,7 @@ add_executable(yeoubi_virtual_textures
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/shader_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/virtual_textures.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/string_builder.cpp
@@ -164,6 +165,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/shader_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp

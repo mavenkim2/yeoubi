@@ -5,6 +5,8 @@
 #include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
+#include "render/bsdf.h"
+#include "render/camera.h"
 #include "render/ray_cone.h"
 #include "render/virtual_texture_interop.h"
 #include <optix_device.h>
