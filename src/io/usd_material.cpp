@@ -5,8 +5,9 @@
 #include "core/vec2f.h"
 #include "core/vec4f.h"
 #include "render/material_opcodes.h"
-#include "scene/openpbr_parameters.h"
 #include "scene/material.h"
+#include "scene/openpbr_parameters.h"
+#include "scene/scene.h"
 #include "scene/shader_compilation.h"
 #include <memory>
 #include <pxr/base/gf/matrix3d.h>
@@ -53,62 +54,60 @@ static MaterialOpcode ConvertTokenToMaterialOpcode(const pxr::TfToken &token)
 struct OpenPbrParameterDescriptor
 {
     pxr::TfToken token;
+    MaterialNodeId OpenPbrMaterial::*member;
 
-    bool (*assignConstant)(OpenPbrMaterial &, const pxr::VtValue &);
-
-    void (*assignTexture)(OpenPbrMaterial &, uint32_t);
+    bool (*assignConstant)(MaterialGraph &, MaterialNodeId &, const pxr::VtValue &);
 };
 
-static bool AssignConstant(OpenPbrInput<float> &input, const pxr::VtValue &value)
+template <typename T>
+static bool
+AssignConstant(MaterialGraph &graph, MaterialNodeId &output, const pxr::VtValue &value);
+
+template <>
+bool AssignConstant<float>(MaterialGraph &graph, MaterialNodeId &output, const pxr::VtValue &value)
 {
     if (!value.IsHolding<float>())
         return false;
 
-    input.constant = value.UncheckedGet<float>();
-    input.textureIndex = kInvalidOpenPbrTextureIndex;
-    input.source = OpenPbrInputSource::Constant;
+    output = static_cast<MaterialNodeId>(graph.nodes.size());
+    graph.nodes.push_back(
+        {MaterialOpcode::ConstantFloat, {{"value", value.UncheckedGet<float>()}}});
+
     return true;
 }
 
-static bool AssignConstant(OpenPbrInput<bool> &input, const pxr::VtValue &value)
+template <>
+bool AssignConstant<bool>(MaterialGraph &graph, MaterialNodeId &output, const pxr::VtValue &value)
 {
     if (!value.IsHolding<bool>())
         return false;
 
-    input.constant = value.UncheckedGet<bool>();
-    input.textureIndex = kInvalidOpenPbrTextureIndex;
-    input.source = OpenPbrInputSource::Constant;
+    output = static_cast<MaterialNodeId>(graph.nodes.size());
+    graph.nodes.push_back({MaterialOpcode::ConstantBool, {{"value", value.UncheckedGet<bool>()}}});
+
     return true;
 }
 
-static bool AssignConstant(OpenPbrInput<Vec3f> &input, const pxr::VtValue &value)
+template <>
+bool AssignConstant<Vec3f>(MaterialGraph &graph, MaterialNodeId &output, const pxr::VtValue &value)
 {
     if (!value.IsHolding<pxr::GfVec3f>())
         return false;
 
     const pxr::GfVec3f &v = value.UncheckedGet<pxr::GfVec3f>();
-    input.constant = Vec3f(v[0], v[1], v[2]);
-    input.textureIndex = kInvalidOpenPbrTextureIndex;
-    input.source = OpenPbrInputSource::Constant;
-    return true;
-}
+    output = static_cast<MaterialNodeId>(graph.nodes.size());
+    graph.nodes.push_back({MaterialOpcode::ConstantColor, {{"value", Vec3f(v[0], v[1], v[2])}}});
 
-template <typename T>
-static void AssignTexture(OpenPbrInput<T> &input, uint32_t textureIndex)
-{
-    input.textureIndex = textureIndex;
-    input.source = OpenPbrInputSource::Texture;
+    return true;
 }
 
 static const OpenPbrParameterDescriptor openPbrParameterDescriptors[] = {
 #define MAKE_PARAMETER_DESCRIPTOR(usdName, type) \
     { \
         pxr::TfToken(#usdName, pxr::TfToken::Immortal), \
-        [](OpenPbrMaterial &material, const pxr::VtValue &value) { \
-            return AssignConstant(material.usdName, value); \
-        }, \
-        [](OpenPbrMaterial &material, uint32_t textureIndex) { \
-            AssignTexture(material.usdName, textureIndex); \
+        &OpenPbrMaterial::usdName, \
+        [](MaterialGraph &graph, MaterialNodeId &output, const pxr::VtValue &value) { \
+            return AssignConstant<type>(graph, output, value); \
         }, \
     },
     OPENPBR_PARAMETERS(MAKE_PARAMETER_DESCRIPTOR)
@@ -142,7 +141,10 @@ static void AssignDefinitionFallback(const pxr::SdrShaderNodeConstPtr &definitio
 
     const pxr::SdrShaderPropertyConstPtr property = definition->GetShaderInput(descriptor.token);
     if (property)
-        descriptor.assignConstant(*material, property->GetDefaultValueAsSdfType());
+    {
+        descriptor.assignConstant(
+            material->graph, material->*descriptor.member, property->GetDefaultValueAsSdfType());
+    }
 }
 
 static void LoadShader(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
@@ -304,9 +306,9 @@ static void DebugPrintConstant(const MaterialInput &input)
         [](const auto &value) {
             using T = std::decay_t<decltype(value)>;
 
-            if constexpr (std::is_same_v<T, std::shared_ptr<MaterialNode>>)
+            if constexpr (std::is_same_v<T, MaterialNodeId>)
             {
-                printf("shader: %p\n", static_cast<const void *>(value.get()));
+                printf("node: %u\n", value);
             }
             else if constexpr (std::is_same_v<T, bool>)
             {
@@ -391,11 +393,12 @@ static void DebugPrintConstant(const MaterialInput &input)
         input.value);
 }
 
-using NodeMap = std::unordered_map<std::string, std::shared_ptr<MaterialNode>>;
+using NodeMap = std::unordered_map<std::string, MaterialNodeId>;
 
-static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
-                                                          NodeMap &nodeMap,
-                                                          pxr::UsdTimeCode timeCode)
+static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
+                                           MaterialGraph &graph,
+                                           NodeMap &nodeMap,
+                                           pxr::UsdTimeCode timeCode)
 {
     pxr::TfToken shaderId;
 
@@ -405,7 +408,7 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
         const pxr::SdrShaderNodeConstPtr definition = shader.GetShaderNodeForSourceType(mtlxToken);
 
         if (!definition)
-            return nullptr;
+            return kInvalidMaterialNodeId;
 
         std::vector<MaterialInput> materialInputs;
 
@@ -448,7 +451,7 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
                         if (auto found = nodeMap.find(sourceShader.GetPath().GetString());
                             found == nodeMap.end())
                         {
-                            LoadMtlxShaderHelper(sourceShader, nodeMap, timeCode);
+                            LoadMtlxShaderHelper(sourceShader, graph, nodeMap, timeCode);
                         }
 
                         auto found = nodeMap.find(sourceShader.GetPath().GetString());
@@ -489,25 +492,24 @@ static std::shared_ptr<MaterialNode> LoadMtlxShaderHelper(const pxr::UsdShadeSha
             }
         }
 
-        std::shared_ptr materialNode = std::make_shared<MaterialNode>();
-        materialNode->inputs = std::move(materialInputs);
-        materialNode->type = ConvertTokenToMaterialOpcode(shaderId);
-
-        nodeMap[path] = materialNode;
-        return materialNode;
+        const MaterialNodeId nodeId = static_cast<MaterialNodeId>(graph.nodes.size());
+        graph.nodes.push_back({ConvertTokenToMaterialOpcode(shaderId), std::move(materialInputs)});
+        nodeMap[path] = nodeId;
+        return nodeId;
     }
-    return nullptr;
+    return kInvalidMaterialNodeId;
 }
 
-static std::shared_ptr<MaterialNode> LoadMtlxShader(const pxr::UsdShadeShader &shader,
-                                                    pxr::UsdTimeCode timeCode)
+static MaterialNodeId
+LoadMtlxShader(MaterialGraph &graph, const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
 {
     NodeMap nodeMap;
-    std::shared_ptr<MaterialNode> result = LoadMtlxShaderHelper(shader, nodeMap, timeCode);
-    CompileShader(result);
-    printf("\n");
+    graph.outputNode = LoadMtlxShaderHelper(shader, graph, nodeMap, timeCode);
 
-    return result;
+    if (graph.outputNode != kInvalidMaterialNodeId)
+        CompileShader(graph, graph.outputNode);
+    printf("\n");
+    return graph.outputNode;
 }
 
 bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
@@ -537,7 +539,7 @@ bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
         {
             pxr::VtValue value;
             if (input.Get(&value, timeCode))
-                descriptor.assignConstant(*material, value);
+                descriptor.assignConstant(material->graph, material->*descriptor.member, value);
 
             continue;
         }
@@ -547,7 +549,9 @@ bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
             pxr::VtValue value;
             if (pxr::UsdShadeInput::IsInput(producer))
             {
-                if (producer.Get(&value, timeCode) && descriptor.assignConstant(*material, value))
+                if (producer.Get(&value, timeCode) &&
+                    descriptor.assignConstant(
+                        material->graph, material->*descriptor.member, value))
                 {
                     break;
                 }
@@ -566,10 +570,12 @@ bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
 
                     printf("input type: %s\n", descriptor.token.GetText());
                     printf("%s\n", shaderId.GetText());
-                    LoadMtlxShader(sourceShader, timeCode);
+                    material->*descriptor.member =
+                        LoadMtlxShader(material->graph, sourceShader, timeCode);
                 }
                 else if (producer.Get(&value, timeCode) &&
-                         descriptor.assignConstant(*material, value))
+                         descriptor.assignConstant(
+                             material->graph, material->*descriptor.member, value))
                 {
                     break;
                 }
@@ -583,32 +589,5 @@ bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
 
     return true;
 }
-
-bool SetOpenPbrTexture(OpenPbrMaterial *material,
-                       const pxr::TfToken &parameterName,
-                       uint32_t textureIndex)
-{
-    if (!material || textureIndex == kInvalidOpenPbrTextureIndex)
-        return false;
-
-    for (const OpenPbrParameterDescriptor &descriptor : openPbrParameterDescriptors)
-    {
-        if (descriptor.token == parameterName)
-        {
-            descriptor.assignTexture(*material, textureIndex);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// Shader graph
-
-struct Shader
-{
-    int inputOffset;
-    int outputOffset;
-};
 
 } // namespace ybi

@@ -5,18 +5,17 @@
 namespace ybi
 {
 
-// This is renderer IR, not a list of MaterialX identifiers. Every opcode
-// emitted by the material compiler must be listed here, including future
-// renderer-native and fused operations.
 #define RENDERER_NODE_DEFINITIONS(X) \
+    X(ConstantFloat, Float) \
+    X(ConstantBool, Bool) \
+    X(ConstantColor, Vec3) \
     X(ImageColor3, Vec3) \
     X(ImageVector3, Vec3) \
     X(ImageFloat, Float) \
-    X(GeompropValueVector2, Vec2) \
+    X(AttributeValueVector2, Vec2) \
     X(HeightToNormalVector3, Vec3) \
     X(InvertFloat, Float) \
     X(ExtractVector3, Float) \
-    X(ExtractColor3, Float) \
     X(Combine3Vector3, Vec3) \
     X(NormalMapVector2, Vec3) \
     X(ColorCorrectColor3, Vec3) \
@@ -24,17 +23,15 @@ namespace ybi
     X(Ramp4Float, Float) \
     X(Separate3Color3, Float)
 
-// MaterialX import mapping only. The first name creates ND_<mtlxName>; the
-// second name is the renderer opcode emitted by the importer.
 #define MATERIALX_DEFINITIONS(X) \
     X(image_color3, ImageColor3) \
     X(image_vector3, ImageVector3) \
     X(image_float, ImageFloat) \
-    X(geompropvalue_vector2, GeompropValueVector2) \
+    X(geompropvalue_vector2, AttributeValueVector2) \
     X(heighttonormal_vector3, HeightToNormalVector3) \
     X(invert_float, InvertFloat) \
     X(extract_vector3, ExtractVector3) \
-    X(extract_color3, ExtractColor3) \
+    X(extract_color3, ExtractVector3) \
     X(combine3_vector3, Combine3Vector3) \
     X(normalmap_vector2, NormalMapVector2) \
     X(colorcorrect_color3, ColorCorrectColor3) \
@@ -57,18 +54,18 @@ constexpr uint8_t GetMaterialValueRegisterCount(MaterialValueType type)
 {
     switch (type)
     {
-    case MaterialValueType::Bool:
-    case MaterialValueType::Int:
-    case MaterialValueType::Float:
-        return 1;
-    case MaterialValueType::Vec2:
-        return 2;
-    case MaterialValueType::Vec3:
-        return 3;
-    case MaterialValueType::Vec4:
-        return 4;
-    case MaterialValueType::None:
-        return 0;
+        case MaterialValueType::Bool:
+        case MaterialValueType::Int:
+        case MaterialValueType::Float:
+            return 1;
+        case MaterialValueType::Vec2:
+            return 2;
+        case MaterialValueType::Vec3:
+            return 3;
+        case MaterialValueType::Vec4:
+            return 4;
+        case MaterialValueType::None:
+            return 0;
     }
 
     return 0;
@@ -82,7 +79,7 @@ enum class MaterialOpcode : uint8_t
     RENDERER_NODE_DEFINITIONS(ENUM)
 #undef ENUM
 
-    Count,
+        Count,
 };
 
 constexpr const char *ConvertMaterialOpcodeToString(MaterialOpcode opcode)
@@ -95,10 +92,10 @@ constexpr const char *ConvertMaterialOpcodeToString(MaterialOpcode opcode)
         RENDERER_NODE_DEFINITIONS(CASE)
 #undef CASE
 
-    case MaterialOpcode::Invalid:
-        return "Invalid";
-    case MaterialOpcode::Count:
-        return "Count";
+        case MaterialOpcode::Invalid:
+            return "Invalid";
+        case MaterialOpcode::Count:
+            return "Count";
     }
 
     return "Invalid";
@@ -114,9 +111,9 @@ constexpr MaterialValueType GetMaterialOpcodeOutputType(MaterialOpcode opcode)
         RENDERER_NODE_DEFINITIONS(CASE)
 #undef CASE
 
-    case MaterialOpcode::Invalid:
-    case MaterialOpcode::Count:
-        return MaterialValueType::None;
+        case MaterialOpcode::Invalid:
+        case MaterialOpcode::Count:
+            return MaterialValueType::None;
     }
 
     return MaterialValueType::None;

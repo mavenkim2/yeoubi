@@ -1733,6 +1733,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         // info.materialPath = material.GetPath().GetString();
         // info.packed = {};
         Material &mat = container->materials.emplace_back();
+        MaterialHandle &handle = container->materialHandles.emplace_back();
 
         pxr::UsdShadeShader shader = GetMaterialSurfaceShader(material);
 
@@ -1849,8 +1850,11 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {
-                mat.path = material.GetPath().GetString();
-                mat.hasOpenPbr = LoadOpenPbrMaterial(shader, timeCode, &mat.openPbr);
+                bool hasOpenPbr = LoadOpenPbrMaterial(shader, timeCode, &mat.openPbr);
+                if (hasOpenPbr)
+                {
+                    mat.hasOpenPbr = true;
+                }
             }
             else
             {

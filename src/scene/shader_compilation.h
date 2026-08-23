@@ -1,6 +1,6 @@
-#include <memory>
+#include "scene/material.h"
+
 namespace ybi
 {
-struct MaterialNode;
-void CompileShader(std::shared_ptr<MaterialNode> outputNode);
+void CompileShader(const MaterialGraph &graph, MaterialNodeId outputNode);
 } // namespace ybi

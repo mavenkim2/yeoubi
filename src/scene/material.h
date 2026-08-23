@@ -1,3 +1,5 @@
+#pragma once
+
 #include "render/material_opcodes.h"
 
 #include "core/matrix4x4.h"
@@ -5,24 +7,19 @@
 #include "core/vec3f.h"
 #include "core/vec4f.h"
 
-#include <memory>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <variant>
 #include <vector>
 
-namespace ybi 
+namespace ybi
 {
-struct MaterialNode;
+using MaterialNodeId = uint32_t;
+constexpr MaterialNodeId kInvalidMaterialNodeId = std::numeric_limits<MaterialNodeId>::max();
 
-using MaterialInputValue = std::variant<std::shared_ptr<MaterialNode>,
-                                        bool,
-                                        int,
-                                        float,
-                                        Vec2f,
-                                        Vec3f,
-                                        Vec4f,
-                                        Matrix4x4,
-                                        std::string>;
+using MaterialInputValue =
+    std::variant<MaterialNodeId, bool, int, float, Vec2f, Vec3f, Vec4f, Matrix4x4, std::string>;
 
 struct MaterialInput
 {
@@ -35,4 +32,11 @@ struct MaterialNode
     MaterialOpcode type = MaterialOpcode::Invalid;
     std::vector<MaterialInput> inputs;
 };
-}
+
+struct MaterialGraph
+{
+    std::vector<MaterialNode> nodes;
+    MaterialNodeId outputNode = kInvalidMaterialNodeId;
+};
+
+} // namespace ybi

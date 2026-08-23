@@ -1,8 +1,8 @@
 #pragma once
 
 #include "scene/openpbr_parameters.h"
-#include <pxr/pxr.h>
 #include <pxr/base/tf/token.h>
+#include <pxr/pxr.h>
 #include <pxr/usd/usdShade/shader.h>
 
 PXR_NAMESPACE_OPEN_SCOPE

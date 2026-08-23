@@ -7,6 +7,7 @@
 #include "device/device_memory.h"
 #include "scene/bvh.h"
 #include "scene/device_scene.h"
+#include "scene/material.h"
 #include "scene/openpbr_parameters.h"
 #include "scene/texture.h"
 #include <array>
@@ -128,6 +129,13 @@ struct Camera
     int height;
 };
 
+// NOTE: temporary bridge to allow meshes to reference either Material or MaterialGraph
+struct MaterialHandle
+{
+    bool isGraph;
+    uint32_t index;
+};
+
 // TODO: this is maybe getting messy
 struct DataContainer
 {
@@ -143,6 +151,9 @@ struct DataContainer
     std::vector<Material> materials;
     Curve *curves;
     SubdivisionMesh *subdivisionMeshes;
+
+    std::vector<OpenPbrMaterial> openPbrMaterials;
+    std::vector<MaterialHandle> materialHandles;
 
     // BVHs
     std::array<Array<BVH>, int(GeometryType::Max)> bvhHandles;
