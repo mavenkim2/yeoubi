@@ -134,6 +134,7 @@ class VirtualTextureManager
 
 public:
     VirtualTextureManager(Arena &arena, Device *device, DisplayDevice *displayDevice);
+    ~VirtualTextureManager();
     MaterialTextureHandle
     AddTexture(const std::vector<std::pair<std::string, uint32_t>> &filenames);
     void Finalize();

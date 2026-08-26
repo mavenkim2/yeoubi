@@ -106,6 +106,7 @@ struct CUDADevice : Device
     bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
+    void DestroyTexture(DeviceTexture &texture) override;
     std::unique_ptr<DeviceStream> CreateDeviceStream() override;
     std::shared_ptr<DeviceEvent> CreateDeviceEvent() override;
     void SyncDeviceStream(DeviceStream &stream) override;

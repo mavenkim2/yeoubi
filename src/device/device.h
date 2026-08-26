@@ -146,6 +146,7 @@ struct Device
     virtual void Memzero(void *dst, size_t size) = 0;
     virtual bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) = 0;
     virtual DeviceTexture CreateTexture(const DeviceTextureInfo &info) = 0;
+    virtual void DestroyTexture(DeviceTexture &texture) = 0;
     virtual std::unique_ptr<DeviceStream> CreateDeviceStream() = 0;
     virtual std::shared_ptr<DeviceEvent> CreateDeviceEvent() = 0;
     virtual void SyncDeviceStream(DeviceStream &stream) = 0;

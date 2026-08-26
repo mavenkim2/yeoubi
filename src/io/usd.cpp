@@ -7,6 +7,7 @@
 #include "core/bit.h"
 #include "core/math.h"
 #include "core/thread_context.h"
+#include "io/usd_helpers.h"
 #include "io/usd_material.h"
 #include "scene/scene.h"
 #include <algorithm>
@@ -1729,38 +1730,28 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     const char *debugMaterialFilter = std::getenv("YBI_DEBUG_MATERIAL");
     for (pxr::UsdShadeMaterial &material : materials)
     {
-        // MaterialInfo info = {};
-        // info.materialPath = material.GetPath().GetString();
-        // info.packed = {};
-        Material &mat = container->materials.emplace_back();
         MaterialHandle &handle = container->materialHandles.emplace_back();
+        Material &mat = container->materials.emplace_back();
 
         pxr::UsdShadeShader shader = GetMaterialSurfaceShader(material);
 
         if (shader)
         {
             const std::string materialPath = material.GetPath().GetString();
-            // if (!dumpedDebugMaterial &&
-            //     (!debugMaterialFilter ||
-            //      materialPath.find(debugMaterialFilter) != std::string::npos))
-            // {
-            //     DumpMaterialGraph(material, shader);
-            //     dumpedDebugMaterial = true;
-            // }
 
             pxr::TfToken token;
             if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
             {
+                handle.isGraph = false;
+                handle.index = container->materials.size();
+
+                // Material &mat = container->materials.emplace_back();
+
                 mat.path = material.GetPath().GetString();
                 for (const pxr::UsdShadeInput &input : shader.GetInputs())
                 {
                     if (input.GetBaseName().GetString() != "diffuseColor")
                         continue;
-
-                    // std::string texturePath;
-                    // std::string swizzle;
-                    // TextureWrapMode wrapS = TEXTURE_WRAP_MODE_UNKNOWN;
-                    // TextureWrapMode wrapT = TEXTURE_WRAP_MODE_UNKNOWN;
 
                     auto sources = input.GetConnectedSources();
 
@@ -1785,6 +1776,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                     bool result = fileInput.Get(&assetPath);
                     YBI_ASSERT(result);
 
+                    ParseUdimPaths(assetPath, shader, fileInput, mat.diffuseUdimPaths);
+
                     std::string rawPathStr = assetPath.GetAssetPath();
                     std::string resolved = assetPath.GetResolvedPath();
 
@@ -1805,17 +1798,11 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                             anchorLayer = shader.GetPrim().GetStage()->GetRootLayer();
                         }
 
-                        // printf("anchor layer: %s\n",
-                        // anchorLayer->GetRealPath().c_str());
-
                         auto tiles =
                             pxr::UsdShadeUdimUtils::ResolveUdimTilePaths(rawPathStr, anchorLayer);
 
-                        // printf("num udim tiles: %zu\n", tiles.size());
                         for (const auto &[resolvedPath, tile] : tiles)
                         {
-                            // printf("UDIM tile %s: %s\n", tile.c_str(),
-                            // resolvedPath.c_str());
                             auto value = std::stoul(tile);
                             YBI_ASSERT(value <= std::numeric_limits<uint32_t>::max());
 
@@ -1850,11 +1837,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {
-                bool hasOpenPbr = LoadOpenPbrMaterial(shader, timeCode, &mat.openPbr);
-                if (hasOpenPbr)
-                {
-                    mat.hasOpenPbr = true;
-                }
+                OpenPbrMaterial &mat = container->openPbrMaterials.emplace_back();
+                LoadOpenPbrMaterial(shader, timeCode, &mat);
             }
             else
             {

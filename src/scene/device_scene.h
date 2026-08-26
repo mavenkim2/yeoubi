@@ -4,6 +4,7 @@
 #include "core/vec3f.h"
 #include "device/device_memory.h"
 #include "scene/device_cluster.h"
+#include "scene/openpbr_parameters.h"
 #include <cstdint>
 
 namespace ybi
@@ -23,6 +24,13 @@ struct DeviceMaterial
     uint32_t udimTableOffset;
 
     bool valid;
+};
+
+struct DeviceMaterial2
+{
+#define DECLARE(name, type) int name;
+    OPENPBR_PARAMETERS(DECLARE)
+#undef DECLARE
 };
 
 struct Object

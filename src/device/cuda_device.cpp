@@ -671,6 +671,24 @@ DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
     return result;
 }
 
+void CUDADevice::DestroyTexture(DeviceTexture &texture)
+{
+    if (texture.textureObject == 0 && texture.array == 0)
+        return;
+
+    ContextScope contextScope(this);
+    if (texture.textureObject != 0)
+    {
+        CUDA_ASSERT(cuTexObjectDestroy(static_cast<CUtexObject>(texture.textureObject)));
+    }
+    if (texture.array != 0)
+    {
+        CUDA_ASSERT(cuArrayDestroy(reinterpret_cast<CUarray>(texture.array)));
+    }
+
+    texture = {};
+}
+
 #endif
 
 // BVH

@@ -13,11 +13,8 @@ namespace ybi
 {
 
 pxr::UsdShadeShader GetMaterialSurfaceShader(const pxr::UsdShadeMaterial &material);
-bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
+void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                          pxr::UsdTimeCode timeCode,
                          OpenPbrMaterial *material);
-bool SetOpenPbrTexture(OpenPbrMaterial *material,
-                       const pxr::TfToken &parameterName,
-                       uint32_t textureIndex);
 
 } // namespace ybi

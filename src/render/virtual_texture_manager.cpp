@@ -88,6 +88,57 @@ VirtualTextureManager::VirtualTextureManager(Arena &arena,
     lruNodes.EmplaceBack(node);
 }
 
+VirtualTextureManager::~VirtualTextureManager()
+{
+    // No task may retain a manager buffer, texture, or upload stream when it is released.
+    feedbackJob.Wait();
+    uploadPool.Wait();
+
+    // The feedback and page-table transfers use the default stream.  Wait for it before
+    // freeing their host-pinned and device buffers.
+    if (!uploadStreams.empty())
+    {
+        std::shared_ptr<DeviceEvent> deviceIdle = device->CreateDeviceEvent();
+        device->RecordDeviceEvent(nullptr, *deviceIdle);
+        device->WaitDeviceEvent(*uploadStreams.front(), *deviceIdle);
+        device->SyncDeviceStream(*uploadStreams.front());
+    }
+
+    if (feedback)
+        device->Free(feedback);
+    if (deviceTextureDescriptors)
+        device->Free(deviceTextureDescriptors);
+    if (deviceTexturePools)
+        device->Free(deviceTexturePools);
+    if (devicePageDescriptors)
+        device->Free(devicePageDescriptors);
+    for (DeviceBuffer &buffer : pageDescriptorBits)
+    {
+        if (buffer)
+            device->Free(buffer);
+    }
+    for (DeviceBuffer &buffer : deviceUpdateRequests)
+    {
+        if (buffer)
+            device->Free(buffer);
+    }
+    for (DeviceBuffer &buffer : hostPinnedFeedbackRequests)
+    {
+        if (buffer)
+            device->FreeHost(buffer);
+    }
+    for (DeviceBuffer &buffer : hostPinnedUpdateRequests)
+    {
+        if (buffer)
+            device->FreeHost(buffer);
+    }
+
+    for (PagePool &pool : pagePools)
+        device->DestroyTexture(pool.texture);
+
+    updatePageDescriptors.reset();
+}
+
 // DONE:
 // make lru node not 1to1 with page descriptors, instead based on page pool entries
 // update the lru logic when i unlink and relink lrus for resident pages

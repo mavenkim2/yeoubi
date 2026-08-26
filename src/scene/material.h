@@ -15,11 +15,21 @@
 
 namespace ybi
 {
+
+using UdimTextureVector = std::vector<std::pair<std::string, uint32_t>>;
 using MaterialNodeId = uint32_t;
 constexpr MaterialNodeId kInvalidMaterialNodeId = std::numeric_limits<MaterialNodeId>::max();
 
-using MaterialInputValue =
-    std::variant<MaterialNodeId, bool, int, float, Vec2f, Vec3f, Vec4f, Matrix4x4, std::string>;
+using MaterialInputValue = std::variant<MaterialNodeId,
+                                        bool,
+                                        int,
+                                        float,
+                                        Vec2f,
+                                        Vec3f,
+                                        Vec4f,
+                                        Matrix4x4,
+                                        std::string,
+                                        UdimTextureVector>;
 
 struct MaterialInput
 {

@@ -9,7 +9,6 @@
 #include "scene/device_scene.h"
 #include "scene/material.h"
 #include "scene/openpbr_parameters.h"
-#include "scene/texture.h"
 #include <array>
 #include <cstring>
 #include <memory>
@@ -26,7 +25,7 @@ class DeviceArena;
 struct Material
 {
     std::string path;
-    std::vector<std::pair<std::string, uint32_t>> diffuseUdimPaths;
+    UdimTextureVector diffuseUdimPaths;
     OpenPbrMaterial openPbr;
     uint32_t udimBase = 0;
     uint32_t udimTableOffset = 0;

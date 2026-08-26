@@ -5,15 +5,21 @@
 #include "core/thread_context.h"
 #include "core/time.h"
 #include "device/device.h"
+#include "render/virtual_texture_manager.h"
 #include "scene/clusterizer.h"
 #include "scene/scene.h"
+#include "scene/shader_compilation.h"
 #include <cstring>
+#include <memory>
 #include <tbb/parallel_for.h>
 
 #define YBI_USE_CLUSTERS
 
 namespace ybi
 {
+
+MaterialManager::~MaterialManager() = default;
+RenderSystem::~RenderSystem() = default;
 
 RenderSystem::RenderSystem(Device *device, DataContainer *container, Scene *rootScene)
     : device(device), dataContainer(container), rootScene(rootScene)
@@ -495,6 +501,50 @@ void GeometryManager::Update(Device *device,
     device->CopyToDevice(deviceScene->objects, objects.data(), objects.numBytes());
 
     printf("bvh total allocated: %zu\n", device->GetBVHAllocationSize());
+}
+
+void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId member) {}
+
+void MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
+                                           const char *memberName,
+                                           MaterialNodeId member,
+                                           std::vector<uint32_t> &nodes)
+{
+    MaterialNode &node = material.graph.nodes[member];
+
+    uint32_t offset = static_cast<uint32_t>(nodes.size());
+    CompileShader(material.graph, member, nodes);
+}
+
+void MaterialManager::Update(Device *device,
+                             DisplayDevice *displayDevice,
+                             DataContainer *container,
+                             DeviceScene *deviceScene)
+{
+    if (virtualTextureManager == nullptr)
+    {
+        virtualTextureManager =
+            std::make_unique<VirtualTextureManager>(arena, device, displayDevice);
+    }
+
+    // Convert textures to handles
+    for (OpenPbrMaterial &material : container->openPbrMaterials)
+    {
+#define VISIT_PARAMETER(name, type) AddTextures(material, material.name);
+        OPENPBR_PARAMETERS(VISIT_PARAMETER)
+#undef VISIT_PARAMETER
+    }
+
+    // Compile shader nodes
+    std::vector<uint32_t> shaderNodes;
+
+    for (OpenPbrMaterial &material : container->openPbrMaterials)
+    {
+#define VISIT_PARAMETER(name, type) \
+    ProcessMaterialGraph(material, #name, material.name, shaderNodes);
+        OPENPBR_PARAMETERS(VISIT_PARAMETER)
+#undef VISIT_PARAMETER
+    }
 }
 
 } // namespace ybi

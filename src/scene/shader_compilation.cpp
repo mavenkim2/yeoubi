@@ -1,30 +1,16 @@
 #include "scene/shader_compilation.h"
 #include "core/assert.h"
+#include "core/bit.h"
 #include "core/bit_vector.h"
 #include "core/thread_context.h"
-#include "render/material_types.h"
 #include "render/material_opcodes.h"
+#include "render/material_types.h"
+#include "scene/device_scene.h"
 #include "scene/material.h"
 #include <vector>
 
 namespace ybi
 {
-
-// struct CompileNode
-// {
-//     MaterialOpcode type;
-//     std::vector<MaterialInput> inputs;
-//     int in = 0;
-//     bool constantFolded;
-//
-//     virtual int GetOutputSlot() = 0;
-//     CompileNode() = 0;
-// };
-
-struct CompileNode
-{
-    uint32_t outputSlot;
-};
 
 template <typename Func>
 static void IterateMaterialNodeInputs(const MaterialNode &node, Func &&func)
@@ -43,7 +29,63 @@ static void IterateMaterialNodeInputs(const MaterialNode &node, Func &&func)
     }
 }
 
-void CompileShader(const MaterialGraph &graph, MaterialNodeId outputNode)
+template <typename T>
+static const T *GetConstantValue(const MaterialNode &node)
+{
+    if (node.inputs.size() != 1 || node.inputs[0].name != "value")
+    {
+        YBI_ERROR(false,
+                  "%s requires exactly one input named value\n",
+                  ConvertMaterialOpcodeToString(node.type));
+        return nullptr;
+    }
+
+    const T *value = std::get_if<T>(&node.inputs[0].value);
+    if (value == nullptr)
+    {
+        YBI_ERROR(false,
+                  "%s has an input with an unexpected type\n",
+                  ConvertMaterialOpcodeToString(node.type));
+    }
+
+    return value;
+}
+
+static void CompileConstantFloat(const MaterialNode &node, std::vector<uint32_t> &nodes)
+{
+    const float *value = GetConstantValue<float>(node);
+    if (value == nullptr)
+        return;
+
+    nodes.push_back(static_cast<uint32_t>(node.type));
+    nodes.push_back(FloatAsUint(*value));
+}
+
+static void CompileConstantBool(const MaterialNode &node, std::vector<uint32_t> &nodes)
+{
+    const bool *value = GetConstantValue<bool>(node);
+    if (value == nullptr)
+        return;
+
+    nodes.push_back(static_cast<uint32_t>(node.type));
+    nodes.push_back(*value ? 1u : 0u);
+}
+
+static void CompileConstantColor(const MaterialNode &node, std::vector<uint32_t> &nodes)
+{
+    const Vec3f *value = GetConstantValue<Vec3f>(node);
+    if (value == nullptr)
+        return;
+
+    nodes.push_back(static_cast<uint32_t>(node.type));
+    nodes.push_back(FloatAsUint(value->x));
+    nodes.push_back(FloatAsUint(value->y));
+    nodes.push_back(FloatAsUint(value->z));
+}
+
+void CompileShader(const MaterialGraph &graph,
+                   MaterialNodeId outputNode,
+                   std::vector<uint32_t> &nodes)
 {
     // Count number of incoming and outgoing edges
     struct NodeInfo
@@ -121,8 +163,8 @@ void CompileShader(const MaterialGraph &graph, MaterialNodeId outputNode)
     ScratchArena scratch;
     BitVector slotAllocated(scratch.arena, SHADER_NUM_REGISTERS);
 
-    std::vector<uint8_t> compiledBytes;
-    std::vector<CompileNode> compiledNodes;
+    // std::vector<uint8_t> compiledBytes;
+    // std::vector<CompileNode> compiledNodes;
 
     for (MaterialNodeId nodeId : outputList)
     {
@@ -195,10 +237,27 @@ void CompileShader(const MaterialGraph &graph, MaterialNodeId outputNode)
         NodeInfo &info = nodeInfo[nodeId];
         info.outputSlotOffset = freeSlot;
         info.numOutputSlots = numWords;
+    }
 
-        CompileNode compiledNode;
-        compiledNode.outputSlot = freeSlot;
-        compiledNodes.push_back(compiledNode);
+    for (MaterialNodeId nodeId : outputList)
+    {
+        const MaterialNode &node = graph.nodes[nodeId];
+        switch (node.type)
+        {
+            case MaterialOpcode::ConstantFloat:
+                CompileConstantFloat(node, nodes);
+                break;
+            case MaterialOpcode::ConstantBool:
+                CompileConstantBool(node, nodes);
+                break;
+            case MaterialOpcode::ConstantColor:
+                CompileConstantColor(node, nodes);
+                break;
+            default:
+                YBI_LOGFATAL("Shader compilation for %s is not implemented\n",
+                             ConvertMaterialOpcodeToString(node.type));
+                break;
+        }
     }
 
     for (MaterialNodeId nodeId : outputList)

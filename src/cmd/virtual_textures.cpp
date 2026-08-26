@@ -7,7 +7,6 @@
 #include "io/usd.h"
 #include "render/virtual_texture_file.h"
 #include "scene/scene.h"
-#include "scene/texture.h"
 #include <unordered_map>
 
 #define STB_IMAGE_IMPLEMENTATION

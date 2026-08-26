@@ -42,7 +42,7 @@ YBI_CPU_GPU void ShaderExtractVec3(float *registers, int dst, int src, int extra
     StoreFloatRegister(registers, value, dst);
 }
 
-YBI_CPU_GPU void EvaluateShader()
+YBI_CPU_GPU void EvaluateShader(KernelParams &params, int offset)
 {
     float registers[SHADER_NUM_REGISTERS];
 

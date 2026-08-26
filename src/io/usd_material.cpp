@@ -4,11 +4,12 @@
 #include "core/matrix4x4.h"
 #include "core/vec2f.h"
 #include "core/vec4f.h"
+#include "io/usd_helpers.h"
+#include "pxr/usd/usdShade/udimUtils.h"
 #include "render/material_opcodes.h"
 #include "scene/material.h"
 #include "scene/openpbr_parameters.h"
 #include "scene/scene.h"
-#include "scene/shader_compilation.h"
 #include <memory>
 #include <pxr/base/gf/matrix3d.h>
 #include <pxr/base/gf/matrix4d.h>
@@ -21,6 +22,8 @@
 #include <pxr/usd/sdr/shaderProperty.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/output.h>
+#include <pxr/usd/usdShade/udimUtils.h>
+#include <pxr/usd/usdShade/utils.h>
 #include <type_traits>
 
 namespace ybi
@@ -181,7 +184,6 @@ static void LoadShader(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeC
                     int v = value.UncheckedGet<int>();
                     printf("int: %i\n", v);
                 }
-                // LoadConstant(inputName, value);
                 continue;
             }
         }
@@ -195,7 +197,6 @@ static void LoadShader(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeC
 
             if (!defaultValue.IsEmpty())
             {
-                // LoadConstant(inputName, defaultValue);
             }
         }
     }
@@ -222,7 +223,9 @@ static void LoadExpression(const pxr::UsdShadeInput &input, pxr::UsdTimeCode tim
     }
 }
 
-static MaterialInputValue LoadConstant(const pxr::VtValue &value)
+static MaterialInputValue LoadConstant(const pxr::UsdShadeShader &shader,
+                                       const pxr::UsdShadeInput &input,
+                                       const pxr::VtValue &value)
 {
     if (value.IsHolding<bool>())
     {
@@ -285,7 +288,11 @@ static MaterialInputValue LoadConstant(const pxr::VtValue &value)
     }
     else if (value.IsHolding<pxr::SdfAssetPath>())
     {
-        return value.UncheckedGet<pxr::SdfAssetPath>().GetAssetPath();
+        UdimTextureVector filePaths;
+
+        pxr::SdfAssetPath sdfAssetPath = value.UncheckedGet<pxr::SdfAssetPath>();
+        ParseUdimPaths(sdfAssetPath, shader, input, filePaths);
+        return filePaths;
     }
     else if (value.IsHolding<pxr::TfToken>())
     {
@@ -430,7 +437,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     pxr::VtValue value;
                     if (input.Get(&value, timeCode))
                     {
-                        materialInputs.push_back({inputName, LoadConstant(value)});
+                        materialInputs.push_back({inputName, LoadConstant(shader, input, value)});
                         useDefault = false;
                         DebugPrintConstant(materialInputs.back());
                     }
@@ -462,7 +469,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     }
                     else if (producer.Get(&value, timeCode))
                     {
-                        materialInputs.push_back({inputName, LoadConstant(value)});
+                        materialInputs.push_back({inputName, LoadConstant(shader, input, value)});
                         useDefault = false;
                         DebugPrintConstant(materialInputs.back());
                         break;
@@ -486,7 +493,8 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
 
                     if (!defaultValue.IsEmpty())
                     {
-                        materialInputs.push_back({inputName, LoadConstant(defaultValue)});
+                        materialInputs.push_back(
+                            {inputName, LoadConstant(shader, input, defaultValue)});
                     }
                 }
             }
@@ -506,22 +514,20 @@ LoadMtlxShader(MaterialGraph &graph, const pxr::UsdShadeShader &shader, pxr::Usd
     NodeMap nodeMap;
     graph.outputNode = LoadMtlxShaderHelper(shader, graph, nodeMap, timeCode);
 
-    if (graph.outputNode != kInvalidMaterialNodeId)
-        CompileShader(graph, graph.outputNode);
+    // if (graph.outputNode != kInvalidMaterialNodeId)
+    //     CompileShader(graph, graph.outputNode);
     printf("\n");
     return graph.outputNode;
 }
 
-bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
+void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                          pxr::UsdTimeCode timeCode,
                          OpenPbrMaterial *material)
 {
-    if (!shader || !material)
-        return false;
+    YBI_ASSERT(shader && material);
 
     pxr::TfToken idToken;
-    if (!shader.GetShaderId(&idToken) || idToken != mtlxOpenPbr)
-        return false;
+    YBI_ASSERT(shader.GetShaderId(&idToken) && idToken == mtlxOpenPbr);
 
     *material = OpenPbrMaterial{};
     const pxr::SdrShaderNodeConstPtr definition = shader.GetShaderNodeForSourceType(mtlxToken);
@@ -586,8 +592,6 @@ bool LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
             }
         }
     }
-
-    return true;
 }
 
 } // namespace ybi
