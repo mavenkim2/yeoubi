@@ -109,7 +109,33 @@ void Mesh::SetMaterialIndex(uint32_t index)
     materialIndex = index;
 }
 
-// Data container
+bool Mesh::HasMaterial() const
+{
+    return materialIndex != ~0u || faceMaterialIndices.IsValid();
+}
+
+bool Mesh::HasSingleMaterial() const
+{
+    return materialIndex != ~0u;
+}
+
+// -----------------------------------------------------------------------------
+// Attributes
+// -----------------------------------------------------------------------------
+
+size_t Attributes::AddAttribute(Array<Vec2f> &&array)
+{
+    // TODO: deduplication
+    vector2s.emplace_back(std::move(array));
+
+    size_t index = vector2s.size() - 1;
+    return index;
+}
+
+// -----------------------------------------------------------------------------
+// Data Container
+// -----------------------------------------------------------------------------
+
 Array<BVH> &DataContainer::GetBVHs(GeometryType type)
 {
     return bvhHandles[(int)type];

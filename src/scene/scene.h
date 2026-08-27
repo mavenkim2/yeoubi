@@ -22,6 +22,25 @@ namespace ybi
 struct Device;
 class DeviceArena;
 
+enum class PrimvarValueType
+{
+    Bool,
+    Int,
+    Float,
+    ArrayVec2f,
+    ArrayVec3f,
+    ArrayVec4f,
+};
+
+using PrimvarValue = std::variant<bool, int, float, Array<Vec2f>, Array<Vec3f>, Array<Vec4f>>;
+
+struct Primvar
+{
+    AttributeType type;
+    PrimvarValueType valueType;
+    size_t index;
+};
+
 struct Material
 {
     std::string path;
@@ -106,6 +125,8 @@ public:
     void SetIndicesHandle(BufferHandle handle);
     void SetFaceMaterialIndicesHandle(BufferHandle handle);
     void SetMaterialIndex(uint32_t index);
+    bool HasMaterial() const;
+    bool HasSingleMaterial() const;
 };
 
 class Curve
@@ -135,6 +156,13 @@ struct MaterialHandle
     uint32_t index;
 };
 
+struct Attributes
+{
+    std::vector<Array<Vec2f>> vector2s;
+
+    size_t AddAttribute(Array<Vec2f> &&array);
+};
+
 // TODO: this is maybe getting messy
 struct DataContainer
 {
@@ -153,6 +181,8 @@ struct DataContainer
 
     std::vector<OpenPbrMaterial> openPbrMaterials;
     std::vector<MaterialHandle> materialHandles;
+
+    Attributes attributes;
 
     // BVHs
     std::array<Array<BVH>, int(GeometryType::Max)> bvhHandles;

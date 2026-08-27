@@ -405,6 +405,7 @@ using NodeMap = std::unordered_map<std::string, MaterialNodeId>;
 static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                                            MaterialGraph &graph,
                                            NodeMap &nodeMap,
+                                           std::vector<std::string> &geomProps,
                                            pxr::UsdTimeCode timeCode)
 {
     pxr::TfToken shaderId;
@@ -422,7 +423,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
         for (const pxr::TfToken &inputName : definition->GetShaderInputNames())
         {
             const pxr::UsdShadeInput input = shader.GetInput(inputName);
-            printf("input name: %s\n", inputName.GetText());
+            // printf("input name: %s\n", inputName.GetText());
             bool useDefault = true;
 
             if (input)
@@ -453,12 +454,13 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                         pxr::UsdShadeShader sourceShader(producer.GetPrim());
                         pxr::TfToken shaderId;
                         sourceShader.GetShaderId(&shaderId);
-                        printf("%s\n", shaderId.GetText());
+                        // printf("%s\n", shaderId.GetText());
 
                         if (auto found = nodeMap.find(sourceShader.GetPath().GetString());
                             found == nodeMap.end())
                         {
-                            LoadMtlxShaderHelper(sourceShader, graph, nodeMap, timeCode);
+                            LoadMtlxShaderHelper(
+                                sourceShader, graph, nodeMap, geomProps, timeCode);
                         }
 
                         auto found = nodeMap.find(sourceShader.GetPath().GetString());
@@ -501,18 +503,35 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
         }
 
         const MaterialNodeId nodeId = static_cast<MaterialNodeId>(graph.nodes.size());
-        graph.nodes.push_back({ConvertTokenToMaterialOpcode(shaderId), std::move(materialInputs)});
+        MaterialOpcode opcode = ConvertTokenToMaterialOpcode(shaderId);
+
+        if (IsAttributeOpcode(opcode))
+        {
+            for (const MaterialInput &input : materialInputs)
+            {
+                if (input.name == "geomprop")
+                {
+                    const std::string *value = std::get_if<std::string>(&input.value);
+                    YBI_ASSERT(value != nullptr);
+                    geomProps.push_back(*value);
+                }
+            }
+        }
+
+        graph.nodes.push_back({opcode, std::move(materialInputs)});
         nodeMap[path] = nodeId;
         return nodeId;
     }
     return kInvalidMaterialNodeId;
 }
 
-static MaterialNodeId
-LoadMtlxShader(MaterialGraph &graph, const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
+static MaterialNodeId LoadMtlxShader(MaterialGraph &graph,
+                                     const pxr::UsdShadeShader &shader,
+                                     std::vector<std::string> &geomProps,
+                                     pxr::UsdTimeCode timeCode)
 {
     NodeMap nodeMap;
-    graph.outputNode = LoadMtlxShaderHelper(shader, graph, nodeMap, timeCode);
+    graph.outputNode = LoadMtlxShaderHelper(shader, graph, nodeMap, geomProps, timeCode);
 
     // if (graph.outputNode != kInvalidMaterialNodeId)
     //     CompileShader(graph, graph.outputNode);
@@ -522,6 +541,7 @@ LoadMtlxShader(MaterialGraph &graph, const pxr::UsdShadeShader &shader, pxr::Usd
 
 void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                          pxr::UsdTimeCode timeCode,
+                         std::vector<std::string> &geomProps,
                          OpenPbrMaterial *material)
 {
     YBI_ASSERT(shader && material);
@@ -577,7 +597,7 @@ void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                     printf("input type: %s\n", descriptor.token.GetText());
                     printf("%s\n", shaderId.GetText());
                     material->*descriptor.member =
-                        LoadMtlxShader(material->graph, sourceShader, timeCode);
+                        LoadMtlxShader(material->graph, sourceShader, geomProps, timeCode);
                 }
                 else if (producer.Get(&value, timeCode) &&
                          descriptor.assignConstant(

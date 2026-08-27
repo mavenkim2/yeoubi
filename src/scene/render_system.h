@@ -1,7 +1,9 @@
 #include "core/arena.h"
+#include "render/virtual_texture_manager.h"
 #include "scene/device_scene.h"
 #include "scene/material.h"
 #include <memory>
+#include <unordered_map>
 
 namespace ybi
 {
@@ -26,6 +28,9 @@ struct GeometryManager
 struct MaterialManager
 {
     Arena arena;
+
+    // Maps material node to MaterialTextureHandle
+    std::unordered_map<const MaterialNode *, MaterialTextureHandle> textureNodeToHandle;
     std::unique_ptr<VirtualTextureManager> virtualTextureManager;
 
     ~MaterialManager();
@@ -48,13 +53,17 @@ struct RenderSystem
     DeviceScene deviceScene;
 
     Device *device;
+    DisplayDevice *displayDevice;
     std::unique_ptr<DeviceArena> deviceArena;
 
     // Data managers
     GeometryManager geometryManager;
     MaterialManager materialManager;
 
-    RenderSystem(Device *device, DataContainer *container, Scene *rootScene);
+    RenderSystem(Device *device,
+                 DisplayDevice *displayDevice,
+                 DataContainer *container,
+                 Scene *rootScene);
     ~RenderSystem();
     void Update();
 };

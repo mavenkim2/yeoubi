@@ -47,6 +47,7 @@
 #include <tbb/parallel_for.h>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ybi
@@ -64,6 +65,24 @@ static const pxr::TfToken varnameToken("varname", pxr::TfToken::Immortal);
 
 constexpr size_t INVALID_INDEX = ~size_t(0);
 constexpr uint32_t INVALID_OFFSET = ~0u;
+
+static AttributeType ConvertTokenToAttributeType(const pxr::TfToken &token)
+{
+    AttributeType type = AttributeType::None;
+    if (token == "vertex")
+    {
+        type = AttributeType::Vertex;
+    }
+    else if (token == "faceVarying")
+    {
+        type = AttributeType::FaceVarying;
+    }
+    else
+    {
+        YBI_LOGFATAL("Type: %s not supported\n", token.GetText());
+    }
+    return type;
+}
 
 struct USDPrimTraversalData
 {
@@ -126,6 +145,8 @@ size_t MeshBufferInternState<T>::Intern(Arena *arena, Array<T> &&buffer, size_t 
 template <typename T>
 void MeshBufferInternState<T>::MoveSortedBuffersTo(std::vector<Array<T>> *dst)
 {
+    // NOTE: during concurrent loads, sort the buffers to maintain a deterministic order
+    // across separate program runs
     struct SortEntry
     {
         uint64_t hash;
@@ -528,19 +549,7 @@ AttributeType USDSceneLoader::ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
 
     pxr::TfToken interpolationToken = stPrimvar.GetInterpolation();
 
-    AttributeType type = AttributeType::None;
-    if (interpolationToken == "vertex")
-    {
-        type = AttributeType::Vertex;
-    }
-    else if (interpolationToken == "faceVarying")
-    {
-        type = AttributeType::FaceVarying;
-    }
-    else
-    {
-        YBI_LOGFATAL("Need to handle other uv interpolation types\n");
-    }
+    AttributeType type = ConvertTokenToAttributeType(interpolationToken);
 
     *outUVs = stValues;
     if (hasIndices)
@@ -1322,6 +1331,84 @@ static void ParseSTInput(const pxr::UsdShadeShader &shader)
     }
 }
 
+static PrimvarValue LoadPrimvarValue(const pxr::VtValue &value)
+{
+    if (value.IsHolding<bool>())
+    {
+        return value.UncheckedGet<bool>();
+    }
+    if (value.IsHolding<int>())
+    {
+        return value.UncheckedGet<int>();
+    }
+    if (value.IsHolding<float>())
+    {
+        return value.UncheckedGet<float>();
+    }
+    if (value.IsHolding<pxr::VtVec2fArray>())
+    {
+        const pxr::VtVec2fArray &source = value.UncheckedGet<pxr::VtVec2fArray>();
+        Array<Vec2f> result(source.size());
+        for (size_t i = 0; i < source.size(); ++i)
+            result[i] = Vec2f(source[i][0], source[i][1]);
+        return result;
+    }
+    if (value.IsHolding<pxr::VtVec3fArray>())
+    {
+        const pxr::VtVec3fArray &source = value.UncheckedGet<pxr::VtVec3fArray>();
+        Array<Vec3f> result(source.size());
+        for (size_t i = 0; i < source.size(); ++i)
+            result[i] = Vec3f(source[i][0], source[i][1], source[i][2]);
+        return result;
+    }
+    if (value.IsHolding<pxr::VtVec4fArray>())
+    {
+        const pxr::VtVec4fArray &source = value.UncheckedGet<pxr::VtVec4fArray>();
+        Array<Vec4f> result(source.size());
+        for (size_t i = 0; i < source.size(); ++i)
+            result[i] = Vec4f(source[i][0], source[i][1], source[i][2], source[i][3]);
+        return result;
+    }
+
+    YBI_LOGFATAL("Unsupported primvar value type: %s\n", value.GetTypeName().c_str());
+    return {};
+}
+
+static AttributeType LoadPrimvar(pxr::UsdPrim prim,
+                                 const std::string &name,
+                                 pxr::UsdTimeCode timeCode,
+                                 PrimvarValue &outValue,
+                                 Array<int> &outIndices)
+{
+    pxr::UsdGeomPrimvar primvar =
+        pxr::UsdGeomPrimvarsAPI(prim).FindPrimvarWithInheritance(pxr::TfToken(name));
+
+    pxr::VtValue value;
+    if (!primvar.Get(&value, timeCode))
+    {
+        YBI_LOGFATAL("Material graph references primvar '%s', but geometry prim '%s' has no "
+                     "value for it.\n",
+                     name.c_str(),
+                     prim.GetPath().GetText());
+        return {};
+    }
+
+    pxr::VtIntArray indices;
+    const bool hasIndices =
+        primvar.IsIndexed() && primvar.GetIndices(&indices, timeCode) && !indices.empty();
+
+    if (hasIndices)
+    {
+        outIndices.Resize(indices.size());
+        memcpy(outIndices.data(), indices.data(), outIndices.size() * sizeof(int));
+    }
+
+    pxr::TfToken interpolationToken = primvar.GetInterpolation();
+    AttributeType type = ConvertTokenToAttributeType(interpolationToken);
+    outValue = LoadPrimvarValue(value);
+    return type;
+}
+
 static void PrintMatrix(const pxr::GfMatrix4d &d)
 {
     printf("%f %f %f %f\n % f % f % f % f\n % f % f % f % f\n % f % f % f % f\n ",
@@ -1728,6 +1815,9 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     // Handle materials
     bool dumpedDebugMaterial = false;
     const char *debugMaterialFilter = std::getenv("YBI_DEBUG_MATERIAL");
+
+    std::vector<std::vector<std::string>> materialGeomProps;
+
     for (pxr::UsdShadeMaterial &material : materials)
     {
         MaterialHandle &handle = container->materialHandles.emplace_back();
@@ -1837,8 +1927,12 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {
+                handle.isGraph = true;
+                handle.index = container->openPbrMaterials.size();
+
                 OpenPbrMaterial &mat = container->openPbrMaterials.emplace_back();
-                LoadOpenPbrMaterial(shader, timeCode, &mat);
+                auto &geomProps = materialGeomProps.emplace_back();
+                LoadOpenPbrMaterial(shader, timeCode, geomProps, &mat);
             }
             else
             {
@@ -1860,6 +1954,65 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
             }
             // YBI_LOGFATAL("%s\n", material.GetPath().GetString().c_str());
             // YBI_ASSERT(0);
+        }
+    }
+
+    // Load geomprops found in material graphs
+    {
+        auto LoadMaterialPrimvars = [&](pxr::UsdPrim prim, int index) {
+            MaterialHandle handle = container->materialHandles[index];
+            if (handle.isGraph)
+            {
+                auto &geomProps = materialGeomProps[handle.index];
+                for (const std::string &geomPropName : geomProps)
+                {
+                    PrimvarValue value;
+                    Array<int> indices;
+                    AttributeType type = LoadPrimvar(prim, geomPropName, timeCode, value, indices);
+
+                    // std::visit(
+                    //     [&](const auto &value) {
+                    //         container->attributes.AddAttribute(std::move(value));
+                    //     },
+                    //     value);
+                }
+            }
+        };
+
+        for (size_t sceneIndex = 0; sceneIndex < traversalDatas.size(); sceneIndex++)
+        {
+            USDPrimTraversalData &data = traversalDatas[sceneIndex];
+            size_t meshOffset = sceneMeshOffsets[sceneIndex];
+            for (size_t i = 0; i < data.meshes.size(); i++)
+            {
+                const size_t meshIndex = meshOffset + i;
+                Mesh &mesh = container->meshes[meshIndex];
+                pxr::UsdPrim prim = data.meshes[i];
+
+                if (mesh.HasMaterial())
+                {
+                    if (mesh.HasSingleMaterial())
+                    {
+                        LoadMaterialPrimvars(prim, mesh.GetMaterialIndex());
+                    }
+                    else
+                    {
+                        std::unordered_set<int> uniqueMaterialIndexSet;
+                        YBI_ASSERT(mesh.GetFaceMaterialIndicesHandle().IsValid());
+                        const Array<int> &indices =
+                            container->meshFaceMaterialIndices[mesh.GetFaceMaterialIndicesHandle()
+                                                                   .index];
+                        for (int index : indices)
+                        {
+                            uniqueMaterialIndexSet.insert(index);
+                        }
+                        for (int index : uniqueMaterialIndexSet)
+                        {
+                            LoadMaterialPrimvars(prim, index);
+                        }
+                    }
+                }
+            }
         }
     }
 

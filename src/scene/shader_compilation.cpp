@@ -5,12 +5,31 @@
 #include "core/thread_context.h"
 #include "render/material_opcodes.h"
 #include "render/material_types.h"
+#include "render/virtual_texture_manager.h"
 #include "scene/device_scene.h"
 #include "scene/material.h"
+#include <unordered_map>
 #include <vector>
 
 namespace ybi
 {
+
+struct ShaderCompilationContext
+{
+    const MaterialGraph &graph;
+    std::vector<uint32_t> &nodes;
+    const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle;
+
+    void AddFloat(float v)
+    {
+        nodes.push_back(FloatAsUint(v));
+    }
+    void AddTextureHandle(MaterialTextureHandle handle)
+    {
+        nodes.push_back(handle.udimBase);
+        nodes.push_back(handle.udimTableOffset);
+    }
+};
 
 template <typename Func>
 static void IterateMaterialNodeInputs(const MaterialNode &node, Func &&func)
@@ -32,61 +51,140 @@ static void IterateMaterialNodeInputs(const MaterialNode &node, Func &&func)
 template <typename T>
 static const T *GetConstantValue(const MaterialNode &node)
 {
+    YBI_ERROR(node.inputs.size() == 1 && node.inputs[0].name == "value",
+              "%s requires exactly one input named value\n",
+              ConvertMaterialOpcodeToString(node.type));
     if (node.inputs.size() != 1 || node.inputs[0].name != "value")
     {
-        YBI_ERROR(false,
-                  "%s requires exactly one input named value\n",
-                  ConvertMaterialOpcodeToString(node.type));
         return nullptr;
     }
 
     const T *value = std::get_if<T>(&node.inputs[0].value);
+    YBI_ERROR(value != nullptr,
+              "%s has an input with an unexpected type\n",
+              ConvertMaterialOpcodeToString(node.type));
     if (value == nullptr)
     {
-        YBI_ERROR(false,
-                  "%s has an input with an unexpected type\n",
-                  ConvertMaterialOpcodeToString(node.type));
+        return nullptr;
     }
 
     return value;
 }
 
-static void CompileConstantFloat(const MaterialNode &node, std::vector<uint32_t> &nodes)
+template <typename Func>
+static void IterateNamedInput(const MaterialNode &node, const std::string &name, Func &&func)
+{
+    for (const MaterialInput &input : node.inputs)
+    {
+        if (input.name == name)
+        {
+            std::visit(
+                [&](const auto &value) {
+                    using T = std::decay_t<decltype(value)>;
+                    func(value);
+                },
+                input.value);
+            break;
+        }
+    }
+}
+
+static void CompileConstantFloat(const MaterialNode &node, ShaderCompilationContext &context)
 {
     const float *value = GetConstantValue<float>(node);
     if (value == nullptr)
         return;
 
-    nodes.push_back(static_cast<uint32_t>(node.type));
-    nodes.push_back(FloatAsUint(*value));
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    context.AddFloat(*value);
 }
 
-static void CompileConstantBool(const MaterialNode &node, std::vector<uint32_t> &nodes)
+static void CompileConstantBool(const MaterialNode &node, ShaderCompilationContext &context)
 {
     const bool *value = GetConstantValue<bool>(node);
     if (value == nullptr)
         return;
 
-    nodes.push_back(static_cast<uint32_t>(node.type));
-    nodes.push_back(*value ? 1u : 0u);
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    context.nodes.push_back(*value ? 1u : 0u);
 }
 
-static void CompileConstantColor(const MaterialNode &node, std::vector<uint32_t> &nodes)
+static void CompileConstantColor(const MaterialNode &node, ShaderCompilationContext &context)
 {
     const Vec3f *value = GetConstantValue<Vec3f>(node);
     if (value == nullptr)
         return;
 
-    nodes.push_back(static_cast<uint32_t>(node.type));
-    nodes.push_back(FloatAsUint(value->x));
-    nodes.push_back(FloatAsUint(value->y));
-    nodes.push_back(FloatAsUint(value->z));
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    context.AddFloat(value->x);
+    context.AddFloat(value->y);
+    context.AddFloat(value->z);
 }
 
-void CompileShader(const MaterialGraph &graph,
-                   MaterialNodeId outputNode,
-                   std::vector<uint32_t> &nodes)
+// -----------------------------------------------------------------------------
+// Image node compilation
+// -----------------------------------------------------------------------------
+
+static MaterialTextureHandle GetTextureHandle(const MaterialNode &node,
+                                              ShaderCompilationContext &context)
 {
+    const auto found = context.textureNodeToHandle.find(&node);
+    YBI_ERROR(found != context.textureNodeToHandle.end(),
+              "Image node does not have a material texture handle\n");
+
+    MaterialTextureHandle handle = found->second;
+    return handle;
+}
+
+// TODO: add address mode
+static void CompileImageColor3(const MaterialNode &node, ShaderCompilationContext &context)
+{
+    MaterialTextureHandle handle = GetTextureHandle(node, context);
+    context.AddTextureHandle(handle);
+}
+
+static void CompileImageVector3(const MaterialNode &node, ShaderCompilationContext &context)
+{
+    MaterialTextureHandle handle = GetTextureHandle(node, context);
+    context.AddTextureHandle(handle);
+}
+
+static void CompileImageFloat(const MaterialNode &node, ShaderCompilationContext &context)
+{
+    MaterialTextureHandle handle = GetTextureHandle(node, context);
+    context.AddTextureHandle(handle);
+}
+
+static void CompileAttributeValueVector2(const MaterialNode &node,
+                                         ShaderCompilationContext &context)
+{
+}
+
+static void CompileHeightToNormalVector3(const MaterialNode &node,
+                                         ShaderCompilationContext &context)
+{
+}
+
+static void CompileInvertFloat(const MaterialNode &node, ShaderCompilationContext &context) {}
+
+static void CompileExtractVector3(const MaterialNode &node, ShaderCompilationContext &context) {}
+static void CompileCombine3Vector3(const MaterialNode &node, ShaderCompilationContext &context) {}
+static void CompileNormalMapVector2(const MaterialNode &node, ShaderCompilationContext &context) {}
+static void CompileColorCorrectColor3(const MaterialNode &node, ShaderCompilationContext &context)
+{
+}
+static void CompileRemapColor3(const MaterialNode &node, ShaderCompilationContext &context) {}
+static void CompileRamp4Float(const MaterialNode &node, ShaderCompilationContext &context) {}
+static void CompileSeparate3Color3(const MaterialNode &node, ShaderCompilationContext &context) {}
+
+void CompileShader(
+    const MaterialGraph &graph,
+    MaterialNodeId outputNode,
+    const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,
+    std::vector<uint32_t> &nodes)
+{
+    ShaderCompilationContext context{graph, nodes, textureNodeToHandle};
+
     // Count number of incoming and outgoing edges
     struct NodeInfo
     {
@@ -244,15 +342,12 @@ void CompileShader(const MaterialGraph &graph,
         const MaterialNode &node = graph.nodes[nodeId];
         switch (node.type)
         {
-            case MaterialOpcode::ConstantFloat:
-                CompileConstantFloat(node, nodes);
-                break;
-            case MaterialOpcode::ConstantBool:
-                CompileConstantBool(node, nodes);
-                break;
-            case MaterialOpcode::ConstantColor:
-                CompileConstantColor(node, nodes);
-                break;
+#define CASE(name, type) \
+    case MaterialOpcode::name: \
+        Compile##name(node, context); \
+        break;
+            RENDERER_NODE_DEFINITIONS(CASE)
+#undef CASE
             default:
                 YBI_LOGFATAL("Shader compilation for %s is not implemented\n",
                              ConvertMaterialOpcodeToString(node.type));

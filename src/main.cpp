@@ -58,7 +58,7 @@ int main(int argc, char **argv)
     }
     manager.Finalize();
 
-    RenderSystem system(device.get(), &container, scene);
+    RenderSystem system(device.get(), displayDevice.get(), &container, scene);
     system.Update();
 
     YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);

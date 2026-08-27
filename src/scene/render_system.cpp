@@ -7,6 +7,7 @@
 #include "device/device.h"
 #include "render/virtual_texture_manager.h"
 #include "scene/clusterizer.h"
+#include "scene/material.h"
 #include "scene/scene.h"
 #include "scene/shader_compilation.h"
 #include <cstring>
@@ -21,8 +22,11 @@ namespace ybi
 MaterialManager::~MaterialManager() = default;
 RenderSystem::~RenderSystem() = default;
 
-RenderSystem::RenderSystem(Device *device, DataContainer *container, Scene *rootScene)
-    : device(device), dataContainer(container), rootScene(rootScene)
+RenderSystem::RenderSystem(Device *device,
+                           DisplayDevice *displayDevice,
+                           DataContainer *container,
+                           Scene *rootScene)
+    : device(device), displayDevice(displayDevice), dataContainer(container), rootScene(rootScene)
 {
     deviceArena = device->CreateArena();
 }
@@ -31,6 +35,8 @@ void RenderSystem::Update()
 {
     YBI_ASSERT(dataContainer);
     YBI_ASSERT(rootScene);
+
+    materialManager.Update(device, displayDevice, dataContainer, &deviceScene);
     geometryManager.Update(device, deviceArena.get(), dataContainer, rootScene, &deviceScene);
 }
 
@@ -503,7 +509,37 @@ void GeometryManager::Update(Device *device,
     printf("bvh total allocated: %zu\n", device->GetBVHAllocationSize());
 }
 
-void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId member) {}
+void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId member)
+{
+    const MaterialNode *node = &material.graph.nodes[member];
+
+    // TODO: allow enable/disable vt system
+    if (IsTextureOpcode(node->type))
+    {
+        bool found = false;
+        for (const MaterialInput &input : node->inputs)
+        {
+            std::visit(
+                [&](const auto &value) {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (std::is_same_v<T, UdimTextureVector>)
+                    {
+                        for (auto &[file, udim] : value)
+                        {
+                            printf("%s\n", file.c_str());
+                        }
+                        MaterialTextureHandle handle = virtualTextureManager->AddTexture(value);
+                        found = true;
+                        textureNodeToHandle[node] = handle;
+                    }
+                },
+                input.value);
+            if (found)
+                break;
+        }
+        YBI_ASSERT(found);
+    }
+}
 
 void MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
                                            const char *memberName,
@@ -513,7 +549,7 @@ void MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
     MaterialNode &node = material.graph.nodes[member];
 
     uint32_t offset = static_cast<uint32_t>(nodes.size());
-    CompileShader(material.graph, member, nodes);
+    CompileShader(material.graph, member, textureNodeToHandle, nodes);
 }
 
 void MaterialManager::Update(Device *device,

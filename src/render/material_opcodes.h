@@ -9,7 +9,6 @@ namespace ybi
     X(ConstantFloat, Float) \
     X(ConstantBool, Bool) \
     X(ConstantColor, Vec3) \
-    X(ImageColor3, Vec3) \
     X(ImageVector3, Vec3) \
     X(ImageFloat, Float) \
     X(AttributeValueVector2, Vec2) \
@@ -24,7 +23,7 @@ namespace ybi
     X(Separate3Color3, Float)
 
 #define MATERIALX_DEFINITIONS(X) \
-    X(image_color3, ImageColor3) \
+    X(image_color3, ImageVector3) \
     X(image_vector3, ImageVector3) \
     X(image_float, ImageFloat) \
     X(geompropvalue_vector2, AttributeValueVector2) \
@@ -122,6 +121,16 @@ constexpr MaterialValueType GetMaterialOpcodeOutputType(MaterialOpcode opcode)
 constexpr uint8_t GetMaterialOpcodeOutputRegisterCount(MaterialOpcode opcode)
 {
     return GetMaterialValueRegisterCount(GetMaterialOpcodeOutputType(opcode));
+}
+
+constexpr bool IsTextureOpcode(MaterialOpcode opcode)
+{
+    return opcode == MaterialOpcode::ImageVector3 || opcode == MaterialOpcode::ImageFloat;
+}
+
+constexpr bool IsAttributeOpcode(MaterialOpcode opcode)
+{
+    return opcode == MaterialOpcode::AttributeValueVector2;
 }
 
 } // namespace ybi
