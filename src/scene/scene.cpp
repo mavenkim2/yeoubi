@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -109,6 +110,33 @@ void Mesh::SetMaterialIndex(uint32_t index)
     materialIndex = index;
 }
 
+void Mesh::SetPrimvar(Primvar primvar)
+{
+    for (Primvar &existing : primvars)
+    {
+        if (existing.id == primvar.id)
+        {
+            existing = std::move(primvar);
+            return;
+        }
+    }
+
+    primvars.emplace_back(std::move(primvar));
+}
+
+const Primvar *Mesh::GetPrimvar(AttributeId id) const
+{
+    for (const Primvar &primvar : primvars)
+    {
+        if (primvar.id == id)
+        {
+            return &primvar;
+        }
+    }
+
+    return nullptr;
+}
+
 bool Mesh::HasMaterial() const
 {
     return materialIndex != ~0u || faceMaterialIndices.IsValid();
@@ -123,13 +151,63 @@ bool Mesh::HasSingleMaterial() const
 // Attributes
 // -----------------------------------------------------------------------------
 
-size_t Attributes::AddAttribute(Array<Vec2f> &&array)
+Primvar Attributes::AddAttribute(AttributeId id,
+                                 AttributeType type,
+                                 PrimvarValue &&value,
+                                 Array<int> &&attributeIndices)
 {
     // TODO: deduplication
-    vector2s.emplace_back(std::move(array));
+    Primvar primvar{id, type, PrimvarValueType::Bool, 0};
 
-    size_t index = vector2s.size() - 1;
-    return index;
+    std::visit(
+        [&](auto &&attribute) {
+            using T = std::decay_t<decltype(attribute)>;
+            if constexpr (std::is_same_v<T, bool>)
+            {
+                primvar.valueType = PrimvarValueType::Bool;
+                bools.push_back(attribute);
+                primvar.index = bools.size() - 1;
+            }
+            else if constexpr (std::is_same_v<T, int>)
+            {
+                primvar.valueType = PrimvarValueType::Int;
+                ints.push_back(attribute);
+                primvar.index = ints.size() - 1;
+            }
+            else if constexpr (std::is_same_v<T, float>)
+            {
+                primvar.valueType = PrimvarValueType::Float;
+                floats.push_back(attribute);
+                primvar.index = floats.size() - 1;
+            }
+            else if constexpr (std::is_same_v<T, Array<Vec2f>>)
+            {
+                primvar.valueType = PrimvarValueType::ArrayVec2f;
+                vector2s.emplace_back(std::move(attribute));
+                primvar.index = vector2s.size() - 1;
+            }
+            else if constexpr (std::is_same_v<T, Array<Vec3f>>)
+            {
+                primvar.valueType = PrimvarValueType::ArrayVec3f;
+                vector3s.emplace_back(std::move(attribute));
+                primvar.index = vector3s.size() - 1;
+            }
+            else if constexpr (std::is_same_v<T, Array<Vec4f>>)
+            {
+                primvar.valueType = PrimvarValueType::ArrayVec4f;
+                vector4s.emplace_back(std::move(attribute));
+                primvar.index = vector4s.size() - 1;
+            }
+        },
+        std::move(value));
+
+    if (attributeIndices.size())
+    {
+        indices.emplace_back(std::move(attributeIndices));
+        primvar.indicesIndex = indices.size() - 1;
+    }
+
+    return primvar;
 }
 
 // -----------------------------------------------------------------------------

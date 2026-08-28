@@ -1374,14 +1374,32 @@ static PrimvarValue LoadPrimvarValue(const pxr::VtValue &value)
     return {};
 }
 
-static AttributeType LoadPrimvar(pxr::UsdPrim prim,
-                                 const std::string &name,
-                                 pxr::UsdTimeCode timeCode,
-                                 PrimvarValue &outValue,
-                                 Array<int> &outIndices)
+static bool LoadPrimvar(const pxr::UsdStageRefPtr &stage,
+                        const pxr::SdfPath &primPath,
+                        pxr::UsdTimeCode timeCode,
+                        const std::string &name,
+                        MeshAttribute &outAttribute)
 {
+    const pxr::UsdPrim prim = stage->GetPrimAtPath(primPath);
+    if (!prim)
+    {
+        YBI_LOGFATAL("Cannot load geometry attribute '%s': source prim '%s' no longer exists.\n",
+                     name.c_str(),
+                     primPath.GetText());
+        return false;
+    }
+
     pxr::UsdGeomPrimvar primvar =
         pxr::UsdGeomPrimvarsAPI(prim).FindPrimvarWithInheritance(pxr::TfToken(name));
+
+    if (!primvar)
+    {
+        YBI_LOGFATAL("Material graph references primvar '%s', but geometry prim '%s' does not "
+                     "define it.\n",
+                     name.c_str(),
+                     prim.GetPath().GetText());
+        return false;
+    }
 
     pxr::VtValue value;
     if (!primvar.Get(&value, timeCode))
@@ -1390,7 +1408,7 @@ static AttributeType LoadPrimvar(pxr::UsdPrim prim,
                      "value for it.\n",
                      name.c_str(),
                      prim.GetPath().GetText());
-        return {};
+        return false;
     }
 
     pxr::VtIntArray indices;
@@ -1399,14 +1417,16 @@ static AttributeType LoadPrimvar(pxr::UsdPrim prim,
 
     if (hasIndices)
     {
-        outIndices.Resize(indices.size());
-        memcpy(outIndices.data(), indices.data(), outIndices.size() * sizeof(int));
+        outAttribute.indices.Resize(indices.size());
+        memcpy(outAttribute.indices.data(),
+               indices.data(),
+               outAttribute.indices.size() * sizeof(int));
     }
 
     pxr::TfToken interpolationToken = primvar.GetInterpolation();
-    AttributeType type = ConvertTokenToAttributeType(interpolationToken);
-    outValue = LoadPrimvarValue(value);
-    return type;
+    outAttribute.type = ConvertTokenToAttributeType(interpolationToken);
+    outAttribute.value = LoadPrimvarValue(value);
+    return outAttribute.type != AttributeType::None;
 }
 
 static void PrintMatrix(const pxr::GfMatrix4d &d)
@@ -1451,7 +1471,9 @@ static bool RoughlyEqual(const pxr::GfMatrix4d &a, const pxr::GfMatrix4d &b)
     return true;
 }
 
-Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
+Scene *USDSceneLoader::LoadScene(Arena *arena,
+                                 DataContainer *container,
+                                 SceneImportContext *importContext)
 {
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
     pxr::UsdPrim root = stage->GetPseudoRoot();
@@ -1816,8 +1838,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
     bool dumpedDebugMaterial = false;
     const char *debugMaterialFilter = std::getenv("YBI_DEBUG_MATERIAL");
 
-    std::vector<std::vector<std::string>> materialGeomProps;
-
     for (pxr::UsdShadeMaterial &material : materials)
     {
         MaterialHandle &handle = container->materialHandles.emplace_back();
@@ -1931,8 +1951,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 handle.index = container->openPbrMaterials.size();
 
                 OpenPbrMaterial &mat = container->openPbrMaterials.emplace_back();
-                auto &geomProps = materialGeomProps.emplace_back();
-                LoadOpenPbrMaterial(shader, timeCode, geomProps, &mat);
+                LoadOpenPbrMaterial(shader, timeCode, &mat);
             }
             else
             {
@@ -1957,28 +1976,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
         }
     }
 
-    // Load geomprops found in material graphs
+    // Defer loading of geometry attributes until all material graphs have been traversed.
     {
-        auto LoadMaterialPrimvars = [&](pxr::UsdPrim prim, int index) {
-            MaterialHandle handle = container->materialHandles[index];
-            if (handle.isGraph)
-            {
-                auto &geomProps = materialGeomProps[handle.index];
-                for (const std::string &geomPropName : geomProps)
-                {
-                    PrimvarValue value;
-                    Array<int> indices;
-                    AttributeType type = LoadPrimvar(prim, geomPropName, timeCode, value, indices);
-
-                    // std::visit(
-                    //     [&](const auto &value) {
-                    //         container->attributes.AddAttribute(std::move(value));
-                    //     },
-                    //     value);
-                }
-            }
-        };
-
         for (size_t sceneIndex = 0; sceneIndex < traversalDatas.size(); sceneIndex++)
         {
             USDPrimTraversalData &data = traversalDatas[sceneIndex];
@@ -1989,28 +1988,18 @@ Scene *USDSceneLoader::LoadScene(Arena *arena, DataContainer *container)
                 Mesh &mesh = container->meshes[meshIndex];
                 pxr::UsdPrim prim = data.meshes[i];
 
+                // TODO: should make it so that only graphs can enter this path too?
                 if (mesh.HasMaterial())
                 {
-                    if (mesh.HasSingleMaterial())
-                    {
-                        LoadMaterialPrimvars(prim, mesh.GetMaterialIndex());
-                    }
-                    else
-                    {
-                        std::unordered_set<int> uniqueMaterialIndexSet;
-                        YBI_ASSERT(mesh.GetFaceMaterialIndicesHandle().IsValid());
-                        const Array<int> &indices =
-                            container->meshFaceMaterialIndices[mesh.GetFaceMaterialIndicesHandle()
-                                                                   .index];
-                        for (int index : indices)
-                        {
-                            uniqueMaterialIndexSet.insert(index);
-                        }
-                        for (int index : uniqueMaterialIndexSet)
-                        {
-                            LoadMaterialPrimvars(prim, index);
-                        }
-                    }
+                    const pxr::SdfPath primPath = prim.GetPath();
+                    auto loadAttribute = [stage, primPath, timeCode](const std::string &propName,
+                                                                     MeshAttribute &outAttribute) {
+                        return LoadPrimvar(stage, primPath, timeCode, propName, outAttribute);
+                    };
+
+                    // printf("size of lambda: %zu\n", sizeof(loadAttribute));
+
+                    importContext->pendingMeshes.push_back({meshIndex, std::move(loadAttribute)});
                 }
             }
         }

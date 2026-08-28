@@ -31,12 +31,12 @@ RenderSystem::RenderSystem(Device *device,
     deviceArena = device->CreateArena();
 }
 
-void RenderSystem::Update()
+void RenderSystem::Update(SceneImportContext *context)
 {
     YBI_ASSERT(dataContainer);
     YBI_ASSERT(rootScene);
 
-    materialManager.Update(device, displayDevice, dataContainer, &deviceScene);
+    materialManager.Update(device, displayDevice, dataContainer, &deviceScene, context);
     geometryManager.Update(device, deviceArena.get(), dataContainer, rootScene, &deviceScene);
 }
 
@@ -552,11 +552,110 @@ void MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
     CompileShader(material.graph, member, textureNodeToHandle, nodes);
 }
 
+AttributeId AttributeManager::GetOrAdd(const std::string &name)
+{
+    auto find = attributeIdMap.find(name);
+    if (find != attributeIdMap.end())
+    {
+        return find->second;
+    }
+    else
+    {
+        AttributeId id = counter++;
+        attributeIdMap[name] = id;
+        return id;
+    }
+}
+
+void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext *context)
+{
+    std::vector<std::vector<std::string>> materialGeomProps;
+
+    for (OpenPbrMaterial &material : container->openPbrMaterials)
+    {
+        materialGeomProps.emplace_back();
+        std::vector<std::string> &geomProps = materialGeomProps.back();
+
+        for (MaterialNode &node : material.graph.nodes)
+        {
+            if (IsAttributeOpcode(node.type))
+            {
+                for (const MaterialInput &input : node.inputs)
+                {
+                    if (input.name == "geomprop")
+                    {
+                        const std::string *value = std::get_if<std::string>(&input.value);
+                        YBI_ASSERT(value != nullptr);
+                        geomProps.push_back(*value);
+                    }
+                }
+            }
+        }
+    }
+
+    for (PendingMesh &pendingMesh : context->pendingMeshes)
+    {
+        Mesh &mesh = container->meshes[pendingMesh.meshIndex];
+        YBI_ASSERT(mesh.HasMaterial());
+
+        std::vector<int> materialIndices;
+
+        if (mesh.HasSingleMaterial())
+        {
+            materialIndices.push_back(mesh.GetMaterialIndex());
+        }
+        else if (mesh.GetFaceMaterialIndicesHandle().IsValid())
+        {
+            std::unordered_set<int> uniqueMaterialIndexSet;
+            const Array<int> &indices =
+                container->meshFaceMaterialIndices[mesh.GetFaceMaterialIndicesHandle().index];
+            for (int index : indices)
+            {
+                if (index >= 0)
+                {
+                    uniqueMaterialIndexSet.insert(index);
+                }
+            }
+            materialIndices.insert(materialIndices.end(),
+                                   uniqueMaterialIndexSet.begin(),
+                                   uniqueMaterialIndexSet.end());
+        }
+
+        for (int materialIndex : materialIndices)
+        {
+            const MaterialHandle &handle = container->materialHandles[materialIndex];
+            const std::vector<std::string> &geomProps = materialGeomProps[handle.index];
+            for (const std::string &name : geomProps)
+            {
+                const AttributeId id = GetOrAdd(name);
+
+                // TODO: these asserts should probably be handled as edge cases instead of
+                // crashing
+                YBI_ASSERT(mesh.GetPrimvar(id) != nullptr);
+
+                MeshAttribute attribute;
+                bool result = pendingMesh.loadAttribute(name, attribute);
+
+                YBI_ASSERT(result);
+
+                Primvar primvar = container->attributes.AddAttribute(
+                    id, attribute.type, std::move(attribute.value), std::move(attribute.indices));
+                mesh.SetPrimvar(std::move(primvar));
+            }
+        }
+    }
+
+    context->pendingMeshes.clear();
+}
+
 void MaterialManager::Update(Device *device,
                              DisplayDevice *displayDevice,
                              DataContainer *container,
-                             DeviceScene *deviceScene)
+                             DeviceScene *deviceScene,
+                             SceneImportContext *importContext)
 {
+    attributeManager.FindPrimvars(container, importContext);
+
     if (virtualTextureManager == nullptr)
     {
         virtualTextureManager =

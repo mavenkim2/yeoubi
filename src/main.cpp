@@ -41,7 +41,8 @@ int main(int argc, char **argv)
 
     std::unique_ptr<SceneLoader> sceneLoader = SceneLoader::CreateSceneLoader(filename);
     YBI_ASSERT(sceneLoader);
-    Scene *scene = sceneLoader->LoadScene(&arena, &container);
+    SceneImportContext importContext;
+    Scene *scene = sceneLoader->LoadScene(&arena, &container, &importContext);
 
     std::unique_ptr<Device> device = Device::CreateDevice(DeviceKind::GPU);
 
@@ -59,7 +60,7 @@ int main(int argc, char **argv)
     manager.Finalize();
 
     RenderSystem system(device.get(), displayDevice.get(), &container, scene);
-    system.Update();
+    system.Update(&importContext);
 
     YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);
 

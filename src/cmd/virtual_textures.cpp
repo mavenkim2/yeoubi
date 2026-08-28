@@ -419,7 +419,8 @@ static void Run(const std::string &filename)
     Arena arena;
     std::unique_ptr<SceneLoader> sceneLoader = SceneLoader::CreateSceneLoader(filename);
     YBI_ASSERT(sceneLoader);
-    Scene *scene = sceneLoader->LoadScene(&arena, &container);
+    SceneImportContext importContext;
+    Scene *scene = sceneLoader->LoadScene(&arena, &container, &importContext);
     (void)scene;
 
     std::vector<std::pair<std::string, uint32_t>> textures;

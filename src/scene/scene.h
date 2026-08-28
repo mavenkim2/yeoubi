@@ -11,9 +11,12 @@
 #include "scene/openpbr_parameters.h"
 #include <array>
 #include <cstring>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace ybi
@@ -36,9 +39,18 @@ using PrimvarValue = std::variant<bool, int, float, Array<Vec2f>, Array<Vec3f>, 
 
 struct Primvar
 {
+    AttributeId id;
     AttributeType type;
     PrimvarValueType valueType;
     size_t index;
+    size_t indicesIndex = std::numeric_limits<size_t>::max();
+};
+
+struct MeshAttribute
+{
+    AttributeType type;
+    PrimvarValue value;
+    Array<int> indices;
 };
 
 struct Material
@@ -98,6 +110,7 @@ class Mesh
     uint32_t materialIndex = ~0u;
     AttributeType uvType = AttributeType::None;
     AttributeType normalType = AttributeType::None;
+    std::vector<Primvar> primvars;
 
 public:
     Mesh() = default;
@@ -125,6 +138,8 @@ public:
     void SetIndicesHandle(BufferHandle handle);
     void SetFaceMaterialIndicesHandle(BufferHandle handle);
     void SetMaterialIndex(uint32_t index);
+    void SetPrimvar(Primvar primvar);
+    const Primvar *GetPrimvar(AttributeId id) const;
     bool HasMaterial() const;
     bool HasSingleMaterial() const;
 };
@@ -158,9 +173,33 @@ struct MaterialHandle
 
 struct Attributes
 {
+    std::vector<bool> bools;
+    std::vector<int> ints;
+    std::vector<float> floats;
     std::vector<Array<Vec2f>> vector2s;
+    std::vector<Array<Vec3f>> vector3s;
+    std::vector<Array<Vec4f>> vector4s;
+    std::vector<Array<int>> indices;
 
-    size_t AddAttribute(Array<Vec2f> &&array);
+    Primvar AddAttribute(AttributeId id,
+                         AttributeType type,
+                         PrimvarValue &&value,
+                         Array<int> &&attributeIndices);
+};
+
+using GeometryAttributeLoader = std::function<bool(const std::string &, MeshAttribute &)>;
+
+struct PendingMesh
+{
+    size_t meshIndex;
+    // std::vector<GeometryAttributeRequirement> requiredAttributes;
+    GeometryAttributeLoader loadAttribute;
+};
+
+// NOTE: temporary context
+struct SceneImportContext
+{
+    std::vector<PendingMesh> pendingMeshes;
 };
 
 // TODO: this is maybe getting messy

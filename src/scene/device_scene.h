@@ -10,6 +10,8 @@
 namespace ybi
 {
 
+using AttributeId = uint16_t;
+
 enum class AttributeType
 {
     None,

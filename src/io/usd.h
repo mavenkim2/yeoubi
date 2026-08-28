@@ -36,7 +36,8 @@ class SceneLoader
 {
 public:
     static std::unique_ptr<SceneLoader> CreateSceneLoader(const std::string &filePath);
-    virtual Scene *LoadScene(Arena *arena, DataContainer *container) = 0;
+    virtual Scene *
+    LoadScene(Arena *arena, DataContainer *container, SceneImportContext *importContext) = 0;
 };
 
 template <typename T>
@@ -127,7 +128,8 @@ class USDSceneLoader : public SceneLoader
 public:
     USDSceneLoader(std::string filePath);
     ~USDSceneLoader() = default;
-    Scene *LoadScene(Arena *arena, DataContainer *container) override;
+    Scene *
+    LoadScene(Arena *arena, DataContainer *container, SceneImportContext *importContext) override;
 };
 
 } // namespace ybi

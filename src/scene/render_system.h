@@ -12,6 +12,7 @@ class DeviceArena;
 class VirtualTextureManager;
 
 struct DataContainer;
+struct SceneImportContext;
 struct DisplayDevice;
 struct Device;
 struct Scene;
@@ -25,6 +26,15 @@ struct GeometryManager
                 DeviceScene *deviceScene);
 };
 
+struct AttributeManager
+{
+    AttributeId counter;
+    std::unordered_map<std::string, AttributeId> attributeIdMap;
+
+    AttributeId GetOrAdd(const std::string &name);
+    void FindPrimvars(DataContainer *container, SceneImportContext *context);
+};
+
 struct MaterialManager
 {
     Arena arena;
@@ -32,6 +42,7 @@ struct MaterialManager
     // Maps material node to MaterialTextureHandle
     std::unordered_map<const MaterialNode *, MaterialTextureHandle> textureNodeToHandle;
     std::unique_ptr<VirtualTextureManager> virtualTextureManager;
+    AttributeManager attributeManager;
 
     ~MaterialManager();
     void AddTextures(OpenPbrMaterial &material, MaterialNodeId member);
@@ -42,7 +53,8 @@ struct MaterialManager
     void Update(Device *device,
                 DisplayDevice *displayDevice,
                 DataContainer *container,
-                DeviceScene *deviceScene);
+                DeviceScene *deviceScene,
+                SceneImportContext *importContext);
 };
 
 struct RenderSystem
@@ -65,7 +77,7 @@ struct RenderSystem
                  DataContainer *container,
                  Scene *rootScene);
     ~RenderSystem();
-    void Update();
+    void Update(SceneImportContext *context);
 };
 
 } // namespace ybi

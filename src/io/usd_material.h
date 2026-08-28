@@ -15,7 +15,6 @@ namespace ybi
 pxr::UsdShadeShader GetMaterialSurfaceShader(const pxr::UsdShadeMaterial &material);
 void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                          pxr::UsdTimeCode timeCode,
-                         std::vector<std::string> &geomProps,
                          OpenPbrMaterial *material);
 
 } // namespace ybi
