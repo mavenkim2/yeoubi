@@ -13,6 +13,7 @@
 #include <cstring>
 #include <memory>
 #include <tbb/parallel_for.h>
+#include <unordered_set>
 
 #define YBI_USE_CLUSTERS
 
@@ -200,6 +201,7 @@ void GeometryManager::Update(Device *device,
     std::vector<uint32_t> uvIndexOffsets;
     std::vector<uint32_t> triangleIndexOffsets;
     std::vector<uint32_t> triangleMaterialIndexOffsets;
+    std::vector<uint32_t> meshPrimvarOffsets;
 
     size_t totalNumVertices = CalculateBufferOffsets(container->meshPositions, positionOffsets);
     size_t totalNumNormals = CalculateBufferOffsets(container->meshNormals, normalOffsets);
@@ -209,6 +211,18 @@ void GeometryManager::Update(Device *device,
         CalculateBufferOffsets(container->meshTriangleIndices, triangleIndexOffsets);
     size_t totalNumTriangleMaterialIndices =
         CalculateBufferOffsets(container->meshFaceMaterialIndices, triangleMaterialIndexOffsets);
+    meshPrimvarOffsets.resize(container->meshes.size());
+
+    // Calculate primvar offsets
+    size_t primvarOffset = 0;
+    for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+    {
+        const Mesh &mesh = container->meshes[meshIndex];
+        size_t numPrimvars = mesh.GetPrimvars().size();
+
+        meshPrimvarOffsets[meshIndex] = primvarOffset;
+        primvarOffset += numPrimvars;
+    }
 
     std::vector<size_t> bvhSourceIndices;
     bvhSourceIndices.reserve(container->meshes.size());
@@ -229,6 +243,8 @@ void GeometryManager::Update(Device *device,
         object.uvType = mesh.GetUVType();
         object.normalType = mesh.GetNormalType();
         object.materialIndex = -1;
+        object.primvarOffset = meshPrimvarOffsets[meshIndex];
+        object.primvarCount = mesh.GetPrimvars().size();
 
         BufferHandle positionHandle = mesh.GetPositionsHandle();
         BufferHandle normalHandle = mesh.GetNormalsHandle();
@@ -488,6 +504,32 @@ void GeometryManager::Update(Device *device,
         deviceScene->compressedClusterBytes = nullptr;
     }
 
+    // Upload primvars
+    {
+        std::vector<DeviceAttribute> attributes;
+        for (size_t i = 0; i < container->meshes.size(); i++)
+        {
+            const Mesh &mesh = container->meshes[i];
+            for (const Primvar &primvar : mesh.GetPrimvars())
+            {
+                DeviceAttribute deviceAttribute;
+                deviceAttribute.id = primvar.id;
+                deviceAttribute.attributeType = primvar.type;
+
+                // TODO: fill these out when clusterizer is not used
+                // deviceAttribute.indices = ;
+                // deviceAttribute.indicesIndex = ;
+                attributes.push_back(deviceAttribute);
+            }
+        }
+
+        deviceScene->deviceAttributes = reinterpret_cast<DeviceAttribute *>(
+            device->Alloc(sizeof(DeviceAttribute) * primvarOffset).Data());
+        device->CopyToDevice(deviceScene->deviceAttributes,
+                             attributes.data(),
+                             sizeof(DeviceAttribute) * primvarOffset);
+    }
+
     Help();
 
     printf("total num vertices: %zu\n", totalNumVertices);
@@ -524,10 +566,6 @@ void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId memb
                     using T = std::decay_t<decltype(value)>;
                     if constexpr (std::is_same_v<T, UdimTextureVector>)
                     {
-                        for (auto &[file, udim] : value)
-                        {
-                            printf("%s\n", file.c_str());
-                        }
                         MaterialTextureHandle handle = virtualTextureManager->AddTexture(value);
                         found = true;
                         textureNodeToHandle[node] = handle;
@@ -569,12 +607,12 @@ AttributeId AttributeManager::GetOrAdd(const std::string &name)
 
 void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext *context)
 {
-    std::vector<std::vector<std::string>> materialGeomProps;
+    std::vector<std::unordered_set<std::string>> materialGeomProps;
 
     for (OpenPbrMaterial &material : container->openPbrMaterials)
     {
         materialGeomProps.emplace_back();
-        std::vector<std::string> &geomProps = materialGeomProps.back();
+        std::unordered_set<std::string> &geomProps = materialGeomProps.back();
 
         for (MaterialNode &node : material.graph.nodes)
         {
@@ -586,7 +624,8 @@ void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext
                     {
                         const std::string *value = std::get_if<std::string>(&input.value);
                         YBI_ASSERT(value != nullptr);
-                        geomProps.push_back(*value);
+
+                        geomProps.insert(*value);
                     }
                 }
             }
@@ -624,14 +663,14 @@ void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext
         for (int materialIndex : materialIndices)
         {
             const MaterialHandle &handle = container->materialHandles[materialIndex];
-            const std::vector<std::string> &geomProps = materialGeomProps[handle.index];
+            const std::unordered_set<std::string> &geomProps = materialGeomProps[handle.index];
             for (const std::string &name : geomProps)
             {
                 const AttributeId id = GetOrAdd(name);
 
                 // TODO: these asserts should probably be handled as edge cases instead of
                 // crashing
-                YBI_ASSERT(mesh.GetPrimvar(id) != nullptr);
+                YBI_ASSERT(mesh.GetPrimvar(id) == nullptr);
 
                 MeshAttribute attribute;
                 bool result = pendingMesh.loadAttribute(name, attribute);
@@ -654,6 +693,12 @@ void MaterialManager::Update(Device *device,
                              DeviceScene *deviceScene,
                              SceneImportContext *importContext)
 {
+    // what's next
+    // 1. uploading primvars to gpu (accounting for clusterizer...)
+    // 2. uploading mesh primvar handles to gpu (so shader can lookup right id)
+    // 3. runtime access of primvars
+    // 4. runtime shading
+
     attributeManager.FindPrimvars(container, importContext);
 
     if (virtualTextureManager == nullptr)
@@ -673,6 +718,7 @@ void MaterialManager::Update(Device *device,
     // Compile shader nodes
     std::vector<uint32_t> shaderNodes;
 
+#if 0
     for (OpenPbrMaterial &material : container->openPbrMaterials)
     {
 #define VISIT_PARAMETER(name, type) \
@@ -680,6 +726,7 @@ void MaterialManager::Update(Device *device,
         OPENPBR_PARAMETERS(VISIT_PARAMETER)
 #undef VISIT_PARAMETER
     }
+#endif
 }
 
 } // namespace ybi

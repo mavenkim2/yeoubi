@@ -115,6 +115,15 @@ endif()
 # Virtual textures exe
 set(YBI_MINIZ_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyexr/deps/miniz/miniz.c")
 
+# LibTIFF
+set(tiff-tools OFF CACHE BOOL "" FORCE)
+set(tiff-tests OFF CACHE BOOL "" FORCE)
+set(tiff-contrib OFF CACHE BOOL "" FORCE)
+set(tiff-docs OFF CACHE BOOL "" FORCE)
+set(tiff-install OFF CACHE BOOL "" FORCE)
+set(tiff-cxx OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/libtiff EXCLUDE_FROM_ALL)
+
 add_executable(yeoubi_virtual_textures
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
@@ -138,6 +147,7 @@ target_include_directories(yeoubi_virtual_textures SYSTEM PRIVATE
 
 target_link_libraries(yeoubi_virtual_textures PRIVATE
     ${OPENUSD_LIBRARIES}
+    TIFF::tiff
 )
 
 target_compile_definitions(yeoubi_virtual_textures PRIVATE

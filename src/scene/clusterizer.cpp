@@ -6,10 +6,13 @@
 #include "core/octahedral.h"
 #include "core/thread_context.h"
 #include "core/vec3f.h"
+#include "core/vec4u.h"
 #include "scene/device_cluster.h"
+#include "scene/scene.h"
 #include <atomic>
 #include <cfloat>
 #include <cstdint>
+#include <functional>
 #include <meshoptimizer.h>
 #include <tbb/parallel_for.h>
 #include <unordered_map>
@@ -744,6 +747,247 @@ static uint32_t WriteMaterialIDs(const DataContainer *container,
            (static_cast<uint32_t>(materialTableOffset) << 10u);
 }
 
+template <typename T>
+struct PrimvarPacking;
+
+template <>
+struct PrimvarPacking<Vec2f>
+{
+    using PackedType = Vec2u;
+    static constexpr size_t componentCount = 2;
+};
+
+template <>
+struct PrimvarPacking<Vec3f>
+{
+    using PackedType = Vec3u;
+    static constexpr size_t componentCount = 3;
+};
+
+template <>
+struct PrimvarPacking<Vec4f>
+{
+    using PackedType = Vec4u;
+    static constexpr size_t componentCount = 4;
+};
+
+template <typename T>
+struct PrimvarHash
+{
+    using PackedType = typename PrimvarPacking<T>::PackedType;
+
+    size_t operator()(const PackedType &primvar) const
+    {
+        size_t hash = 0;
+        for (size_t component = 0; component < PrimvarPacking<T>::componentCount; ++component)
+        {
+            hash ^= std::hash<uint32_t>{}(primvar[component]) + 0x9e3779b9u + (hash << 6u) +
+                    (hash >> 2u);
+        }
+        return hash;
+    }
+};
+
+template <typename T>
+static DeviceClusterAttribute WriteClusteredPrimvars(const DataContainer *container,
+                                                     const Primvar &primvar,
+                                                     AttributeType attributeType,
+                                                     const Array<int> *primvarIndices,
+                                                     const Array<unsigned int> &faceVaryingIndices,
+                                                     const Array<unsigned int> &vertexIndices,
+                                                     Array<uint8_t> &outputBytes)
+{
+    using PackedType = typename PrimvarPacking<T>::PackedType;
+    constexpr size_t componentCount = PrimvarPacking<T>::componentCount;
+
+    const std::vector<Array<T>> &arrays = container->attributes.GetArrays<T>();
+    YBI_ASSERT(primvar.index < arrays.size());
+    const Array<T> &primvars = arrays[primvar.index];
+    const Array<unsigned int> &chosenIndices =
+        attributeType == AttributeType::FaceVarying ? faceVaryingIndices : vertexIndices;
+    YBI_ASSERT(chosenIndices.size());
+
+    const Array<int> *indices = primvarIndices;
+
+    Array<PackedType> logicalPrimvars;
+    Array<PackedType> uniquePrimvars;
+    Array<uint32_t> localPrimvarIndices;
+    logicalPrimvars.Reserve(chosenIndices.size());
+    uniquePrimvars.Reserve(chosenIndices.size());
+    localPrimvarIndices.Reserve(chosenIndices.size());
+    std::unordered_map<PackedType, uint32_t, PrimvarHash<T>> uniquePrimvarMap;
+    uniquePrimvarMap.reserve(chosenIndices.size());
+
+    for (unsigned int index : chosenIndices)
+    {
+        int primvarIndex = static_cast<int>(index);
+        if (indices)
+        {
+            YBI_ERROR(
+                index < indices->size(), "%u %zu %u\n", index, indices->size(), attributeType);
+            primvarIndex = (*indices)[index];
+        }
+        YBI_ASSERT(primvarIndex >= 0 && static_cast<size_t>(primvarIndex) < primvars.size());
+
+        const T &primvarValue = primvars[static_cast<size_t>(primvarIndex)];
+        PackedType packedPrimvar(0u);
+        for (size_t component = 0; component < componentCount; ++component)
+        {
+            packedPrimvar[component] = FloatAsUint(primvarValue[component]);
+        }
+        logicalPrimvars.EmplaceBack(packedPrimvar);
+
+        const auto result =
+            uniquePrimvarMap.emplace(packedPrimvar, static_cast<uint32_t>(uniquePrimvars.size()));
+        if (result.second)
+        {
+            uniquePrimvars.EmplaceBack(packedPrimvar);
+        }
+        localPrimvarIndices.EmplaceBack(result.first->second);
+    }
+
+    YBI_ASSERT(logicalPrimvars.size() == chosenIndices.size());
+    YBI_ASSERT(uniquePrimvars.size());
+
+    PackedType minPrimvar(~0u);
+    PackedType maxPrimvar(0u);
+    PackedType bitWidths(0u);
+
+    for (const PackedType &packedPrimvar : uniquePrimvars)
+    {
+        minPrimvar = Min(minPrimvar, packedPrimvar);
+        maxPrimvar = Max(maxPrimvar, packedPrimvar);
+    }
+
+    size_t bitsPerPrimvar = 0;
+    for (size_t component = 0; component < componentCount; ++component)
+    {
+        bitWidths[component] = CalculateBitWidth(maxPrimvar[component] - minPrimvar[component]);
+        bitsPerPrimvar += bitWidths[component];
+    }
+    const uint32_t primvarIndexBitWidth =
+        CalculateBitWidth(static_cast<uint32_t>(uniquePrimvars.size() - 1u));
+
+    DeviceClusterAttribute attribute = {};
+    for (size_t component = 0; component < componentCount; ++component)
+    {
+        YBI_ASSERT(bitWidths[component] <= DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_MASK);
+        attribute.bitWidths[component] = bitWidths[component];
+    }
+
+    const size_t primvarDataByteOffset =
+        AppendOutputBytes(outputBytes, componentCount * sizeof(uint32_t));
+    YBI_ASSERT(primvarDataByteOffset <= DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_MASK);
+    YBI_ASSERT(primvarDataByteOffset <= UINT32_MAX / 8u);
+    attribute.dataByteOffset = static_cast<uint32_t>(primvarDataByteOffset);
+
+    uint32_t primvarBaseBitOffset = static_cast<uint32_t>(primvarDataByteOffset * 8u);
+    for (size_t component = 0; component < componentCount; ++component)
+    {
+        WriteBits(outputBytes.data(), primvarBaseBitOffset, minPrimvar[component], 32u);
+    }
+
+    const size_t flatPrimvarByteCount = (logicalPrimvars.size() * bitsPerPrimvar + 7u) >> 3u;
+    const size_t indexedPrimvarByteCount = (uniquePrimvars.size() * bitsPerPrimvar + 7u) >> 3u;
+    const size_t primvarIndexByteCount =
+        (localPrimvarIndices.size() * size_t(primvarIndexBitWidth) + 7u) >> 3u;
+    const bool useIndexedPrimvars =
+        indexedPrimvarByteCount + primvarIndexByteCount < flatPrimvarByteCount;
+
+    const Array<PackedType> &storedPrimvars =
+        useIndexedPrimvars ? uniquePrimvars : logicalPrimvars;
+    const size_t primvarByteCount = (storedPrimvars.size() * bitsPerPrimvar + 7u) >> 3u;
+    const size_t primvarByteOffset = AppendOutputBytes(outputBytes, primvarByteCount);
+    YBI_ASSERT(primvarByteOffset <= UINT32_MAX / 8u);
+    uint32_t primvarBitOffset = static_cast<uint32_t>(primvarByteOffset * 8u);
+    for (const PackedType &packedPrimvar : storedPrimvars)
+    {
+        for (size_t component = 0; component < componentCount; ++component)
+        {
+            WriteBits(outputBytes.data(),
+                      primvarBitOffset,
+                      packedPrimvar[component] - minPrimvar[component],
+                      bitWidths[component]);
+        }
+    }
+
+    if (useIndexedPrimvars)
+    {
+        YBI_ASSERT(primvarIndexBitWidth <= DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_MASK);
+        const size_t primvarIndicesByteOffset =
+            AppendOutputBytes(outputBytes, primvarIndexByteCount);
+        YBI_ASSERT(primvarIndicesByteOffset <= UINT32_MAX / 8u);
+        YBI_ASSERT(primvarIndicesByteOffset >= primvarDataByteOffset);
+        const size_t relativePrimvarIndexByteOffset =
+            primvarIndicesByteOffset - primvarDataByteOffset;
+        YBI_ASSERT(relativePrimvarIndexByteOffset <=
+                   DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_MASK);
+        attribute.indexed = true;
+        attribute.indexBitWidth = primvarIndexBitWidth;
+        attribute.indexByteOffset = static_cast<uint32_t>(relativePrimvarIndexByteOffset);
+
+        uint32_t primvarIndexBitOffset = static_cast<uint32_t>(primvarIndicesByteOffset * 8u);
+        for (uint32_t localPrimvarIndex : localPrimvarIndices)
+        {
+            WriteBits(outputBytes.data(),
+                      primvarIndexBitOffset,
+                      localPrimvarIndex,
+                      primvarIndexBitWidth);
+        }
+    }
+
+    return attribute;
+}
+
+static uint64_t PackClusterAttribute(const DeviceClusterAttribute &attribute)
+{
+    YBI_ASSERT(attribute.dataByteOffset <= DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_MASK);
+
+    uint64_t bits = attribute.dataByteOffset;
+    for (uint32_t component = 0; component < DEVICE_CLUSTER_ATTRIBUTE_MAX_COMPONENT_COUNT;
+         ++component)
+    {
+        YBI_ASSERT(attribute.bitWidths[component] <=
+                   DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_MASK);
+        const uint32_t shift = DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_SHIFT +
+                               component * DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_NUM_BITS;
+        bits |= static_cast<uint64_t>(attribute.bitWidths[component]) << shift;
+    }
+
+    YBI_ASSERT(attribute.indexBitWidth <= DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_MASK);
+    YBI_ASSERT(attribute.indexByteOffset <= DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_MASK);
+    bits |= static_cast<uint64_t>(attribute.indexBitWidth)
+            << DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_SHIFT;
+    bits |= static_cast<uint64_t>(attribute.indexByteOffset)
+            << DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_SHIFT;
+    bits |= static_cast<uint64_t>(attribute.indexed)
+            << DEVICE_CLUSTER_ATTRIBUTE_INDEXED_FLAG_SHIFT;
+    return bits;
+}
+
+static uint32_t WriteClusterAttributeTable(const Array<DeviceClusterAttribute> &attributes,
+                                           Array<uint8_t> &outputBytes)
+{
+    if (attributes.size() == 0)
+    {
+        return 0u;
+    }
+
+    const size_t tableByteOffset =
+        AppendOutputBytes(outputBytes, attributes.size() * sizeof(uint64_t));
+    YBI_ASSERT(tableByteOffset <= UINT32_MAX / 8u);
+
+    uint32_t tableBitOffset = static_cast<uint32_t>(tableByteOffset * 8u);
+    for (const DeviceClusterAttribute &attribute : attributes)
+    {
+        const uint64_t bits = PackClusterAttribute(attribute);
+        WriteBits(outputBytes.data(), tableBitOffset, static_cast<uint32_t>(bits), 32u);
+        WriteBits(outputBytes.data(), tableBitOffset, static_cast<uint32_t>(bits >> 32u), 32u);
+    }
+
+    return static_cast<uint32_t>(tableByteOffset);
+}
+
 static void CreateCompressedGeometry(const DataContainer *container,
                                      const MeshletClustersResult &clusters,
                                      const Mesh &mesh,
@@ -921,9 +1165,16 @@ static void CreateCompressedGeometry(const DataContainer *container,
 
     Array<unsigned int> faceVaryingIndices;
     faceVaryingIndices.Reserve(3 * meshlet.triangleCount);
+
+    bool hasFaceVaryingAttributes = mesh.GetNormalType() == AttributeType::FaceVarying ||
+                                    mesh.GetUVType() == AttributeType::FaceVarying;
+    for (const Primvar &primvar : mesh.GetPrimvars())
+    {
+        hasFaceVaryingAttributes |= primvar.type == AttributeType::FaceVarying;
+    }
+
     // TODO: also need this if there are face varying attributes
-    if (mesh.GetNormalType() == AttributeType::FaceVarying ||
-        mesh.GetUVType() == AttributeType::FaceVarying)
+    if (hasFaceVaryingAttributes)
     {
         static const int rotationsTable[] = {0, 1, 2, 0, 1};
         YBI_ASSERT(clusterTriangleToMeshTriangle.size());
@@ -1122,6 +1373,62 @@ static void CreateCompressedGeometry(const DataContainer *container,
         }
     }
 
+    // Write primvars
+    Array<DeviceClusterAttribute> clusterAttributes;
+    clusterAttributes.Reserve(mesh.GetPrimvars().size());
+    for (const Primvar &primvar : mesh.GetPrimvars())
+    {
+        DeviceClusterAttribute clusterAttribute = {};
+        if (IsPrimvarArray(primvar.valueType))
+        {
+            const Array<int> *primvarIndices =
+                primvar.HasIndices() ? &container->attributes.GetIndices(primvar.indicesIndex)
+                                     : nullptr;
+            switch (primvar.valueType)
+            {
+                case PrimvarValueType::ArrayVec2f:
+                {
+                    clusterAttribute = WriteClusteredPrimvars<Vec2f>(container,
+                                                                     primvar,
+                                                                     primvar.type,
+                                                                     primvarIndices,
+                                                                     faceVaryingIndices,
+                                                                     vertexIndices,
+                                                                     outputBytes);
+                    break;
+                }
+                case PrimvarValueType::ArrayVec3f:
+                {
+                    clusterAttribute = WriteClusteredPrimvars<Vec3f>(container,
+                                                                     primvar,
+                                                                     primvar.type,
+                                                                     primvarIndices,
+                                                                     faceVaryingIndices,
+                                                                     vertexIndices,
+                                                                     outputBytes);
+                    break;
+                }
+                case PrimvarValueType::ArrayVec4f:
+                {
+                    clusterAttribute = WriteClusteredPrimvars<Vec4f>(container,
+                                                                     primvar,
+                                                                     primvar.type,
+                                                                     primvarIndices,
+                                                                     faceVaryingIndices,
+                                                                     vertexIndices,
+                                                                     outputBytes);
+                    break;
+                }
+                default:
+                {
+                    YBI_ASSERT(0);
+                    break; // scalar primvars are not clustered yet
+                }
+            }
+        }
+        clusterAttributes.EmplaceBack(clusterAttribute);
+    }
+
     BitVector backtrack(scratch.arena, meshlet.triangleCount);
     BitVector restart(scratch.arena, meshlet.triangleCount);
     BitVector edge(scratch.arena, meshlet.triangleCount);
@@ -1252,6 +1559,8 @@ static void CreateCompressedGeometry(const DataContainer *container,
 
     const uint32_t packedMaterialData = WriteMaterialIDs(
         container, mesh, orderingInfo, meshlet, clusterTriangleToMeshTriangle, outputBytes);
+    const uint32_t attributeTableOffset =
+        WriteClusterAttributeTable(clusterAttributes, outputBytes);
 
     uint32_t headerOffset = 0;
     cluster = {};
@@ -1271,6 +1580,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
     cluster.controlBitOffset = controlBitOffset;
     cluster.reuseBitOffset = reuseBitOffset;
     cluster.firstUseBitOffset = firstUseBitOffset;
+    cluster.attributeTableOffset = attributeTableOffset;
 
     for (uint32_t i = 0; i < DEVICE_CLUSTER_CONTROL_DWORD_COUNT; i++)
     {
@@ -1290,7 +1600,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
     }
     YBI_ASSERT(firstUseCount == vertexIndices.size());
 
-#if 0 // defined(WITH_CUDA)
+#if defined(WITH_CUDA)
     ValidateCompressedClusterCUDA(outputBytes,
                                   cluster,
                                   *container,

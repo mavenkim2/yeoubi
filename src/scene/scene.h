@@ -37,6 +37,12 @@ enum class PrimvarValueType
 
 using PrimvarValue = std::variant<bool, int, float, Array<Vec2f>, Array<Vec3f>, Array<Vec4f>>;
 
+inline bool IsPrimvarArray(PrimvarValueType type)
+{
+    return type == PrimvarValueType::ArrayVec2f || type == PrimvarValueType::ArrayVec3f ||
+           type == PrimvarValueType::ArrayVec4f;
+}
+
 struct Primvar
 {
     AttributeId id;
@@ -44,6 +50,8 @@ struct Primvar
     PrimvarValueType valueType;
     size_t index;
     size_t indicesIndex = std::numeric_limits<size_t>::max();
+
+    bool HasIndices() const;
 };
 
 struct MeshAttribute
@@ -57,22 +65,47 @@ struct Material
 {
     std::string path;
     UdimTextureVector diffuseUdimPaths;
-    OpenPbrMaterial openPbr;
     uint32_t udimBase = 0;
     uint32_t udimTableOffset = 0;
 
-    bool hasOpenPbr = false;
     bool valid;
 };
 
 enum class GeometryType
 {
     Mesh,
-    Subdivison,
+    Subdivision,
     Curve,
     Scene,
     Max,
 };
+
+inline const char *ConvertGeometryTypeToString(GeometryType type)
+{
+    switch (type)
+    {
+        case GeometryType::Mesh:
+        {
+            return "Mesh";
+        }
+        case GeometryType::Subdivision:
+        {
+            return "Subdivision";
+        }
+        case GeometryType::Curve:
+        {
+            return "Curve";
+        }
+        case GeometryType::Scene:
+        {
+            return "Scene";
+        }
+        default:
+        {
+            return "Invalid";
+        }
+    }
+}
 
 struct GeometryHandle
 {
@@ -140,6 +173,7 @@ public:
     void SetMaterialIndex(uint32_t index);
     void SetPrimvar(Primvar primvar);
     const Primvar *GetPrimvar(AttributeId id) const;
+    const std::vector<Primvar> &GetPrimvars() const;
     bool HasMaterial() const;
     bool HasSingleMaterial() const;
 };
@@ -185,6 +219,30 @@ struct Attributes
                          AttributeType type,
                          PrimvarValue &&value,
                          Array<int> &&attributeIndices);
+
+    template <typename T>
+    const std::vector<Array<T>> &GetArrays() const
+    {
+        if constexpr (std::is_same_v<T, Vec2f>)
+        {
+            return vector2s;
+        }
+        else if constexpr (std::is_same_v<T, Vec3f>)
+        {
+            return vector3s;
+        }
+        else if constexpr (std::is_same_v<T, Vec4f>)
+        {
+            return vector4s;
+        }
+        else
+        {
+            static_assert("Unsupported type");
+        }
+    }
+
+    const std::vector<Array<int>> &GetIndices() const;
+    const Array<int> &GetIndices(size_t index) const;
 };
 
 using GeometryAttributeLoader = std::function<bool(const std::string &, MeshAttribute &)>;

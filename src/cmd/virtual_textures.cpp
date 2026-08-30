@@ -13,14 +13,17 @@
 #define TINYEXR_IMPLEMENTATION
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stb_image.h>
 #include <tbb/parallel_for.h>
+#include <tiffio.h>
 #include <tinyexr/tinyexr.h>
 #include <vector>
 
@@ -305,18 +308,65 @@ static void LoadEXRFile(Image *texture, std::string filename)
     texture->numBytesPerChannel = 4;
 }
 
+static void LoadTIFFFile(Image *texture, std::string filename)
+{
+    TIFF *tiff = TIFFOpen(filename.c_str(), "r");
+    YBI_ASSERT(tiff);
+
+    uint32_t width = 0;
+    uint32_t height = 0;
+    YBI_ASSERT(TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width));
+    YBI_ASSERT(TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height));
+    YBI_ASSERT(width > 0 && height > 0);
+    YBI_ASSERT(width <= static_cast<uint32_t>(std::numeric_limits<int>::max()));
+    YBI_ASSERT(height <= static_cast<uint32_t>(std::numeric_limits<int>::max()));
+
+    const size_t numTexels = static_cast<size_t>(width) * height;
+    YBI_ASSERT(numTexels <= std::numeric_limits<size_t>::max() / sizeof(uint32_t));
+
+    std::vector<uint32_t> raster(numTexels);
+    YBI_ASSERT(
+        TIFFReadRGBAImageOriented(tiff, width, height, raster.data(), ORIENTATION_TOPLEFT, 0));
+    TIFFClose(tiff);
+
+    uint8_t *rgba = static_cast<uint8_t *>(malloc(numTexels * 4));
+    YBI_ASSERT(rgba);
+    for (size_t texelIndex = 0; texelIndex < numTexels; texelIndex++)
+    {
+        const uint32_t pixel = raster[texelIndex];
+        rgba[texelIndex * 4 + 0] = TIFFGetR(pixel);
+        rgba[texelIndex * 4 + 1] = TIFFGetG(pixel);
+        rgba[texelIndex * 4 + 2] = TIFFGetB(pixel);
+        rgba[texelIndex * 4 + 3] = TIFFGetA(pixel);
+    }
+
+    texture->ptr = rgba;
+    texture->width = static_cast<int>(width);
+    texture->height = static_cast<int>(height);
+    texture->numChannels = 4;
+    texture->numBytesPerChannel = 1;
+}
+
 static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t udim)
 {
     std::string ext = std::filesystem::path(filename).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     Image texture;
     TextureFormat format;
 
-    if (ext.find("png") != std::string::npos || ext.find("jpg") != std::string::npos)
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
     {
         LoadImageFile(&texture, filename);
         format = TextureFormat::RGBA8_UNORM;
     }
-    else if (ext.find("exr") != std::string::npos)
+    else if (ext == ".tif" || ext == ".tiff")
+    {
+        LoadTIFFFile(&texture, filename);
+        format = TextureFormat::RGBA8_UNORM;
+    }
+    else if (ext == ".exr")
     {
         LoadEXRFile(&texture, filename);
         format = TextureFormat::RGBA32_FLOAT;
@@ -425,23 +475,48 @@ static void Run(const std::string &filename)
 
     std::vector<std::pair<std::string, uint32_t>> textures;
     std::unordered_map<std::string, uint32_t> filenameToUdim;
+    const auto AddTexture = [&](const std::string &filename, uint32_t udim) {
+        YBI_ASSERT(!filename.empty());
+        const auto [it, inserted] = filenameToUdim.emplace(filename, udim);
+        if (inserted)
+        {
+            textures.emplace_back(filename, udim);
+        }
+        else
+        {
+            YBI_ERROR(it->second == udim,
+                      "Texture has conflicting UDIM values: %s (%u and %u)\n",
+                      filename.c_str(),
+                      it->second,
+                      udim);
+        }
+    };
+
     for (const Material &material : container.materials)
     {
         for (const auto &[diffuseUdimPath, udim] : material.diffuseUdimPaths)
         {
-            YBI_ASSERT(!diffuseUdimPath.empty());
-            auto [it, inserted] = filenameToUdim.emplace(diffuseUdimPath, udim);
-            if (inserted)
+            AddTexture(diffuseUdimPath, udim);
+        }
+    }
+
+    for (const OpenPbrMaterial &material : container.openPbrMaterials)
+    {
+        for (const MaterialNode &node : material.graph.nodes)
+        {
+            for (const MaterialInput &input : node.inputs)
             {
-                textures.emplace_back(diffuseUdimPath, udim);
-            }
-            else
-            {
-                YBI_ERROR(it->second == udim,
-                          "Texture has conflicting UDIM values: %s (%u and %u)\n",
-                          diffuseUdimPath.c_str(),
-                          it->second,
-                          udim);
+                const UdimTextureVector *textureFiles =
+                    std::get_if<UdimTextureVector>(&input.value);
+                if (!textureFiles)
+                {
+                    continue;
+                }
+
+                for (const auto &[filename, udim] : *textureFiles)
+                {
+                    AddTexture(filename, udim);
+                }
             }
         }
     }

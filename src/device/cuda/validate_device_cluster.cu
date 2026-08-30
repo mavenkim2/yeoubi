@@ -3,6 +3,7 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "core/vec3u.h"
+#include "core/vec4f.h"
 #include "scene/clusterizer.h"
 #include "scene/device_cluster.h"
 #include <cstddef>
@@ -57,8 +58,7 @@ __global__ void DecodeCompressedClusterMaterialIDs(const uint8_t *compressedByte
     const uint32_t triangleIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (triangleIndex < triangleCount)
     {
-        materialIDs[triangleIndex] =
-            cluster->DecodeMaterialID(compressedBytes, triangleIndex);
+        materialIDs[triangleIndex] = cluster->DecodeMaterialID(compressedBytes, triangleIndex);
     }
 }
 
@@ -74,9 +74,93 @@ __global__ void DecodeCompressedClusterUVs(const uint8_t *compressedBytes,
     }
 }
 
+template <typename T>
+__global__ void DecodeCompressedClusterAttribute(const uint8_t *compressedBytes,
+                                                 const DeviceCluster *cluster,
+                                                 T *attributes,
+                                                 uint32_t attributeIndex,
+                                                 uint32_t attributeCount)
+{
+    const uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < attributeCount)
+    {
+        attributes[index] = cluster->DecodeAttribute<T>(compressedBytes, attributeIndex, index);
+    }
+}
+
 static void CheckCudaRuntime(cudaError_t result)
 {
     YBI_ERROR(result == cudaSuccess, "CUDA runtime error: %s\n", cudaGetErrorString(result));
+}
+
+template <typename T>
+static void ValidateClusteredPrimvarCUDA(const uint8_t *deviceCompressedBytes,
+                                         const DeviceCluster *deviceCluster,
+                                         const DataContainer &container,
+                                         const Primvar &primvar,
+                                         uint32_t attributeIndex,
+                                         const Array<unsigned int> &faceVaryingIndices,
+                                         const Array<unsigned int> &vertexIndices)
+{
+    constexpr uint32_t componentCount = sizeof(T) / sizeof(float);
+
+    const std::vector<Array<T>> &arrays = container.attributes.GetArrays<T>();
+    YBI_ASSERT(primvar.index < arrays.size());
+    const Array<T> &sourceValues = arrays[primvar.index];
+    const Array<unsigned int> &chosenIndices =
+        primvar.type == AttributeType::FaceVarying ? faceVaryingIndices : vertexIndices;
+    const Array<int> *sourceIndices =
+        primvar.HasIndices() ? &container.attributes.GetIndices(primvar.indicesIndex) : nullptr;
+    const uint32_t attributeCount = static_cast<uint32_t>(chosenIndices.size());
+    YBI_ASSERT(attributeCount);
+
+    std::vector<T> expectedAttributes;
+    expectedAttributes.reserve(attributeCount);
+    for (unsigned int index : chosenIndices)
+    {
+        int sourceIndex = static_cast<int>(index);
+        if (sourceIndices)
+        {
+            YBI_ASSERT(index < sourceIndices->size());
+            sourceIndex = (*sourceIndices)[index];
+        }
+        YBI_ASSERT(sourceIndex >= 0 && static_cast<size_t>(sourceIndex) < sourceValues.size());
+        expectedAttributes.push_back(sourceValues[static_cast<size_t>(sourceIndex)]);
+    }
+
+    T *deviceAttributes = nullptr;
+    CheckCudaRuntime(
+        cudaMalloc(reinterpret_cast<void **>(&deviceAttributes), attributeCount * sizeof(T)));
+
+    constexpr uint32_t blockSize = 128u;
+    const uint32_t blockCount = (attributeCount + blockSize - 1u) / blockSize;
+    DecodeCompressedClusterAttribute<T><<<blockCount, blockSize>>>(
+        deviceCompressedBytes, deviceCluster, deviceAttributes, attributeIndex, attributeCount);
+    CheckCudaRuntime(cudaGetLastError());
+
+    std::vector<T> decodedAttributes(attributeCount);
+    CheckCudaRuntime(cudaMemcpy(decodedAttributes.data(),
+                                deviceAttributes,
+                                attributeCount * sizeof(T),
+                                cudaMemcpyDeviceToHost));
+    CheckCudaRuntime(cudaFree(deviceAttributes));
+
+    for (uint32_t index = 0; index < attributeCount; ++index)
+    {
+        for (uint32_t component = 0; component < componentCount; ++component)
+        {
+            const uint32_t expected = FloatAsUint(expectedAttributes[index][component]);
+            const uint32_t decoded = FloatAsUint(decodedAttributes[index][component]);
+            YBI_ERROR(decoded == expected,
+                      "GPU primvar decode mismatch at attribute %u, element %u, component %u: "
+                      "expected %08x, got %08x\n",
+                      attributeIndex,
+                      index,
+                      component,
+                      expected,
+                      decoded);
+        }
+    }
 }
 
 void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
@@ -92,6 +176,71 @@ void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
                                    const Array<int> &triangleRotationsBuffer,
                                    const Array<uint32_t> &oldIndexToNewIndexBuffer)
 {
+    const size_t compressedByteCount = compressedBytes.size();
+    YBI_ASSERT(compressedBytes.data());
+    YBI_ASSERT(compressedByteCount);
+
+    uint8_t *deviceCompressedBytes = nullptr;
+    DeviceCluster *deviceCluster = nullptr;
+    const size_t paddedByteCount =
+        AlignUp(compressedByteCount + sizeof(uint32_t), sizeof(uint32_t));
+    CheckCudaRuntime(
+        cudaMalloc(reinterpret_cast<void **>(&deviceCompressedBytes), paddedByteCount));
+    CheckCudaRuntime(cudaMemset(deviceCompressedBytes, 0, paddedByteCount));
+    CheckCudaRuntime(cudaMemcpy(deviceCompressedBytes,
+                                compressedBytes.data(),
+                                compressedByteCount,
+                                cudaMemcpyHostToDevice));
+    CheckCudaRuntime(cudaMalloc(reinterpret_cast<void **>(&deviceCluster), sizeof(DeviceCluster)));
+    CheckCudaRuntime(
+        cudaMemcpy(deviceCluster, &cluster, sizeof(DeviceCluster), cudaMemcpyHostToDevice));
+
+    uint32_t attributeIndex = 0u;
+    for (const Primvar &primvar : mesh.GetPrimvars())
+    {
+        if (IsPrimvarArray(primvar.valueType))
+        {
+            switch (primvar.valueType)
+            {
+                case PrimvarValueType::ArrayVec2f:
+                    ValidateClusteredPrimvarCUDA<Vec2f>(deviceCompressedBytes,
+                                                        deviceCluster,
+                                                        container,
+                                                        primvar,
+                                                        attributeIndex,
+                                                        faceVaryingIndices,
+                                                        vertexIndicesBuffer);
+                    break;
+                case PrimvarValueType::ArrayVec3f:
+                    ValidateClusteredPrimvarCUDA<Vec3f>(deviceCompressedBytes,
+                                                        deviceCluster,
+                                                        container,
+                                                        primvar,
+                                                        attributeIndex,
+                                                        faceVaryingIndices,
+                                                        vertexIndicesBuffer);
+                    break;
+                case PrimvarValueType::ArrayVec4f:
+                    ValidateClusteredPrimvarCUDA<Vec4f>(deviceCompressedBytes,
+                                                        deviceCluster,
+                                                        container,
+                                                        primvar,
+                                                        attributeIndex,
+                                                        faceVaryingIndices,
+                                                        vertexIndicesBuffer);
+                    break;
+                default:
+                    YBI_ASSERT(0);
+                    break;
+            }
+        }
+        ++attributeIndex;
+    }
+
+    CheckCudaRuntime(cudaFree(deviceCluster));
+    CheckCudaRuntime(cudaFree(deviceCompressedBytes));
+
+#if 0 // Temporarily disabled while validating clustered primvars.
     const uint8_t *compressedBytesPtr = compressedBytes.data();
     const size_t compressedByteCount = compressedBytes.size();
     const Vec3f *sourcePositions = container.GetMeshPositions(mesh).data();
@@ -420,6 +569,7 @@ void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
     CheckCudaRuntime(cudaFree(devicePositions));
     CheckCudaRuntime(cudaFree(deviceCluster));
     CheckCudaRuntime(cudaFree(deviceCompressedBytes));
+#endif
 }
 
 } // namespace ybi

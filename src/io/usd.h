@@ -81,15 +81,6 @@ class USDSceneLoader : public SceneLoader
 
     AffineTransform ConvertAffineTransform(const pxr::GfMatrix4d &m) const;
     Matrix4x4 ConvertMatrix4x4(const pxr::GfMatrix4d &m) const;
-    void ConvertMeshIndicesToTriangles(const pxr::VtIntArray &faceIndices,
-                                       const pxr::VtIntArray &faceCounts,
-                                       Array<int> &triangles) const;
-    void ConvertFaceVaryingUVsToTriangles(const pxr::VtVec2fArray &values,
-                                          const pxr::VtIntArray &faceCounts,
-                                          Array<Vec2f> &triangles) const;
-    void ConvertFaceVaryingNormalsToTriangles(const pxr::VtVec3fArray &values,
-                                              const pxr::VtIntArray &faceCounts,
-                                              Array<Vec3f> &triangles) const;
     AttributeType ProcessPrimvars(const pxr::UsdGeomMesh &mesh,
                                   pxr::VtArray<pxr::GfVec2f> *outUVs,
                                   pxr::VtIntArray *outUVIndices,

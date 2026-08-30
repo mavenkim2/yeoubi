@@ -6,6 +6,7 @@
 #include "core/vec2u.h"
 #include "core/vec3f.h"
 #include "core/vec3u.h"
+#include "core/vec4u.h"
 #include "device/cuda_compat.h"
 
 namespace ybi
@@ -16,8 +17,7 @@ namespace ybi
 #define DEVICE_CLUSTER_MAX_VERTICES_NUM_BITS 8u
 #define DEVICE_CLUSTER_MAX_VERTICES (1u << DEVICE_CLUSTER_MAX_VERTICES_NUM_BITS)
 #define DEVICE_CLUSTER_CONTROL_DWORD_COUNT (1u << (DEVICE_CLUSTER_MAX_VERTICES_NUM_BITS - 5u))
-#define DEVICE_CLUSTER_FIRST_USE_DWORD_COUNT \
-    ((3u * DEVICE_CLUSTER_MAX_TRIANGLES + 31u) >> 5u)
+#define DEVICE_CLUSTER_FIRST_USE_DWORD_COUNT ((3u * DEVICE_CLUSTER_MAX_TRIANGLES + 31u) >> 5u)
 
 #define DEVICE_CLUSTER_REUSE_BUFFER_NUM_BITS_SIZE 3u
 #define DEVICE_CLUSTER_UV_INDEXED_FLAG 1u
@@ -27,6 +27,45 @@ namespace ybi
     ((1u << DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_NUM_BITS) - 1u)
 #define DEVICE_CLUSTER_INVALID_MATERIAL_ID 0xffffffffu
 #define DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID 0x7fffffffu
+
+#define DEVICE_CLUSTER_ATTRIBUTE_MAX_COMPONENT_COUNT 4u
+#define DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_NUM_BITS 20u
+#define DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_MASK \
+    ((uint64_t(1) << DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_NUM_BITS) - 1u)
+#define DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_NUM_BITS 6u
+#define DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_MASK \
+    ((1u << DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_NUM_BITS) - 1u)
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_NUM_BITS 6u
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_MASK \
+    ((1u << DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_NUM_BITS) - 1u)
+#define DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_SHIFT \
+    DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_NUM_BITS
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_SHIFT \
+    (DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_SHIFT + \
+     DEVICE_CLUSTER_ATTRIBUTE_MAX_COMPONENT_COUNT * \
+         DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_NUM_BITS)
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_SHIFT \
+    (DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_SHIFT + \
+     DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_NUM_BITS)
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_NUM_BITS 13u
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_MASK \
+    ((uint64_t(1) << DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_NUM_BITS) - 1u)
+#define DEVICE_CLUSTER_ATTRIBUTE_INDEXED_FLAG_SHIFT \
+    (DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_SHIFT + \
+     DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_NUM_BITS)
+
+// Attribute data begins with one uint32 base per component, followed by the packed deltas.
+// dataByteOffset is absolute; indexByteOffset is relative to dataByteOffset.
+struct DeviceClusterAttribute
+{
+    uint32_t dataByteOffset;
+    Vec4u bitWidths;
+    uint32_t indexBitWidth;
+    uint32_t indexByteOffset;
+    bool indexed;
+};
+
+static_assert(DEVICE_CLUSTER_ATTRIBUTE_INDEXED_FLAG_SHIFT == 63u);
 
 // TODO: maybe don't want interop functions in src/scene
 struct PackedDeviceCluster
@@ -91,6 +130,8 @@ struct DeviceCluster
     uint32_t controlBitOffset;
     uint32_t reuseBitOffset;
     uint32_t firstUseBitOffset;
+    // Byte offset to packed 64-bit attribute entries in the cluster byte stream.
+    uint32_t attributeTableOffset;
 
     uint32_t restartCountPerDword[DEVICE_CLUSTER_CONTROL_DWORD_COUNT];
     int32_t restartHighBitPerDword[DEVICE_CLUSTER_CONTROL_DWORD_COUNT];
@@ -285,18 +326,14 @@ struct DeviceCluster
                             DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_NUM_BITS,
                             DEVICE_CLUSTER_UV_INDEX_BIT_WIDTH_SHIFT);
             valueIndex = ReadClusterBits(
-                clusterPageData,
-                uvIndexBitOffset + uvIndex * uvIndexBitWidth,
-                uvIndexBitWidth);
+                clusterPageData, uvIndexBitOffset + uvIndex * uvIndexBitWidth, uvIndexBitWidth);
         }
 
         const uint32_t bitsPerUV = uvBitWidths.x + uvBitWidths.y;
         uint32_t bitOffset = uvBitOffset + valueIndex * bitsPerUV;
-        const uint32_t x =
-            uvBase.x + ReadClusterBits(clusterPageData, bitOffset, uvBitWidths.x);
+        const uint32_t x = uvBase.x + ReadClusterBits(clusterPageData, bitOffset, uvBitWidths.x);
         bitOffset += uvBitWidths.x;
-        const uint32_t y =
-            uvBase.y + ReadClusterBits(clusterPageData, bitOffset, uvBitWidths.y);
+        const uint32_t y = uvBase.y + ReadClusterBits(clusterPageData, bitOffset, uvBitWidths.y);
         return Vec2f(UintAsFloat(x), UintAsFloat(y));
     }
 
@@ -344,6 +381,84 @@ struct DeviceCluster
         return materialID == DEVICE_CLUSTER_ENCODED_INVALID_MATERIAL_ID
                    ? DEVICE_CLUSTER_INVALID_MATERIAL_ID
                    : materialID;
+    }
+
+    YBI_CPU_GPU DeviceClusterAttribute DecodeAttributeInfo(const uint8_t *clusterPageData,
+                                                           uint32_t attributeIndex) const
+    {
+        YBI_ASSERT(clusterPageData);
+        const uint32_t bitOffset =
+            attributeTableOffset * 8u + attributeIndex * sizeof(DeviceClusterAttribute) * 8u;
+
+        const uint64_t low = ReadClusterBits(clusterPageData, bitOffset, 32u);
+        const uint64_t high = ReadClusterBits(clusterPageData, bitOffset + 32u, 32u);
+        const uint64_t bits = low | (high << 32u);
+
+        DeviceClusterAttribute attribute;
+        attribute.dataByteOffset =
+            static_cast<uint32_t>(bits & DEVICE_CLUSTER_ATTRIBUTE_DATA_BYTE_OFFSET_MASK);
+        for (uint32_t component = 0; component < DEVICE_CLUSTER_ATTRIBUTE_MAX_COMPONENT_COUNT;
+             ++component)
+        {
+            const uint32_t shift =
+                DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_SHIFT +
+                component * DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_NUM_BITS;
+            attribute.bitWidths[component] = static_cast<uint32_t>(
+                (bits >> shift) & DEVICE_CLUSTER_ATTRIBUTE_COMPONENT_BIT_WIDTH_MASK);
+        }
+        attribute.indexBitWidth =
+            static_cast<uint32_t>((bits >> DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_SHIFT) &
+                                  DEVICE_CLUSTER_ATTRIBUTE_INDEX_BIT_WIDTH_MASK);
+        attribute.indexByteOffset =
+            static_cast<uint32_t>((bits >> DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_SHIFT) &
+                                  DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_MASK);
+        attribute.indexByteOffset += attribute.dataByteOffset;
+        attribute.indexed = (bits >> DEVICE_CLUSTER_ATTRIBUTE_INDEXED_FLAG_SHIFT) != 0u;
+        return attribute;
+    }
+
+    template <typename T>
+    YBI_CPU_GPU T DecodeAttribute(const uint8_t *clusterPageData,
+                                  uint32_t attributeIndex,
+                                  uint32_t index) const
+    {
+        constexpr uint32_t componentCount = sizeof(T) / sizeof(float);
+        static_assert(componentCount > 0u &&
+                      componentCount <= DEVICE_CLUSTER_ATTRIBUTE_MAX_COMPONENT_COUNT);
+
+        const DeviceClusterAttribute attribute =
+            DecodeAttributeInfo(clusterPageData, attributeIndex);
+
+        uint32_t valueIndex = index;
+        if (attribute.indexed)
+        {
+            const uint32_t indexBitOffset = attribute.indexByteOffset * 8u;
+            valueIndex = ReadClusterBits(clusterPageData,
+                                         indexBitOffset + index * attribute.indexBitWidth,
+                                         attribute.indexBitWidth);
+        }
+
+        uint32_t bitsPerAttribute = 0u;
+        for (uint32_t component = 0; component < componentCount; ++component)
+        {
+            bitsPerAttribute += attribute.bitWidths[component];
+        }
+
+        T result;
+        const uint32_t dataBitOffset = attribute.dataByteOffset * 8u;
+        uint32_t valueBitOffset =
+            dataBitOffset + componentCount * 32u + valueIndex * bitsPerAttribute;
+        for (uint32_t component = 0; component < componentCount; ++component)
+        {
+            const uint32_t bitWidth = attribute.bitWidths[component];
+            const uint32_t base =
+                ReadClusterBits(clusterPageData, dataBitOffset + component * 32u, 32u);
+            const uint32_t value =
+                base + ReadClusterBits(clusterPageData, valueBitOffset, bitWidth);
+            result[component] = UintAsFloat(value);
+            valueBitOffset += bitWidth;
+        }
+        return result;
     }
 };
 

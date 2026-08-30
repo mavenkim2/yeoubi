@@ -439,66 +439,39 @@ Matrix4x4 USDSceneLoader::ConvertMatrix4x4(const pxr::GfMatrix4d &m) const
                      (float)r3[3]);
 }
 
-void USDSceneLoader::ConvertMeshIndicesToTriangles(const pxr::VtIntArray &values,
-                                                   const pxr::VtIntArray &faceCounts,
-                                                   Array<int> &triangles) const
+template <typename OutputT, typename Values, typename Convert>
+static Array<OutputT> TriangulateFaceVaryingValues(const Values &values,
+                                                    const pxr::VtIntArray &faceCounts,
+                                                    Convert &&convert)
 {
-    size_t index = 0;
-    for (int faceCount : faceCounts)
+    Array<OutputT> triangles;
+    size_t faceVertexOffset = 0;
+
+    for (const int faceCount : faceCounts)
     {
         YBI_ASSERT(faceCount >= 3);
+        YBI_ASSERT(faceVertexOffset + static_cast<size_t>(faceCount) <= values.size());
 
-        for (size_t i = 1; i < faceCount - 1; i++)
+        for (size_t i = 1; i < static_cast<size_t>(faceCount) - 1; ++i)
         {
-            triangles.EmplaceBack(values[index]);
-            triangles.EmplaceBack(values[index + i]);
-            triangles.EmplaceBack(values[index + i + 1]);
+            triangles.EmplaceBack(convert(values[faceVertexOffset]));
+            triangles.EmplaceBack(convert(values[faceVertexOffset + i]));
+            triangles.EmplaceBack(convert(values[faceVertexOffset + i + 1]));
         }
 
-        index += faceCount;
+        faceVertexOffset += static_cast<size_t>(faceCount);
     }
+
+    YBI_ASSERT(faceVertexOffset == values.size());
+    return triangles;
 }
 
-void USDSceneLoader::ConvertFaceVaryingUVsToTriangles(const pxr::VtVec2fArray &values,
-                                                      const pxr::VtIntArray &faceCounts,
-                                                      Array<Vec2f> &uvs) const
+template <typename Values>
+static Array<typename Values::value_type>
+TriangulateFaceVaryingValues(const Values &values, const pxr::VtIntArray &faceCounts)
 {
-    size_t index = 0;
-    for (int faceCount : faceCounts)
-    {
-        YBI_ASSERT(faceCount >= 3);
-
-        for (size_t i = 1; i < faceCount - 1; i++)
-        {
-            uvs.EmplaceBack(Vec2f(values[index][0], values[index][1]));
-            uvs.EmplaceBack(Vec2f(values[index + i][0], values[index + i][1]));
-            uvs.EmplaceBack(Vec2f(values[index + i + 1][0], values[index + i + 1][1]));
-        }
-
-        index += faceCount;
-    }
-}
-
-void USDSceneLoader::ConvertFaceVaryingNormalsToTriangles(const pxr::VtVec3fArray &values,
-                                                          const pxr::VtIntArray &faceCounts,
-                                                          Array<Vec3f> &normals) const
-{
-    size_t index = 0;
-    for (int faceCount : faceCounts)
-    {
-        YBI_ASSERT(faceCount >= 3);
-
-        for (size_t i = 1; i < faceCount - 1; i++)
-        {
-            normals.EmplaceBack(Vec3f(values[index][0], values[index][1], values[index][2]));
-            normals.EmplaceBack(
-                Vec3f(values[index + i][0], values[index + i][1], values[index + i][2]));
-            normals.EmplaceBack(Vec3f(
-                values[index + i + 1][0], values[index + i + 1][1], values[index + i + 1][2]));
-        }
-
-        index += faceCount;
-    }
+    return TriangulateFaceVaryingValues<typename Values::value_type>(
+        values, faceCounts, [](const auto &value) { return value; });
 }
 
 bool USDSceneLoader::IsPurposeAllowed(pxr::UsdPrim prim) const
@@ -686,12 +659,15 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
                 YBI_ASSERT(usdUvIndices.size() == faceIndices.size());
                 uvs.Resize(usdUvs.size());
                 memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
-                ConvertMeshIndicesToTriangles(usdUvIndices, faceCounts, uvIndices);
+                uvIndices = TriangulateFaceVaryingValues(usdUvIndices, faceCounts);
             }
             else
             {
                 YBI_ASSERT(usdUvs.size() == faceIndices.size());
-                ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+                uvs = TriangulateFaceVaryingValues<Vec2f>(
+                    usdUvs, faceCounts, [](const pxr::GfVec2f &value) {
+                        return Vec2f(value[0], value[1]);
+                    });
             }
             break;
         }
@@ -731,7 +707,10 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
         case AttributeType::FaceVarying:
         {
             YBI_ASSERT(usdNormals.size() == faceIndices.size());
-            ConvertFaceVaryingNormalsToTriangles(usdNormals, faceCounts, normals);
+            normals = TriangulateFaceVaryingValues<Vec3f>(
+                usdNormals, faceCounts, [](const pxr::GfVec3f &value) {
+                    return Vec3f(value[0], value[1], value[2]);
+                });
             break;
         }
         case AttributeType::Vertex:
@@ -755,8 +734,7 @@ void USDSceneLoader::ProcessPolygonMesh(Scene *scene,
 
     Array<Vec3f> positions(usdPositions.size());
     memcpy(positions.data(), usdPositions.data(), sizeof(Vec3f) * usdPositions.size());
-    Array<int> triangleIndices;
-    ConvertMeshIndicesToTriangles(faceIndices, faceCounts, triangleIndices);
+    Array<int> triangleIndices = TriangulateFaceVaryingValues(faceIndices, faceCounts);
 
     printf("%zu %zu %zu\n", positions.size(), normals.size(), uvs.size());
     size_t index = meshOffset + meshIndex;
@@ -932,12 +910,15 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
                 YBI_ASSERT(usdUvIndices.size() == faceIndices.size());
                 uvs.Resize(usdUvs.size());
                 memcpy(uvs.data(), usdUvs.data(), sizeof(Vec2f) * usdUvs.size());
-                ConvertMeshIndicesToTriangles(usdUvIndices, faceCounts, uvIndices);
+                uvIndices = TriangulateFaceVaryingValues(usdUvIndices, faceCounts);
             }
             else
             {
                 YBI_ASSERT(usdUvs.size() == faceIndices.size());
-                ConvertFaceVaryingUVsToTriangles(usdUvs, faceCounts, uvs);
+                uvs = TriangulateFaceVaryingValues<Vec2f>(
+                    usdUvs, faceCounts, [](const pxr::GfVec2f &value) {
+                        return Vec2f(value[0], value[1]);
+                    });
             }
             break;
         }
@@ -977,7 +958,10 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
         case AttributeType::FaceVarying:
         {
             YBI_ASSERT(usdNormals.size() == faceIndices.size());
-            ConvertFaceVaryingNormalsToTriangles(usdNormals, faceCounts, normals);
+            normals = TriangulateFaceVaryingValues<Vec3f>(
+                usdNormals, faceCounts, [](const pxr::GfVec3f &value) {
+                    return Vec3f(value[0], value[1], value[2]);
+                });
             break;
         }
         case AttributeType::Vertex:
@@ -999,10 +983,10 @@ void USDSceneLoader::ProcessPolygonMeshConcurrent(Arena *arena,
         }
     }
 
-    Array<int> triangleIndices;
-    ConvertMeshIndicesToTriangles(faceIndices, faceCounts, triangleIndices);
+    Array<int> triangleIndices = TriangulateFaceVaryingValues(faceIndices, faceCounts);
 
     size_t index = meshOffset + meshIndex;
+
     BufferHandle positionHandle{
         static_cast<uint32_t>(internStates->positions.Intern(arena, std::move(positions), index))};
     BufferHandle normalHandle{
@@ -1411,11 +1395,51 @@ static bool LoadPrimvar(const pxr::UsdStageRefPtr &stage,
         return false;
     }
 
+    pxr::TfToken interpolationToken = primvar.GetInterpolation();
+    outAttribute.type = ConvertTokenToAttributeType(interpolationToken);
+    outAttribute.value = LoadPrimvarValue(value);
+
     pxr::VtIntArray indices;
     const bool hasIndices =
         primvar.IsIndexed() && primvar.GetIndices(&indices, timeCode) && !indices.empty();
 
-    if (hasIndices)
+    if (outAttribute.type == AttributeType::FaceVarying)
+    {
+        pxr::UsdGeomMesh mesh(prim);
+        pxr::VtIntArray faceCounts;
+        YBI_ERROR(mesh.GetFaceVertexCountsAttr().Get(&faceCounts, timeCode),
+                  "Could not read face vertex counts for primvar '%s' on mesh '%s'.\n",
+                  name.c_str(),
+                  prim.GetPath().GetText());
+
+        if (hasIndices)
+        {
+            // Indexed primvars keep their value table intact; their per-corner indices must
+            // follow the triangulated corner order.
+            Array<int> sourceIndices(indices.size());
+            memcpy(sourceIndices.data(), indices.data(), indices.size() * sizeof(int));
+            outAttribute.indices = TriangulateFaceVaryingValues(sourceIndices, faceCounts);
+        }
+        else
+        {
+            std::visit(
+                [&faceCounts](auto &values) {
+                    using T = std::decay_t<decltype(values)>;
+                    if constexpr (std::is_same_v<T, Array<Vec2f>> ||
+                                  std::is_same_v<T, Array<Vec3f>> ||
+                                  std::is_same_v<T, Array<Vec4f>>)
+                    {
+                        values = TriangulateFaceVaryingValues(values, faceCounts);
+                    }
+                    else
+                    {
+                        YBI_LOGFATAL("Face-varying primvars must have an array value.\n");
+                    }
+                },
+                outAttribute.value);
+        }
+    }
+    else if (hasIndices)
     {
         outAttribute.indices.Resize(indices.size());
         memcpy(outAttribute.indices.data(),
@@ -1423,9 +1447,6 @@ static bool LoadPrimvar(const pxr::UsdStageRefPtr &stage,
                outAttribute.indices.size() * sizeof(int));
     }
 
-    pxr::TfToken interpolationToken = primvar.GetInterpolation();
-    outAttribute.type = ConvertTokenToAttributeType(interpolationToken);
-    outAttribute.value = LoadPrimvarValue(value);
     return outAttribute.type != AttributeType::None;
 }
 
@@ -1477,26 +1498,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
 {
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
     pxr::UsdPrim root = stage->GetPseudoRoot();
-
-    // pxr::UsdPrimRange range = stage->Traverse();
-    // for (pxr::UsdPrimRange::iterator it = range.begin(); it != range.end(); ++it)
-    // {
-    //     pxr::UsdPrim prim = *it;
-    //     pxr::UsdVariantSets sets = prim.GetVariantSets();
-    //
-    //     for (const std::string &setName : sets.GetNames())
-    //     {
-    //         pxr::UsdVariantSet set = sets.GetVariantSet(setName);
-    //         std::vector<std::string> names = set.GetVariantNames();
-    //
-    //         for (std::string name : names)
-    //         // if (std::find(names.begin(), names.end(), "render") != names.end())
-    //         {
-    //             // set.SetVariantSelection("render");
-    //             printf("Selected %s=render on %s\n", setName.c_str(), prim.GetPath().GetText());
-    //         }
-    //     }
-    // }
 
     USDPrimTraversalData collectiveData;
 
@@ -1886,48 +1887,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
                     bool result = fileInput.Get(&assetPath);
                     YBI_ASSERT(result);
 
-                    ParseUdimPaths(assetPath, shader, fileInput, mat.diffuseUdimPaths);
-
-                    std::string rawPathStr = assetPath.GetAssetPath();
-                    std::string resolved = assetPath.GetResolvedPath();
-
-                    // printf("raw asset path: %s\n", rawPathStr.c_str());
-                    // printf("is udim: %d\n",
-                    if (pxr::UsdShadeUdimUtils::IsUdimIdentifier(rawPathStr))
-                    {
-                        pxr::SdfLayerHandle anchorLayer;
-                        pxr::SdfPropertySpecHandleVector stack =
-                            fileInput.GetAttr().GetPropertyStack();
-
-                        if (!stack.empty())
-                        {
-                            anchorLayer = stack.front()->GetLayer();
-                        }
-                        else
-                        {
-                            anchorLayer = shader.GetPrim().GetStage()->GetRootLayer();
-                        }
-
-                        auto tiles =
-                            pxr::UsdShadeUdimUtils::ResolveUdimTilePaths(rawPathStr, anchorLayer);
-
-                        for (const auto &[resolvedPath, tile] : tiles)
-                        {
-                            auto value = std::stoul(tile);
-                            YBI_ASSERT(value <= std::numeric_limits<uint32_t>::max());
-
-                            mat.diffuseUdimPaths.emplace_back(resolvedPath,
-                                                              static_cast<uint32_t>(value));
-                        }
-                    }
-                    else if (!resolved.empty())
-                    {
-                        mat.diffuseUdimPaths.emplace_back(resolved, ~0u);
-                    }
-                    else
-                    {
-                        YBI_ASSERT(0);
-                    }
+                    ParseUdimPaths(assetPath, fileInput.GetAttr(), timeCode, mat.diffuseUdimPaths);
 
 #if 0
                     pxr::TfToken wrapS, wrapT;
@@ -2035,8 +1995,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
                 }
                 default:
                 {
-                    // TODO: not yet implemented
-                    YBI_ASSERT(0);
+                    YBI_LOGFATAL("Geometry type: %s not supported\n",
+                                 ConvertGeometryTypeToString(instance.handle.type));
                     break;
                 }
             }

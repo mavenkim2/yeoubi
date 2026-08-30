@@ -35,6 +35,16 @@ struct DeviceMaterial2
 #undef DECLARE
 };
 
+struct DeviceAttribute
+{
+    AttributeId id;
+    AttributeType attributeType;
+
+    // NOTE: these are unused when YBI_USE_CLUSTERS is enabled
+    int index;
+    int indicesIndex;
+};
+
 struct Object
 {
     AttributeType uvType;
@@ -46,6 +56,8 @@ struct Object
     uint32_t triangleIndexOffset;
     uint32_t triangleMaterialOffset;
     uint32_t clusterOffset;
+    uint32_t primvarOffset;
+    uint32_t primvarCount;
 
     int materialIndex;
 };
@@ -64,6 +76,12 @@ struct DeviceScene
 
     DeviceCluster *compressedClusters;
     uint8_t *compressedClusterBytes;
+
+    DeviceAttribute *deviceAttributes;
+
+    // TODO: populate these and use them when clusterizer isn't used
+    int *attributeIndices;
+    Vec2f *attributesVec2f;
 };
 
 } // namespace ybi

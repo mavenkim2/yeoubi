@@ -137,6 +137,11 @@ const Primvar *Mesh::GetPrimvar(AttributeId id) const
     return nullptr;
 }
 
+const std::vector<Primvar> &Mesh::GetPrimvars() const
+{
+    return primvars;
+}
+
 bool Mesh::HasMaterial() const
 {
     return materialIndex != ~0u || faceMaterialIndices.IsValid();
@@ -150,6 +155,11 @@ bool Mesh::HasSingleMaterial() const
 // -----------------------------------------------------------------------------
 // Attributes
 // -----------------------------------------------------------------------------
+
+bool Primvar::HasIndices() const
+{
+    return indicesIndex != std::numeric_limits<size_t>::max();
+}
 
 Primvar Attributes::AddAttribute(AttributeId id,
                                  AttributeType type,
@@ -208,6 +218,16 @@ Primvar Attributes::AddAttribute(AttributeId id,
     }
 
     return primvar;
+}
+
+const std::vector<Array<int>> &Attributes::GetIndices() const
+{
+    return indices;
+}
+
+const Array<int> &Attributes::GetIndices(size_t index) const
+{
+    return indices[index];
 }
 
 // -----------------------------------------------------------------------------

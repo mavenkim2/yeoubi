@@ -7,6 +7,7 @@
 #include "device/kernel_params.h"
 #include "render/bsdf/bsdf.h"
 #include "render/camera.h"
+#include "render/device_attributes.h"
 #include "render/ray_cone.h"
 #include "render/virtual_texture_interop.h"
 #include <optix_device.h>

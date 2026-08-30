@@ -223,9 +223,9 @@ static void LoadExpression(const pxr::UsdShadeInput &input, pxr::UsdTimeCode tim
     }
 }
 
-static MaterialInputValue LoadConstant(const pxr::UsdShadeShader &shader,
-                                       const pxr::UsdShadeInput &input,
-                                       const pxr::VtValue &value)
+static MaterialInputValue LoadConstant(const pxr::UsdAttribute &sourceAttribute,
+                                       const pxr::VtValue &value,
+                                       pxr::UsdTimeCode timeCode)
 {
     if (value.IsHolding<bool>())
     {
@@ -291,7 +291,8 @@ static MaterialInputValue LoadConstant(const pxr::UsdShadeShader &shader,
         UdimTextureVector filePaths;
 
         pxr::SdfAssetPath sdfAssetPath = value.UncheckedGet<pxr::SdfAssetPath>();
-        ParseUdimPaths(sdfAssetPath, shader, input, filePaths);
+        ParseUdimPaths(sdfAssetPath, sourceAttribute, timeCode, filePaths);
+
         return filePaths;
     }
     else if (value.IsHolding<pxr::TfToken>())
@@ -396,6 +397,18 @@ static void DebugPrintConstant(const MaterialInput &input)
             {
                 printf("asset: @%s@\n", value.GetAssetPath().c_str());
             }
+            else if constexpr (std::is_same_v<T, UdimTextureVector>)
+            {
+                printf("files: \n");
+                for (auto &[filename, udim] : value)
+                {
+                    printf("%s\n", filename.c_str());
+                }
+            }
+            else
+            {
+                YBI_ASSERT(0);
+            }
         },
         input.value);
 }
@@ -437,7 +450,8 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     pxr::VtValue value;
                     if (input.Get(&value, timeCode))
                     {
-                        materialInputs.push_back({inputName, LoadConstant(shader, input, value)});
+                        materialInputs.push_back(
+                            {inputName, LoadConstant(input.GetAttr(), value, timeCode)});
                         useDefault = false;
                         DebugPrintConstant(materialInputs.back());
                     }
@@ -469,7 +483,8 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     }
                     else if (producer.Get(&value, timeCode))
                     {
-                        materialInputs.push_back({inputName, LoadConstant(shader, input, value)});
+                        materialInputs.push_back(
+                            {inputName, LoadConstant(producer, value, timeCode)});
                         useDefault = false;
                         DebugPrintConstant(materialInputs.back());
                         break;
@@ -494,7 +509,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     if (!defaultValue.IsEmpty())
                     {
                         materialInputs.push_back(
-                            {inputName, LoadConstant(shader, input, defaultValue)});
+                            {inputName, LoadConstant(input.GetAttr(), defaultValue, timeCode)});
                     }
                 }
             }
