@@ -54,6 +54,15 @@ namespace ybi
     (DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_SHIFT + \
      DEVICE_CLUSTER_ATTRIBUTE_INDEX_BYTE_OFFSET_NUM_BITS)
 
+YBI_GPU bool IsClusteredTriangle(uint32_t clusterOffset, uint32_t clusterId)
+{
+#if OPTIX_VERSION >= 90000
+    return clusterOffset != ~0u && clusterId != ~0u; // OPTIX_CLUSTER_ID_INVALID;
+#else
+    return false;
+#endif
+}
+
 // Attribute data begins with one uint32 base per component, followed by the packed deltas.
 // dataByteOffset is absolute; indexByteOffset is relative to dataByteOffset.
 struct DeviceClusterAttribute

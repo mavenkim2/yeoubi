@@ -57,10 +57,9 @@ int main(int argc, char **argv)
         // TODO: this disables materials with no diffuse map. support actual materials
         mat.valid = mat.udimBase != 0u;
     }
-    manager.Finalize();
-
-    RenderSystem system(device.get(), displayDevice.get(), &container, scene);
+    RenderSystem system(device.get(), displayDevice.get(), &container, scene, &manager);
     system.Update(&importContext);
+    manager.Finalize();
 
     YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);
 

@@ -29,9 +29,6 @@ struct KernelParams
     DeviceScene scene;
     int maxDepth;
 
-    // Materials
-    uint32_t *shaderNodes;
-
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;
     PageDescriptor *pageDescriptors;

@@ -14,20 +14,45 @@
 namespace ybi
 {
 
+struct NodeInfo
+{
+    std::vector<MaterialNodeId> outNodes;
+    int in = 0;
+    int out = 0;
+
+    // Used when compiling
+    int inputSlotOffset;
+    int numInputSlots;
+
+    int outputSlotOffset;
+    int numOutputSlots;
+};
+
 struct ShaderCompilationContext
 {
     const MaterialGraph &graph;
     std::vector<uint32_t> &nodes;
     const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle;
+    const std::unordered_map<std::string, AttributeId> &attributeIdMap;
 
     void AddFloat(float v)
     {
         nodes.push_back(FloatAsUint(v));
     }
+    void AddUint(uint32_t v)
+    {
+        nodes.push_back(v);
+    }
     void AddTextureHandle(MaterialTextureHandle handle)
     {
         nodes.push_back(handle.udimBase);
         nodes.push_back(handle.udimTableOffset);
+    }
+    AttributeId GetAttributeId(const std::string &name)
+    {
+        auto find = attributeIdMap.find(name);
+        YBI_ASSERT(find != attributeIdMap.end());
+        return find->second;
     }
 };
 
@@ -89,8 +114,12 @@ static void IterateNamedInput(const MaterialNode &node, const std::string &name,
     }
 }
 
-static void CompileConstantFloat(const MaterialNode &node, ShaderCompilationContext &context)
+static void CompileConstantFloat(const MaterialNode &node,
+                                 const std::vector<NodeInfo> &,
+                                 MaterialNodeId,
+                                 ShaderCompilationContext &context)
 {
+    YBI_ASSERT(0);
     const float *value = GetConstantValue<float>(node);
     if (value == nullptr)
         return;
@@ -99,8 +128,12 @@ static void CompileConstantFloat(const MaterialNode &node, ShaderCompilationCont
     context.AddFloat(*value);
 }
 
-static void CompileConstantBool(const MaterialNode &node, ShaderCompilationContext &context)
+static void CompileConstantBool(const MaterialNode &node,
+                                const std::vector<NodeInfo> &,
+                                MaterialNodeId,
+                                ShaderCompilationContext &context)
 {
+    YBI_ASSERT(0);
     const bool *value = GetConstantValue<bool>(node);
     if (value == nullptr)
         return;
@@ -109,7 +142,10 @@ static void CompileConstantBool(const MaterialNode &node, ShaderCompilationConte
     context.nodes.push_back(*value ? 1u : 0u);
 }
 
-static void CompileConstantColor(const MaterialNode &node, ShaderCompilationContext &context)
+static void CompileConstantColor(const MaterialNode &node,
+                                 const std::vector<NodeInfo> &nodeInfos,
+                                 MaterialNodeId nodeId,
+                                 ShaderCompilationContext &context)
 {
     const Vec3f *value = GetConstantValue<Vec3f>(node);
     if (value == nullptr)
@@ -119,6 +155,7 @@ static void CompileConstantColor(const MaterialNode &node, ShaderCompilationCont
     context.AddFloat(value->x);
     context.AddFloat(value->y);
     context.AddFloat(value->z);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
 // -----------------------------------------------------------------------------
@@ -137,69 +174,175 @@ static MaterialTextureHandle GetTextureHandle(const MaterialNode &node,
 }
 
 // TODO: add address mode
-static void CompileImageColor3(const MaterialNode &node, ShaderCompilationContext &context)
+static void CompileImageVector3(const MaterialNode &node,
+                                const std::vector<NodeInfo> &nodeInfos,
+                                MaterialNodeId nodeId,
+                                ShaderCompilationContext &context)
 {
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
     MaterialTextureHandle handle = GetTextureHandle(node, context);
     context.AddTextureHandle(handle);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
-static void CompileImageVector3(const MaterialNode &node, ShaderCompilationContext &context)
+static void CompileImageFloat(const MaterialNode &node,
+                              const std::vector<NodeInfo> &,
+                              MaterialNodeId,
+                              ShaderCompilationContext &context)
 {
-    MaterialTextureHandle handle = GetTextureHandle(node, context);
-    context.AddTextureHandle(handle);
-}
-
-static void CompileImageFloat(const MaterialNode &node, ShaderCompilationContext &context)
-{
+    YBI_ASSERT(0);
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
     MaterialTextureHandle handle = GetTextureHandle(node, context);
     context.AddTextureHandle(handle);
 }
 
 static void CompileAttributeValueVector2(const MaterialNode &node,
+                                         const std::vector<NodeInfo> &nodeInfos,
+                                         MaterialNodeId nodeId,
                                          ShaderCompilationContext &context)
 {
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    bool found = false;
+    for (const MaterialInput &input : node.inputs)
+    {
+        if (input.name == "geomprop")
+        {
+            const std::string *value = std::get_if<std::string>(&input.value);
+            YBI_ASSERT(value);
+            AttributeId id = context.GetAttributeId(*value);
+            context.AddUint(id);
+            context.AddUint(nodeInfos[nodeId].outputSlotOffset);
+            found = true;
+            break;
+        }
+    }
+    YBI_ASSERT(found);
 }
 
 static void CompileHeightToNormalVector3(const MaterialNode &node,
+                                         const std::vector<NodeInfo> &,
+                                         MaterialNodeId,
                                          ShaderCompilationContext &context)
 {
+    YBI_ASSERT(0);
 }
 
-static void CompileInvertFloat(const MaterialNode &node, ShaderCompilationContext &context) {}
-
-static void CompileExtractVector3(const MaterialNode &node, ShaderCompilationContext &context) {}
-static void CompileCombine3Vector3(const MaterialNode &node, ShaderCompilationContext &context) {}
-static void CompileNormalMapVector2(const MaterialNode &node, ShaderCompilationContext &context) {}
-static void CompileColorCorrectColor3(const MaterialNode &node, ShaderCompilationContext &context)
+static void CompileInvertFloat(const MaterialNode &node,
+                               const std::vector<NodeInfo> &,
+                               MaterialNodeId,
+                               ShaderCompilationContext &context)
 {
+    YBI_ASSERT(0);
 }
-static void CompileRemapColor3(const MaterialNode &node, ShaderCompilationContext &context) {}
-static void CompileRamp4Float(const MaterialNode &node, ShaderCompilationContext &context) {}
-static void CompileSeparate3Color3(const MaterialNode &node, ShaderCompilationContext &context) {}
 
-int CompileShader(
+static void CompileExtractVector3(const MaterialNode &node,
+                                  const std::vector<NodeInfo> &,
+                                  MaterialNodeId,
+                                  ShaderCompilationContext &context)
+{
+    YBI_ASSERT(0);
+}
+
+static void CompileCombine3Vector3(const MaterialNode &node,
+                                   const std::vector<NodeInfo> &,
+                                   MaterialNodeId,
+                                   ShaderCompilationContext &context)
+{
+    YBI_ASSERT(0);
+}
+
+static void CompileNormalMapVector2(const MaterialNode &node,
+                                    const std::vector<NodeInfo> &,
+                                    MaterialNodeId,
+                                    ShaderCompilationContext &context)
+{
+    YBI_ASSERT(0);
+}
+
+static void CompileColorCorrectColor3(const MaterialNode &node,
+                                      const std::vector<NodeInfo> &nodeInfos,
+                                      MaterialNodeId nodeId,
+                                      ShaderCompilationContext &context)
+{
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    bool found = false;
+    for (const MaterialInput &input : node.inputs)
+    {
+        if (input.name == "in")
+        {
+            const MaterialNodeId *inputNodeId = std::get_if<MaterialNodeId>(&input.value);
+            if (inputNodeId)
+            {
+                found = true;
+                context.AddUint(nodeInfos[*inputNodeId].outputSlotOffset);
+            }
+            else
+            {
+                YBI_ASSERT(0);
+            }
+        }
+    }
+    YBI_ASSERT(found);
+
+    found = false;
+    for (const MaterialInput &input : node.inputs)
+    {
+        if (input.name == "gamma")
+        {
+            const float *gammaVal = std::get_if<float>(&input.value);
+            if (gammaVal)
+            {
+                found = true;
+                context.AddUint(0);
+                context.AddFloat(*gammaVal);
+            }
+            else
+            {
+                YBI_ASSERT(0);
+            }
+        }
+    }
+    YBI_ASSERT(found);
+
+    const NodeInfo &nodeInfo = nodeInfos[nodeId];
+    context.AddUint(nodeInfo.outputSlotOffset);
+}
+
+static void CompileRemapColor3(const MaterialNode &node,
+                               const std::vector<NodeInfo> &,
+                               MaterialNodeId,
+                               ShaderCompilationContext &context)
+{
+    YBI_ASSERT(0);
+}
+
+static void CompileRamp4Float(const MaterialNode &node,
+                              const std::vector<NodeInfo> &,
+                              MaterialNodeId,
+                              ShaderCompilationContext &context)
+{
+    YBI_ASSERT(0);
+}
+
+static void CompileSeparate3Color3(const MaterialNode &node,
+                                   const std::vector<NodeInfo> &,
+                                   MaterialNodeId,
+                                   ShaderCompilationContext &context)
+{
+    YBI_ASSERT(0);
+}
+
+DeviceMaterialExpression CompileShader(
     const MaterialGraph &graph,
     MaterialNodeId outputNode,
     const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,
+    const std::unordered_map<std::string, AttributeId> &attributeIdMap,
     std::vector<uint32_t> &nodes)
 {
-    ShaderCompilationContext context{graph, nodes, textureNodeToHandle};
+    ShaderCompilationContext context{graph, nodes, textureNodeToHandle, attributeIdMap};
+    const uint32_t bytecodeOffset = static_cast<uint32_t>(nodes.size());
 
     // Count number of incoming and outgoing edges
-    struct NodeInfo
-    {
-        std::vector<MaterialNodeId> outNodes;
-        int in = 0;
-        int out = 0;
-
-        // Used when compiling
-        int inputSlotOffset;
-        int numInputSlots;
-
-        int outputSlotOffset;
-        int numOutputSlots;
-    };
-
     YBI_ASSERT(outputNode < graph.nodes.size());
 
     std::vector<NodeInfo> nodeInfo(graph.nodes.size());
@@ -344,8 +487,10 @@ int CompileShader(
         {
 #define CASE(name, type) \
     case MaterialOpcode::name: \
-        Compile##name(node, context); \
-        break;
+    { \
+        Compile##name(node, nodeInfo, nodeId, context); \
+        break; \
+    }
             RENDERER_NODE_DEFINITIONS(CASE)
 #undef CASE
             default:
@@ -355,6 +500,12 @@ int CompileShader(
         }
     }
 
+    context.AddUint(static_cast<uint32_t>(MaterialOpcode::Count));
+
+    DeviceMaterialExpression result;
+    result.bytecodeOffset = bytecodeOffset;
+    result.outputRegister = nodeInfo[outputNode].outputSlotOffset;
+
     for (MaterialNodeId nodeId : outputList)
     {
         const MaterialNode &node = graph.nodes[nodeId];
@@ -363,6 +514,8 @@ int CompileShader(
 
         printf("output slot: %i\n", info.outputSlotOffset);
     }
+
+    return result;
 }
 
 } // namespace ybi

@@ -41,15 +41,15 @@ struct MaterialManager
 
     // Maps material node to MaterialTextureHandle
     std::unordered_map<const MaterialNode *, MaterialTextureHandle> textureNodeToHandle;
-    std::unique_ptr<VirtualTextureManager> virtualTextureManager;
+    VirtualTextureManager *virtualTextureManager = nullptr;
     AttributeManager attributeManager;
 
     ~MaterialManager();
     void AddTextures(OpenPbrMaterial &material, MaterialNodeId member);
-    int ProcessMaterialGraph(OpenPbrMaterial &material,
-                             const char *memberName,
-                             MaterialNodeId member,
-                             std::vector<uint32_t> &nodes);
+    DeviceMaterialExpression ProcessMaterialGraph(OpenPbrMaterial &material,
+                                                  const char *memberName,
+                                                  MaterialNodeId member,
+                                                  std::vector<uint32_t> &nodes);
     void Update(Device *device,
                 DisplayDevice *displayDevice,
                 DataContainer *container,
@@ -75,7 +75,8 @@ struct RenderSystem
     RenderSystem(Device *device,
                  DisplayDevice *displayDevice,
                  DataContainer *container,
-                 Scene *rootScene);
+                 Scene *rootScene,
+                 VirtualTextureManager *virtualTextureManager);
     ~RenderSystem();
     void Update(SceneImportContext *context);
 };

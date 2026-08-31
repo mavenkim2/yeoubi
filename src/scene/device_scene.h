@@ -35,9 +35,15 @@ struct DeviceMaterial
     bool valid;
 };
 
+struct DeviceMaterialExpression
+{
+    uint32_t bytecodeOffset;
+    uint32_t outputRegister;
+};
+
 struct DeviceMaterial2
 {
-#define DECLARE(name, type) int name;
+#define DECLARE(name, type) DeviceMaterialExpression name;
     OPENPBR_PARAMETERS(DECLARE)
 #undef DECLARE
 };
@@ -87,6 +93,7 @@ struct DeviceScene
     uint8_t *compressedClusterBytes;
 
     DeviceAttribute *deviceAttributes;
+    uint32_t *shaderNodes;
 
     // TODO: populate these and use them when clusterizer isn't used
     int *attributeIndices;

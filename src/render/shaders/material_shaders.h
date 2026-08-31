@@ -1,9 +1,10 @@
 #include "core/assert.h"
-#include "core/bit.h"
 #include "device/cuda_compat.h"
 #include "device/kernel_params.h"
 #include "render/material_opcodes.h"
 #include "render/material_types.h"
+#include "render/shaders/attribute.h"
+#include "render/shaders/colorcorrect.h"
 #include "render/shaders/image.h"
 
 namespace ybi
@@ -16,26 +17,6 @@ struct Something
     int src0 : 8;
     int src1 : 8;
 };
-
-YBI_CPU_GPU int LoadIntRegister(float *registers, int srcRegister)
-{
-    YBI_ASSERT(srcRegister < SHADER_NUM_REGISTERS);
-    int result = FloatAsInt(registers[srcRegister]);
-    return result;
-}
-
-YBI_CPU_GPU float LoadFloatRegister(float *registers, int srcRegister)
-{
-    YBI_ASSERT(srcRegister < SHADER_NUM_REGISTERS);
-    float result = registers[srcRegister];
-    return result;
-}
-
-YBI_CPU_GPU void StoreFloatRegister(float *registers, float value, int dstRegister)
-{
-    YBI_ASSERT(dstRegister < SHADER_NUM_REGISTERS);
-    registers[dstRegister] = value;
-}
 
 #if 0
 YBI_CPU_GPU void ShaderExtractVec3(float *registers, int dst, int src, int extractSrc)
@@ -61,21 +42,54 @@ X(Ramp4Float, Float) \
 X(Separate3Color3, Float)
 #endif
 
-YBI_CPU_GPU void EvaluateShader(const KernelParams &params, int offset)
+YBI_CPU_GPU Vec3f EvaluateShader(const KernelParams &params,
+                                 const ShadingInfo &info,
+                                 const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
+    uint32_t offset = shader.bytecodeOffset;
 
-    // TODO
-    MaterialOpcode opcode;
-
-    switch (opcode)
+    for (;;)
     {
-        case MaterialOpcode::ExtractVector3:
-            // TODO
-            // ShaderExtractVec3(registers, 0, 0);
-            break;
-        case MaterialOpcode::ImageVector3:
-            break;
+        MaterialOpcode opcode = static_cast<MaterialOpcode>(params.scene.shaderNodes[offset++]);
+        switch (opcode)
+        {
+            case MaterialOpcode::ConstantColor:
+            {
+                const Vec3f value(UintAsFloat(params.scene.shaderNodes[offset++]),
+                                  UintAsFloat(params.scene.shaderNodes[offset++]),
+                                  UintAsFloat(params.scene.shaderNodes[offset++]));
+                const uint32_t dst = params.scene.shaderNodes[offset++];
+                StoreFloat3Register(registers, value, dst);
+                break;
+            }
+            case MaterialOpcode::ImageVector3:
+            {
+                ShaderImageVector3(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::ImageFloat:
+            {
+                ShaderImageFloat(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::AttributeValueVector2:
+            {
+                ShaderAttributeValueVector2(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::ColorCorrectColor3:
+            {
+                ShaderColorCorrectColor3(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::Count:
+            {
+                return LoadFloat3Register(registers, shader.outputRegister);
+            }
+            default:
+                YBI_ASSERT(0);
+        }
     }
 }
 

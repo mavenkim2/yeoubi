@@ -26,10 +26,12 @@ RenderSystem::~RenderSystem() = default;
 RenderSystem::RenderSystem(Device *device,
                            DisplayDevice *displayDevice,
                            DataContainer *container,
-                           Scene *rootScene)
+                           Scene *rootScene,
+                           VirtualTextureManager *virtualTextureManager)
     : device(device), displayDevice(displayDevice), dataContainer(container), rootScene(rootScene)
 {
     deviceArena = device->CreateArena();
+    materialManager.virtualTextureManager = virtualTextureManager;
 }
 
 void RenderSystem::Update(SceneImportContext *context)
@@ -597,12 +599,14 @@ void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId memb
     }
 }
 
-int MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
-                                          const char *memberName,
-                                          MaterialNodeId member,
-                                          std::vector<uint32_t> &nodes)
+DeviceMaterialExpression MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
+                                                               const char *memberName,
+                                                               MaterialNodeId member,
+                                                               std::vector<uint32_t> &nodes)
 {
-    return CompileShader(material.graph, member, textureNodeToHandle, nodes);
+    (void)memberName;
+    return CompileShader(
+        material.graph, member, textureNodeToHandle, attributeManager.attributeIdMap, nodes);
 }
 
 AttributeId AttributeManager::GetOrAdd(const std::string &name)
@@ -721,27 +725,25 @@ void MaterialManager::Update(Device *device,
 
     attributeManager.FindPrimvars(container, importContext);
 
-    if (virtualTextureManager == nullptr)
-    {
-        virtualTextureManager =
-            std::make_unique<VirtualTextureManager>(arena, device, displayDevice);
-    }
+    YBI_ASSERT(virtualTextureManager != nullptr);
 
     // Convert textures to handles
     for (OpenPbrMaterial &material : container->openPbrMaterials)
     {
-#define VISIT_PARAMETER(name, type) AddTextures(material, material.name);
-        OPENPBR_PARAMETERS(VISIT_PARAMETER)
-#undef VISIT_PARAMETER
+        for (MaterialNodeId nodeId = 0;
+             nodeId < static_cast<MaterialNodeId>(material.graph.nodes.size());
+             nodeId++)
+        {
+            AddTextures(material, nodeId);
+        }
     }
 
     // Compile shader nodes
     std::vector<uint32_t> shaderNodes;
 
-#if 1
     ScratchArena scratch;
     View<DeviceMaterial2> hostMaterials;
-    if (container->materials.size())
+    if (container->openPbrMaterials.size())
     {
         hostMaterials =
             scratch.arena->PushArray<DeviceMaterial2>(container->openPbrMaterials.size());
@@ -752,11 +754,14 @@ void MaterialManager::Update(Device *device,
     {
         OpenPbrMaterial &material = container->openPbrMaterials[materialIndex];
         DeviceMaterial2 &deviceMaterial = hostMaterials[materialIndex];
-#define VISIT_PARAMETER(name, type) \
-    deviceMaterial.name = ProcessMaterialGraph(material, #name, material.name, shaderNodes);
-
-        OPENPBR_PARAMETERS(VISIT_PARAMETER)
-#undef VISIT_PARAMETER
+        deviceMaterial.base_color =
+            ProcessMaterialGraph(material, "base_color", material.base_color, shaderNodes);
+        // #define VISIT_PARAMETER(name, type) \
+        //     deviceMaterial.name = ProcessMaterialGraph(material, #name, material.name,
+        //     shaderNodes);
+        //
+        //         OPENPBR_PARAMETERS(VISIT_PARAMETER)
+        // #undef VISIT_PARAMETER
     }
 
     if (hostMaterials.size())
@@ -766,7 +771,15 @@ void MaterialManager::Update(Device *device,
         device->CopyToDevice(
             deviceScene->deviceMaterial2s, hostMaterials.data(), hostMaterials.numBytes());
     }
-#endif
+
+    deviceScene->shaderNodes = nullptr;
+    if (!shaderNodes.empty())
+    {
+        deviceScene->shaderNodes = reinterpret_cast<uint32_t *>(
+            device->Alloc(sizeof(uint32_t) * shaderNodes.size()).Data());
+        device->CopyToDevice(
+            deviceScene->shaderNodes, shaderNodes.data(), sizeof(uint32_t) * shaderNodes.size());
+    }
 }
 
 } // namespace ybi

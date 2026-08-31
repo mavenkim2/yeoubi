@@ -1,8 +1,10 @@
 #pragma once
 
+#include "core/assert.h"
 #include "device/cuda_compat.h"
 #include "device/kernel_params.h"
 #include "render/shaders/shading.h"
+#include "render/shaders/shading_helpers.h"
 #include "render/virtual_texture_interop.h"
 #include "render/virtual_texture_sampling.h"
 
@@ -89,7 +91,7 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
                                             uint32_t &nodeOffset,
                                             const ShadingInfo &shadingInfo)
 {
-    const MaterialTextureHandle handle = LoadTextureHandle(params.shaderNodes, nodeOffset);
+    const MaterialTextureHandle handle = LoadTextureHandle(params.scene.shaderNodes, nodeOffset);
     return VirtualTextureSampleImage(params, handle, shadingInfo);
 }
 
@@ -98,9 +100,18 @@ YBI_CPU_GPU void ShaderImageVector3(const KernelParams &params,
                                     float *registers,
                                     uint32_t &nodeOffset)
 {
-    VirtualTextureSampleImage(params, nodeOffset, info);
+    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
+    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    StoreFloat3Register(registers, result.Xyz(), dst);
 }
 
-YBI_CPU_GPU void ShaderImageFloat(float *registers) {}
+YBI_CPU_GPU void ShaderImageFloat(const KernelParams &params,
+                                  const ShadingInfo &info,
+                                  float *registers,
+                                  uint32_t &nodeOffset)
+{
+    YBI_ASSERT(0);
+    VirtualTextureSampleImage(params, nodeOffset, info);
+}
 
 } // namespace ybi

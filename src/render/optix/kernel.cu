@@ -342,7 +342,7 @@ YBI_GPU static void
 GetShadingInfo(const Object &object, const IntersectionInfo &info, ShadingInfo &shadingInfo)
 {
     shadingInfo = {};
-    if (IsClusteredTriangle(object, info))
+    if (IsClusteredTriangle(object.clusterOffset, info.clusterId))
     {
         const uint32_t clusterIndex = object.clusterOffset + info.clusterId;
         const DeviceCluster &cluster = params.scene.compressedClusters[clusterIndex];
@@ -359,6 +359,9 @@ GetShadingInfo(const Object &object, const IntersectionInfo &info, ShadingInfo &
     shadingInfo.uv = InterpolateTriangleValues(shadingInfo.uvs, info.bary);
     shadingInfo.shadingNormal =
         Normalize(InterpolateTriangleValues(shadingInfo.normals, info.bary));
+    shadingInfo.objectId = info.id;
+    shadingInfo.clusterId = info.clusterId;
+    shadingInfo.primIndex = info.primIndex;
 }
 
 extern "C" __global__ void __miss__kernel()
@@ -507,6 +510,17 @@ extern "C" __global__ void __raygen__kernel()
                                                                  normals[1],
                                                                  normals[2]);
                 PropagateRayCone(rayCone, surfaceSpreadAngle, info.t);
+                shadingInfo.rayDirection = rayDirection;
+                shadingInfo.rayCone = rayCone;
+
+                const Vec3f baseColor = EvaluateShader(params, shadingInfo, material.base_color);
+
+                // Vec3f baseColor(0.f);
+                color =
+                    make_uchar4(static_cast<unsigned char>(Clamp(baseColor.x, 0.f, 1.f) * 255.f),
+                                static_cast<unsigned char>(Clamp(baseColor.y, 0.f, 1.f) * 255.f),
+                                static_cast<unsigned char>(Clamp(baseColor.z, 0.f, 1.f) * 255.f),
+                                255);
             }
             // TODO: get rid of this legacy path
             else
@@ -531,8 +545,8 @@ extern "C" __global__ void __raygen__kernel()
                     shadingInfo.rayDirection = rayDirection;
                     shadingInfo.rayCone = rayCone;
 
-                    const MaterialTextureHandle textureHandle = {
-                        material.udimBase, material.udimTableOffset};
+                    const MaterialTextureHandle textureHandle = {material.udimBase,
+                                                                 material.udimTableOffset};
                     const Vec4f value =
                         VirtualTextureSampleImage(params, textureHandle, shadingInfo);
                     color =

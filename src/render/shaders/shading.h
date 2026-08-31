@@ -20,6 +20,10 @@ struct ShadingInfo
     Vec3f rayDirection;
     RayCone rayCone;
 
+    uint32_t objectId;
+    uint32_t clusterId;
+    uint32_t primIndex;
+
     uint32_t materialIndex;
     bool hasNormals;
     bool hasUvs;

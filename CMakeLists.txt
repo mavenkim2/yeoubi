@@ -201,6 +201,7 @@ set (YBI_KERNEL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/ray_cone.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/image.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/material_shaders.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/attribute.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_cluster.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_scene.h
