@@ -26,12 +26,6 @@ struct DeviceTexture;
 struct DisplayDevice;
 struct KernelParams;
 
-struct MaterialTextureHandle
-{
-    uint32_t udimBase = 0;
-    uint32_t udimTableOffset = 0;
-};
-
 struct PageAllocationInfo
 {
     uint32_t textureIndex;

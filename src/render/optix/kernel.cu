@@ -9,7 +9,11 @@
 #include "render/camera.h"
 #include "render/device_attributes.h"
 #include "render/ray_cone.h"
+#include "render/shaders/material_shaders.h"
+#include "render/shaders/shading.h"
 #include "render/virtual_texture_interop.h"
+#include "render/virtual_texture_sampling.h"
+#include "scene/openpbr_parameters.h"
 #include <optix_device.h>
 #include <optix_types.h>
 #include <vector_types.h>
@@ -60,144 +64,6 @@ struct IntersectionInfo
     IntersectionType type;
 };
 
-YBI_GPU static Vec4f SamplePointVirtualTexture(DeviceTextureDescriptor descriptor,
-                                               uint32_t pageShift,
-                                               Vec2f uv,
-                                               uint32_t mip,
-                                               UnpackedFeedbackRequest *request = nullptr,
-                                               uint32_t udimTableIndex = 0,
-                                               uint32_t base = 0,
-                                               uint32_t offset = 0)
-{
-    const uint32_t pageSize = (1u << pageShift);
-    Vec2f normalizedUv = uv - Floor(uv);
-    // Floating-point cancellation can make fract(uv) exactly 1 for values just below an
-    // integer, particularly for negative or large UVs. Keep the repeated coordinate in
-    // [0, 1) so it cannot produce a one-past-the-end texel or page.
-    constexpr float maxNormalizedUv = 0x1.fffffep-1f;
-    normalizedUv.x = Clamp(normalizedUv.x, 0.f, maxNormalizedUv);
-    normalizedUv.y = Clamp(normalizedUv.y, 0.f, maxNormalizedUv);
-
-    uint32_t mipWidth = descriptor.width >> mip;
-    uint32_t mipHeight = descriptor.height >> mip;
-
-    if (request)
-    {
-        request->textureIndex = descriptor.textureIndex;
-        request->tileX = 0;
-        request->tileY = 0;
-        request->mip = mip;
-        request->pageDescriptorIndex = ~0u;
-    }
-
-    if (mipWidth < pageSize || mipHeight < pageSize)
-    {
-        return descriptor.fallback;
-    }
-
-    Vec2f texel = normalizedUv * Vec2f(mipWidth, mipHeight);
-    const Vec2f page = Floor(texel / float(pageSize));
-    const Vec2f texelInPage = texel - page * pageSize;
-
-    const Vec2f pageUv = texelInPage / pageSize;
-
-    const uint32_t pageOffset = CalculatePageDescriptorOffset(descriptor.width,
-                                                              descriptor.height,
-                                                              mip,
-                                                              pageShift,
-                                                              static_cast<uint32_t>(page.x),
-                                                              static_cast<uint32_t>(page.y));
-    if (pageOffset >= descriptor.pageDescriptorCount)
-    {
-        printf("%u %u, %u: %u %u %f %f %f %f, %u %u\n",
-               pageOffset,
-               descriptor.pageDescriptorCount,
-               udimTableIndex,
-               descriptor.width,
-               descriptor.height,
-               page.x,
-               page.y,
-               uv.x,
-               uv.y,
-               base,
-               offset);
-        assert(pageOffset < descriptor.pageDescriptorCount);
-    }
-    const uint32_t pageIndex = descriptor.pageDescriptorOffset + pageOffset;
-
-    if (request)
-    {
-        request->tileX = static_cast<uint32_t>(page.x);
-        request->tileY = static_cast<uint32_t>(page.y);
-        request->pageDescriptorIndex = pageIndex;
-    }
-
-    const PageDescriptor pageDescriptor = params.pageDescriptors[pageIndex];
-
-    if (pageDescriptor.bits == ~0u)
-    {
-        return descriptor.fallback;
-    }
-
-    const uint32_t layer = pageDescriptor.bits >> 27u;
-    const uint32_t textureIndex = pageDescriptor.bits & 0x07ffffffu;
-
-    // DeviceTexture texture = params.texturePools[textureIndex];
-    uint64_t textureObject = pageDescriptor.textureObject;
-    if (textureObject == 0ull)
-    {
-        return descriptor.fallback;
-    }
-
-    float4 value = tex2DLayered<float4>(
-        reinterpret_cast<cudaTextureObject_t>(textureObject), pageUv.x, pageUv.y, layer);
-
-    return Vec4f(value.x, value.y, value.z, value.w);
-}
-
-YBI_GPU void WriteUniqueFeedback(UnpackedFeedbackRequest request)
-{
-    const uint32_t pageDescriptorIndex = request.pageDescriptorIndex;
-    if (pageDescriptorIndex == ~0u)
-    {
-        return;
-    }
-
-    uint32_t *bits = params.pageDescriptorBits;
-
-    const uint32_t wordIndex = pageDescriptorIndex >> 5u;
-    const uint32_t bitIndex = pageDescriptorIndex & 31u;
-
-    uint32_t old = atomicOr(&bits[wordIndex], 1u << bitIndex);
-    if (((old >> bitIndex) & 1u) == 0)
-    {
-        uint32_t requestIndex = atomicAdd(&params.feedbackRequests[0].textureIndex, 1u);
-
-        params.feedbackRequests[requestIndex + 1] =
-            PackFeedbackRequest(request.textureIndex, request.tileX, request.tileY, request.mip);
-    }
-}
-
-YBI_GPU static uint32_t CalculateMaxVirtualTextureMip(DeviceTextureDescriptor descriptor,
-                                                      uint32_t pageShift)
-{
-    const uint32_t pageSize = 1u << pageShift;
-    uint32_t maxMip = 0;
-
-    while (maxMip < 15u)
-    {
-        const uint32_t nextMip = maxMip + 1u;
-        if ((descriptor.width >> nextMip) < pageSize || (descriptor.height >> nextMip) < pageSize)
-        {
-            break;
-        }
-
-        maxMip = nextMip;
-    }
-
-    return maxMip;
-}
-
 YBI_GPU static Vec3f GetLodDebugColor(float lod, uint32_t maxMip)
 {
     const float normalizedLod = maxMip ? Clamp(lod / float(maxMip), 0.f, 1.f) : 0.f;
@@ -217,23 +83,6 @@ YBI_GPU static Vec3f GetLodDebugColor(float lod, uint32_t maxMip)
 
     return Lerp(Vec3f(1.f, 1.f, 0.f), Vec3f(1.f, 0.f, 0.f), (normalizedLod - 0.75f) * 4.f);
 }
-
-template <typename T>
-YBI_GPU static T InterpolateTriangleValues(T values[3], Vec2f bary)
-{
-    return values[0] * (1.f - bary.x - bary.y) + values[1] * bary.x + values[2] * bary.y;
-}
-
-struct ShadingInfo
-{
-    Vec3f positions[3];
-    Vec3f normals[3];
-    Vec2f uvs[3];
-    DeviceMaterial material;
-    bool hasNormals;
-    bool hasUvs;
-    bool hasMaterial;
-};
 
 YBI_GPU static Vec3u GetTriangleVertexIndices(const Object &object, const IntersectionInfo &info)
 {
@@ -431,18 +280,17 @@ YBI_GPU static bool GetClusteredTriangleUVs(const Object &object,
 }
 
 YBI_GPU static bool
-GetTriangleMaterial(const Object &object, uint32_t triangleIndex, DeviceMaterial &material)
+GetTriangleMaterial(const Object &object, uint32_t triangleIndex, uint32_t &materialIndex)
 {
     if (object.triangleMaterialOffset != ~0u)
     {
-        int materialIndex =
+        materialIndex =
             params.scene.triangleMaterialIndices[object.triangleMaterialOffset + triangleIndex];
-        material = params.scene.materials[materialIndex];
         return true;
     }
     else if (object.materialIndex != -1)
     {
-        material = params.scene.materials[object.materialIndex];
+        materialIndex = object.materialIndex;
         return true;
     }
     return false;
@@ -451,15 +299,14 @@ GetTriangleMaterial(const Object &object, uint32_t triangleIndex, DeviceMaterial
 YBI_GPU static bool GetClusteredTriangleMaterial(const IntersectionInfo &info,
                                                  const DeviceCluster &cluster,
                                                  const uint8_t *clusterData,
-                                                 DeviceMaterial &material)
+                                                 uint32_t &materialIndex)
 {
-    const uint32_t materialIndex = cluster.DecodeMaterialID(clusterData, info.primIndex);
+    materialIndex = cluster.DecodeMaterialID(clusterData, info.primIndex);
     if (materialIndex == DEVICE_CLUSTER_INVALID_MATERIAL_ID)
     {
         return false;
     }
 
-    material = params.scene.materials[materialIndex];
     return true;
 }
 
@@ -471,7 +318,8 @@ YBI_GPU static void GetTriangleShadingInfo(const Object &object,
     GetTrianglePositions(object, vertexIndices, shadingInfo.positions);
     shadingInfo.hasNormals = GetTriangleNormals(object, info, vertexIndices, shadingInfo.normals);
     shadingInfo.hasUvs = GetTriangleUVs(object, info, vertexIndices, shadingInfo.uvs);
-    shadingInfo.hasMaterial = GetTriangleMaterial(object, info.primIndex, shadingInfo.material);
+    shadingInfo.hasMaterial =
+        GetTriangleMaterial(object, info.primIndex, shadingInfo.materialIndex);
 }
 
 YBI_GPU static void GetClusteredShadingInfo(const Object &object,
@@ -487,7 +335,7 @@ YBI_GPU static void GetClusteredShadingInfo(const Object &object,
     shadingInfo.hasUvs = GetClusteredTriangleUVs(
         object, info, cluster, clusterData, vertexIndices, shadingInfo.uvs);
     shadingInfo.hasMaterial =
-        GetClusteredTriangleMaterial(info, cluster, clusterData, shadingInfo.material);
+        GetClusteredTriangleMaterial(info, cluster, clusterData, shadingInfo.materialIndex);
 }
 
 YBI_GPU static void
@@ -506,6 +354,11 @@ GetShadingInfo(const Object &object, const IntersectionInfo &info, ShadingInfo &
     {
         GetTriangleShadingInfo(object, info, shadingInfo);
     }
+
+    shadingInfo.bary = info.bary;
+    shadingInfo.uv = InterpolateTriangleValues(shadingInfo.uvs, info.bary);
+    shadingInfo.shadingNormal =
+        Normalize(InterpolateTriangleValues(shadingInfo.normals, info.bary));
 }
 
 extern "C" __global__ void __miss__kernel()
@@ -629,63 +482,24 @@ extern "C" __global__ void __raygen__kernel()
         Vec2f *uvs = shadingInfo.uvs;
         Vec2f uv = InterpolateTriangleValues(uvs, info.bary);
 
-        DeviceMaterial &material = shadingInfo.material;
-
-        if (shadingInfo.hasMaterial && material.valid)
+        if (shadingInfo.hasMaterial)
         {
-            if (shadingInfo.hasUvs)
+            const MaterialHandle &handle = params.scene.materialHandles[shadingInfo.materialIndex];
+
+            if (handle.isGraph)
             {
-                // Virtual texture path
-                Vec2f flooredUv = Floor(uv);
-                uint32_t udimTableIndex = 0u;
-                if (material.udimBase != ~0u)
-                {
-                    const uint32_t udim = 1001 + static_cast<uint32_t>(flooredUv.x) +
-                                          10 * static_cast<uint32_t>(flooredUv.y);
-                    udimTableIndex = material.udimTableOffset + udim - material.udimBase;
-                }
-                else
-                {
-                    udimTableIndex = material.udimTableOffset;
-                }
-
-                DeviceTextureDescriptor textureDescriptor =
-                    params.textureDescriptors[udimTableIndex];
-
-                const uint32_t pageShift = 7;
+                const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
                 const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
                 const Vec3f cameraPosition = params.cameraPosition;
 
+                shadingInfo.TransformToWorld(info.objectToWorld);
+
                 // Calculate LOD
-                for (int i = 0; i < 3; i++)
-                {
-                    positions[i] = info.objectToWorld.TransformPoint(positions[i]);
-                }
-
-                Vec3f r0 = info.objectToWorld.GetRow(0).xyz;
-                Vec3f r1 = info.objectToWorld.GetRow(1).xyz;
-                Vec3f r2 = info.objectToWorld.GetRow(2).xyz;
-
-                Vec3f adjugate0 = Cross(r1, r2);
-                Vec3f adjugate1 = Cross(r2, r0);
-                Vec3f adjugate2 = Cross(r0, r1);
-
-                Vec3f shadingNormal = Normalize(InterpolateTriangleValues(normals, info.bary));
-                shadingNormal = Normalize(Vec3f(Dot(adjugate0, shadingNormal),
-                                                Dot(adjugate1, shadingNormal),
-                                                Dot(adjugate2, shadingNormal)));
-
-                for (int i = 0; i < 3; i++)
-                {
-                    normals[i] = Normalize(Vec3f(Dot(adjugate0, normals[i]),
-                                                 Dot(adjugate1, normals[i]),
-                                                 Dot(adjugate2, normals[i])));
-                }
 
                 float surfaceSpreadAngle =
                     CalculatePrimaryHitUnifiedSurfaceSpreadAngle(rayCone,
                                                                  rayDirection,
-                                                                 shadingNormal,
+                                                                 shadingInfo.shadingNormal,
                                                                  positions[0],
                                                                  positions[1],
                                                                  positions[2],
@@ -693,63 +507,40 @@ extern "C" __global__ void __raygen__kernel()
                                                                  normals[1],
                                                                  normals[2]);
                 PropagateRayCone(rayCone, surfaceSpreadAngle, info.t);
-                float lod = ComputeTextureLOD(positions[0],
-                                              positions[1],
-                                              positions[2],
-                                              uvs[0],
-                                              uvs[1],
-                                              uvs[2],
-                                              rayDirection,
-                                              shadingNormal,
-                                              rayCone.width,
-                                              textureDescriptor.width,
-                                              textureDescriptor.height);
+            }
+            // TODO: get rid of this legacy path
+            else
+            {
+                DeviceMaterial &material = params.scene.materials[handle.index];
+                if (material.valid && shadingInfo.hasUvs)
+                {
+                    shadingInfo.TransformToWorld(info.objectToWorld);
 
-                const uint32_t maxMip =
-                    CalculateMaxVirtualTextureMip(textureDescriptor, pageShift);
-                lod = Clamp(lod, 0.f, float(maxMip));
+                    float surfaceSpreadAngle =
+                        CalculatePrimaryHitUnifiedSurfaceSpreadAngle(rayCone,
+                                                                     rayDirection,
+                                                                     shadingInfo.shadingNormal,
+                                                                     positions[0],
+                                                                     positions[1],
+                                                                     positions[2],
+                                                                     normals[0],
+                                                                     normals[1],
+                                                                     normals[2]);
+                    PropagateRayCone(rayCone, surfaceSpreadAngle, info.t);
 
-#if YBI_DEBUG_LOD_COLOR
-                Vec3f value = GetLodDebugColor(lod, maxMip);
-                color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
-                                    static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
-                                    static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
-                                    255);
-#else
-                uint32_t baseMip = uint32_t(Floor(lod));
-                uint32_t nextMip = Min(baseMip + 1, maxMip);
+                    shadingInfo.rayDirection = rayDirection;
+                    shadingInfo.rayCone = rayCone;
 
-                // TODO: don't hardcode
-                UnpackedFeedbackRequest lowR, highR;
-                Vec4f lowerValue = SamplePointVirtualTexture(textureDescriptor,
-                                                             pageShift,
-                                                             uv,
-                                                             baseMip,
-                                                             &lowR,
-                                                             udimTableIndex,
-                                                             material.udimBase,
-                                                             material.udimTableOffset);
-                Vec4f higherValue = SamplePointVirtualTexture(textureDescriptor,
-                                                              pageShift,
-                                                              uv,
-                                                              nextMip,
-                                                              &highR,
-                                                              udimTableIndex,
-                                                              material.udimBase,
-                                                              material.udimTableOffset);
-
-                WriteUniqueFeedback(lowR);
-                WriteUniqueFeedback(highR);
-
-                float t = lod - float(baseMip);
-                Vec4f value = Lerp(lowerValue, higherValue, t);
-                color = make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
+                    const MaterialTextureHandle textureHandle = {
+                        material.udimBase, material.udimTableOffset};
+                    const Vec4f value =
+                        VirtualTextureSampleImage(params, textureHandle, shadingInfo);
+                    color =
+                        make_uchar4(static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
                                     static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
                                     static_cast<unsigned char>(Clamp(value.z, 0.f, 1.f) * 255.f),
                                     static_cast<unsigned char>(Clamp(value.w, 0.f, 1.f) * 255.f));
-#endif
-            }
-        }
+                }
 #else
         uint32_t hash = info.clusterId;
         hash ^= hash >> 16u;
@@ -762,6 +553,8 @@ extern "C" __global__ void __raygen__kernel()
         color.y = static_cast<unsigned char>(64u + ((hash >> 8u) & 0xbfu));
         color.z = static_cast<unsigned char>(64u + ((hash >> 16u) & 0xbfu));
 #endif
+            }
+        }
     }
 
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);

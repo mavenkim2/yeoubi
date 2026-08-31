@@ -19,6 +19,13 @@ enum class AttributeType
     FaceVarying,
 };
 
+// NOTE: temporary bridge to allow meshes to reference either Material or MaterialGraph
+struct MaterialHandle
+{
+    bool isGraph;
+    uint32_t index;
+};
+
 struct DeviceMaterial
 {
     // NOTE: = ~0u if no udims
@@ -66,6 +73,8 @@ struct DeviceScene
 {
     Object *objects;
     DeviceMaterial *materials;
+    DeviceMaterial2 *deviceMaterial2s;
+    MaterialHandle *materialHandles;
 
     Vec3f *positions;
     uint32_t *normals;

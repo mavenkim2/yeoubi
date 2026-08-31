@@ -1600,7 +1600,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
     }
     YBI_ASSERT(firstUseCount == vertexIndices.size());
 
-#if defined(WITH_CUDA)
+#if 0//defined(WITH_CUDA)
     ValidateCompressedClusterCUDA(outputBytes,
                                   cluster,
                                   *container,

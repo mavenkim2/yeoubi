@@ -441,8 +441,8 @@ Matrix4x4 USDSceneLoader::ConvertMatrix4x4(const pxr::GfMatrix4d &m) const
 
 template <typename OutputT, typename Values, typename Convert>
 static Array<OutputT> TriangulateFaceVaryingValues(const Values &values,
-                                                    const pxr::VtIntArray &faceCounts,
-                                                    Convert &&convert)
+                                                   const pxr::VtIntArray &faceCounts,
+                                                   Convert &&convert)
 {
     Array<OutputT> triangles;
     size_t faceVertexOffset = 0;
@@ -1842,7 +1842,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
     for (pxr::UsdShadeMaterial &material : materials)
     {
         MaterialHandle &handle = container->materialHandles.emplace_back();
-        Material &mat = container->materials.emplace_back();
 
         pxr::UsdShadeShader shader = GetMaterialSurfaceShader(material);
 
@@ -1856,7 +1855,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
                 handle.isGraph = false;
                 handle.index = container->materials.size();
 
-                // Material &mat = container->materials.emplace_back();
+                Material &mat = container->materials.emplace_back();
 
                 mat.path = material.GetPath().GetString();
                 for (const pxr::UsdShadeInput &input : shader.GetInputs())

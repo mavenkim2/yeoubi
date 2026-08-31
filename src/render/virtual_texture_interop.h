@@ -10,6 +10,12 @@
 namespace ybi
 {
 
+struct MaterialTextureHandle
+{
+    uint32_t udimBase = 0;
+    uint32_t udimTableOffset = 0;
+};
+
 struct PageDescriptorUpdateRequest
 {
     uint32_t pageDescriptorIndex;

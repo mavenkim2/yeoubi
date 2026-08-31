@@ -198,13 +198,6 @@ struct Camera
     int height;
 };
 
-// NOTE: temporary bridge to allow meshes to reference either Material or MaterialGraph
-struct MaterialHandle
-{
-    bool isGraph;
-    uint32_t index;
-};
-
 struct Attributes
 {
     std::vector<bool> bools;

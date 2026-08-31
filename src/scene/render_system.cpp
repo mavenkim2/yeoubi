@@ -180,9 +180,18 @@ void GeometryManager::Update(Device *device,
     // Set up device scene
     View<Object> objects = scratch.arena->PushArray<Object>(container->meshes.size());
     View<DeviceMaterial> hostMaterials;
+    View<MaterialHandle> hostMaterialHandles;
     if (container->materials.size())
     {
         hostMaterials = scratch.arena->PushArray<DeviceMaterial>(container->materials.size());
+    }
+    if (container->materialHandles.size())
+    {
+        hostMaterialHandles =
+            scratch.arena->PushArray<MaterialHandle>(container->materialHandles.size());
+        memcpy(hostMaterialHandles.data(),
+               container->materialHandles.data(),
+               sizeof(container->materialHandles[0]) * container->materialHandles.size());
     }
 
     // Prepare device materials
@@ -505,6 +514,7 @@ void GeometryManager::Update(Device *device,
     }
 
     // Upload primvars
+    if (primvarOffset)
     {
         std::vector<DeviceAttribute> attributes;
         for (size_t i = 0; i < container->meshes.size(); i++)
@@ -542,6 +552,14 @@ void GeometryManager::Update(Device *device,
             device->Alloc(sizeof(DeviceMaterial) * hostMaterials.size()).Data());
         device->CopyToDevice(
             deviceScene->materials, hostMaterials.data(), hostMaterials.numBytes());
+    }
+    if (hostMaterialHandles.size())
+    {
+        deviceScene->materialHandles = reinterpret_cast<MaterialHandle *>(
+            device->Alloc(sizeof(MaterialHandle) * hostMaterialHandles.size()).Data());
+        device->CopyToDevice(deviceScene->materialHandles,
+                             hostMaterialHandles.data(),
+                             hostMaterialHandles.numBytes());
     }
 
     deviceScene->objects = reinterpret_cast<Object *>(
@@ -663,6 +681,11 @@ void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext
         for (int materialIndex : materialIndices)
         {
             const MaterialHandle &handle = container->materialHandles[materialIndex];
+            if (!handle.isGraph)
+            {
+                continue;
+            }
+
             const std::unordered_set<std::string> &geomProps = materialGeomProps[handle.index];
             for (const std::string &name : geomProps)
             {
@@ -694,9 +717,9 @@ void MaterialManager::Update(Device *device,
                              SceneImportContext *importContext)
 {
     // what's next
-    // 1. uploading primvars to gpu (accounting for clusterizer...)
-    // 2. uploading mesh primvar handles to gpu (so shader can lookup right id)
-    // 3. runtime access of primvars
+    // 1. uploading primvars to gpu (accounting for clusterizer...) <-- fin
+    // 2. uploading mesh primvar handles to gpu (so shader can lookup right id) <-- fin
+    // 3. runtime access of primvars <-- fin
     // 4. runtime shading
 
     attributeManager.FindPrimvars(container, importContext);
