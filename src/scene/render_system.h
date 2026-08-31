@@ -46,10 +46,10 @@ struct MaterialManager
 
     ~MaterialManager();
     void AddTextures(OpenPbrMaterial &material, MaterialNodeId member);
-    void ProcessMaterialGraph(OpenPbrMaterial &material,
-                              const char *memberName,
-                              MaterialNodeId member,
-                              std::vector<uint32_t> &nodes);
+    int ProcessMaterialGraph(OpenPbrMaterial &material,
+                             const char *memberName,
+                             MaterialNodeId member,
+                             std::vector<uint32_t> &nodes);
     void Update(Device *device,
                 DisplayDevice *displayDevice,
                 DataContainer *container,

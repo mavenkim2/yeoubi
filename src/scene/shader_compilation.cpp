@@ -177,7 +177,7 @@ static void CompileRemapColor3(const MaterialNode &node, ShaderCompilationContex
 static void CompileRamp4Float(const MaterialNode &node, ShaderCompilationContext &context) {}
 static void CompileSeparate3Color3(const MaterialNode &node, ShaderCompilationContext &context) {}
 
-void CompileShader(
+int CompileShader(
     const MaterialGraph &graph,
     MaterialNodeId outputNode,
     const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,

@@ -597,15 +597,12 @@ void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId memb
     }
 }
 
-void MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
-                                           const char *memberName,
-                                           MaterialNodeId member,
-                                           std::vector<uint32_t> &nodes)
+int MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
+                                          const char *memberName,
+                                          MaterialNodeId member,
+                                          std::vector<uint32_t> &nodes)
 {
-    MaterialNode &node = material.graph.nodes[member];
-
-    uint32_t offset = static_cast<uint32_t>(nodes.size());
-    CompileShader(material.graph, member, textureNodeToHandle, nodes);
+    return CompileShader(material.graph, member, textureNodeToHandle, nodes);
 }
 
 AttributeId AttributeManager::GetOrAdd(const std::string &name)
@@ -741,13 +738,33 @@ void MaterialManager::Update(Device *device,
     // Compile shader nodes
     std::vector<uint32_t> shaderNodes;
 
-#if 0
-    for (OpenPbrMaterial &material : container->openPbrMaterials)
+#if 1
+    ScratchArena scratch;
+    View<DeviceMaterial2> hostMaterials;
+    if (container->materials.size())
     {
+        hostMaterials =
+            scratch.arena->PushArray<DeviceMaterial2>(container->openPbrMaterials.size());
+    }
+
+    for (size_t materialIndex = 0; materialIndex < container->openPbrMaterials.size();
+         materialIndex++)
+    {
+        OpenPbrMaterial &material = container->openPbrMaterials[materialIndex];
+        DeviceMaterial2 &deviceMaterial = hostMaterials[materialIndex];
 #define VISIT_PARAMETER(name, type) \
-    ProcessMaterialGraph(material, #name, material.name, shaderNodes);
+    deviceMaterial.name = ProcessMaterialGraph(material, #name, material.name, shaderNodes);
+
         OPENPBR_PARAMETERS(VISIT_PARAMETER)
 #undef VISIT_PARAMETER
+    }
+
+    if (hostMaterials.size())
+    {
+        deviceScene->deviceMaterial2s = reinterpret_cast<DeviceMaterial2 *>(
+            device->Alloc(sizeof(DeviceMaterial2) * hostMaterials.size()).Data());
+        device->CopyToDevice(
+            deviceScene->deviceMaterial2s, hostMaterials.data(), hostMaterials.numBytes());
     }
 #endif
 }
