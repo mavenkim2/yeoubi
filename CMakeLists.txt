@@ -8,6 +8,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
 
+# SIMD feature detection
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles(
+    "#include <xmmintrin.h>
+     int main()
+     {
+         const __m128 result = _mm_rsqrt_ss(_mm_set_ss(1.0f));
+         return _mm_cvtss_f32(result) == 0.0f;
+     }"
+    YBI_HAS_SSE)
+
 # Compile Options
 option(WITH_CUDA "Enable CUDA backend" OFF)
 option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
@@ -17,6 +28,9 @@ set(YBI_COMPILE_DEFINITIONS)
 set(YBI_DEPENDENCIES)
 set(YBI_SOURCE)
 set(YBI_USE_GPU)
+if (YBI_HAS_SSE)
+    list(APPEND YBI_COMPILE_DEFINITIONS YBI_HAS_SSE)
+endif()
 if (WIN32)
     list(APPEND YBI_COMPILE_DEFINITIONS NOMINMAX)
     list(APPEND YBI_COMPILE_DEFINITIONS WIN32_LEAN_AND_MEAN)
