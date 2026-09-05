@@ -2,6 +2,7 @@
 
 #include "core/assert.h"
 #include "core/math.h"
+#include "core/vec2f.h"
 #include "device/cuda_compat.h"
 #include <cmath>
 #include <cstddef>
@@ -109,6 +110,16 @@ YBI_CPU_GPU constexpr Vec3f operator+(Vec3f lhs, Vec3f rhs)
 YBI_CPU_GPU constexpr Vec3f operator-(Vec3f lhs, Vec3f rhs)
 {
     return Vec3f(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z);
+}
+
+YBI_CPU_GPU constexpr Vec3f operator-(Vec3f lhs, float rhs)
+{
+    return Vec3f(lhs.x - rhs, lhs.y - rhs, lhs.z - rhs);
+}
+
+YBI_CPU_GPU constexpr Vec3f operator-(float lhs, Vec3f rhs)
+{
+    return Vec3f(lhs - rhs.x, lhs - rhs.y, lhs - rhs.z);
 }
 
 YBI_CPU_GPU constexpr Vec3f operator*(Vec3f lhs, Vec3f rhs)

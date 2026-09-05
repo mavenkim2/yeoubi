@@ -3,6 +3,7 @@
 #include "core/assert.h"
 #include "core/bit.h"
 #include "device/cuda_compat.h"
+#include <type_traits>
 
 namespace ybi
 {
@@ -21,6 +22,15 @@ YBI_GPU float LoadFloatRegister(float *registers, int srcRegister)
     return result;
 }
 
+YBI_GPU Vec2f LoadFloat2Register(float *registers, int srcRegister)
+{
+    YBI_ASSERT(srcRegister + 1 < SHADER_NUM_REGISTERS);
+    Vec2f v;
+    v[0] = registers[srcRegister];
+    v[1] = registers[srcRegister + 1];
+    return v;
+}
+
 YBI_GPU Vec3f LoadFloat3Register(float *registers, int srcRegister)
 {
     YBI_ASSERT(srcRegister + 2 < SHADER_NUM_REGISTERS);
@@ -28,6 +38,17 @@ YBI_GPU Vec3f LoadFloat3Register(float *registers, int srcRegister)
     v[0] = registers[srcRegister];
     v[1] = registers[srcRegister + 1];
     v[2] = registers[srcRegister + 2];
+    return v;
+}
+
+YBI_GPU Vec4f LoadFloat4Register(float *registers, int srcRegister)
+{
+    YBI_ASSERT(srcRegister + 3 < SHADER_NUM_REGISTERS);
+    Vec4f v;
+    v[0] = registers[srcRegister];
+    v[1] = registers[srcRegister + 1];
+    v[2] = registers[srcRegister + 2];
+    v[3] = registers[srcRegister + 3];
     return v;
 }
 
@@ -50,6 +71,31 @@ YBI_GPU void StoreFloat3Register(float *registers, const Vec3f &value, int dstRe
     registers[dstRegister] = value[0];
     registers[dstRegister + 1] = value[1];
     registers[dstRegister + 2] = value[2];
+}
+
+template <typename T>
+YBI_GPU T LoadTemplateRegister(float *registers, int srcRegister)
+{
+    static_assert(std::is_same_v<T, float> || std::is_same_v<T, Vec2f> ||
+                      std::is_same_v<T, Vec3f> || std::is_same_v<T, Vec4f>,
+                  "T must be float, Vec2f, Vec3f, or Vec4f");
+
+    if constexpr (std::is_same_v<T, float>)
+    {
+        return LoadFloatRegister(registers, srcRegister);
+    }
+    else if constexpr (std::is_same_v<T, Vec2f>)
+    {
+        return LoadFloat2Register(registers, srcRegister);
+    }
+    else if constexpr (std::is_same_v<T, Vec3f>)
+    {
+        return LoadFloat3Register(registers, srcRegister);
+    }
+    else if constexpr (std::is_same_v<T, Vec4f>)
+    {
+        return LoadFloat4Register(registers, srcRegister);
+    }
 }
 
 } // namespace ybi

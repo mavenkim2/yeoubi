@@ -42,9 +42,10 @@ X(Ramp4Float, Float) \
 X(Separate3Color3, Float)
 #endif
 
-YBI_CPU_GPU Vec3f EvaluateShader(const KernelParams &params,
-                                 const ShadingInfo &info,
-                                 const DeviceMaterialExpression &shader)
+template <typename T>
+YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
+                             const ShadingInfo &info,
+                             const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
     uint32_t offset = shader.bytecodeOffset;

@@ -5,10 +5,13 @@
 #include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
-#include "render/bsdf/bsdf.h"
+#include "render/bsdf/openpbr/glossy_diffuse.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
 #include "render/ray_cone.h"
+#include "render/ray_cone_utils.h"
+#include "render/rng.h"
+#include "render/sampling.h"
 #include "render/shaders/material_shaders.h"
 #include "render/shaders/shading.h"
 #include "render/virtual_texture_interop.h"
@@ -31,14 +34,6 @@ struct Ray
 
 struct Camera
 {
-};
-
-struct RNG
-{
-    YBI_GPU float Uniform()
-    {
-        return 0.f;
-    }
 };
 
 extern "C"
@@ -356,9 +351,7 @@ GetShadingInfo(const Object &object, const IntersectionInfo &info, ShadingInfo &
     }
 
     shadingInfo.bary = info.bary;
-    shadingInfo.uv = InterpolateTriangleValues(shadingInfo.uvs, info.bary);
-    shadingInfo.shadingNormal =
-        Normalize(InterpolateTriangleValues(shadingInfo.normals, info.bary));
+    CalculateTriangleHitInfo(shadingInfo);
     shadingInfo.objectId = info.id;
     shadingInfo.clusterId = info.clusterId;
     shadingInfo.primIndex = info.primIndex;
@@ -412,7 +405,7 @@ extern "C" __global__ void __raygen__kernel()
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDimensions = optixGetLaunchDimensions();
 
-    RNG rng;
+    RNG rng = RNG::Init(Vec2u(launchIndex.x, launchIndex.y), 0u);
     Vec3f pixel(float(launchIndex.x) + 0.5f, float(launchIndex.y) + 0.5f, 0.f);
 
     float filterU = rng.Uniform();
@@ -513,7 +506,8 @@ extern "C" __global__ void __raygen__kernel()
                 shadingInfo.rayDirection = rayDirection;
                 shadingInfo.rayCone = rayCone;
 
-                const Vec3f baseColor = EvaluateShader(params, shadingInfo, material.base_color);
+                const Vec3f baseColor =
+                    EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
 
                 // Vec3f baseColor(0.f);
                 color =
@@ -575,5 +569,126 @@ extern "C" __global__ void __raygen__kernel()
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
     image[pixelIndex] = color;
 }
+
+#if 1
+extern "C" __global__ void __raygen__unidirectional()
+{
+    const uint3 launchIndex = optixGetLaunchIndex();
+    const uint3 launchDimensions = optixGetLaunchDimensions();
+
+    RNG rng = RNG::Init(Vec2u(launchIndex.x, launchIndex.y), 0u);
+    Vec3f pixel(float(launchIndex.x) + 0.5f, float(launchIndex.y) + 0.5f, 0.f);
+
+    float filterU = rng.Uniform();
+    float filterV = rng.Uniform();
+
+    pixel.x += filterU - 0.5f;
+    pixel.y += filterV - 0.5f;
+
+    const int maxDepth = params.maxDepth;
+
+    Matrix4x4 cameraFromRaster = params.cameraFromRaster;
+    AffineTransform renderFromCamera = params.renderFromCamera;
+
+    // Generate ray
+    Vec4f cameraPos = cameraFromRaster * Vec4f(pixel, 1.f);
+    cameraPos.xyz /= cameraPos.w;
+
+    Vec3f rayOrigin = renderFromCamera.TransformPoint(Vec3f(0.f));
+    Vec3f rayDirection = Normalize(renderFromCamera.TransformVector(cameraPos.xyz));
+    float tMin = 0.f;
+    float tMax = 1000000.f;
+    float time = 0.f;
+    uint32_t mask = 0xff;
+    RayCone rayCone;
+    rayCone.width = 0.f;
+    rayCone.spreadAngle = atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
+
+    OptixTraversableHandle bvhHandle = static_cast<OptixTraversableHandle>(params.bvhHandle);
+
+    Vec3f environment(0.5f);
+    Vec3f radiance(0.f);
+    Vec3f throughput(1.f);
+
+    for (uint32_t depth = 0; depth < params.maxDepth + 1; depth++)
+    {
+        float time = 0.f;
+
+        IntersectionInfo info;
+        uint64_t ptr = reinterpret_cast<uint64_t>(&info);
+        uint32_t low = ptr & 0xffffffffu;
+        uint32_t high = ptr >> 32u;
+
+        // Interect ray against scene
+        optixTrace(bvhHandle,
+                   make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
+                   make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
+                   tMin,
+                   tMax,
+                   time,
+                   mask,
+                   OPTIX_RAY_FLAG_NONE,
+                   0,
+                   0,
+                   0,
+                   low,
+                   high);
+
+        if (info.type == INTERSECTION_TYPE_NONE)
+        {
+            radiance += throughput * environment;
+            break;
+        }
+
+        if (depth == params.maxDepth)
+        {
+            break;
+        }
+
+        // Sample BSDF
+        // NOTE: includes PDF, cosine term
+        const Object &object = params.scene.objects[info.id];
+
+        ShadingInfo shadingInfo;
+        GetShadingInfo(object, info, shadingInfo);
+
+        Vec2f bsdfU = rng.Uniform2D();
+
+        if (shadingInfo.hasMaterial)
+        {
+            const MaterialHandle &handle = params.scene.materialHandles[shadingInfo.materialIndex];
+            YBI_ASSERT(handle.isGraph);
+
+            const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
+            const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
+            const Vec3f cameraPosition = params.cameraPosition;
+
+            shadingInfo.TransformToWorld(info.objectToWorld);
+
+            UpdateRayCone(rayCone, rayDirection, info.t, shadingInfo, depth);
+            shadingInfo.rayDirection = rayDirection;
+            shadingInfo.rayCone = rayCone;
+
+            // Sample BSDF
+            Vec3f direction = SampleCosineHemisphere(bsdfU);
+            const Vec3f baseColor =
+                EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
+
+            throughput = throughput * baseColor;
+
+            // Transform ray back to world space
+        }
+        else
+        {
+            // Assume no-op, change ray origin and preserve ray direction
+        }
+
+        if (throughput.x == 0.f && throughput.y == 0.f && throughput.z == 0.f)
+        {
+            break;
+        }
+    }
+}
+#endif
 
 } // namespace ybi
