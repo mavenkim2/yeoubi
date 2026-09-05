@@ -76,6 +76,7 @@ struct Vulkan : DisplayDevice
 
     std::unique_ptr<DisplayBuffer> AllocateExternalBuffer(size_t size) override;
     std::unique_ptr<DisplaySemaphore> CreateDisplaySemaphore() override;
+    void WaitIdle() override;
     bool BeginFrame() override;
     bool EndFrame(DisplayBuffer &framebuffer,
                   DisplaySemaphore &cudaFinishedSemaphore,

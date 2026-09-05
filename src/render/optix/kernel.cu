@@ -1,5 +1,6 @@
 #include "core/affine_transform.h"
 #include "core/assert.h"
+#include "core/frame.h"
 #include "core/math.h"
 #include "core/matrix4x4.h"
 #include "core/octahedral.h"
@@ -8,8 +9,10 @@
 #include "render/bsdf/openpbr/glossy_diffuse.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
+#include "render/path_tracing.h"
 #include "render/ray_cone.h"
 #include "render/ray_cone_utils.h"
+#include "render/ray_utils.h"
 #include "render/rng.h"
 #include "render/sampling.h"
 #include "render/shaders/material_shaders.h"
@@ -400,8 +403,15 @@ extern "C" __global__ void __closesthit__kernel()
     }
 }
 
+YBI_GPU void RenderUnidirectional();
+
 extern "C" __global__ void __raygen__kernel()
 {
+    if (params.pathTrace)
+    {
+        RenderUnidirectional();
+        return;
+    }
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDimensions = optixGetLaunchDimensions();
 
@@ -570,125 +580,130 @@ extern "C" __global__ void __raygen__kernel()
     image[pixelIndex] = color;
 }
 
-#if 1
-extern "C" __global__ void __raygen__unidirectional()
+YBI_GPU void RenderUnidirectional()
 {
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDimensions = optixGetLaunchDimensions();
+    const uint32_t sampleCount = Max(1u, params.samplesPerPixel);
+    const int maxDepth = Max(0, params.maxDepth);
+    const OptixTraversableHandle bvhHandle = static_cast<OptixTraversableHandle>(params.bvhHandle);
+    Vec3f sum(0.f);
 
-    RNG rng = RNG::Init(Vec2u(launchIndex.x, launchIndex.y), 0u);
-    Vec3f pixel(float(launchIndex.x) + 0.5f, float(launchIndex.y) + 0.5f, 0.f);
-
-    float filterU = rng.Uniform();
-    float filterV = rng.Uniform();
-
-    pixel.x += filterU - 0.5f;
-    pixel.y += filterV - 0.5f;
-
-    const int maxDepth = params.maxDepth;
-
-    Matrix4x4 cameraFromRaster = params.cameraFromRaster;
-    AffineTransform renderFromCamera = params.renderFromCamera;
-
-    // Generate ray
-    Vec4f cameraPos = cameraFromRaster * Vec4f(pixel, 1.f);
-    cameraPos.xyz /= cameraPos.w;
-
-    Vec3f rayOrigin = renderFromCamera.TransformPoint(Vec3f(0.f));
-    Vec3f rayDirection = Normalize(renderFromCamera.TransformVector(cameraPos.xyz));
-    float tMin = 0.f;
-    float tMax = 1000000.f;
-    float time = 0.f;
-    uint32_t mask = 0xff;
-    RayCone rayCone;
-    rayCone.width = 0.f;
-    rayCone.spreadAngle = atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
-
-    OptixTraversableHandle bvhHandle = static_cast<OptixTraversableHandle>(params.bvhHandle);
-
-    Vec3f environment(0.5f);
-    Vec3f radiance(0.f);
-    Vec3f throughput(1.f);
-
-    for (uint32_t depth = 0; depth < params.maxDepth + 1; depth++)
+    for (uint32_t sample = 0; sample < sampleCount; ++sample)
     {
-        float time = 0.f;
+        RNG rng = RNG::Init(Vec2u(launchIndex.x, launchIndex.y), params.sampleOffset + sample);
+        const float pixelX = float(launchIndex.x) + rng.Uniform();
+        const float pixelY = float(launchIndex.y) + rng.Uniform();
+        Vec4f cameraPos = params.cameraFromRaster * Vec4f(Vec3f(pixelX, pixelY, 0.f), 1.f);
+        cameraPos.xyz /= cameraPos.w;
+        Vec3f rayOrigin = params.renderFromCamera.TransformPoint(Vec3f(0.f));
+        Vec3f rayDirection = Normalize(params.renderFromCamera.TransformVector(cameraPos.xyz));
+        RayCone rayCone{};
+        rayCone.spreadAngle =
+            atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
+        Vec3f radiance(0.f);
+        Vec3f throughput(1.f);
 
-        IntersectionInfo info;
-        uint64_t ptr = reinterpret_cast<uint64_t>(&info);
-        uint32_t low = ptr & 0xffffffffu;
-        uint32_t high = ptr >> 32u;
-
-        // Interect ray against scene
-        optixTrace(bvhHandle,
-                   make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
-                   make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
-                   tMin,
-                   tMax,
-                   time,
-                   mask,
-                   OPTIX_RAY_FLAG_NONE,
-                   0,
-                   0,
-                   0,
-                   low,
-                   high);
-
-        if (info.type == INTERSECTION_TYPE_NONE)
+        for (int depth = 0; depth <= maxDepth; ++depth)
         {
-            radiance += throughput * environment;
-            break;
-        }
+            IntersectionInfo info{};
+            const uint64_t ptr = reinterpret_cast<uint64_t>(&info);
+            uint32_t low = static_cast<uint32_t>(ptr);
+            uint32_t high = static_cast<uint32_t>(ptr >> 32u);
+            optixTrace(bvhHandle,
+                       make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
+                       make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
+                       0.f,
+                       1.0e30f,
+                       0.f,
+                       0xff,
+                       OPTIX_RAY_FLAG_NONE,
+                       0,
+                       0,
+                       0,
+                       low,
+                       high);
+            if (info.type == INTERSECTION_TYPE_NONE)
+            {
+                radiance += throughput * Vec3f(0.5f);
+                break;
+            }
+            if (depth == maxDepth)
+                break;
 
-        if (depth == params.maxDepth)
-        {
-            break;
-        }
-
-        // Sample BSDF
-        // NOTE: includes PDF, cosine term
-        const Object &object = params.scene.objects[info.id];
-
-        ShadingInfo shadingInfo;
-        GetShadingInfo(object, info, shadingInfo);
-
-        Vec2f bsdfU = rng.Uniform2D();
-
-        if (shadingInfo.hasMaterial)
-        {
-            const MaterialHandle &handle = params.scene.materialHandles[shadingInfo.materialIndex];
-            YBI_ASSERT(handle.isGraph);
-
-            const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
-            const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
-            const Vec3f cameraPosition = params.cameraPosition;
-
+            const Object &object = params.scene.objects[info.id];
+            ShadingInfo shadingInfo;
+            GetShadingInfo(object, info, shadingInfo);
             shadingInfo.TransformToWorld(info.objectToWorld);
+
+            // Treat this basic diffuse renderer as two-sided.
+            Vec3f geometricNormal = shadingInfo.geometricNormal;
+            if (Dot(geometricNormal, rayDirection) > 0.f)
+                geometricNormal = -geometricNormal;
+            Vec3f normal = shadingInfo.shadingNormal;
+            if (Dot(normal, geometricNormal) < 0.f)
+                normal = -normal;
+            if (Dot(normal, rayDirection) >= 0.f)
+                normal = geometricNormal;
+            shadingInfo.shadingNormal = normal;
 
             UpdateRayCone(rayCone, rayDirection, info.t, shadingInfo, depth);
             shadingInfo.rayDirection = rayDirection;
             shadingInfo.rayCone = rayCone;
 
-            // Sample BSDF
-            Vec3f direction = SampleCosineHemisphere(bsdfU);
-            const Vec3f baseColor =
-                EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
-
+            Vec3f baseColor(0.5f);
+            if (shadingInfo.hasMaterial)
+            {
+                const MaterialHandle &handle =
+                    params.scene.materialHandles[shadingInfo.materialIndex];
+                if (handle.isGraph)
+                {
+                    const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
+                    baseColor = EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
+                }
+                else
+                {
+                    const DeviceMaterial &material = params.scene.materials[handle.index];
+                    if (material.valid && shadingInfo.hasUvs)
+                    {
+                        const MaterialTextureHandle textureHandle = {material.udimBase,
+                                                                     material.udimTableOffset};
+                        baseColor =
+                            VirtualTextureSampleImage(params, textureHandle, shadingInfo).xyz;
+                    }
+                }
+            }
+            baseColor = Min(Max(baseColor, Vec3f(0.f)), Vec3f(1.f));
             throughput = throughput * baseColor;
+            if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
+                break;
 
-            // Transform ray back to world space
-        }
-        else
-        {
-            // Assume no-op, change ray origin and preserve ray direction
-        }
+            const Vec3f sampledDirection = SampleCosineHemisphere(rng.Uniform2D());
+            OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
+            const Vec3f nextDirection = basis.LocalToWorld(sampledDirection);
 
-        if (throughput.x == 0.f && throughput.y == 0.f && throughput.z == 0.f)
-        {
-            break;
+            if (Dot(nextDirection, geometricNormal) <= 0.f)
+                break;
+            rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
+            rayDirection = nextDirection;
         }
+        sum += radiance;
     }
+
+    uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
+    const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
+    Vec3f *history = params.accumulation ? params.accumulation + pixelIndex : nullptr;
+    const Vec3f color = AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
+    image[pixelIndex] =
+        make_uchar4(static_cast<unsigned char>(255.f * LinearToDisplay(color.x) + 0.5f),
+                    static_cast<unsigned char>(255.f * LinearToDisplay(color.y) + 0.5f),
+                    static_cast<unsigned char>(255.f * LinearToDisplay(color.z) + 0.5f),
+                    255);
 }
-#endif
+
+extern "C" __global__ void __raygen__unidirectional()
+{
+    RenderUnidirectional();
+}
 
 } // namespace ybi

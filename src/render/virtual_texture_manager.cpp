@@ -701,6 +701,7 @@ void VirtualTextureManager::Update(KernelParams *params)
         desc.blockX = 32;
         desc.arguments = arguments;
         device->ExecuteKernel(*updatePageDescriptors, desc);
+        ++residencyRevision;
 
         pageTableUpdatesDone = device->CreateDeviceEvent();
         device->RecordDeviceEvent(nullptr, *pageTableUpdatesDone);

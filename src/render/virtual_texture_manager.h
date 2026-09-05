@@ -96,6 +96,7 @@ class VirtualTextureManager
     size_t physicalAllocationLimit;
     int pageSize;
     uint32_t feedbackCapacity;
+    uint64_t residencyRevision = 0;
 
     // Device
     std::unique_ptr<DeviceKernel> updatePageDescriptors;
@@ -135,6 +136,7 @@ public:
     void Update(KernelParams *params);
     void UpdateParams(KernelParams *params);
     void CopyFeedback();
+    uint64_t GetResidencyRevision() const { return residencyRevision; }
 };
 
 } // namespace ybi

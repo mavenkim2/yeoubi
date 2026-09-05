@@ -5,10 +5,13 @@
 #include "display_device/display_device.h"
 #include "input/camera_controller.h"
 #include "io/usd.h"
+#include "render/progressive_state.h"
 #include "render/virtual_texture_manager.h"
 #include "scene/render_system.h"
 #include "scene/scene.h"
 #include <cstdlib>
+#include <cerrno>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,11 +25,69 @@ using namespace ybi;
 
 int main(int argc, char **argv)
 {
-    YBI_ASSERT(argc == 2);
+    bool pathTrace = false;
+    bool interactive = false;
+    uint32_t samplesPerPixel = 0;
+    std::string filename;
+    bool positionalOnly = false;
+    const auto printUsage = []() {
+        std::printf("Usage: yeoubi <scene> [--path-trace | --interactive] [--spp 1..4096]\n"
+                    "The scene filename and options may appear in any order.\n"
+                    "Default: base-color preview. --path-trace: 16 samples per frame.\n"
+                    "--interactive: progressive diffuse tracing, 1 sample per frame.\n"
+                    "--spp overrides samples per frame. Lighting is a constant environment.\n"
+                    "Esc: toggle camera controls; WASD/QE: move; mouse: look; R: reset accumulation.\n");
+    };
+    for (int i = 1; i < argc; ++i)
+    {
+        if (!positionalOnly && std::strcmp(argv[i], "--help") == 0)
+        {
+            printUsage();
+            return 0;
+        }
+        else if (!positionalOnly && std::strcmp(argv[i], "--") == 0)
+            positionalOnly = true;
+        else if (!positionalOnly && std::strcmp(argv[i], "--path-trace") == 0)
+            pathTrace = true;
+        else if (!positionalOnly && std::strcmp(argv[i], "--interactive") == 0)
+        {
+            interactive = true;
+            pathTrace = true;
+        }
+        else if (!positionalOnly && std::strcmp(argv[i], "--spp") == 0 && i + 1 < argc)
+        {
+            char *end = nullptr;
+            errno = 0;
+            const long value = std::strtol(argv[++i], &end, 10);
+            if (errno || end == argv[i] || *end || value < 1 || value > 4096)
+            {
+                std::fprintf(stderr, "--spp must be an integer from 1 to 4096.\n");
+                return 1;
+            }
+            samplesPerPixel = static_cast<uint32_t>(value);
+        }
+        else if (!positionalOnly && argv[i][0] == '-')
+        {
+            std::fprintf(stderr, "Unknown or incomplete option: %s\n", argv[i]);
+            return 1;
+        }
+        else if (filename.empty())
+            filename = argv[i];
+        else
+        {
+            std::fprintf(stderr, "Expected one scene filename; extra argument: %s\n", argv[i]);
+            return 1;
+        }
+    }
+    if (filename.empty())
+    {
+        std::fprintf(stderr, "A scene filename is required.\n");
+        printUsage();
+        return 1;
+    }
+    if (samplesPerPixel == 0)
+        samplesPerPixel = interactive ? 1u : 16u;
 
-    // char *filename = argv[0];
-
-    std::string filename(argv[1]);
     Arena arena;
     DataContainer container;
 
@@ -94,7 +155,9 @@ int main(int argc, char **argv)
             device->ImportExternalSemaphore(*displayFrameFinishedSemaphores.back()));
     }
 
-    KernelParams params;
+    KernelParams params{};
+    params.pathTrace = pathTrace;
+    params.samplesPerPixel = samplesPerPixel;
     params.bvhHandle = scene->container->GetBVHs(GeometryType::Scene)[0].handle.handle;
     params.cameraPosition = camera.position;
     params.fovRadians = camera.verticalFovRadians;
@@ -107,10 +170,20 @@ int main(int argc, char **argv)
     params.scene = system.deviceScene;
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
+    DeviceBuffer accumulationBuffer;
+    if (interactive)
+    {
+        accumulationBuffer = device->Alloc(
+            static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * sizeof(Vec3f));
+        params.accumulation = reinterpret_cast<Vec3f *>(accumulationBuffer.Data());
+    }
+    ProgressiveState progressiveState;
 
     uint32_t lastFrameIndex = 0;
     double lastTime = glfwGetTime();
     bool wasEscapePressed = false;
+    bool wasResetPressed = false;
+    bool resetPending = false;
 
     while (!glfwWindowShouldClose(window))
     {
@@ -135,6 +208,9 @@ int main(int argc, char **argv)
             cameraController.SetMovementEnabled(cursorMode == GLFW_CURSOR_DISABLED);
         }
         wasEscapePressed = escapePressed;
+        const bool resetPressed = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+        resetPending |= resetPressed && !wasResetPressed;
+        wasResetPressed = resetPressed;
 
         if (!displayDevice->BeginFrame())
         {
@@ -148,8 +224,26 @@ int main(int argc, char **argv)
         params.imageHandle = reinterpret_cast<uint64_t>(deviceImageHandle.buffer.Data());
         manager.UpdateParams(&params);
         manager.Update(&params);
+        if (interactive)
+        {
+            progressiveState.BeginFrame(params.renderFromCamera, manager.GetResidencyRevision(),
+                                        samplesPerPixel, resetPending);
+            params.accumulatedSamples = progressiveState.samples;
+            params.sampleOffset = progressiveState.samples;
+        }
+        resetPending = false;
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->DispatchKernel(camera.width, camera.height, cudaParams);
+        if (interactive)
+        {
+            progressiveState.samples += samplesPerPixel;
+            char title[128];
+            std::snprintf(title, sizeof(title), "Yeoubi | Diffuse path tracing | %u spp | R: reset",
+                          progressiveState.samples);
+            glfwSetWindowTitle(window, title);
+        }
+        else if (params.pathTrace)
+            params.sampleOffset += params.samplesPerPixel;
         manager.CopyFeedback();
         device->SignalExternalSemaphore(deviceFrameFinishedSemaphores[frameIndex]);
 
@@ -158,6 +252,9 @@ int main(int argc, char **argv)
                                 camera.width,
                                 camera.height);
     }
+
+    // Finish presentation before reading back or releasing shared CUDA/Vulkan resources.
+    displayDevice->WaitIdle();
 
     const size_t outputSize =
         static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
@@ -181,6 +278,8 @@ int main(int argc, char **argv)
     deviceImageHandles.clear();
     displayImageHandles.clear();
     displayDevice.reset();
+    if (accumulationBuffer)
+        device->Free(accumulationBuffer);
     device->Free(cudaParams);
 
     glfwDestroyWindow(window);

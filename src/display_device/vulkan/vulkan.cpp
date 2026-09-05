@@ -531,11 +531,17 @@ Vulkan::Vulkan(GLFWwindow *window, ValidationMode validationMode, GPUDevicePrefe
     }
 }
 
+void Vulkan::WaitIdle()
+{
+    if (device)
+        VK_CHECK(vkDeviceWaitIdle(device));
+}
+
 Vulkan::~Vulkan()
 {
     if (device)
     {
-        vkDeviceWaitIdle(device);
+        WaitIdle();
         for (VkFence fence : inFlightFences)
         {
             if (fence)

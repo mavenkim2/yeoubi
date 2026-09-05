@@ -28,6 +28,11 @@ struct KernelParams
     // Geometry
     DeviceScene scene;
     int maxDepth;
+    bool pathTrace;
+    uint32_t samplesPerPixel;
+    uint32_t sampleOffset;
+    Vec3f *accumulation;
+    uint32_t accumulatedSamples;
 
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;

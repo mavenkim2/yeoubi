@@ -64,6 +64,8 @@ struct DisplayDevice
     static std::unique_ptr<DisplayDevice> CreateDevice(GLFWwindow *window);
     virtual std::unique_ptr<DisplayBuffer> AllocateExternalBuffer(size_t size) = 0;
     virtual std::unique_ptr<DisplaySemaphore> CreateDisplaySemaphore() = 0;
+    // Complete submitted display work before releasing resources it references.
+    virtual void WaitIdle() = 0;
     virtual bool BeginFrame() = 0;
     virtual bool
     EndFrame(DisplayBuffer &framebuffer, DisplaySemaphore &cudaFinishedSemaphore, int width, int height) = 0;

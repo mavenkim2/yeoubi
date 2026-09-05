@@ -15,8 +15,10 @@ struct OrthonormalBasis
     Vec3f y;
     Vec3f z;
 
-    OrthonormalBasis(const Vec3f &x, const Vec3f &y, const Vec3f &z) : x(x), y(y), z(z) {}
-    OrthonormalBasis(const Vec3f &x, const Vec3f &z)
+    YBI_CPU_GPU OrthonormalBasis(const Vec3f &x, const Vec3f &y, const Vec3f &z) : x(x), y(y), z(z)
+    {
+    }
+    YBI_CPU_GPU OrthonormalBasis(const Vec3f &x, const Vec3f &z)
         : x(Normalize(x)), y(Normalize(Cross(Normalize(z), Normalize(x)))), z(Normalize(z))
     {
     }
