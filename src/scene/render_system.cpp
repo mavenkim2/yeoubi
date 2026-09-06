@@ -23,6 +23,64 @@ namespace ybi
 MaterialManager::~MaterialManager() = default;
 RenderSystem::~RenderSystem() = default;
 
+static bool MeshClusterDataEqual(const Mesh &a, const Mesh &b)
+{
+    if (a.GetPositionsHandle().index != b.GetPositionsHandle().index ||
+        a.GetNormalsHandle().index != b.GetNormalsHandle().index ||
+        a.GetUVsHandle().index != b.GetUVsHandle().index ||
+        a.GetUVIndicesHandle().index != b.GetUVIndicesHandle().index ||
+        a.GetIndicesHandle().index != b.GetIndicesHandle().index ||
+        a.GetFaceMaterialIndicesHandle().index != b.GetFaceMaterialIndicesHandle().index ||
+        a.GetMaterialIndex() != b.GetMaterialIndex() || a.GetUVType() != b.GetUVType() ||
+        a.GetNormalType() != b.GetNormalType())
+    {
+        return false;
+    }
+
+    const std::vector<Primvar> &aPrimvars = a.GetPrimvars();
+    const std::vector<Primvar> &bPrimvars = b.GetPrimvars();
+    if (aPrimvars.size() != bPrimvars.size())
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < aPrimvars.size(); ++i)
+    {
+        const Primvar &aPrimvar = aPrimvars[i];
+        const Primvar &bPrimvar = bPrimvars[i];
+        if (aPrimvar.id != bPrimvar.id || aPrimvar.type != bPrimvar.type ||
+            aPrimvar.valueType != bPrimvar.valueType || aPrimvar.index != bPrimvar.index ||
+            aPrimvar.indicesIndex != bPrimvar.indicesIndex)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint64_t HashMeshClusterData(const Mesh &mesh)
+{
+    uint64_t hash = 0;
+    hash = HashCombine(hash, mesh.GetPositionsHandle().index);
+    hash = HashCombine(hash, mesh.GetNormalsHandle().index);
+    hash = HashCombine(hash, mesh.GetUVsHandle().index);
+    hash = HashCombine(hash, mesh.GetUVIndicesHandle().index);
+    hash = HashCombine(hash, mesh.GetIndicesHandle().index);
+    hash = HashCombine(hash, mesh.GetFaceMaterialIndicesHandle().index);
+    hash = HashCombine(hash, mesh.GetMaterialIndex());
+    hash = HashCombine(hash, static_cast<uint64_t>(mesh.GetUVType()));
+    hash = HashCombine(hash, static_cast<uint64_t>(mesh.GetNormalType()));
+    for (const Primvar &primvar : mesh.GetPrimvars())
+    {
+        hash = HashCombine(hash, primvar.id);
+        hash = HashCombine(hash, static_cast<uint64_t>(primvar.type));
+        hash = HashCombine(hash, static_cast<uint64_t>(primvar.valueType));
+        hash = HashCombine(hash, primvar.index);
+        hash = HashCombine(hash, primvar.indicesIndex);
+    }
+    return hash;
+}
+
 RenderSystem::RenderSystem(Device *device,
                            DisplayDevice *displayDevice,
                            DataContainer *container,
@@ -239,6 +297,12 @@ void GeometryManager::Update(Device *device,
     bvhSourceIndices.reserve(container->meshes.size());
     std::unordered_map<uint64_t, size_t> bvhPairToMeshIndex;
 
+    // Unlike a BVH, a compressed cluster embeds shading data. Reuse it only when all
+    // standard mesh buffers, material assignments, and primvars match.
+    std::vector<size_t> clusterSourceIndices;
+    clusterSourceIndices.reserve(container->meshes.size());
+    std::unordered_multimap<uint64_t, size_t> clusterHashToMeshIndex;
+
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         Mesh &mesh = container->meshes[meshIndex];
@@ -296,7 +360,7 @@ void GeometryManager::Update(Device *device,
         }
 
         uint32_t materialIndex = mesh.GetMaterialIndex();
-        if (materialIndex < container->materials.size())
+        if (materialIndex < container->materialHandles.size())
         {
             object.materialIndex = static_cast<int>(materialIndex);
         }
@@ -319,6 +383,23 @@ void GeometryManager::Update(Device *device,
         {
             bvhSourceIndices.push_back(meshIndex);
         }
+
+        const uint64_t clusterHash = HashMeshClusterData(mesh);
+        const auto clusterCandidates = clusterHashToMeshIndex.equal_range(clusterHash);
+        size_t clusterSourceIndex = meshIndex;
+        for (auto it = clusterCandidates.first; it != clusterCandidates.second; ++it)
+        {
+            if (MeshClusterDataEqual(mesh, container->meshes[it->second]))
+            {
+                clusterSourceIndex = it->second;
+                break;
+            }
+        }
+        if (clusterSourceIndex == meshIndex)
+        {
+            clusterHashToMeshIndex.emplace(clusterHash, meshIndex);
+        }
+        clusterSourceIndices.push_back(clusterSourceIndex);
     }
 
     // Create BVHs
@@ -333,7 +414,7 @@ void GeometryManager::Update(Device *device,
 
         tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
             Mesh &mesh = container->meshes[meshIndex];
-            const size_t sourceIndex = bvhSourceIndices[meshIndex];
+            const size_t sourceIndex = clusterSourceIndices[meshIndex];
 
             if (sourceIndex != meshIndex)
             {
@@ -377,7 +458,7 @@ void GeometryManager::Update(Device *device,
         container->compressedClusterBytes.resize(totalNumClusters);
         const Timer compressClustersTimer = StartTimer();
         tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
-            if (bvhSourceIndices[meshIndex] != meshIndex)
+            if (clusterSourceIndices[meshIndex] != meshIndex)
             {
                 return;
             }
@@ -398,7 +479,7 @@ void GeometryManager::Update(Device *device,
 
         for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
         {
-            if (bvhSourceIndices[meshIndex] != meshIndex)
+            if (clusterSourceIndices[meshIndex] != meshIndex)
             {
                 continue;
             }
@@ -416,7 +497,7 @@ void GeometryManager::Update(Device *device,
 
         for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
         {
-            const size_t sourceIndex = bvhSourceIndices[meshIndex];
+            const size_t sourceIndex = clusterSourceIndices[meshIndex];
             YBI_ASSERT(sourceIndex < clusterOffsets.size());
             YBI_ASSERT(clusterOffsets[sourceIndex] != INVALID_OFFSET);
             objects[meshIndex].triangleIndexOffset = INVALID_OFFSET;

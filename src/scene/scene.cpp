@@ -161,12 +161,43 @@ bool Primvar::HasIndices() const
     return indicesIndex != std::numeric_limits<size_t>::max();
 }
 
+static uint64_t HashBytes(const void *data, size_t numBytes)
+{
+    const uint8_t empty = 0;
+    const uint8_t *bytes = numBytes ? reinterpret_cast<const uint8_t *>(data) : &empty;
+    return MurmurHash64A(bytes, numBytes, 0);
+}
+
+template <typename T>
+static size_t InternArray(std::vector<Array<T>> &arrays,
+                          std::unordered_multimap<uint64_t, size_t> &hashToIndex,
+                          Array<T> &&array)
+{
+    const size_t numBytes = sizeof(T) * array.size();
+    const uint64_t hash = HashBytes(array.data(), numBytes);
+    const auto [first, last] = hashToIndex.equal_range(hash);
+    for (auto found = first; found != last; ++found)
+    {
+        YBI_ASSERT(found->second < arrays.size());
+        const Array<T> &existing = arrays[found->second];
+        if (existing.size() == array.size() &&
+            (numBytes == 0 || memcmp(existing.data(), array.data(), numBytes) == 0))
+        {
+            return found->second;
+        }
+    }
+
+    const size_t index = arrays.size();
+    arrays.emplace_back(std::move(array));
+    hashToIndex.emplace(hash, index);
+    return index;
+}
+
 Primvar Attributes::AddAttribute(AttributeId id,
                                  AttributeType type,
                                  PrimvarValue &&value,
                                  Array<int> &&attributeIndices)
 {
-    // TODO: deduplication
     Primvar primvar{id, type, PrimvarValueType::Bool, 0};
 
     std::visit(
@@ -175,46 +206,46 @@ Primvar Attributes::AddAttribute(AttributeId id,
             if constexpr (std::is_same_v<T, bool>)
             {
                 primvar.valueType = PrimvarValueType::Bool;
+                primvar.index = bools.size();
                 bools.push_back(attribute);
-                primvar.index = bools.size() - 1;
             }
             else if constexpr (std::is_same_v<T, int>)
             {
                 primvar.valueType = PrimvarValueType::Int;
+                primvar.index = ints.size();
                 ints.push_back(attribute);
-                primvar.index = ints.size() - 1;
             }
             else if constexpr (std::is_same_v<T, float>)
             {
                 primvar.valueType = PrimvarValueType::Float;
+                primvar.index = floats.size();
                 floats.push_back(attribute);
-                primvar.index = floats.size() - 1;
             }
             else if constexpr (std::is_same_v<T, Array<Vec2f>>)
             {
                 primvar.valueType = PrimvarValueType::ArrayVec2f;
-                vector2s.emplace_back(std::move(attribute));
-                primvar.index = vector2s.size() - 1;
+                primvar.index =
+                    InternArray(vector2s, vector2HashToIndex, std::move(attribute));
             }
             else if constexpr (std::is_same_v<T, Array<Vec3f>>)
             {
                 primvar.valueType = PrimvarValueType::ArrayVec3f;
-                vector3s.emplace_back(std::move(attribute));
-                primvar.index = vector3s.size() - 1;
+                primvar.index =
+                    InternArray(vector3s, vector3HashToIndex, std::move(attribute));
             }
             else if constexpr (std::is_same_v<T, Array<Vec4f>>)
             {
                 primvar.valueType = PrimvarValueType::ArrayVec4f;
-                vector4s.emplace_back(std::move(attribute));
-                primvar.index = vector4s.size() - 1;
+                primvar.index =
+                    InternArray(vector4s, vector4HashToIndex, std::move(attribute));
             }
         },
         std::move(value));
 
     if (attributeIndices.size())
     {
-        indices.emplace_back(std::move(attributeIndices));
-        primvar.indicesIndex = indices.size() - 1;
+        primvar.indicesIndex =
+            InternArray(indices, indicesHashToIndex, std::move(attributeIndices));
     }
 
     return primvar;

@@ -208,6 +208,11 @@ struct Attributes
     std::vector<Array<Vec4f>> vector4s;
     std::vector<Array<int>> indices;
 
+    std::unordered_multimap<uint64_t, size_t> vector2HashToIndex;
+    std::unordered_multimap<uint64_t, size_t> vector3HashToIndex;
+    std::unordered_multimap<uint64_t, size_t> vector4HashToIndex;
+    std::unordered_multimap<uint64_t, size_t> indicesHashToIndex;
+
     Primvar AddAttribute(AttributeId id,
                          AttributeType type,
                          PrimvarValue &&value,
