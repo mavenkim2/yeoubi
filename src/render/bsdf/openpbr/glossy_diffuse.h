@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/math.h"
+#include "render/sampling.h"
 #include <cmath>
 namespace ybi
 {
@@ -65,6 +66,19 @@ YBI_CPU_GPU Vec3f EvaluateOrenNayar(const Vec3f &viewDirection,
     Vec3f f_ms = rho_ms * YBI_RCP_PI * oneMinusEFo * oneMinusEFi / oneMinusAvgEF;
     Vec3f result = f_ss + f_ms;
     return result;
+}
+
+YBI_CPU_GPU bool SampleOrenNayar(const Vec3f &viewDirection,
+                                 const Vec3f &baseColor,
+                                 const Vec2f &u,
+                                 Vec3f &lightDirection,
+                                 Vec3f &weight)
+{
+    Vec3f lightDirectionLocal = SampleCosineHemisphere(u);
+    weight = EvaluateOrenNayar(viewDirection, lightDirectionLocal, baseColor, 0.0f) * YBI_PI;
+
+    lightDirection = lightDirectionLocal;
+    return true;
 }
 
 } // namespace ybi

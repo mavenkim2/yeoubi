@@ -3,6 +3,7 @@
 #include "core/assert.h"
 #include "core/vec2f.h"
 #include "device/device.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -124,6 +125,53 @@ void Mesh::SetPrimvar(Primvar primvar)
     primvars.emplace_back(std::move(primvar));
 }
 
+static bool PrimvarLess(const Primvar &a, const Primvar &b)
+{
+    const bool aIsArray = IsPrimvarArray(a.valueType);
+    const bool bIsArray = IsPrimvarArray(b.valueType);
+    if (aIsArray != bIsArray)
+    {
+        return aIsArray;
+    }
+    if (a.valueType != b.valueType)
+    {
+        return a.valueType > b.valueType;
+    }
+    if (a.index != b.index)
+    {
+        return a.index < b.index;
+    }
+    if (a.indicesIndex != b.indicesIndex)
+    {
+        return a.indicesIndex < b.indicesIndex;
+    }
+    if (a.id != b.id)
+    {
+        return a.id < b.id;
+    }
+    return a.type < b.type;
+}
+
+// NOTE: Primvars must be sorted and ordered such that arrays come first. We allow for
+// mesh cluster data to be deduplicated when all geometry and array primvars are duplicated,
+// meaning non-array primvars can differ. If primvars weren't sorted, the following could occur:
+//
+// Mesh A primvars: [Vec2f]
+// Mesh B primvars: [float, Vec2f]
+//
+// If Mesh A is used for clustering, then the max attribute index is 0. When
+// the Mesh B's primvars are queried, the attribute index resolves to 1 which is invalid.
+
+void Mesh::SortPrimvars()
+{
+    std::sort(primvars.begin(), primvars.end(), PrimvarLess);
+}
+
+bool Mesh::PrimvarsAreSorted() const
+{
+    return std::is_sorted(primvars.begin(), primvars.end(), PrimvarLess);
+}
+
 const Primvar *Mesh::GetPrimvar(AttributeId id) const
 {
     for (const Primvar &primvar : primvars)
@@ -224,20 +272,17 @@ Primvar Attributes::AddAttribute(AttributeId id,
             else if constexpr (std::is_same_v<T, Array<Vec2f>>)
             {
                 primvar.valueType = PrimvarValueType::ArrayVec2f;
-                primvar.index =
-                    InternArray(vector2s, vector2HashToIndex, std::move(attribute));
+                primvar.index = InternArray(vector2s, vector2HashToIndex, std::move(attribute));
             }
             else if constexpr (std::is_same_v<T, Array<Vec3f>>)
             {
                 primvar.valueType = PrimvarValueType::ArrayVec3f;
-                primvar.index =
-                    InternArray(vector3s, vector3HashToIndex, std::move(attribute));
+                primvar.index = InternArray(vector3s, vector3HashToIndex, std::move(attribute));
             }
             else if constexpr (std::is_same_v<T, Array<Vec4f>>)
             {
                 primvar.valueType = PrimvarValueType::ArrayVec4f;
-                primvar.index =
-                    InternArray(vector4s, vector4HashToIndex, std::move(attribute));
+                primvar.index = InternArray(vector4s, vector4HashToIndex, std::move(attribute));
             }
         },
         std::move(value));

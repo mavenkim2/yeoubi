@@ -134,65 +134,8 @@ YBI_CPU_GPU void SampleOpenPBRFuzz(const Vec3f &wo, Vec2f u)
     }
 }
 
-YBI_CPU_GPU Vec3f SampleGGXVNDF(const Vec3f &wo, const Vec2f &a, const Vec2f &u)
-{
-    // fma(1 - u.y, 1 + wo.z, -wo.z)
-    // z = 1 + wo.z - u.y - u.y * wo.z - wo.z = 1 - u.y - u.y * wo.z
-
-    Vec3f woStd = Normalize(Vec3f(a * wo.Xy(), wo.z));
-
-    float z = 1 - u.y - u.y * woStd.z;
-    float sinTheta = Clamp(sqrtf(1 - z * z), 0.f, 1.f);
-
-    float phi = 2 * YBI_PI * u.x;
-    float cosPhi = Cos(phi);
-    float sinPhi = Sin(phi);
-
-    Vec3f result(sinTheta * cosPhi, sinTheta * sinPhi, z);
-    result += woStd;
-
-    result.x *= a.x;
-    result.y *= a.y;
-    return Normalize(result);
-}
-
 YBI_CPU_GPU float EvaluateMaskingGGX() {}
 
-YBI_CPU_GPU float EvaluateAnisoGGX(const Vec3f &v, const Vec3f &a)
-{
-    float x = (v.x / a.x) * (v.x / a.x);
-    float y = (v.y / a.y) * (v.y / a.y);
-    float z = v.z * v.z;
-    float denom = x + y + z;
-    denom *= denom;
-
-    float result = 1.f / (YBI_PI * a.x * a.y * denom);
-    return result;
-}
-
 YBI_CPU_GPU float FrDielectric(float eta) {}
-
-YBI_CPU_GPU bool
-SampleGGX(const Vec3f &viewDirection, const Vec2f &a, const Vec2f &u, Vec3f &lightDirection)
-{
-    Vec3f halfway = SampleGGXVNDF(viewDirection, a, u);
-    float hDotV = Dot(halfway, viewDirection);
-
-    if (hDotV < 0.f)
-    {
-        return false;
-    }
-
-    lightDirection = Normalize(-viewDirection + 2.f * hDotV * halfway);
-    float lDotV = Dot(lightDirection, viewDirection);
-
-    if (lDotV < 0.f)
-    {
-        return false;
-    }
-
-    float D = EvaluateAnisoGGX(wm, a);
-    // float G = ;
-}
 
 } // namespace ybi

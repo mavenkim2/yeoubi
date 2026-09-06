@@ -6,7 +6,8 @@
 #include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
-#include "render/bsdf/openpbr/glossy_diffuse.h"
+#include "render/bsdf/openpbr/init.h"
+#include "render/bsdf/openpbr/substrate.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
 #include "render/path_tracing.h"
@@ -651,6 +652,8 @@ YBI_GPU void RenderUnidirectional()
             shadingInfo.rayDirection = rayDirection;
             shadingInfo.rayCone = rayCone;
 
+            OpenPbrBSDF bsdf;
+
             Vec3f baseColor(0.5f);
             if (shadingInfo.hasMaterial)
             {
@@ -659,21 +662,38 @@ YBI_GPU void RenderUnidirectional()
                 if (handle.isGraph)
                 {
                     const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
+                    // InitializeOpenPbrBSDF(params, material, shadingInfo, bsdf);
                     baseColor = EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
                 }
-                else
-                {
-                    const DeviceMaterial &material = params.scene.materials[handle.index];
-                    if (material.valid && shadingInfo.hasUvs)
-                    {
-                        const MaterialTextureHandle textureHandle = {material.udimBase,
-                                                                     material.udimTableOffset};
-                        baseColor =
-                            VirtualTextureSampleImage(params, textureHandle, shadingInfo).xyz;
-                    }
-                }
+                // else
+                // {
+                //     const DeviceMaterial &material = params.scene.materials[handle.index];
+                //     if (material.valid && shadingInfo.hasUvs)
+                //     {
+                //         const MaterialTextureHandle textureHandle = {material.udimBase,
+                //                                                      material.udimTableOffset};
+                //         baseColor =
+                //             VirtualTextureSampleImage(params, textureHandle, shadingInfo).xyz;
+                //     }
+                // }
             }
+
             baseColor = Clamp(baseColor, 0.f, 1.f);
+#if 0
+            OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
+            const Vec3f viewDirection = basis.WorldToLocal(-rayDirection);
+
+            Vec3f lightDirection, weight;
+            SampleOrenNayar(viewDirection, baseColor, rng.Uniform2D(), lightDirection, weight);
+
+            throughput *= weight;
+            if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
+                break;
+
+            const Vec3f nextDirection = basis.LocalToWorld(lightDirection);
+#endif
+
+#if 1
             throughput = throughput * baseColor;
             if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
                 break;
@@ -681,6 +701,7 @@ YBI_GPU void RenderUnidirectional()
             const Vec3f sampledDirection = SampleCosineHemisphere(rng.Uniform2D());
             OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
             const Vec3f nextDirection = basis.LocalToWorld(sampledDirection);
+#endif
 
             if (Dot(nextDirection, geometricNormal) <= 0.f)
                 break;

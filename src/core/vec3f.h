@@ -19,7 +19,7 @@ public:
 
     Vec3f() = default;
     YBI_CPU_GPU constexpr explicit Vec3f(float value) : x(value), y(value), z(value) {}
-    YBI_CPU_GPU constexpr explicit Vec3f(const Vec3f &v, float value) : x(v.x), y(v.y), z(value) {}
+    YBI_CPU_GPU constexpr explicit Vec3f(const Vec2f &v, float value) : x(v.x), y(v.y), z(value) {}
     YBI_CPU_GPU constexpr Vec3f(float x, float y, float z) : x(x), y(y), z(z) {}
 
     YBI_CPU_GPU float *Data()
@@ -72,6 +72,14 @@ public:
         x -= rhs.x;
         y -= rhs.y;
         z -= rhs.z;
+        return *this;
+    }
+
+    YBI_CPU_GPU Vec3f &operator*=(Vec3f rhs)
+    {
+        x *= rhs.x;
+        y *= rhs.y;
+        z *= rhs.z;
         return *this;
     }
 

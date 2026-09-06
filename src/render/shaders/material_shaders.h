@@ -1,3 +1,5 @@
+#pragma once
+
 #include "core/assert.h"
 #include "device/cuda_compat.h"
 #include "device/kernel_params.h"
@@ -6,41 +8,10 @@
 #include "render/shaders/attribute.h"
 #include "render/shaders/colorcorrect.h"
 #include "render/shaders/image.h"
+#include "render/shaders/shading_helpers.h"
 
 namespace ybi
 {
-
-struct Something
-{
-    MaterialOpcode opcode;
-    int dst : 8;
-    int src0 : 8;
-    int src1 : 8;
-};
-
-#if 0
-YBI_CPU_GPU void ShaderExtractVec3(float *registers, int dst, int src, int extractSrc)
-{
-    int index = LoadIntRegister(registers, srcRegister);
-    float value = LoadFloatRegister(registers, src + index);
-    StoreFloatRegister(registers, value, dst);
-}
-#endif
-
-#if 0
-X(ImageVector3, Vec3) \
-X(ImageFloat, Float) \
-X(AttributeValueVector2, Vec2) \
-X(HeightToNormalVector3, Vec3) \
-X(InvertFloat, Float) \
-X(ExtractVector3, Float) \
-X(Combine3Vector3, Vec3) \
-X(NormalMapVector2, Vec3) \
-X(ColorCorrectColor3, Vec3) \
-X(RemapColor3, Vec3) \
-X(Ramp4Float, Float) \
-X(Separate3Color3, Float)
-#endif
 
 template <typename T>
 YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
@@ -86,7 +57,7 @@ YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
             }
             case MaterialOpcode::Count:
             {
-                return LoadFloat3Register(registers, shader.outputRegister);
+                return LoadTemplateRegister<T>(registers, shader.outputRegister);
             }
             default:
                 YBI_ASSERT(0);

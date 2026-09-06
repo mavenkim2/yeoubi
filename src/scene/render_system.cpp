@@ -39,15 +39,26 @@ static bool MeshClusterDataEqual(const Mesh &a, const Mesh &b)
 
     const std::vector<Primvar> &aPrimvars = a.GetPrimvars();
     const std::vector<Primvar> &bPrimvars = b.GetPrimvars();
-    if (aPrimvars.size() != bPrimvars.size())
+    size_t aIndex = 0;
+    size_t bIndex = 0;
+    for (;;)
     {
-        return false;
-    }
+        while (aIndex < aPrimvars.size() && !IsPrimvarArray(aPrimvars[aIndex].valueType))
+        {
+            ++aIndex;
+        }
+        while (bIndex < bPrimvars.size() && !IsPrimvarArray(bPrimvars[bIndex].valueType))
+        {
+            ++bIndex;
+        }
 
-    for (size_t i = 0; i < aPrimvars.size(); ++i)
-    {
-        const Primvar &aPrimvar = aPrimvars[i];
-        const Primvar &bPrimvar = bPrimvars[i];
+        if (aIndex == aPrimvars.size() || bIndex == bPrimvars.size())
+        {
+            return aIndex == aPrimvars.size() && bIndex == bPrimvars.size();
+        }
+
+        const Primvar &aPrimvar = aPrimvars[aIndex++];
+        const Primvar &bPrimvar = bPrimvars[bIndex++];
         if (aPrimvar.id != bPrimvar.id || aPrimvar.type != bPrimvar.type ||
             aPrimvar.valueType != bPrimvar.valueType || aPrimvar.index != bPrimvar.index ||
             aPrimvar.indicesIndex != bPrimvar.indicesIndex)
@@ -55,7 +66,6 @@ static bool MeshClusterDataEqual(const Mesh &a, const Mesh &b)
             return false;
         }
     }
-    return true;
 }
 
 static uint64_t HashMeshClusterData(const Mesh &mesh)
@@ -72,6 +82,11 @@ static uint64_t HashMeshClusterData(const Mesh &mesh)
     hash = HashCombine(hash, static_cast<uint64_t>(mesh.GetNormalType()));
     for (const Primvar &primvar : mesh.GetPrimvars())
     {
+        if (!IsPrimvarArray(primvar.valueType))
+        {
+            continue;
+        }
+
         hash = HashCombine(hash, primvar.id);
         hash = HashCombine(hash, static_cast<uint64_t>(primvar.type));
         hash = HashCombine(hash, static_cast<uint64_t>(primvar.valueType));
@@ -287,6 +302,7 @@ void GeometryManager::Update(Device *device,
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
         const Mesh &mesh = container->meshes[meshIndex];
+        YBI_ASSERT(mesh.PrimvarsAreSorted());
         size_t numPrimvars = mesh.GetPrimvars().size();
 
         meshPrimvarOffsets[meshIndex] = primvarOffset;
@@ -298,7 +314,7 @@ void GeometryManager::Update(Device *device,
     std::unordered_map<uint64_t, size_t> bvhPairToMeshIndex;
 
     // Unlike a BVH, a compressed cluster embeds shading data. Reuse it only when all
-    // standard mesh buffers, material assignments, and primvars match.
+    // standard mesh buffers, material assignments, and array primvars match.
     std::vector<size_t> clusterSourceIndices;
     clusterSourceIndices.reserve(container->meshes.size());
     std::unordered_multimap<uint64_t, size_t> clusterHashToMeshIndex;
@@ -787,6 +803,8 @@ void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext
                 mesh.SetPrimvar(std::move(primvar));
             }
         }
+
+        mesh.SortPrimvars();
     }
 
     context->pendingMeshes.clear();

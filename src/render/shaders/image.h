@@ -3,6 +3,7 @@
 #include "core/assert.h"
 #include "device/cuda_compat.h"
 #include "device/kernel_params.h"
+#include "render/ray_cone_utils.h"
 #include "render/shaders/shading.h"
 #include "render/shaders/shading_helpers.h"
 #include "render/virtual_texture_interop.h"

@@ -217,6 +217,10 @@ set (YBI_KERNEL_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/material_shaders.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/attribute.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/glossy_diffuse.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/substrate.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/init.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/ggx.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_cluster.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_scene.h
 )

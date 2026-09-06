@@ -172,6 +172,8 @@ public:
     void SetFaceMaterialIndicesHandle(BufferHandle handle);
     void SetMaterialIndex(uint32_t index);
     void SetPrimvar(Primvar primvar);
+    void SortPrimvars();
+    bool PrimvarsAreSorted() const;
     const Primvar *GetPrimvar(AttributeId id) const;
     const std::vector<Primvar> &GetPrimvars() const;
     bool HasMaterial() const;
