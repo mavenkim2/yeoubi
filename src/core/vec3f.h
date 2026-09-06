@@ -199,14 +199,39 @@ YBI_CPU_GPU constexpr Vec3f Min(Vec3f a, Vec3f b)
     return Vec3f(ybi::Min<float>(a.x, b.x), ybi::Min<float>(a.y, b.y), ybi::Min<float>(a.z, b.z));
 }
 
+YBI_CPU_GPU constexpr Vec3f Min(Vec3f a, float b)
+{
+    return Vec3f(ybi::Min<float>(a.x, b), ybi::Min<float>(a.y, b), ybi::Min<float>(a.z, b));
+}
+
+YBI_CPU_GPU constexpr Vec3f Min(float a, Vec3f b)
+{
+    return Min(b, a);
+}
+
 YBI_CPU_GPU constexpr Vec3f Max(Vec3f a, Vec3f b)
 {
     return Vec3f(ybi::Max<float>(a.x, b.x), ybi::Max<float>(a.y, b.y), ybi::Max<float>(a.z, b.z));
 }
 
+YBI_CPU_GPU constexpr Vec3f Max(Vec3f a, float b)
+{
+    return Vec3f(ybi::Max<float>(a.x, b), ybi::Max<float>(a.y, b), ybi::Max<float>(a.z, b));
+}
+
+YBI_CPU_GPU constexpr Vec3f Max(float a, Vec3f b)
+{
+    return Max(b, a);
+}
+
 YBI_CPU_GPU constexpr Vec3f Abs(Vec3f v)
 {
     return Vec3f(ybi::Abs(v.x), ybi::Abs(v.y), ybi::Abs(v.z));
+}
+
+YBI_CPU_GPU constexpr Vec3f Clamp(const Vec3f &v, float low, float high)
+{
+    return ybi::Max(ybi::Min(v, high), low);
 }
 
 } // namespace ybi

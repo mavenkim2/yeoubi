@@ -673,7 +673,7 @@ YBI_GPU void RenderUnidirectional()
                     }
                 }
             }
-            baseColor = Min(Max(baseColor, Vec3f(0.f)), Vec3f(1.f));
+            baseColor = Clamp(baseColor, 0.f, 1.f);
             throughput = throughput * baseColor;
             if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
                 break;

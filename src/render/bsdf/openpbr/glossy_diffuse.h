@@ -2,7 +2,6 @@
 // Copyright (c) 2024 Jamie Portsmouth
 // SPDX-License-Identifier: MIT
 // Full license: licenses/EON-diffuse.txt (relative to the repository root).
-// Source and modifications: THIRD_PARTY_NOTICES.md.
 #pragma once
 
 #include "core/math.h"
