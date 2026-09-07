@@ -4,6 +4,7 @@
 #include "core/bit.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
+#include "device/device_texture.h"
 #include <cassert>
 #include <cstdint>
 
@@ -32,6 +33,7 @@ struct PageDescriptor
 struct DeviceTextureDescriptor
 {
     uint32_t textureIndex;
+    TextureFormat format;
     uint32_t pageDescriptorOffset;
     uint32_t pageDescriptorCount;
     uint32_t width;

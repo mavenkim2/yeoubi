@@ -115,17 +115,17 @@ static void IterateNamedInput(const MaterialNode &node, const std::string &name,
 }
 
 static void CompileConstantFloat(const MaterialNode &node,
-                                 const std::vector<NodeInfo> &,
-                                 MaterialNodeId,
+                                 const std::vector<NodeInfo> &nodeInfos,
+                                 MaterialNodeId nodeId,
                                  ShaderCompilationContext &context)
 {
-    YBI_ASSERT(0);
     const float *value = GetConstantValue<float>(node);
     if (value == nullptr)
         return;
 
     context.nodes.push_back(static_cast<uint32_t>(node.type));
     context.AddFloat(*value);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
 static void CompileConstantBool(const MaterialNode &node,
@@ -186,14 +186,14 @@ static void CompileImageVector3(const MaterialNode &node,
 }
 
 static void CompileImageFloat(const MaterialNode &node,
-                              const std::vector<NodeInfo> &,
-                              MaterialNodeId,
+                              const std::vector<NodeInfo> &nodeInfos,
+                              MaterialNodeId nodeId,
                               ShaderCompilationContext &context)
 {
-    YBI_ASSERT(0);
     context.nodes.push_back(static_cast<uint32_t>(node.type));
     MaterialTextureHandle handle = GetTextureHandle(node, context);
     context.AddTextureHandle(handle);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
 static void CompileAttributeValueVector2(const MaterialNode &node,
@@ -236,11 +236,36 @@ static void CompileInvertFloat(const MaterialNode &node,
 }
 
 static void CompileExtractVector3(const MaterialNode &node,
-                                  const std::vector<NodeInfo> &,
-                                  MaterialNodeId,
+                                  const std::vector<NodeInfo> &nodeInfos,
+                                  MaterialNodeId nodeId,
                                   ShaderCompilationContext &context)
 {
-    YBI_ASSERT(0);
+    const MaterialNodeId *inputNodeId = nullptr;
+    int index = 0;
+
+    for (const MaterialInput &input : node.inputs)
+    {
+        if (input.name == "in")
+        {
+            inputNodeId = std::get_if<MaterialNodeId>(&input.value);
+            YBI_ASSERT(inputNodeId);
+        }
+        else if (input.name == "index")
+        {
+            const int *value = std::get_if<int>(&input.value);
+            YBI_ASSERT(value);
+            index = *value;
+        }
+    }
+
+    YBI_ASSERT(inputNodeId);
+    YBI_ASSERT(*inputNodeId < nodeInfos.size());
+    YBI_ASSERT(index >= 0 && index < 3);
+
+    context.AddUint(static_cast<uint32_t>(node.type));
+    context.AddUint(nodeInfos[*inputNodeId].outputSlotOffset);
+    context.AddUint(static_cast<uint32_t>(index));
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
 static void CompileCombine3Vector3(const MaterialNode &node,

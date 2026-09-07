@@ -1,10 +1,14 @@
 #pragma once
 
+#include "core/assert.h"
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec4f.h"
+#include "device/device_texture.h"
 #include "device/kernel_params.h"
+#include "render/texture_sampling.h"
 #include "render/virtual_texture_interop.h"
+#include "render/virtual_texture_sampling.h"
 #include <cassert>
 #include <cstdint>
 #include <cuda_runtime.h>
@@ -122,10 +126,12 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
         return descriptor.fallback;
     }
 
-    float4 value = tex2DLayered<float4>(
-        reinterpret_cast<cudaTextureObject_t>(textureObject), pageUv.x, pageUv.y, layer);
+    YBI_ASSERT(sizeof(T) / sizeof(float) == GetTextureFormatNumChannels(descriptor.format));
 
-    return Vec4f(value.x, value.y, value.z, value.w);
+    Vec4f result =
+        SampleDeviceTexture(textureObject, descriptor.format, pageUv.x, pageUv.y, layer);
+
+    return result;
 }
 
 YBI_GPU void WriteUniqueFeedback(const KernelParams &params, UnpackedFeedbackRequest request)

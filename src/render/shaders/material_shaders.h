@@ -26,6 +26,13 @@ YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
         MaterialOpcode opcode = static_cast<MaterialOpcode>(params.scene.shaderNodes[offset++]);
         switch (opcode)
         {
+            case MaterialOpcode::ConstantFloat:
+            {
+                float value = UintAsFloat(params.scene.shaderNodes[offset++]);
+                const uint32_t dst = params.scene.shaderNodes[offset++];
+                StoreFloatRegister(registers, value, dst);
+                break;
+            }
             case MaterialOpcode::ConstantColor:
             {
                 const Vec3f value(UintAsFloat(params.scene.shaderNodes[offset++]),
@@ -35,14 +42,14 @@ YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
                 StoreFloat3Register(registers, value, dst);
                 break;
             }
-            case MaterialOpcode::ImageVector3:
-            {
-                ShaderImageVector3(params, info, registers, offset);
-                break;
-            }
             case MaterialOpcode::ImageFloat:
             {
                 ShaderImageFloat(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::ImageVector3:
+            {
+                ShaderImageVector3(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::AttributeValueVector2:
@@ -53,6 +60,16 @@ YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
             case MaterialOpcode::ColorCorrectColor3:
             {
                 ShaderColorCorrectColor3(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::ExtractVector3:
+            {
+                const uint32_t src = params.scene.shaderNodes[offset++];
+                const uint32_t index = params.scene.shaderNodes[offset++];
+                const uint32_t dst = params.scene.shaderNodes[offset++];
+
+                const Vec3f value = LoadFloat3Register(registers, src);
+                StoreFloatRegister(registers, value[index], dst);
                 break;
             }
             case MaterialOpcode::Count:

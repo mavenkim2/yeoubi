@@ -697,11 +697,9 @@ void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId memb
 }
 
 DeviceMaterialExpression MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &material,
-                                                               const char *memberName,
                                                                MaterialNodeId member,
                                                                std::vector<uint32_t> &nodes)
 {
-    (void)memberName;
     return CompileShader(
         material.graph, member, textureNodeToHandle, attributeManager.attributeIdMap, nodes);
 }
@@ -854,7 +852,16 @@ void MaterialManager::Update(Device *device,
         OpenPbrMaterial &material = container->openPbrMaterials[materialIndex];
         DeviceMaterial2 &deviceMaterial = hostMaterials[materialIndex];
         deviceMaterial.base_color =
-            ProcessMaterialGraph(material, "base_color", material.base_color, shaderNodes);
+            ProcessMaterialGraph(material, material.base_color, shaderNodes);
+        deviceMaterial.specular_color =
+            ProcessMaterialGraph(material, material.specular_color, shaderNodes);
+        deviceMaterial.specular_roughness =
+            ProcessMaterialGraph(material, material.specular_roughness, shaderNodes);
+        // deviceMaterial.specular_weight =
+        // deviceMaterial.specular_color, Vec3f) \
+        // deviceMaterial.specular_roughness, float) \
+        // deviceMaterial.specular_roughness_anisotropy, float) \
+        // deviceMaterial.specular_ior, float) \
         // #define VISIT_PARAMETER(name, type) \
         //     deviceMaterial.name = ProcessMaterialGraph(material, #name, material.name,
         //     shaderNodes);

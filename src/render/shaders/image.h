@@ -111,8 +111,9 @@ YBI_CPU_GPU void ShaderImageFloat(const KernelParams &params,
                                   float *registers,
                                   uint32_t &nodeOffset)
 {
-    YBI_ASSERT(0);
-    VirtualTextureSampleImage(params, nodeOffset, info);
+    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
+    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    StoreFloatRegister(registers, result.x, dst);
 }
 
 } // namespace ybi

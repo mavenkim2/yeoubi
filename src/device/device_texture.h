@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
+#include "device/cuda_compat.h"
 #include <cstdint>
 
 namespace ybi
@@ -55,7 +56,7 @@ struct DeviceTexture
     DeviceTextureInfo info;
 };
 
-inline uint32_t GetTextureFormatNumChannels(TextureFormat format)
+YBI_CPU_GPU uint32_t GetTextureFormatNumChannels(TextureFormat format)
 {
     switch (format)
     {

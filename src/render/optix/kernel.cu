@@ -663,7 +663,10 @@ YBI_GPU void RenderUnidirectional()
                 {
                     const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
                     // InitializeOpenPbrBSDF(params, material, shadingInfo, bsdf);
-                    baseColor = EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
+                    // baseColor =
+                    //     EvaluateShader<Vec3f>(params, shadingInfo, material.specular_color);
+                    baseColor = Vec3f(
+                        EvaluateShader<float>(params, shadingInfo, material.specular_roughness));
                 }
                 // else
                 // {

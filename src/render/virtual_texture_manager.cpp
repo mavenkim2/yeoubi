@@ -363,6 +363,7 @@ void VirtualTextureManager::Finalize()
 
         const TextureDescriptor &descriptor = textureDescriptors[textureIndex];
         deviceDescriptor.textureIndex = textureIndex;
+        deviceDescriptor.format = descriptor.tileFileHeader.format;
         deviceDescriptor.pageDescriptorOffset = descriptor.pageDescriptorOffset;
         deviceDescriptor.pageDescriptorCount = descriptor.tileFileHeader.numPages;
         deviceDescriptor.width = descriptor.tileFileHeader.width;
