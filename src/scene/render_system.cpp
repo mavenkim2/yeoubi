@@ -853,18 +853,21 @@ void MaterialManager::Update(Device *device,
         DeviceMaterial2 &deviceMaterial = hostMaterials[materialIndex];
         deviceMaterial.base_color =
             ProcessMaterialGraph(material, material.base_color, shaderNodes);
+        deviceMaterial.base_weight =
+            ProcessMaterialGraph(material, material.base_weight, shaderNodes);
+        deviceMaterial.specular_weight =
+            ProcessMaterialGraph(material, material.specular_weight, shaderNodes);
         deviceMaterial.specular_color =
             ProcessMaterialGraph(material, material.specular_color, shaderNodes);
         deviceMaterial.specular_roughness =
             ProcessMaterialGraph(material, material.specular_roughness, shaderNodes);
-        // deviceMaterial.specular_weight =
-        // deviceMaterial.specular_color, Vec3f) \
-        // deviceMaterial.specular_roughness, float) \
-        // deviceMaterial.specular_roughness_anisotropy, float) \
-        // deviceMaterial.specular_ior, float) \
+        deviceMaterial.specular_roughness_anisotropy =
+            ProcessMaterialGraph(material, material.specular_roughness_anisotropy, shaderNodes);
+        deviceMaterial.specular_ior =
+            ProcessMaterialGraph(material, material.specular_ior, shaderNodes);
         // #define VISIT_PARAMETER(name, type) \
-        //     deviceMaterial.name = ProcessMaterialGraph(material, #name, material.name,
-        //     shaderNodes);
+        //     deviceMaterial.name = ProcessMaterialGraph(material, #name,
+        //     material.name, shaderNodes);
         //
         //         OPENPBR_PARAMETERS(VISIT_PARAMETER)
         // #undef VISIT_PARAMETER

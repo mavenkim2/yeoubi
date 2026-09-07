@@ -6,6 +6,7 @@
 #include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
+#include "render/bsdf/openpbr/ggx.h"
 #include "render/bsdf/openpbr/init.h"
 #include "render/bsdf/openpbr/substrate.h"
 #include "render/camera.h"
@@ -626,7 +627,12 @@ YBI_GPU void RenderUnidirectional()
                        high);
             if (info.type == INTERSECTION_TYPE_NONE)
             {
-                radiance += throughput * Vec3f(0.5f);
+                const Vec3f sunDirection = Normalize(Vec3f(1.0f, 1.0f, 0.5f));
+
+                Vec3f environment(0.02f);
+                if (Dot(rayDirection, sunDirection) > 0.995f)
+                    environment = Vec3f(20.0f);
+                radiance += throughput * environment; // Vec3f(0.5f);
                 break;
             }
             if (depth == maxDepth)
@@ -652,7 +658,7 @@ YBI_GPU void RenderUnidirectional()
             shadingInfo.rayDirection = rayDirection;
             shadingInfo.rayCone = rayCone;
 
-            OpenPbrBSDF bsdf;
+            OpenPbrBsdf bsdf;
 
             Vec3f baseColor(0.5f);
             if (shadingInfo.hasMaterial)
@@ -662,11 +668,10 @@ YBI_GPU void RenderUnidirectional()
                 if (handle.isGraph)
                 {
                     const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
-                    // InitializeOpenPbrBSDF(params, material, shadingInfo, bsdf);
-                    // baseColor =
-                    //     EvaluateShader<Vec3f>(params, shadingInfo, material.specular_color);
-                    baseColor = Vec3f(
-                        EvaluateShader<float>(params, shadingInfo, material.specular_roughness));
+                    InitializeOpenPbrBsdf(params, material, shadingInfo, bsdf);
+                    // baseColor = Vec3f(
+                    //     EvaluateShader<float>(params, shadingInfo,
+                    //     material.specular_roughness));
                 }
                 // else
                 // {
@@ -681,30 +686,44 @@ YBI_GPU void RenderUnidirectional()
                 // }
             }
 
-            baseColor = Clamp(baseColor, 0.f, 1.f);
-#if 0
+            if (!shadingInfo.hasMaterial)
+            {
+                rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
+                continue;
+            }
+
             OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
             const Vec3f viewDirection = basis.WorldToLocal(-rayDirection);
 
             Vec3f lightDirection, weight;
-            SampleOrenNayar(viewDirection, baseColor, rng.Uniform2D(), lightDirection, weight);
+            bool success = SampleOpenPBR(
+                bsdf, viewDirection, throughput, rng.Uniform2D(), lightDirection, weight);
+
+            if (!success)
+                break;
+
+            throughput *= weight;
+#if 0
+
+            Vec3f lightDirection, weight;
+            SampleDiffuseLobe(
+                viewDirection, bsdf.baseColor, rng.Uniform2D(), lightDirection, weight);
 
             throughput *= weight;
             if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
                 break;
 
-            const Vec3f nextDirection = basis.LocalToWorld(lightDirection);
 #endif
 
-#if 1
+#if 0
             throughput = throughput * baseColor;
             if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
                 break;
 
             const Vec3f sampledDirection = SampleCosineHemisphere(rng.Uniform2D());
             OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
-            const Vec3f nextDirection = basis.LocalToWorld(sampledDirection);
 #endif
+            const Vec3f nextDirection = basis.LocalToWorld(lightDirection);
 
             if (Dot(nextDirection, geometricNormal) <= 0.f)
                 break;

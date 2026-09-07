@@ -15,9 +15,9 @@ YBI_GPU Vec4f
 SampleDeviceTexture(uint64_t handle, TextureFormat format, float u, float v, uint32_t layer)
 {
 #ifdef __CUDA_ARCH__
-    SampleCUDATexture(handle, format, u, v, layer);
+    return SampleCUDATexture(handle, format, u, v, layer);
 #else
-#error Device not supported yet
+    return Vec4f(0.f);
 #endif
 }
 

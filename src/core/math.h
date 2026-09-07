@@ -80,4 +80,10 @@ YBI_CPU_GPU void Swap(T &a, T &b)
     b = temp;
 }
 
+template <typename T>
+YBI_CPU_GPU T Sqr(const T &v)
+{
+    return v * v;
+}
+
 } // namespace ybi

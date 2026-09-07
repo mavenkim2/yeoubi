@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
+#include "core/math.h"
 #include "device/cuda_compat.h"
 #include <cmath>
 #include <cstddef>
@@ -166,6 +167,26 @@ YBI_CPU_GPU constexpr Vec2f Lerp(Vec2f a, Vec2f b, float t)
 YBI_CPU_GPU Vec2f Floor(Vec2f a)
 {
     return Vec2f(floorf(a.x), floorf(a.y));
+}
+
+YBI_CPU_GPU constexpr Vec2f Max(const Vec2f &lhs, float rhs)
+{
+    return Vec2f(ybi::Max<float>(lhs.x, rhs), ybi::Max<float>(lhs.y, rhs));
+}
+
+YBI_CPU_GPU constexpr Vec2f Max(float lhs, const Vec2f &rhs)
+{
+    return Max(rhs, lhs);
+}
+
+YBI_CPU_GPU constexpr Vec2f Min(const Vec2f &lhs, float rhs)
+{
+    return Vec2f(ybi::Min<float>(lhs.x, rhs), ybi::Min<float>(lhs.y, rhs));
+}
+
+YBI_CPU_GPU constexpr Vec2f Min(float lhs, const Vec2f &rhs)
+{
+    return Min(rhs, lhs);
 }
 
 } // namespace ybi

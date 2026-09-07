@@ -9,8 +9,8 @@
 #include "render/virtual_texture_manager.h"
 #include "scene/render_system.h"
 #include "scene/scene.h"
-#include <cstdlib>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -31,12 +31,13 @@ int main(int argc, char **argv)
     std::string filename;
     bool positionalOnly = false;
     const auto printUsage = []() {
-        std::printf("Usage: yeoubi <scene> [--path-trace | --interactive] [--spp 1..4096]\n"
-                    "The scene filename and options may appear in any order.\n"
-                    "Default: base-color preview. --path-trace: 16 samples per frame.\n"
-                    "--interactive: progressive diffuse tracing, 1 sample per frame.\n"
-                    "--spp overrides samples per frame. Lighting is a constant environment.\n"
-                    "Esc: toggle camera controls; WASD/QE: move; mouse: look; R: reset accumulation.\n");
+        std::printf(
+            "Usage: yeoubi <scene> [--path-trace | --interactive] [--spp 1..4096]\n"
+            "The scene filename and options may appear in any order.\n"
+            "Default: base-color preview. --path-trace: 16 samples per frame.\n"
+            "--interactive: progressive diffuse tracing, 1 sample per frame.\n"
+            "--spp overrides samples per frame. Lighting is a constant environment.\n"
+            "Esc: toggle camera controls; WASD/QE: move; mouse: look; R: reset accumulation.\n");
     };
     for (int i = 1; i < argc; ++i)
     {
@@ -173,8 +174,8 @@ int main(int argc, char **argv)
     DeviceBuffer accumulationBuffer;
     if (interactive)
     {
-        accumulationBuffer = device->Alloc(
-            static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * sizeof(Vec3f));
+        accumulationBuffer = device->Alloc(static_cast<size_t>(camera.width) *
+                                           static_cast<size_t>(camera.height) * sizeof(Vec3f));
         params.accumulation = reinterpret_cast<Vec3f *>(accumulationBuffer.Data());
     }
     ProgressiveState progressiveState;
@@ -226,8 +227,11 @@ int main(int argc, char **argv)
         manager.Update(&params);
         if (interactive)
         {
-            progressiveState.BeginFrame(params.renderFromCamera, manager.GetResidencyRevision(),
-                                        samplesPerPixel, resetPending);
+            progressiveState.BeginFrame(
+                params.renderFromCamera,
+                progressiveState.textureRevision, // manager.GetResidencyRevision(),
+                samplesPerPixel,
+                resetPending);
             params.accumulatedSamples = progressiveState.samples;
             params.sampleOffset = progressiveState.samples;
         }
@@ -238,7 +242,9 @@ int main(int argc, char **argv)
         {
             progressiveState.samples += samplesPerPixel;
             char title[128];
-            std::snprintf(title, sizeof(title), "Yeoubi | Diffuse path tracing | %u spp | R: reset",
+            std::snprintf(title,
+                          sizeof(title),
+                          "Yeoubi | Diffuse path tracing | %u spp | R: reset",
                           progressiveState.samples);
             glfwSetWindowTitle(window, title);
         }

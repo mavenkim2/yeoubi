@@ -68,17 +68,32 @@ YBI_CPU_GPU Vec3f EvaluateOrenNayar(const Vec3f &viewDirection,
     return result;
 }
 
-YBI_CPU_GPU bool SampleOrenNayar(const Vec3f &viewDirection,
-                                 const Vec3f &baseColor,
-                                 const Vec2f &u,
-                                 Vec3f &lightDirection,
-                                 Vec3f &weight)
+YBI_CPU_GPU Vec3f EvaluateDiffuseLobe(const Vec3f &viewDirection,
+                                      const Vec3f &lightDirection,
+                                      const Vec3f &rho,
+                                      float r)
+{
+    Vec3f bsdfCos(EvaluateOrenNayar(viewDirection, lightDirection, rho, r) * lightDirection.z);
+    return bsdfCos;
+}
+
+YBI_CPU_GPU bool SampleDiffuseLobe(const Vec3f &viewDirection,
+                                   const Vec3f &baseColor,
+                                   const Vec2f &u,
+                                   Vec3f &lightDirection,
+                                   Vec3f &weight)
 {
     Vec3f lightDirectionLocal = SampleCosineHemisphere(u);
     weight = EvaluateOrenNayar(viewDirection, lightDirectionLocal, baseColor, 0.0f) * YBI_PI;
 
     lightDirection = lightDirectionLocal;
     return true;
+}
+
+YBI_CPU_GPU float OrenNayarPDF(const Vec3f &lightDirection)
+{
+    float pdf = Max(lightDirection.z, 0.f) * YBI_RCP_PI;
+    return pdf;
 }
 
 } // namespace ybi

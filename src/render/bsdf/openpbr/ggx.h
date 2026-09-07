@@ -83,12 +83,12 @@ YBI_CPU_GPU float FrDielectric(float cosTheta_i, float eta)
 }
 
 // NOTE: reflection only GGX
-YBI_CPU_GPU bool SampleGGX(const Vec3f &viewDirection,
-                           const Vec2f &a,
-                           const Vec2f &u,
-                           const float eta,
-                           Vec3f &lightDirection,
-                           Vec3f &weight)
+YBI_GPU bool SampleGGX(const Vec3f &viewDirection,
+                       const Vec2f &a,
+                       const Vec2f &u,
+                       const float eta,
+                       Vec3f &lightDirection,
+                       Vec3f &weight)
 {
     Vec3f halfway = SampleGGXVNDF(viewDirection, a, u);
     float hDotV = Dot(halfway, viewDirection);
@@ -127,6 +127,67 @@ YBI_CPU_GPU bool SampleGGX(const Vec3f &viewDirection,
 
     weight = Vec3f(G_shadowing * F);
     return true;
+}
+
+YBI_GPU bool SampleGlossLobe(const Vec3f &viewDirection,
+                             const Vec2f &a,
+                             const Vec2f &u,
+                             const float eta,
+                             const Vec3f &specularColor,
+                             Vec3f &lightDirection,
+                             Vec3f &weight)
+{
+    bool success = SampleGGX(viewDirection, a, u, eta, lightDirection, weight);
+    if (success)
+    {
+        weight *= specularColor;
+    }
+    return success;
+}
+
+YBI_CPU_GPU Vec3f EvaluateGGX(const Vec3f &viewDirection,
+                              const Vec3f &lightDirection,
+                              float ior,
+                              const Vec2f &a)
+
+{
+    // NOTE: reflection only
+    const Vec3f &halfway = Normalize(viewDirection + lightDirection);
+    float D = EvaluateAnisoGGX(halfway, a);
+    float G_masking = EvalAnisoSmithG1(viewDirection, a);
+    float G_shadowing = EvalAnisoSmithG1(lightDirection, a);
+    float Fr = FrDielectric(Dot(halfway, viewDirection), ior);
+
+    float hdotv = Dot(halfway, viewDirection);
+    float bsdfCos = D * G_masking * G_shadowing * Fr / (4.f * viewDirection.z);
+    return Vec3f(bsdfCos);
+}
+
+YBI_CPU_GPU Vec3f EvaluateGlossLobe(const Vec3f &viewDirection,
+                                    const Vec3f &lightDirection,
+                                    const Vec3f &specularColor,
+                                    float ior,
+                                    const Vec2f &a)
+{
+    return EvaluateGGX(viewDirection, lightDirection, ior, a) * specularColor;
+}
+
+YBI_CPU_GPU float PDFGGX(const Vec3f &viewDirection, const Vec3f &lightDirection, const Vec2f &a)
+
+{
+    // NOTE: reflection only
+    const Vec3f &halfway = Normalize(viewDirection + lightDirection);
+    float D = EvaluateAnisoGGX(halfway, a);
+    float G_masking = EvalAnisoSmithG1(viewDirection, a);
+
+    float hdotv = Dot(halfway, viewDirection);
+    float hdotl = Dot(halfway, lightDirection);
+
+    if (hdotv * hdotl < 0.f)
+        return 0.f;
+
+    float pdf = D * G_masking / (4.f * viewDirection.z);
+    return pdf;
 }
 
 } // namespace ybi

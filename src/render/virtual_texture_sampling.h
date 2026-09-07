@@ -126,8 +126,6 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
         return descriptor.fallback;
     }
 
-    YBI_ASSERT(sizeof(T) / sizeof(float) == GetTextureFormatNumChannels(descriptor.format));
-
     Vec4f result =
         SampleDeviceTexture(textureObject, descriptor.format, pageUv.x, pageUv.y, layer);
 
