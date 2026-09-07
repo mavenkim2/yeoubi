@@ -6,6 +6,14 @@
 namespace ybi
 {
 
+enum class SampleFormat
+{
+    Float,
+    Uint,
+    Unorm,
+    Count,
+};
+
 enum class TextureFormat
 {
     RGBA8_UNORM,
@@ -15,6 +23,11 @@ enum class TextureFormat
     R32_FLOAT,
     RG32_FLOAT,
     RGBA32_FLOAT,
+    R8_UNORM,
+    RG8_UNORM,
+    R16_UNORM,
+    RG16_UNORM,
+    RGBA16_UNORM,
 };
 
 enum class FilterType
@@ -48,17 +61,22 @@ inline uint32_t GetTextureFormatNumChannels(TextureFormat format)
     {
         case TextureFormat::R16_FLOAT:
         case TextureFormat::R32_FLOAT:
+        case TextureFormat::R8_UNORM:
+        case TextureFormat::R16_UNORM:
         {
             return 1;
         }
         case TextureFormat::RG16_FLOAT:
         case TextureFormat::RG32_FLOAT:
+        case TextureFormat::RG8_UNORM:
+        case TextureFormat::RG16_UNORM:
         {
             return 2;
         }
         case TextureFormat::RGBA8_UNORM:
         case TextureFormat::RGBA16_FLOAT:
         case TextureFormat::RGBA32_FLOAT:
+        case TextureFormat::RGBA16_UNORM:
         {
             return 4;
         }
@@ -74,18 +92,26 @@ inline uint32_t GetTextureFormatSize(TextureFormat format)
 {
     switch (format)
     {
+        case TextureFormat::R8_UNORM:
+        {
+            return 1;
+        }
         case TextureFormat::R16_FLOAT:
+        case TextureFormat::RG8_UNORM:
+        case TextureFormat::R16_UNORM:
         {
             return 2;
         }
         case TextureFormat::RGBA8_UNORM:
         case TextureFormat::RG16_FLOAT:
         case TextureFormat::R32_FLOAT:
+        case TextureFormat::RG16_UNORM:
         {
             return 4;
         }
         case TextureFormat::RGBA16_FLOAT:
         case TextureFormat::RG32_FLOAT:
+        case TextureFormat::RGBA16_UNORM:
         {
             return 8;
         }

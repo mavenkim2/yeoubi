@@ -548,10 +548,20 @@ static CUDATextureFormatInfo GetCUDATextureFormatInfo(TextureFormat format)
 
     switch (format)
     {
+        case TextureFormat::R8_UNORM:
+        case TextureFormat::RG8_UNORM:
         case TextureFormat::RGBA8_UNORM:
         {
             result.format = CU_AD_FORMAT_UNSIGNED_INT8;
-            result.numChannels = 4;
+            result.numChannels = GetTextureFormatNumChannels(format);
+            break;
+        }
+        case TextureFormat::R16_UNORM:
+        case TextureFormat::RG16_UNORM:
+        case TextureFormat::RGBA16_UNORM:
+        {
+            result.format = CU_AD_FORMAT_UNSIGNED_INT16;
+            result.numChannels = GetTextureFormatNumChannels(format);
             break;
         }
         case TextureFormat::R16_FLOAT:

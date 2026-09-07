@@ -1,5 +1,6 @@
 #include "core/arena.h"
 #include "core/assert.h"
+#include "core/half.h"
 #include "core/math.h"
 #include "core/string_builder.h"
 #include "core/thread_context.h"
@@ -7,6 +8,7 @@
 #include "io/usd.h"
 #include "render/virtual_texture_file.h"
 #include "scene/scene.h"
+#include "tiff.h"
 #include <unordered_map>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -39,6 +41,98 @@ struct Image
     int numBytesPerChannel;
 };
 
+static int GetImageFileChannelCount(const std::string &filename)
+{
+    std::string ext = std::filesystem::path(filename).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
+    {
+        int width = 0;
+        int height = 0;
+        int numChannels = 0;
+        if (!stbi_info(filename.c_str(), &width, &height, &numChannels))
+        {
+            YBI_LOGFATAL("Failed to read image information: %s\n", filename.c_str());
+            return 0;
+        }
+
+        return numChannels;
+    }
+
+    if (ext == ".tif" || ext == ".tiff")
+    {
+        TIFF *tiff = TIFFOpen(filename.c_str(), "r");
+        if (!tiff)
+        {
+            YBI_LOGFATAL("Failed to open TIFF: %s\n", filename.c_str());
+            return 0;
+        }
+
+        uint16_t numChannels = 0;
+        const int result = TIFFGetFieldDefaulted(tiff, TIFFTAG_SAMPLESPERPIXEL, &numChannels);
+        TIFFClose(tiff);
+
+        if (!result || numChannels == 0)
+        {
+            YBI_LOGFATAL("Failed to read TIFF channel count: %s\n", filename.c_str());
+            return 0;
+        }
+
+        return static_cast<int>(numChannels);
+    }
+
+    if (ext == ".exr")
+    {
+        EXRVersion version = {};
+        if (ParseEXRVersionFromFile(&version, filename.c_str()) != TINYEXR_SUCCESS)
+        {
+            YBI_LOGFATAL("Failed to read EXR version: %s\n", filename.c_str());
+            return 0;
+        }
+
+        if (version.multipart)
+        {
+            YBI_LOGFATAL("Multipart EXR files do not have a single channel count: %s\n",
+                         filename.c_str());
+            return 0;
+        }
+
+        EXRHeader header;
+        InitEXRHeader(&header);
+
+        const char *error = nullptr;
+        const int result = ParseEXRHeaderFromFile(&header, &version, filename.c_str(), &error);
+        if (result != TINYEXR_SUCCESS)
+        {
+            if (error)
+            {
+                printf("TinyEXR error: %s\n", error);
+                FreeEXRErrorMessage(error);
+            }
+            FreeEXRHeader(&header);
+            YBI_LOGFATAL("Failed to read EXR header: %s\n", filename.c_str());
+            return 0;
+        }
+
+        const int numChannels = header.num_channels;
+        FreeEXRHeader(&header);
+
+        if (numChannels <= 0)
+        {
+            YBI_LOGFATAL("EXR has no channels: %s\n", filename.c_str());
+            return 0;
+        }
+
+        return numChannels;
+    }
+
+    YBI_LOGFATAL("Unsupported image file format: %s\n", filename.c_str());
+    return 0;
+}
+
 static void FlipImageVertically(Image *image)
 {
     YBI_ASSERT(image);
@@ -68,57 +162,143 @@ static void FlipImageVertically(Image *image)
 }
 
 static float ReadChannelAsFloat(
-    const void *data, int pixelIndex, int channel, int numChannels, int numBytesPerChannel)
+    const void *data,
+    int pixelIndex,
+    int channel,
+    int numChannels,
+    int numBytesPerChannel,
+    SampleFormat sampleFormat)
 {
     if (channel >= numChannels)
     {
         return channel == 3 ? 1.0f : 0.0f;
     }
 
-    if (numBytesPerChannel == 1)
+    const int sampleIndex = pixelIndex * numChannels + channel;
+    if (sampleFormat == SampleFormat::Unorm && numBytesPerChannel == 1)
     {
         const uint8_t *pixels = reinterpret_cast<const uint8_t *>(data);
-        return pixels[pixelIndex * numChannels + channel] / 255.0f;
+        return pixels[sampleIndex] / 255.0f;
     }
-    else if (numBytesPerChannel == 4)
+    else if (sampleFormat == SampleFormat::Unorm && numBytesPerChannel == 2)
+    {
+        const uint16_t *pixels = reinterpret_cast<const uint16_t *>(data);
+        return pixels[sampleIndex] / 65535.0f;
+    }
+    else if (sampleFormat == SampleFormat::Float && numBytesPerChannel == 2)
+    {
+        const uint16_t *pixels = reinterpret_cast<const uint16_t *>(data);
+        return static_cast<float>(Half::FromBits(pixels[sampleIndex]));
+    }
+    else if (sampleFormat == SampleFormat::Float && numBytesPerChannel == 4)
     {
         const float *pixels = reinterpret_cast<const float *>(data);
-        return pixels[pixelIndex * numChannels + channel];
+        return pixels[sampleIndex];
     }
     else
     {
-        YBI_LOGFATAL("Unsupported bytes per channel: %d\n", numBytesPerChannel);
+        YBI_LOGFATAL("Unsupported sample format and size: %u, %d bytes\n",
+                     static_cast<uint32_t>(sampleFormat),
+                     numBytesPerChannel);
         return 0.0f;
     }
 }
 
 static void WriteChannelFromFloat(
-    void *data, int pixelIndex, int channel, int numChannels, int numBytesPerChannel, float value)
+    void *data,
+    int pixelIndex,
+    int channel,
+    int numChannels,
+    int numBytesPerChannel,
+    SampleFormat sampleFormat,
+    float value)
 {
     if (channel >= numChannels)
     {
         return;
     }
 
-    if (numBytesPerChannel == 1)
+    const int sampleIndex = pixelIndex * numChannels + channel;
+    if (sampleFormat == SampleFormat::Unorm && numBytesPerChannel == 1)
     {
         uint8_t *pixels = reinterpret_cast<uint8_t *>(data);
         value = std::clamp(value, 0.0f, 1.0f);
-        pixels[pixelIndex * numChannels + channel] =
-            static_cast<uint8_t>(std::round(value * 255.0f));
+        pixels[sampleIndex] = static_cast<uint8_t>(std::round(value * 255.0f));
     }
-    else if (numBytesPerChannel == 4)
+    else if (sampleFormat == SampleFormat::Unorm && numBytesPerChannel == 2)
+    {
+        uint16_t *pixels = reinterpret_cast<uint16_t *>(data);
+        value = std::clamp(value, 0.0f, 1.0f);
+        pixels[sampleIndex] = static_cast<uint16_t>(std::round(value * 65535.0f));
+    }
+    else if (sampleFormat == SampleFormat::Float && numBytesPerChannel == 2)
+    {
+        uint16_t *pixels = reinterpret_cast<uint16_t *>(data);
+        pixels[sampleIndex] = Half(value).Bits();
+    }
+    else if (sampleFormat == SampleFormat::Float && numBytesPerChannel == 4)
     {
         float *pixels = reinterpret_cast<float *>(data);
-        pixels[pixelIndex * numChannels + channel] = value;
+        pixels[sampleIndex] = value;
     }
     else
     {
-        YBI_LOGFATAL("Unsupported bytes per channel: %d\n", numBytesPerChannel);
+        YBI_LOGFATAL("Unsupported sample format and size: %u, %d bytes\n",
+                     static_cast<uint32_t>(sampleFormat),
+                     numBytesPerChannel);
     }
 }
 
-static Vec4f CalculateFallbackColor(const Image &texture)
+static TextureFormat
+GetTextureFormat(uint32_t samplesPerPixel, uint32_t bitsPerSample, SampleFormat sampleFormat)
+{
+    YBI_ASSERT(samplesPerPixel == 1 || samplesPerPixel == 2 || samplesPerPixel == 4);
+
+    if (sampleFormat == SampleFormat::Unorm && bitsPerSample == 8)
+    {
+        switch (samplesPerPixel)
+        {
+            case 1: return TextureFormat::R8_UNORM;
+            case 2: return TextureFormat::RG8_UNORM;
+            case 4: return TextureFormat::RGBA8_UNORM;
+        }
+    }
+    else if (sampleFormat == SampleFormat::Unorm && bitsPerSample == 16)
+    {
+        switch (samplesPerPixel)
+        {
+            case 1: return TextureFormat::R16_UNORM;
+            case 2: return TextureFormat::RG16_UNORM;
+            case 4: return TextureFormat::RGBA16_UNORM;
+        }
+    }
+    else if (sampleFormat == SampleFormat::Float && bitsPerSample == 16)
+    {
+        switch (samplesPerPixel)
+        {
+            case 1: return TextureFormat::R16_FLOAT;
+            case 2: return TextureFormat::RG16_FLOAT;
+            case 4: return TextureFormat::RGBA16_FLOAT;
+        }
+    }
+    else if (sampleFormat == SampleFormat::Float && bitsPerSample == 32)
+    {
+        switch (samplesPerPixel)
+        {
+            case 1: return TextureFormat::R32_FLOAT;
+            case 2: return TextureFormat::RG32_FLOAT;
+            case 4: return TextureFormat::RGBA32_FLOAT;
+        }
+    }
+
+    YBI_LOGFATAL("Unsupported texture format: %u channels, %u bits, sample format %u\n",
+                 samplesPerPixel,
+                 bitsPerSample,
+                 static_cast<uint32_t>(sampleFormat));
+    return TextureFormat::RGBA8_UNORM;
+}
+
+static Vec4f CalculateFallbackColor(const Image &texture, SampleFormat sampleFormat)
 {
     double sum[4] = {};
     const int numTexels = texture.width * texture.height;
@@ -128,7 +308,12 @@ static Vec4f CalculateFallbackColor(const Image &texture)
         for (int channel = 0; channel < 4; channel++)
         {
             sum[channel] += ReadChannelAsFloat(
-                texture.ptr, pixelIndex, channel, texture.numChannels, texture.numBytesPerChannel);
+                texture.ptr,
+                pixelIndex,
+                channel,
+                texture.numChannels,
+                texture.numBytesPerChannel,
+                sampleFormat);
         }
     }
 
@@ -144,7 +329,8 @@ static View<uint8_t> GenerateNextMip(Arena &arena,
                                      int srcWidth,
                                      int srcHeight,
                                      int numChannels,
-                                     int numBytesPerChannel)
+                                     int numBytesPerChannel,
+                                     SampleFormat sampleFormat)
 {
     const int dstWidth = std::max(1, srcWidth / 2);
     const int dstHeight = std::max(1, srcHeight / 2);
@@ -169,7 +355,12 @@ static View<uint8_t> GenerateNextMip(Arena &arena,
                         const int srcY = std::min(srcHeight - 1, y * 2 + dy);
                         const int srcPixelIndex = srcY * srcWidth + srcX;
                         sum += ReadChannelAsFloat(
-                            src, srcPixelIndex, channel, numChannels, numBytesPerChannel);
+                            src,
+                            srcPixelIndex,
+                            channel,
+                            numChannels,
+                            numBytesPerChannel,
+                            sampleFormat);
                     }
                 }
 
@@ -178,6 +369,7 @@ static View<uint8_t> GenerateNextMip(Arena &arena,
                                       channel,
                                       numChannels,
                                       numBytesPerChannel,
+                                      sampleFormat,
                                       sum * 0.25f);
             }
         }
@@ -241,110 +433,414 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
     }
 }
 
-static void LoadImageFile(Image *texture, std::string filename)
+static SampleFormat LoadImageFile(Image *texture, const std::string &filename)
 {
-    int width, height, channels;
-    unsigned char *buffer = stbi_load(filename.c_str(), &width, &height, &channels, 4);
-    YBI_ASSERT(buffer);
-
-    texture->ptr = reinterpret_cast<void *>(buffer);
-    texture->width = width;
-    texture->height = height;
-    texture->numChannels = 4;
-    texture->numBytesPerChannel = 1;
-}
-
-static void LoadEXRFile(Image *texture, std::string filename)
-{
-    float *rgba = nullptr;
     int width = 0;
     int height = 0;
-    const char *err = nullptr;
+    int channels = 0;
+    const bool is16Bit = stbi_is_16_bit(filename.c_str()) != 0;
+    void *stbiPixels = is16Bit
+                           ? static_cast<void *>(
+                                 stbi_load_16(filename.c_str(), &width, &height, &channels, 0))
+                           : static_cast<void *>(
+                                 stbi_load(filename.c_str(), &width, &height, &channels, 0));
+    YBI_ERROR(stbiPixels, "Failed to load image: %s\n", filename.c_str());
 
-    int result = LoadEXR(&rgba, &width, &height, filename.c_str(), &err);
+    const int numBytesPerChannel = is16Bit ? 2 : 1;
+    const size_t numBytes = static_cast<size_t>(width) * height * channels * numBytesPerChannel;
+    void *pixels = malloc(numBytes);
+    YBI_ASSERT(pixels);
+    memcpy(pixels, stbiPixels, numBytes);
+    stbi_image_free(stbiPixels);
+
+    texture->ptr = pixels;
+    texture->width = width;
+    texture->height = height;
+    texture->numChannels = channels;
+    texture->numBytesPerChannel = numBytesPerChannel;
+    return SampleFormat::Unorm;
+}
+
+static bool EXRChannelHasComponent(const char *name, char component)
+{
+    const size_t length = strlen(name);
+    return length > 0 && name[length - 1] == component &&
+           (length == 1 || name[length - 2] == '.');
+}
+
+static SampleFormat LoadEXRFile(Image *texture, const std::string &filename)
+{
+    EXRVersion version = {};
+    int result = ParseEXRVersionFromFile(&version, filename.c_str());
+    YBI_ERROR(result == TINYEXR_SUCCESS, "Failed to read EXR version: %s\n", filename.c_str());
+    YBI_ERROR(!version.multipart, "Multipart EXR is not supported: %s\n", filename.c_str());
+
+    EXRHeader header;
+    InitEXRHeader(&header);
+    const char *error = nullptr;
+    result = ParseEXRHeaderFromFile(&header, &version, filename.c_str(), &error);
+    if (result != TINYEXR_SUCCESS)
+    {
+        if (error)
+        {
+            printf("TinyEXR error: %s\n", error);
+            FreeEXRErrorMessage(error);
+        }
+        FreeEXRHeader(&header);
+        YBI_LOGFATAL("Failed to read EXR header: %s\n", filename.c_str());
+    }
+
+    YBI_ERROR(header.num_channels > 0 && header.num_channels <= 4,
+              "EXR must contain between one and four channels: %s\n",
+              filename.c_str());
+
+    const int pixelType = header.pixel_types[0];
+    for (int channel = 1; channel < header.num_channels; channel++)
+    {
+        YBI_ERROR(header.pixel_types[channel] == pixelType,
+                  "Mixed EXR channel data types are not supported: %s\n",
+                  filename.c_str());
+    }
+
+    YBI_ERROR(pixelType == TINYEXR_PIXELTYPE_HALF || pixelType == TINYEXR_PIXELTYPE_FLOAT,
+              "EXR sample type is not supported: %s\n",
+              filename.c_str());
+
+    // Keep half channels as half instead of asking TinyEXR to promote them to float.
+    for (int channel = 0; channel < header.num_channels; channel++)
+    {
+        header.requested_pixel_types[channel] = pixelType;
+    }
+
+    EXRImage exrImage;
+    InitEXRImage(&exrImage);
+    error = nullptr;
+    result = LoadEXRImageFromFile(&exrImage, &header, filename.c_str(), &error);
 
     if (result != TINYEXR_SUCCESS)
     {
-        if (err)
+        if (error)
         {
-            FreeEXRErrorMessage(err);
-            err = nullptr;
+            printf("TinyEXR error: %s\n", error);
+            FreeEXRErrorMessage(error);
         }
+        FreeEXRImage(&exrImage);
+        FreeEXRHeader(&header);
+        YBI_LOGFATAL("Failed to load EXR: %s\n", filename.c_str());
+    }
 
-        const char **layerNames = nullptr;
-        int numLayers = 0;
-        result = EXRLayers(filename.c_str(), &layerNames, &numLayers, &err);
+    const int numBytesPerChannel = pixelType == TINYEXR_PIXELTYPE_HALF ? 2 : 4;
+    const size_t numTexels = static_cast<size_t>(exrImage.width) * exrImage.height;
+    const size_t numBytes = numTexels * header.num_channels * numBytesPerChannel;
+    uint8_t *pixels = static_cast<uint8_t *>(malloc(numBytes));
+    YBI_ASSERT(pixels);
 
-        if (result == TINYEXR_SUCCESS && numLayers > 0)
+    std::vector<int> channelOrder;
+    const auto AppendEXRComponent = [&](char component) {
+        for (int channel = 0; channel < header.num_channels; channel++)
         {
-            result =
-                LoadEXRWithLayer(&rgba, &width, &height, filename.c_str(), layerNames[0], &err);
-        }
-
-        if (layerNames)
-        {
-            for (int layerIndex = 0; layerIndex < numLayers; layerIndex++)
+            if (EXRChannelHasComponent(header.channels[channel].name, component))
             {
-                free(const_cast<char *>(layerNames[layerIndex]));
+                channelOrder.push_back(channel);
+                return;
             }
-            free(layerNames);
         }
+    };
 
-        if (result != TINYEXR_SUCCESS)
+    // TinyEXR commonly exposes standard color channels in A, B, G, R order.
+    // Put recognizable color or luminance channels into texture component order.
+    int numColorComponents = 0;
+    int numLuminanceComponents = 0;
+    for (int channel = 0; channel < header.num_channels; channel++)
+    {
+        const char *name = header.channels[channel].name;
+        numColorComponents += EXRChannelHasComponent(name, 'R') ||
+                                      EXRChannelHasComponent(name, 'G') ||
+                                      EXRChannelHasComponent(name, 'B') ||
+                                      EXRChannelHasComponent(name, 'A')
+                                  ? 1
+                                  : 0;
+        numLuminanceComponents += EXRChannelHasComponent(name, 'Y') ||
+                                          EXRChannelHasComponent(name, 'A')
+                                      ? 1
+                                      : 0;
+    }
+
+    if (numColorComponents == header.num_channels)
+    {
+        AppendEXRComponent('R');
+        AppendEXRComponent('G');
+        AppendEXRComponent('B');
+        AppendEXRComponent('A');
+    }
+    else if (numLuminanceComponents == header.num_channels)
+    {
+        AppendEXRComponent('Y');
+        AppendEXRComponent('A');
+    }
+    else
+    {
+        for (int channel = 0; channel < header.num_channels; channel++)
         {
-            if (err)
-            {
-                printf("TinyEXR error: %s\n", err);
-                FreeEXRErrorMessage(err);
-            }
-            YBI_LOGFATAL("Failed to load EXR: %s\n", filename.c_str());
+            channelOrder.push_back(channel);
+        }
+    }
+    YBI_ASSERT(channelOrder.size() == static_cast<size_t>(header.num_channels));
+
+    // TinyEXR exposes one plane per channel. Interleave those planes without
+    // converting either their values or their scalar representation.
+    for (size_t texelIndex = 0; texelIndex < numTexels; texelIndex++)
+    {
+        for (int channel = 0; channel < header.num_channels; channel++)
+        {
+            const int srcChannel = channelOrder[channel];
+            memcpy(pixels + (texelIndex * header.num_channels + channel) * numBytesPerChannel,
+                   exrImage.images[srcChannel] + texelIndex * numBytesPerChannel,
+                   numBytesPerChannel);
         }
     }
 
-    texture->ptr = reinterpret_cast<void *>(rgba);
-    texture->width = width;
-    texture->height = height;
-    texture->numChannels = 4;
-    texture->numBytesPerChannel = 4;
+    texture->ptr = pixels;
+    texture->width = exrImage.width;
+    texture->height = exrImage.height;
+    texture->numChannels = header.num_channels;
+    texture->numBytesPerChannel = numBytesPerChannel;
+
+    FreeEXRImage(&exrImage);
+    FreeEXRHeader(&header);
+    return SampleFormat::Float;
 }
 
-static void LoadTIFFFile(Image *texture, std::string filename)
+static uint32_t GetTopDownRow(uint32_t row, uint32_t height, uint16_t orientation)
+{
+    if (orientation == ORIENTATION_TOPLEFT)
+    {
+        return row;
+    }
+    if (orientation == ORIENTATION_BOTLEFT)
+    {
+        return height - 1u - row;
+    }
+
+    YBI_LOGFATAL("Unsupported TIFF orientation: %u\n", orientation);
+    return 0;
+}
+
+static SampleFormat LoadTIFFFile(Image *texture, const std::string &filename)
 {
     TIFF *tiff = TIFFOpen(filename.c_str(), "r");
     YBI_ASSERT(tiff);
 
     uint32_t width = 0;
     uint32_t height = 0;
-    YBI_ASSERT(TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width));
-    YBI_ASSERT(TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height));
+    bool result = TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &width);
+    YBI_ASSERT(result);
+    result = TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &height);
+    YBI_ASSERT(result);
+
+    uint16_t samplesPerPixel = 0;
+    uint16_t bitsPerSample = 0;
+    uint16_t sampleFormat = 0;
+    uint16_t planarConfig = 0;
+    uint16_t orientation = 0;
+
+    TIFFGetFieldDefaulted(tiff, TIFFTAG_SAMPLESPERPIXEL, &samplesPerPixel);
+    TIFFGetFieldDefaulted(tiff, TIFFTAG_BITSPERSAMPLE, &bitsPerSample);
+    TIFFGetFieldDefaulted(tiff, TIFFTAG_SAMPLEFORMAT, &sampleFormat);
+    TIFFGetFieldDefaulted(tiff, TIFFTAG_PLANARCONFIG, &planarConfig);
+    TIFFGetFieldDefaulted(tiff, TIFFTAG_ORIENTATION, &orientation);
+
+    SampleFormat textureSampleFormat;
+    switch (sampleFormat)
+    {
+        case SAMPLEFORMAT_UINT:
+        {
+            // TODO: this assumes that the uints are interpreted as unorms.
+            // need a more robust way of identifying unorm vs actual uints
+            textureSampleFormat = SampleFormat::Unorm;
+            break;
+        }
+        case SAMPLEFORMAT_IEEEFP:
+        {
+            textureSampleFormat = SampleFormat::Float;
+            break;
+        }
+        default:
+        {
+            YBI_LOGFATAL("Sample format: %u not supported yet\n", sampleFormat);
+        }
+    }
+
+    YBI_ERROR(samplesPerPixel >= 1 && samplesPerPixel <= 4,
+              "TIFF must contain between one and four channels: %s\n",
+              filename.c_str());
+    YBI_ERROR((textureSampleFormat == SampleFormat::Unorm &&
+               (bitsPerSample == 8 || bitsPerSample == 16)) ||
+                  (textureSampleFormat == SampleFormat::Float &&
+                   (bitsPerSample == 16 || bitsPerSample == 32)),
+              "Unsupported TIFF sample type: %u-bit sample format %u\n",
+              bitsPerSample,
+              sampleFormat);
+    YBI_ERROR(planarConfig == PLANARCONFIG_CONTIG || planarConfig == PLANARCONFIG_SEPARATE,
+              "Unsupported TIFF planar configuration: %u\n",
+              planarConfig);
     YBI_ASSERT(width > 0 && height > 0);
     YBI_ASSERT(width <= static_cast<uint32_t>(std::numeric_limits<int>::max()));
     YBI_ASSERT(height <= static_cast<uint32_t>(std::numeric_limits<int>::max()));
 
-    const size_t numTexels = static_cast<size_t>(width) * height;
-    YBI_ASSERT(numTexels <= std::numeric_limits<size_t>::max() / sizeof(uint32_t));
+    const int numBytesPerChannel = bitsPerSample / 8;
+    const size_t numBytesPerRow =
+        static_cast<size_t>(width) * samplesPerPixel * numBytesPerChannel;
+    const size_t numBytes = numBytesPerRow * height;
+    uint8_t *pixels = static_cast<uint8_t *>(malloc(numBytes));
+    YBI_ASSERT(pixels);
 
-    std::vector<uint32_t> raster(numTexels);
-    YBI_ASSERT(
-        TIFFReadRGBAImageOriented(tiff, width, height, raster.data(), ORIENTATION_TOPLEFT, 0));
+    if (TIFFIsTiled(tiff))
+    {
+        uint32_t tileWidth = 0;
+        uint32_t tileHeight = 0;
+        YBI_ASSERT(TIFFGetField(tiff, TIFFTAG_TILEWIDTH, &tileWidth));
+        YBI_ASSERT(TIFFGetField(tiff, TIFFTAG_TILELENGTH, &tileHeight));
+
+        const tmsize_t tileSize = TIFFTileSize(tiff);
+        const tmsize_t tileRowSize = TIFFTileRowSize(tiff);
+        YBI_ASSERT(tileSize > 0 && tileRowSize > 0);
+        std::vector<uint8_t> tile(static_cast<size_t>(tileSize));
+
+        const uint16_t numPlanes = planarConfig == PLANARCONFIG_CONTIG ? 1 : samplesPerPixel;
+        const uint16_t samplesPerPlane =
+            planarConfig == PLANARCONFIG_CONTIG ? samplesPerPixel : 1;
+        const size_t sourceTexelSize = samplesPerPlane * numBytesPerChannel;
+        YBI_ASSERT(static_cast<size_t>(tileRowSize) >= tileWidth * sourceTexelSize);
+
+        for (uint16_t plane = 0; plane < numPlanes; plane++)
+        {
+            for (uint32_t tileY = 0; tileY < height; tileY += tileHeight)
+            {
+                for (uint32_t tileX = 0; tileX < width; tileX += tileWidth)
+                {
+                    const ttile_t tileIndex = TIFFComputeTile(tiff, tileX, tileY, 0, plane);
+                    YBI_ERROR(TIFFReadEncodedTile(tiff, tileIndex, tile.data(), tileSize) >= 0,
+                              "Failed to read TIFF tile %u: %s\n",
+                              static_cast<uint32_t>(tileIndex),
+                              filename.c_str());
+
+                    const uint32_t copyWidth = std::min(tileWidth, width - tileX);
+                    const uint32_t copyHeight = std::min(tileHeight, height - tileY);
+                    for (uint32_t localY = 0; localY < copyHeight; localY++)
+                    {
+                        const uint32_t dstRow =
+                            GetTopDownRow(tileY + localY, height, orientation);
+                        uint8_t *dstRowBytes =
+                            pixels + static_cast<size_t>(dstRow) * numBytesPerRow;
+                        const uint8_t *srcRowBytes =
+                            tile.data() + static_cast<size_t>(localY) * tileRowSize;
+
+                        for (uint32_t localX = 0; localX < copyWidth; localX++)
+                        {
+                            uint8_t *dst =
+                                dstRowBytes + static_cast<size_t>(tileX + localX) *
+                                                  samplesPerPixel * numBytesPerChannel;
+                            const uint8_t *src =
+                                srcRowBytes + static_cast<size_t>(localX) * sourceTexelSize;
+                            if (planarConfig == PLANARCONFIG_CONTIG)
+                            {
+                                memcpy(dst, src, sourceTexelSize);
+                            }
+                            else
+                            {
+                                memcpy(dst + plane * numBytesPerChannel,
+                                       src,
+                                       numBytesPerChannel);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        const tmsize_t scanlineSize = TIFFScanlineSize(tiff);
+        YBI_ASSERT(scanlineSize > 0);
+        std::vector<uint8_t> scanline(static_cast<size_t>(scanlineSize));
+
+        for (uint32_t row = 0; row < height; row++)
+        {
+            const uint32_t dstRow = GetTopDownRow(row, height, orientation);
+            uint8_t *dst = pixels + static_cast<size_t>(dstRow) * numBytesPerRow;
+
+            if (planarConfig == PLANARCONFIG_CONTIG)
+            {
+                YBI_ASSERT(static_cast<size_t>(scanlineSize) >= numBytesPerRow);
+                YBI_ERROR(TIFFReadScanline(tiff, scanline.data(), row, 0) >= 0,
+                          "Failed to read TIFF row %u: %s\n",
+                          row,
+                          filename.c_str());
+                memcpy(dst, scanline.data(), numBytesPerRow);
+            }
+            else
+            {
+                const size_t planeRowSize = static_cast<size_t>(width) * numBytesPerChannel;
+                YBI_ASSERT(static_cast<size_t>(scanlineSize) >= planeRowSize);
+                for (uint16_t channel = 0; channel < samplesPerPixel; channel++)
+                {
+                    YBI_ERROR(TIFFReadScanline(tiff, scanline.data(), row, channel) >= 0,
+                              "Failed to read TIFF row %u, channel %u: %s\n",
+                              row,
+                              channel,
+                              filename.c_str());
+                    for (uint32_t x = 0; x < width; x++)
+                    {
+                        memcpy(dst + (static_cast<size_t>(x) * samplesPerPixel + channel) *
+                                         numBytesPerChannel,
+                               scanline.data() + static_cast<size_t>(x) * numBytesPerChannel,
+                               numBytesPerChannel);
+                    }
+                }
+            }
+        }
+    }
     TIFFClose(tiff);
 
-    uint8_t *rgba = static_cast<uint8_t *>(malloc(numTexels * 4));
-    YBI_ASSERT(rgba);
-    for (size_t texelIndex = 0; texelIndex < numTexels; texelIndex++)
-    {
-        const uint32_t pixel = raster[texelIndex];
-        rgba[texelIndex * 4 + 0] = TIFFGetR(pixel);
-        rgba[texelIndex * 4 + 1] = TIFFGetG(pixel);
-        rgba[texelIndex * 4 + 2] = TIFFGetB(pixel);
-        rgba[texelIndex * 4 + 3] = TIFFGetA(pixel);
-    }
-
-    texture->ptr = rgba;
+    texture->ptr = pixels;
     texture->width = static_cast<int>(width);
     texture->height = static_cast<int>(height);
+    texture->numChannels = samplesPerPixel;
+    texture->numBytesPerChannel = numBytesPerChannel;
+    return textureSampleFormat;
+}
+
+static void PadRGBToRGBA(Image *texture, SampleFormat sampleFormat)
+{
+    if (texture->numChannels != 3)
+    {
+        return;
+    }
+
+    const size_t numTexels = static_cast<size_t>(texture->width) * texture->height;
+    const size_t srcTexelSize = 3u * texture->numBytesPerChannel;
+    const size_t dstTexelSize = 4u * texture->numBytesPerChannel;
+    void *rgba = malloc(numTexels * dstTexelSize);
+    YBI_ASSERT(rgba);
+
+    const uint8_t *src = static_cast<const uint8_t *>(texture->ptr);
+    uint8_t *dst = static_cast<uint8_t *>(rgba);
+    for (size_t texelIndex = 0; texelIndex < numTexels; texelIndex++)
+    {
+        memcpy(dst + texelIndex * dstTexelSize, src + texelIndex * srcTexelSize, srcTexelSize);
+        WriteChannelFromFloat(rgba,
+                              static_cast<int>(texelIndex),
+                              3,
+                              4,
+                              texture->numBytesPerChannel,
+                              sampleFormat,
+                              1.0f);
+    }
+
+    free(texture->ptr);
+    texture->ptr = rgba;
     texture->numChannels = 4;
-    texture->numBytesPerChannel = 1;
 }
 
 static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t udim)
@@ -353,28 +849,30 @@ static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t u
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
-    Image texture;
-    TextureFormat format;
+    Image texture = {};
+    SampleFormat sampleFormat = SampleFormat::Count;
 
     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
     {
-        LoadImageFile(&texture, filename);
-        format = TextureFormat::RGBA8_UNORM;
+        sampleFormat = LoadImageFile(&texture, filename);
     }
     else if (ext == ".tif" || ext == ".tiff")
     {
-        LoadTIFFFile(&texture, filename);
-        format = TextureFormat::RGBA8_UNORM;
+        sampleFormat = LoadTIFFFile(&texture, filename);
     }
     else if (ext == ".exr")
     {
-        LoadEXRFile(&texture, filename);
-        format = TextureFormat::RGBA32_FLOAT;
+        sampleFormat = LoadEXRFile(&texture, filename);
     }
     else
     {
         YBI_LOGFATAL("File format is not supported: %s\n", filename.c_str());
     }
+
+    PadRGBToRGBA(&texture, sampleFormat);
+    const TextureFormat format = GetTextureFormat(texture.numChannels,
+                                                  texture.numBytesPerChannel * 8,
+                                                  sampleFormat);
 
     // Texture sampling treats v = 0 as the bottom row, so store ybvt source data bottom-up.
     FlipImageVertically(&texture);
@@ -419,7 +917,7 @@ static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t u
     header->format = format;
     header->compression = 0;
     header->numPages = numPages;
-    header->fallbackColor = CalculateFallbackColor(texture);
+    header->fallbackColor = CalculateFallbackColor(texture, sampleFormat);
     header->pageTableOffset = pageTableOffset;
     header->pageDataOffset = pageTableOffset + sizeof(VirtualTexturePageEntry) * numPages;
 
@@ -453,7 +951,8 @@ static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t u
                                                     mipWidth,
                                                     mipHeight,
                                                     texture.numChannels,
-                                                    texture.numBytesPerChannel);
+                                                    texture.numBytesPerChannel,
+                                                    sampleFormat);
             mipData = nextMip.data();
             mipWidth = nextMipWidth;
             mipHeight = nextMipHeight;
@@ -500,22 +999,116 @@ static void Run(const std::string &filename)
         }
     }
 
+#if 0
+    std::vector<const UdimTextureVector *> udimTextureVectors;
+
     for (const OpenPbrMaterial &material : container.openPbrMaterials)
     {
+        std::vector<const UdimTextureVector *> materialTextures;
         for (const MaterialNode &node : material.graph.nodes)
         {
             for (const MaterialInput &input : node.inputs)
             {
                 const UdimTextureVector *textureFiles =
                     std::get_if<UdimTextureVector>(&input.value);
-                if (!textureFiles)
+
+                if (textureFiles)
                 {
-                    continue;
+                    materialTextures.push_back(textureFiles);
+                }
+            }
+        }
+
+        struct TextureChannel
+        {
+            std::string filename;
+            uint32_t numChannels;
+        };
+
+        // Calculate the number of channels per udim
+        std::unordered_map<uint32_t, std::vector<TextureChannel>> udimToTextures;
+        for (const UdimTextureVector *textureVector : udimTextureVectors)
+        {
+            // NOTE: assume every texture in a single udim set has the same number of channels
+            auto &[file, udim] = (*textureVector)[0];
+            uint32_t numChannels = GetImageFileChannelCount(file);
+
+            for (const auto &[filename, udim] : *textureVector)
+            {
+                auto [it, inserted] = udimToTextures.try_emplace(udim);
+                it->second.push_back({filename, numChannels});
+            }
+        }
+
+        // Iterating over every udim, combine textures into groups of 4 channels if they
+        // have the same data type (float, unorm, etc)
+        for (const auto &[udim, textures] : udimToTextures)
+        {
+            size_t numChosen = 0;
+            std::vector<bool> chosen;
+            std::vector<std::string> combinedTextures;
+
+            while (numChosen != textures.size())
+            {
+                uint32_t numChannels = 0;
+                for (size_t index = 0; index < textures.size(); index++)
+                {
+                    if (numChannels == 4)
+                        break;
+
+                    if (chosen[index])
+                        continue;
+
+                    const TextureChannel &channel = textures[index];
+
+                    // TODO IMPORTANT: they have to use the same UV set too
+                    uint32_t requestedNumChannels = 4 - numChannels;
+                    if (numChannels == 0 || (channel.numChannels == requestedNumChannels))
+                    {
+                        combinedTextures.push_back(channel.filename);
+                        numChannels += channel.numChannels;
+                        chosen[index] = true;
+                        numChosen++;
+                    }
                 }
 
-                for (const auto &[filename, udim] : *textureFiles)
+                // TODO: combine textures, somehow have those properly mapped in the renderer
+                for (const std::string &textureFile : combinedTextures)
                 {
-                    AddTexture(filename, udim);
+                }
+
+                combinedTextures.clear();
+            }
+        }
+
+        udimTextureVectors.insert(
+            udimTextureVectors.end(), materialTextures.begin(), materialTextures.end());
+    }
+    for (const UdimTextureVector *textureVector : udimTextureVectors)
+    {
+        for (const auto &[filename, udim] : *textureVector)
+        {
+            AddTexture(filename, udim);
+        }
+    }
+#endif
+
+    for (const OpenPbrMaterial &material : container.openPbrMaterials)
+    {
+        std::vector<const UdimTextureVector *> materialTextures;
+        for (const MaterialNode &node : material.graph.nodes)
+        {
+            for (const MaterialInput &input : node.inputs)
+            {
+                const UdimTextureVector *textureFiles =
+                    std::get_if<UdimTextureVector>(&input.value);
+
+                if (textureFiles)
+                {
+                    for (const auto &[filename, udim] : *textureFiles)
+                    {
+                        AddTexture(filename, udim);
+                    }
                 }
             }
         }
