@@ -312,7 +312,6 @@ const Array<int> &Attributes::GetIndices(size_t index) const
 
 void DataContainer::Init(Device *device, DeviceArena *deviceArena)
 {
-#if 0
     // Initialize naive rectangle defined such that normal is -Z
     Array<Vec3f> rectPositions;
     rectPositions.EmplaceBack(Vec3f(0.5f, -0.5f, 0.f));
@@ -341,7 +340,6 @@ void DataContainer::Init(Device *device, DeviceArena *deviceArena)
     mesh.SetIndicesHandle(indicesHandle);
 
     defaultRectBVH = device->BuildTriangleBVH(deviceArena, this, mesh);
-#endif
 }
 
 Array<BVH> &DataContainer::GetBVHs(GeometryType type)

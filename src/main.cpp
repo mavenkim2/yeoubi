@@ -93,8 +93,7 @@ int main(int argc, char **argv)
 
     Arena arena;
     DataContainer container;
-    DeviceArena *deviceArena = device->CreateArena().get();
-    container.Init(device.get(), deviceArena);
+    std::unique_ptr<DeviceArena> dataContainerDeviceArena = device->CreateArena();
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -109,6 +108,7 @@ int main(int argc, char **argv)
     YBI_ASSERT(sceneLoader);
     SceneImportContext importContext;
     Scene *scene = sceneLoader->LoadScene(&arena, &container, &importContext);
+    container.Init(device.get(), dataContainerDeviceArena.get());
 
     // Virtual textures
     VirtualTextureManager manager(arena, device.get(), displayDevice.get());

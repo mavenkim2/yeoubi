@@ -77,6 +77,7 @@ struct RectLight
     float width;
     float height;
     Vec3f radiance; // TODO: this can be a texture too
+    uint32_t meshIndex = ~0u;
 };
 
 enum class GeometryType

@@ -11,7 +11,6 @@
 #include "render/bsdf/openpbr/substrate.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
-#include "render/lights/rect.h"
 #include "render/path_tracing.h"
 #include "render/ray_cone.h"
 #include "render/ray_cone_utils.h"
@@ -616,53 +615,25 @@ YBI_GPU void RenderUnidirectional()
         Vec3f radiance(0.f);
         Vec3f throughput(1.f);
 
-        for (int depth = 0; depth <= maxDepth; ++depth)
+        for (int depth = 0; depth <= maxDepth;)
         {
             IntersectionInfo info{};
             const uint64_t ptr = reinterpret_cast<uint64_t>(&info);
             uint32_t low = static_cast<uint32_t>(ptr);
             uint32_t high = static_cast<uint32_t>(ptr >> 32u);
-            for (;;)
-            {
-                info = {};
-                optixTrace(bvhHandle,
-                           make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
-                           make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
-                           0.f,
-                           1.0e30f,
-                           0.f,
-                           0xff,
-                           OPTIX_RAY_FLAG_NONE,
-                           0,
-                           0,
-                           0,
-                           low,
-                           high);
-
-                float closestT = info.type == INTERSECTION_TYPE_NONE ? 1.0e30f : info.t;
-                int closestLightIndex = -1;
-                for (uint32_t lightIndex = 0; lightIndex < params.scene.numLights; ++lightIndex)
-                {
-                    const DeviceLight &light = params.scene.deviceLights[lightIndex];
-                    float lightT;
-                    if (IntersectRectLight(rayDirection, rayOrigin, 0.f, closestT, light, lightT))
-                    {
-                        closestT = lightT;
-                        closestLightIndex = static_cast<int>(lightIndex);
-                    }
-                }
-
-                if (closestLightIndex < 0)
-                {
-                    break;
-                }
-
-                const DeviceLight &light = params.scene.deviceLights[closestLightIndex];
-                radiance += throughput * light.radiance;
-
-                const Vec3f lightHitPosition = rayOrigin + closestT * rayDirection;
-                rayOrigin = OffsetRayOrigin(lightHitPosition, rayDirection);
-            }
+            optixTrace(bvhHandle,
+                       make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
+                       make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
+                       0.f,
+                       1.0e30f,
+                       0.f,
+                       0xff,
+                       OPTIX_RAY_FLAG_NONE,
+                       0,
+                       0,
+                       0,
+                       low,
+                       high);
 
             if (info.type == INTERSECTION_TYPE_NONE)
             {
@@ -677,10 +648,37 @@ YBI_GPU void RenderUnidirectional()
                 radiance += throughput * 0.5f; // environment; // Vec3f(0.5f);
                 break;
             }
+
+            const Object &object = params.scene.objects[info.id];
+            if (object.lightIndex >= 0)
+            {
+                const DeviceLight &light = params.scene.deviceLights[object.lightIndex];
+
+                // Rect lights emit from local -Z. OptiX triangles are two-sided, so a
+                // back-face hit passes through without contributing.
+                const Vec3f localRayDirection = light.localFromWorld.TransformVector(rayDirection);
+                if (localRayDirection.z > 0.f)
+                {
+                    radiance += throughput * light.radiance;
+                }
+
+                const Vec3f lightHitPosition = rayOrigin + info.t * rayDirection;
+                const Vec3f lightTangentX =
+                    info.objectToWorld.TransformVector(Vec3f(1.f, 0.f, 0.f));
+                const Vec3f lightTangentY =
+                    info.objectToWorld.TransformVector(Vec3f(0.f, 1.f, 0.f));
+                Vec3f lightNormal = Normalize(Cross(lightTangentX, lightTangentY));
+                if (Dot(lightNormal, rayDirection) < 0.f)
+                {
+                    lightNormal = -lightNormal;
+                }
+                rayOrigin = OffsetRayOrigin(lightHitPosition, lightNormal);
+                continue;
+            }
+
             if (depth == maxDepth)
                 break;
 
-            const Object &object = params.scene.objects[info.id];
             ShadingInfo shadingInfo;
             GetShadingInfo(object, info, shadingInfo);
             shadingInfo.TransformToWorld(info.objectToWorld);
@@ -730,6 +728,7 @@ YBI_GPU void RenderUnidirectional()
             if (!shadingInfo.hasMaterial)
             {
                 rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
+                ++depth;
                 continue;
             }
 
@@ -770,6 +769,7 @@ YBI_GPU void RenderUnidirectional()
                 break;
             rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
             rayDirection = nextDirection;
+            ++depth;
         }
         sum += radiance;
     }

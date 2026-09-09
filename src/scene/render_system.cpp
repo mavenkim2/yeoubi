@@ -691,6 +691,30 @@ void GeometryManager::Update(Device *device,
     deviceScene->compressedClusters = nullptr;
     deviceScene->compressedClusterBytes = nullptr;
 
+    // Represent each rect light as an ordinary mesh instance. The mesh only provides
+    // an object/instance ID; all rect lights share the unit rectangle BLAS created by
+    // DataContainer::Init.
+    YBI_ASSERT(container->defaultRectHandle.IsValid());
+    YBI_ASSERT(container->defaultRectHandle.index < container->meshes.size());
+    const Mesh defaultRectMesh = container->meshes[container->defaultRectHandle.index];
+    for (RectLight &rectLight : container->rectLights)
+    {
+        if (rectLight.meshIndex == ~0u)
+        {
+            rectLight.meshIndex = static_cast<uint32_t>(container->meshes.size());
+            container->meshes.push_back(defaultRectMesh);
+
+            const AffineTransform lightTransform =
+                rectLight.localToWorld *
+                AffineTransform::Scale(rectLight.width, rectLight.height, 1.f);
+            rootScene->instances.EmplaceBack(
+                lightTransform,
+                GeometryHandle{GeometryType::Mesh, static_cast<int>(rectLight.meshIndex)});
+        }
+
+        YBI_ASSERT(rectLight.meshIndex < container->meshes.size());
+    }
+
     // Set up device scene
     Array<Object> objects;
     objects.Reserve(container->meshes.size());
@@ -874,6 +898,13 @@ void GeometryManager::Update(Device *device,
         }
     }
 
+    for (size_t lightIndex = 0; lightIndex < container->rectLights.size(); lightIndex++)
+    {
+        const uint32_t meshIndex = container->rectLights[lightIndex].meshIndex;
+        YBI_ASSERT(meshIndex < objects.size());
+        objects[meshIndex].lightIndex = static_cast<int>(lightIndex);
+    }
+
     // Create BVHs
     container->GetBVHs(GeometryType::Mesh).Reserve(container->meshes.size());
     printf("num meshes: %zu\n", container->meshes.size());
@@ -892,7 +923,10 @@ void GeometryManager::Update(Device *device,
     {
         for (uint32_t i = 0; i < container->meshes.size(); i++)
         {
-            const Mesh &mesh = container->meshes[i];
+            if (i == container->defaultRectHandle.index || objects[i].lightIndex >= 0)
+            {
+                continue;
+            }
 
             clusterMeshHandles.EmplaceBack(BufferHandle{i});
             // TODO: more criteria for using clusters vs triangles
@@ -911,6 +945,11 @@ void GeometryManager::Update(Device *device,
     {
         for (uint32_t i = 0; i < container->meshes.size(); i++)
         {
+            if (i == container->defaultRectHandle.index || objects[i].lightIndex >= 0)
+            {
+                continue;
+            }
+
             triangleMeshHandles.EmplaceBack(BufferHandle{i});
         }
     }
@@ -934,6 +973,20 @@ void GeometryManager::Update(Device *device,
                                        triangleMeshHandles,
                                        objects,
                                        objectToBVHIndex);
+    }
+
+    if (container->rectLights.size())
+    {
+        Array<BVH> &meshBVHs = container->GetBVHs(GeometryType::Mesh);
+        meshBVHs.EmplaceBack(container->defaultRectBVH);
+        const int rectLightBVHIndex = static_cast<int>(meshBVHs.size() - 1);
+
+        objectToBVHIndex[container->defaultRectHandle.index] = rectLightBVHIndex;
+        for (const RectLight &rectLight : container->rectLights)
+        {
+            YBI_ASSERT(rectLight.meshIndex < objectToBVHIndex.size());
+            objectToBVHIndex[rectLight.meshIndex] = rectLightBVHIndex;
+        }
     }
 
     BuildTLAS(device, deviceArena, container, rootScene, objectToBVHIndex);
