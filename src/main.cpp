@@ -89,8 +89,12 @@ int main(int argc, char **argv)
     if (samplesPerPixel == 0)
         samplesPerPixel = interactive ? 1u : 16u;
 
+    std::unique_ptr<Device> device = Device::CreateDevice(DeviceKind::GPU);
+
     Arena arena;
     DataContainer container;
+    DeviceArena *deviceArena = device->CreateArena().get();
+    container.Init(device.get(), deviceArena);
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -105,8 +109,6 @@ int main(int argc, char **argv)
     YBI_ASSERT(sceneLoader);
     SceneImportContext importContext;
     Scene *scene = sceneLoader->LoadScene(&arena, &container, &importContext);
-
-    std::unique_ptr<Device> device = Device::CreateDevice(DeviceKind::GPU);
 
     // Virtual textures
     VirtualTextureManager manager(arena, device.get(), displayDevice.get());

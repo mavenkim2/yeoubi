@@ -310,6 +310,40 @@ const Array<int> &Attributes::GetIndices(size_t index) const
 // Data Container
 // -----------------------------------------------------------------------------
 
+void DataContainer::Init(Device *device, DeviceArena *deviceArena)
+{
+#if 0
+    // Initialize naive rectangle defined such that normal is -Z
+    Array<Vec3f> rectPositions;
+    rectPositions.EmplaceBack(Vec3f(0.5f, -0.5f, 0.f));
+    rectPositions.EmplaceBack(Vec3f(-0.5f, -0.5f, 0.f));
+    rectPositions.EmplaceBack(Vec3f(-0.5f, 0.5f, 0.f));
+    rectPositions.EmplaceBack(Vec3f(0.5f, 0.5f, 0.f));
+
+    Array<int> rectIndices;
+    rectIndices.EmplaceBack(0);
+    rectIndices.EmplaceBack(1);
+    rectIndices.EmplaceBack(2);
+    rectIndices.EmplaceBack(0);
+    rectIndices.EmplaceBack(2);
+    rectIndices.EmplaceBack(3);
+
+    BufferHandle positionsHandle{static_cast<uint32_t>(meshPositions.size())};
+    BufferHandle indicesHandle{static_cast<uint32_t>(meshTriangleIndices.size())};
+    defaultRectHandle = {static_cast<uint32_t>(meshes.size())};
+
+    meshPositions.push_back(std::move(rectPositions));
+    meshTriangleIndices.push_back(std::move(rectIndices));
+
+    meshes.emplace_back();
+    Mesh &mesh = meshes.back();
+    mesh.SetPositionsHandle(positionsHandle);
+    mesh.SetIndicesHandle(indicesHandle);
+
+    defaultRectBVH = device->BuildTriangleBVH(deviceArena, this, mesh);
+#endif
+}
+
 Array<BVH> &DataContainer::GetBVHs(GeometryType type)
 {
     return bvhHandles[(int)type];

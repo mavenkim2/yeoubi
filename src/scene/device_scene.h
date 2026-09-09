@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/affine_transform.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "device/device_memory.h"
@@ -72,7 +73,23 @@ struct Object
     uint32_t primvarOffset;
     uint32_t primvarCount;
 
-    int materialIndex;
+    int materialIndex = -1;
+    int lightIndex = -1;
+};
+
+enum class LightType
+{
+    Rect,
+};
+
+struct DeviceLight
+{
+    // Rect
+    AffineTransform worldFromLocal;
+    AffineTransform localFromWorld;
+    float width;
+    float height;
+    Vec3f radiance;
 };
 
 struct DeviceScene
@@ -94,6 +111,9 @@ struct DeviceScene
 
     DeviceAttribute *deviceAttributes;
     uint32_t *shaderNodes;
+
+    DeviceLight *deviceLights;
+    uint32_t numLights;
 
     // TODO: populate these and use them when clusterizer isn't used
     int *attributeIndices;

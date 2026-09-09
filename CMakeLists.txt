@@ -201,30 +201,6 @@ add_executable(yeoubi
                ${YBI_SOURCE}
 )
 
-set (YBI_KERNEL_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/affine_transform.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/matrix4x4.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/octahedral.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec2f.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec2u.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3f.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3i.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vec3u.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device_texture.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/kernel_params.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/ray_cone.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/image.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/material_shaders.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/attribute.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/glossy_diffuse.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/substrate.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/init.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/openpbr/ggx.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_cluster.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/device_scene.h
-)
-
 list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
 )
@@ -234,6 +210,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     get_filename_component(YBI_CUDA_HOST_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
 
     set(YBI_OPTIX_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx")
+    set(YBI_OPTIX_PTX_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx.d")
     add_custom_command(
         OUTPUT "${YBI_OPTIX_PTX_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
@@ -248,17 +225,21 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         "-I${OPTIX_INCLUDE_DIR}"
         # "-I${YBI_CUDA_INCLUDE_DIR}"
         # "-I${OPENPBR_BSDF_INCLUDE_DIR}"
+        -MD
+        -MF "${YBI_OPTIX_PTX_DEPFILE}"
         "-o" "${YBI_OPTIX_PTX_PATH}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
-            ${YBI_KERNEL_HEADERS}
+        DEPFILE "${YBI_OPTIX_PTX_DEPFILE}"
         VERBATIM
     )
     add_custom_target(yeoubi_optix_kernel DEPENDS ${YBI_OPTIX_PTX_PATH})
     add_dependencies(yeoubi yeoubi_optix_kernel)
 
     set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx")
+    set(YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE
+        "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx.d")
     add_custom_command(
         OUTPUT "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
@@ -268,11 +249,13 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
         "--use_fast_math"
         "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
+        -MD
+        -MF "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
         "-o" "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_interop.h"
+        DEPFILE "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
         VERBATIM
     )
     add_custom_target(yeoubi_virtual_texture_kernel DEPENDS ${YBI_VIRTUAL_TEXTURE_KERNEL_PATH})

@@ -11,6 +11,7 @@
 #include "render/bsdf/openpbr/substrate.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
+#include "render/lights/rect.h"
 #include "render/path_tracing.h"
 #include "render/ray_cone.h"
 #include "render/ray_cone_utils.h"
@@ -612,27 +613,59 @@ YBI_GPU void RenderUnidirectional()
             const uint64_t ptr = reinterpret_cast<uint64_t>(&info);
             uint32_t low = static_cast<uint32_t>(ptr);
             uint32_t high = static_cast<uint32_t>(ptr >> 32u);
-            optixTrace(bvhHandle,
-                       make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
-                       make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
-                       0.f,
-                       1.0e30f,
-                       0.f,
-                       0xff,
-                       OPTIX_RAY_FLAG_NONE,
-                       0,
-                       0,
-                       0,
-                       low,
-                       high);
+            for (;;)
+            {
+                info = {};
+                optixTrace(bvhHandle,
+                           make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
+                           make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
+                           0.f,
+                           1.0e30f,
+                           0.f,
+                           0xff,
+                           OPTIX_RAY_FLAG_NONE,
+                           0,
+                           0,
+                           0,
+                           low,
+                           high);
+
+                float closestT = info.type == INTERSECTION_TYPE_NONE ? 1.0e30f : info.t;
+                int closestLightIndex = -1;
+                for (uint32_t lightIndex = 0; lightIndex < params.scene.numLights; ++lightIndex)
+                {
+                    const DeviceLight &light = params.scene.deviceLights[lightIndex];
+                    float lightT;
+                    if (IntersectRectLight(rayDirection, rayOrigin, 0.f, closestT, light, lightT))
+                    {
+                        closestT = lightT;
+                        closestLightIndex = static_cast<int>(lightIndex);
+                    }
+                }
+
+                if (closestLightIndex < 0)
+                {
+                    break;
+                }
+
+                const DeviceLight &light = params.scene.deviceLights[closestLightIndex];
+                radiance += throughput * light.radiance;
+
+                const Vec3f lightHitPosition = rayOrigin + closestT * rayDirection;
+                rayOrigin = OffsetRayOrigin(lightHitPosition, rayDirection);
+            }
+
             if (info.type == INTERSECTION_TYPE_NONE)
             {
-                const Vec3f sunDirection = Normalize(Vec3f(1.0f, 1.0f, 0.5f));
-
-                Vec3f environment(0.02f);
-                if (Dot(rayDirection, sunDirection) > 0.995f)
-                    environment = Vec3f(20.0f);
-                radiance += throughput * environment; // Vec3f(0.5f);
+                // Place the procedural sun outside the open front of the room (+Z).
+                // Environment rays point toward the source, so its light travels along
+                // -sunDirection, directly into the room with a slight downward angle.
+                // const Vec3f sunDirection = Normalize(Vec3f(0.0f, 0.25f, 1.0f));
+                //
+                // Vec3f environment(0.02f);
+                // if (Dot(rayDirection, sunDirection) > 0.995f)
+                //     environment = Vec3f(20.0f);
+                radiance += throughput * 0.5f; // environment; // Vec3f(0.5f);
                 break;
             }
             if (depth == maxDepth)
@@ -643,7 +676,6 @@ YBI_GPU void RenderUnidirectional()
             GetShadingInfo(object, info, shadingInfo);
             shadingInfo.TransformToWorld(info.objectToWorld);
 
-            // Treat this basic diffuse renderer as two-sided.
             Vec3f geometricNormal = shadingInfo.geometricNormal;
             if (Dot(geometricNormal, rayDirection) > 0.f)
                 geometricNormal = -geometricNormal;
@@ -736,11 +768,13 @@ YBI_GPU void RenderUnidirectional()
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
     Vec3f *history = params.accumulation ? params.accumulation + pixelIndex : nullptr;
-    const Vec3f color = AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
+    const Vec3f linearColor =
+        AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
+    const Vec3f displayColor = linearColor; // ReinhardToneMap(linearColor);
     image[pixelIndex] =
-        make_uchar4(static_cast<unsigned char>(255.f * LinearToDisplay(color.x) + 0.5f),
-                    static_cast<unsigned char>(255.f * LinearToDisplay(color.y) + 0.5f),
-                    static_cast<unsigned char>(255.f * LinearToDisplay(color.z) + 0.5f),
+        make_uchar4(static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.x) + 0.5f),
+                    static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.y) + 0.5f),
+                    static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.z) + 0.5f),
                     255);
 }
 

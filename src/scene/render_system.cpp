@@ -243,6 +243,190 @@ BuildTLAS(Device *device, DeviceArena *deviceArena, DataContainer *container, Sc
 }
 
 // GeometryManager
+// void GeometryManager::UploadMeshesWithBVHs() {}
+
+void GeometryManager::BuildMeshClusters(Device *device,
+                                        DeviceArena *deviceArena,
+                                        Scene *rootScene,
+                                        DataContainer *container,
+                                        DeviceScene *deviceScene,
+                                        const Array<BufferHandle> &meshHandles,
+                                        const std::vector<size_t> &bvhSourceIndices,
+                                        Array<Object> &objects)
+{
+    // Contains index into meshHandles
+    std::vector<size_t> clusterSourceIndices;
+    std::unordered_multimap<uint64_t, size_t> clusterHashToHandleIndex;
+    clusterSourceIndices.reserve(meshHandles.size());
+
+    // If meshes have exact same data, then reuse their cluster data
+    for (size_t handleIndex = 0; handleIndex < meshHandles.size(); handleIndex++)
+    {
+        BufferHandle handle = meshHandles[handleIndex];
+        const Mesh &mesh = container->meshes[handle.index];
+
+        const uint64_t clusterHash = HashMeshClusterData(mesh);
+        const auto clusterCandidates = clusterHashToHandleIndex.equal_range(clusterHash);
+        size_t clusterSourceIndex = handleIndex;
+        for (auto it = clusterCandidates.first; it != clusterCandidates.second; ++it)
+        {
+            const size_t candidateHandleIndex = it->second;
+            const size_t candidateMeshIndex = meshHandles[candidateHandleIndex].index;
+
+            if (MeshClusterDataEqual(mesh, container->meshes[candidateMeshIndex]))
+            {
+                clusterSourceIndex = candidateHandleIndex;
+                break;
+            }
+        }
+        if (clusterSourceIndex == handleIndex)
+        {
+            clusterHashToHandleIndex.emplace(clusterHash, handleIndex);
+        }
+        clusterSourceIndices.push_back(clusterSourceIndex);
+    }
+
+    std::vector<MeshletClustersResult> clusterResults(meshHandles.size());
+    std::vector<Array<DeviceCluster>> compressedMeshClusters(meshHandles.size());
+
+    tbb::parallel_for(size_t(0), clusterSourceIndices.size(), [&](size_t index) {
+        size_t handleIndex = clusterSourceIndices[index];
+        BufferHandle handle = meshHandles[handleIndex];
+        const Mesh &mesh = container->meshes[handle.index];
+
+        if (index != handleIndex)
+        {
+            return;
+        }
+
+        if (!mesh.GetPositionsHandle().IsValid() || !mesh.GetIndicesHandle().IsValid())
+        {
+            return;
+        }
+
+        const Array<int> &sourceIndices =
+            container->meshTriangleIndices[mesh.GetIndicesHandle().index];
+        YBI_ASSERT(sourceIndices.size() % 3 == 0);
+
+        Array<int> filteredIndices;
+        filteredIndices.Reserve(sourceIndices.size());
+        for (size_t i = 0; i < sourceIndices.size(); i += 3)
+        {
+            const int index0 = sourceIndices[i + 0];
+            const int index1 = sourceIndices[i + 1];
+            const int index2 = sourceIndices[i + 2];
+            if (index0 != index1 && index1 != index2 && index2 != index0)
+            {
+                filteredIndices.EmplaceBack(index0);
+                filteredIndices.EmplaceBack(index1);
+                filteredIndices.EmplaceBack(index2);
+            }
+        }
+
+        MeshletClustersResult &result = clusterResults[handleIndex];
+        ClusterizeMesh(container, mesh, filteredIndices, result);
+        compressedMeshClusters[handleIndex].Resize(result.meshlets.size());
+    });
+
+    std::vector<uint32_t> clusterOffsets;
+    const size_t totalNumClusters = CalculateBufferOffsets(compressedMeshClusters, clusterOffsets);
+
+    container->compressedClusterBytes.clear();
+    container->compressedClusterBytes.resize(totalNumClusters);
+    const Timer compressClustersTimer = StartTimer();
+    tbb::parallel_for(size_t(0), clusterSourceIndices.size(), [&](size_t index) {
+        size_t handleIndex = clusterSourceIndices[index];
+        if (index != handleIndex)
+        {
+            return;
+        }
+
+        YBI_ASSERT(clusterOffsets[handleIndex] != INVALID_OFFSET);
+        CompressClusters(clusterResults[handleIndex],
+                         container->meshes[meshHandles[handleIndex].index],
+                         container,
+                         compressedMeshClusters[handleIndex],
+                         clusterOffsets[handleIndex]);
+    });
+
+    const double compressClustersMilliseconds = StopTimer(compressClustersTimer);
+    printf("CompressClusters parallel_for: %.3f ms\n", compressClustersMilliseconds);
+
+    std::vector<uint32_t> compressedClusterByteOffsets;
+    const size_t totalCompressedClusterBytes = CalculateCompressedClusterByteOffsets(
+        container->compressedClusterBytes, compressedClusterByteOffsets);
+
+    for (size_t index = 0; index < clusterSourceIndices.size(); index++)
+    {
+        size_t handleIndex = clusterSourceIndices[index];
+        if (index != handleIndex)
+        {
+            continue;
+        }
+
+        YBI_ASSERT(clusterOffsets[handleIndex] != INVALID_OFFSET);
+        Array<DeviceCluster> &clusters = compressedMeshClusters[handleIndex];
+        for (size_t clusterIndex = 0; clusterIndex < clusters.size(); clusterIndex++)
+        {
+            const size_t globalClusterIndex = clusterOffsets[handleIndex] + clusterIndex;
+            YBI_ASSERT(globalClusterIndex < compressedClusterByteOffsets.size());
+            clusters[clusterIndex].byteOffset = compressedClusterByteOffsets[globalClusterIndex];
+        }
+    }
+
+    for (size_t handleIndex = 0; handleIndex < meshHandles.size(); ++handleIndex)
+    {
+        const size_t sourceHandleIndex = clusterSourceIndices[handleIndex];
+
+        YBI_ASSERT(sourceHandleIndex < clusterOffsets.size());
+        YBI_ASSERT(clusterOffsets[sourceHandleIndex] != INVALID_OFFSET);
+
+        const size_t meshIndex = meshHandles[handleIndex].index;
+
+        objects[meshIndex].triangleIndexOffset = INVALID_OFFSET;
+        objects[meshIndex].clusterOffset = clusterOffsets[sourceHandleIndex];
+    }
+
+    Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
+    const Timer buildClusterBVHsTimer = StartTimer();
+    for (size_t handleIndex = 0; handleIndex < meshHandles.size(); handleIndex++)
+    {
+        Mesh &mesh = container->meshes[meshHandles[handleIndex].index];
+        const size_t sourceIndex = bvhSourceIndices[handleIndex];
+
+        if (sourceIndex != handleIndex)
+        {
+            bvhs.EmplaceBack(bvhs[sourceIndex]);
+            continue;
+        }
+
+        const MeshletClustersResult &result = clusterResults[handleIndex];
+        YBI_ASSERT(result.meshlets.size());
+        bvhs.EmplaceBack(device->BuildClusterBVH(deviceArena, container, mesh, result));
+    }
+    const double buildClusterBVHsMilliseconds = StopTimer(buildClusterBVHsTimer);
+    printf("BuildClusterBVHs: %.3f ms\n", buildClusterBVHsMilliseconds);
+
+    BuildTLAS(device, deviceArena, container, rootScene);
+
+    deviceScene->positions = nullptr;
+    deviceScene->normals = nullptr;
+    deviceScene->uvs = nullptr;
+    deviceScene->uvIndices = nullptr;
+    deviceScene->triangleIndices = nullptr;
+    deviceScene->triangleMaterialIndices = nullptr;
+    UploadDeviceBuffers(device,
+                        deviceScene->compressedClusters,
+                        compressedMeshClusters,
+                        clusterOffsets,
+                        totalNumClusters);
+    UploadDeviceBuffers(device,
+                        deviceScene->compressedClusterBytes,
+                        container->compressedClusterBytes,
+                        compressedClusterByteOffsets,
+                        totalCompressedClusterBytes);
+}
+
 void GeometryManager::Update(Device *device,
                              DeviceArena *deviceArena,
                              DataContainer *container,
@@ -253,7 +437,8 @@ void GeometryManager::Update(Device *device,
     ScratchArena scratch;
 
     // Set up device scene
-    View<Object> objects = scratch.arena->PushArray<Object>(container->meshes.size());
+    Array<Object> objects;
+    objects.Reserve(container->meshes.size());
     View<DeviceMaterial> hostMaterials;
     View<MaterialHandle> hostMaterialHandles;
     if (container->materials.size())
@@ -323,7 +508,9 @@ void GeometryManager::Update(Device *device,
     {
         Mesh &mesh = container->meshes[meshIndex];
 
-        Object &object = objects[meshIndex];
+        YBI_ASSERT(objects.size() == meshIndex);
+        objects.EmplaceBack();
+        Object &object = objects.Last();
         object.positionOffset = INVALID_OFFSET;
         object.normalOffset = INVALID_OFFSET;
         object.uvOffset = INVALID_OFFSET;
@@ -425,139 +612,19 @@ void GeometryManager::Update(Device *device,
 #ifdef YBI_USE_CLUSTERS
     if (device->SupportsClusterBVHs())
     {
-        std::vector<MeshletClustersResult> clusterResults(container->meshes.size());
-        std::vector<Array<DeviceCluster>> compressedMeshClusters(container->meshes.size());
-
-        tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
-            Mesh &mesh = container->meshes[meshIndex];
-            const size_t sourceIndex = clusterSourceIndices[meshIndex];
-
-            if (sourceIndex != meshIndex)
-            {
-                return;
-            }
-
-            if (!mesh.GetPositionsHandle().IsValid() || !mesh.GetIndicesHandle().IsValid())
-            {
-                return;
-            }
-
-            const Array<int> &sourceIndices =
-                container->meshTriangleIndices[mesh.GetIndicesHandle().index];
-            YBI_ASSERT(sourceIndices.size() % 3 == 0);
-
-            Array<int> filteredIndices;
-            filteredIndices.Reserve(sourceIndices.size());
-            for (size_t i = 0; i < sourceIndices.size(); i += 3)
-            {
-                const int index0 = sourceIndices[i + 0];
-                const int index1 = sourceIndices[i + 1];
-                const int index2 = sourceIndices[i + 2];
-                if (index0 != index1 && index1 != index2 && index2 != index0)
-                {
-                    filteredIndices.EmplaceBack(index0);
-                    filteredIndices.EmplaceBack(index1);
-                    filteredIndices.EmplaceBack(index2);
-                }
-            }
-
-            MeshletClustersResult &result = clusterResults[meshIndex];
-            ClusterizeMesh(container, mesh, filteredIndices, result);
-            compressedMeshClusters[meshIndex].Resize(result.meshlets.size());
-        });
-
-        std::vector<uint32_t> clusterOffsets;
-        const size_t totalNumClusters =
-            CalculateBufferOffsets(compressedMeshClusters, clusterOffsets);
-
-        container->compressedClusterBytes.clear();
-        container->compressedClusterBytes.resize(totalNumClusters);
-        const Timer compressClustersTimer = StartTimer();
-        tbb::parallel_for(size_t(0), container->meshes.size(), [&](size_t meshIndex) {
-            if (clusterSourceIndices[meshIndex] != meshIndex)
-            {
-                return;
-            }
-
-            YBI_ASSERT(clusterOffsets[meshIndex] != INVALID_OFFSET);
-            CompressClusters(clusterResults[meshIndex],
-                             container->meshes[meshIndex],
-                             container,
-                             compressedMeshClusters[meshIndex],
-                             clusterOffsets[meshIndex]);
-        });
-        const double compressClustersMilliseconds = StopTimer(compressClustersTimer);
-        printf("CompressClusters parallel_for: %.3f ms\n", compressClustersMilliseconds);
-
-        std::vector<uint32_t> compressedClusterByteOffsets;
-        const size_t totalCompressedClusterBytes = CalculateCompressedClusterByteOffsets(
-            container->compressedClusterBytes, compressedClusterByteOffsets);
-
-        for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+        Array<BufferHandle> meshHandles;
+        for (uint32_t i = 0; i < container->meshes.size(); i++)
         {
-            if (clusterSourceIndices[meshIndex] != meshIndex)
-            {
-                continue;
-            }
-
-            YBI_ASSERT(clusterOffsets[meshIndex] != INVALID_OFFSET);
-            Array<DeviceCluster> &clusters = compressedMeshClusters[meshIndex];
-            for (size_t clusterIndex = 0; clusterIndex < clusters.size(); clusterIndex++)
-            {
-                const size_t globalClusterIndex = clusterOffsets[meshIndex] + clusterIndex;
-                YBI_ASSERT(globalClusterIndex < compressedClusterByteOffsets.size());
-                clusters[clusterIndex].byteOffset =
-                    compressedClusterByteOffsets[globalClusterIndex];
-            }
+            meshHandles.EmplaceBack(BufferHandle{i});
         }
-
-        for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
-        {
-            const size_t sourceIndex = clusterSourceIndices[meshIndex];
-            YBI_ASSERT(sourceIndex < clusterOffsets.size());
-            YBI_ASSERT(clusterOffsets[sourceIndex] != INVALID_OFFSET);
-            objects[meshIndex].triangleIndexOffset = INVALID_OFFSET;
-            objects[meshIndex].clusterOffset = clusterOffsets[sourceIndex];
-        }
-
-        Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
-        const Timer buildClusterBVHsTimer = StartTimer();
-        for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
-        {
-            Mesh &mesh = container->meshes[meshIndex];
-            const size_t sourceIndex = bvhSourceIndices[meshIndex];
-
-            if (sourceIndex != meshIndex)
-            {
-                bvhs.EmplaceBack(bvhs[sourceIndex]);
-                continue;
-            }
-
-            const MeshletClustersResult &result = clusterResults[meshIndex];
-            YBI_ASSERT(result.meshlets.size());
-            bvhs.EmplaceBack(device->BuildClusterBVH(deviceArena, container, mesh, result));
-        }
-        const double buildClusterBVHsMilliseconds = StopTimer(buildClusterBVHsTimer);
-        printf("BuildClusterBVHs: %.3f ms\n", buildClusterBVHsMilliseconds);
-
-        BuildTLAS(device, deviceArena, container, rootScene);
-
-        deviceScene->positions = nullptr;
-        deviceScene->normals = nullptr;
-        deviceScene->uvs = nullptr;
-        deviceScene->uvIndices = nullptr;
-        deviceScene->triangleIndices = nullptr;
-        deviceScene->triangleMaterialIndices = nullptr;
-        UploadDeviceBuffers(device,
-                            deviceScene->compressedClusters,
-                            compressedMeshClusters,
-                            clusterOffsets,
-                            totalNumClusters);
-        UploadDeviceBuffers(device,
-                            deviceScene->compressedClusterBytes,
-                            container->compressedClusterBytes,
-                            compressedClusterByteOffsets,
-                            totalCompressedClusterBytes);
+        BuildMeshClusters(device,
+                          deviceArena,
+                          rootScene,
+                          container,
+                          deviceScene,
+                          meshHandles,
+                          bvhSourceIndices,
+                          objects);
     }
     else
 #endif
@@ -661,9 +728,38 @@ void GeometryManager::Update(Device *device,
                              hostMaterialHandles.numBytes());
     }
 
-    deviceScene->objects = reinterpret_cast<Object *>(
-        device->Alloc(sizeof(Object) * container->meshes.size()).Data());
-    device->CopyToDevice(deviceScene->objects, objects.data(), objects.numBytes());
+    // Lights
+    deviceScene->deviceLights = nullptr;
+    deviceScene->numLights = static_cast<uint32_t>(container->rectLights.size());
+    if (deviceScene->numLights)
+    {
+        View<DeviceLight> hostLights =
+            scratch.arena->PushArray<DeviceLight>(deviceScene->numLights);
+        for (size_t lightIndex = 0; lightIndex < container->rectLights.size(); ++lightIndex)
+        {
+            const RectLight &rectLight = container->rectLights[lightIndex];
+            DeviceLight &deviceLight = hostLights[lightIndex];
+
+            deviceLight.worldFromLocal = rectLight.localToWorld;
+            const bool invertible = rectLight.localToWorld.TryInverse(&deviceLight.localFromWorld);
+            YBI_ASSERT(invertible);
+
+            deviceLight.width = rectLight.width;
+            deviceLight.height = rectLight.height;
+            deviceLight.radiance = rectLight.radiance;
+        }
+
+        deviceScene->deviceLights = reinterpret_cast<DeviceLight *>(
+            device->Alloc(sizeof(DeviceLight) * hostLights.size()).Data());
+        device->CopyToDevice(deviceScene->deviceLights, hostLights.data(), hostLights.numBytes());
+    }
+
+    {
+    }
+
+    size_t objectBytes = sizeof(Object) * objects.size();
+    deviceScene->objects = reinterpret_cast<Object *>(device->Alloc(objectBytes).Data());
+    device->CopyToDevice(deviceScene->objects, objects.data(), objectBytes);
 
     printf("bvh total allocated: %zu\n", device->GetBVHAllocationSize());
 }

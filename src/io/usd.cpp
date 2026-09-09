@@ -9,6 +9,7 @@
 #include "core/thread_context.h"
 #include "io/usd_helpers.h"
 #include "io/usd_material.h"
+#include "pxr/base/gf/vec3f.h"
 #include "scene/scene.h"
 #include <algorithm>
 #include <atomic>
@@ -36,6 +37,8 @@
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdLux/rectLight.h>
+#include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdShade/connectableAPI.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -91,6 +94,9 @@ struct USDPrimTraversalData
     std::vector<pxr::UsdPrim> pointInstancers;
     std::vector<pxr::UsdPrim> instances;
     std::vector<pxr::UsdPrim> curves;
+
+    std::vector<pxr::UsdPrim> rectLights;
+    std::vector<pxr::UsdPrim> sphereLights;
 
     std::vector<pxr::UsdGeomCamera> cameras;
 };
@@ -1122,6 +1128,14 @@ void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
         {
             data->cameras.push_back(pxr::UsdGeomCamera(prim));
         }
+        else if (prim.IsA<pxr::UsdLuxRectLight>())
+        {
+            data->rectLights.push_back(prim);
+        }
+        else if (prim.IsA<pxr::UsdLuxSphereLight>())
+        {
+            data->sphereLights.push_back(prim);
+        }
 
         if (!pushChildren)
         {
@@ -1932,6 +1946,72 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
             }
             // YBI_LOGFATAL("%s\n", material.GetPath().GetString().c_str());
             // YBI_ASSERT(0);
+        }
+    }
+
+    // Handle lights
+    for (size_t sceneIndex = 0; sceneIndex < traversalDatas.size(); sceneIndex++)
+    {
+        const USDPrimTraversalData &data = traversalDatas[sceneIndex];
+
+        for (size_t i = 0; i < data.rectLights.size(); i++)
+        {
+            pxr::UsdLuxRectLight rectLight(data.rectLights[i]);
+
+            pxr::UsdAttribute widthAttr = rectLight.GetWidthAttr();
+            pxr::UsdAttribute heightAttr = rectLight.GetHeightAttr();
+            pxr::UsdAttribute intensityAttr = rectLight.GetIntensityAttr();
+            pxr::UsdAttribute exposureAttr = rectLight.GetExposureAttr();
+            pxr::UsdAttribute colorAttr = rectLight.GetColorAttr();
+            pxr::UsdAttribute normalizeAttr = rectLight.GetNormalizeAttr();
+
+            float width, height, intensity;
+            float exposure;
+            bool normalize;
+            pxr::GfVec3f radiance;
+            widthAttr.Get(&width, timeCode);
+            heightAttr.Get(&height, timeCode);
+            intensityAttr.Get(&intensity, timeCode);
+            exposureAttr.Get(&exposure, timeCode);
+            colorAttr.Get(&radiance, timeCode);
+            normalizeAttr.Get(&normalize, timeCode);
+
+            const pxr::GfMatrix4d localToWorld =
+                xformCache.GetLocalToWorldTransform(rectLight.GetPrim());
+
+            AffineTransform transform = ConvertAffineTransform(localToWorld);
+
+            printf("chungus: %f %f %f %f\n", width, height, intensity, exposure);
+
+            RectLight light;
+            light.localToWorld = transform;
+            light.width = width;
+            light.height = height;
+            light.radiance =
+                Vec3f(radiance[0], radiance[1], radiance[2]) * intensity * exp2f(exposure);
+
+            if (normalize)
+            {
+                const Vec3f worldWidth =
+                    transform.TransformVector(Vec3f(width, 0.f, 0.f));
+                const Vec3f worldHeight =
+                    transform.TransformVector(Vec3f(0.f, height, 0.f));
+                const float worldArea = Length(Cross(worldWidth, worldHeight));
+
+                if (worldArea > 0.f)
+                {
+                    light.radiance /= worldArea;
+                }
+                else
+                {
+                    light.radiance = Vec3f(0.f);
+                }
+            }
+
+            container->rectLights.push_back(light);
+
+            // pxr::UsdAttribute intensityAttr = rectLight.GetIntensityAttr();
+            // intensityAttr.GetSamp
         }
     }
 

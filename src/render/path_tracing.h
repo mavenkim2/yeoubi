@@ -12,6 +12,18 @@ YBI_CPU_GPU float LinearToDisplay(float value)
     return value <= 0.0031308f ? 12.92f * value : 1.055f * powf(value, 1.f / 2.4f) - 0.055f;
 }
 
+YBI_CPU_GPU float ReinhardToneMap(float value)
+{
+    value = Max(value, 0.f);
+    return value / (1.f + value);
+}
+
+YBI_CPU_GPU Vec3f ReinhardToneMap(const Vec3f &value)
+{
+    return Vec3f(
+        ReinhardToneMap(value.x), ReinhardToneMap(value.y), ReinhardToneMap(value.z));
+}
+
 YBI_CPU_GPU Vec3f AccumulateSamples(Vec3f *history,
                                     uint32_t previousSamples,
                                     const Vec3f &batchSum,

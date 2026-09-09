@@ -22,6 +22,7 @@ struct BVH
 {
     BVHHandle handle;
 
+    BVH() = default;
     BVH(BVHHandle handle) : handle(handle) {}
 };
 

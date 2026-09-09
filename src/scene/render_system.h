@@ -11,6 +11,7 @@ namespace ybi
 class DeviceArena;
 class VirtualTextureManager;
 
+struct BufferHandle;
 struct DataContainer;
 struct SceneImportContext;
 struct DisplayDevice;
@@ -19,6 +20,14 @@ struct Scene;
 
 struct GeometryManager
 {
+    void BuildMeshClusters(Device *device,
+                           DeviceArena *deviceArena,
+                           Scene *rootScene,
+                           DataContainer *container,
+                           DeviceScene *deviceScene,
+                           const Array<BufferHandle> &meshHandles,
+                           const std::vector<size_t> &bvhSourceIndices,
+                           Array<Object> &objects);
     void Update(Device *device,
                 DeviceArena *deviceArena,
                 DataContainer *container,

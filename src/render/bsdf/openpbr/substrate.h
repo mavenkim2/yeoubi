@@ -59,16 +59,13 @@ YBI_GPU bool SampleOpenPBR(const OpenPbrBsdf &bsdf,
         float specularPdf = PDFGGX(viewDirection, lightDirection, bsdf.specularRoughness);
 
         float pdf = diffusePdf * 0.5f + specularPdf * 0.5f;
-        if (pdf < 0.0001f)
-        {
-            printf("mega sigh: %f %f\n", diffusePdf, specularPdf);
-        }
 
         if (pdf <= 0.f)
             return false;
 
         weight = Vec3f(0.f);
-        // TODO: not hardcoded 0
+        // TODO: not hardcoded 0. also the diffuse lobe should be attenuated by gloss
+        // reflection
         weight += EvaluateDiffuseLobe(viewDirection, lightDirection, bsdf.baseColor, 0.f);
         weight += EvaluateGlossLobe(viewDirection,
                                     lightDirection,

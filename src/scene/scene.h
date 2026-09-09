@@ -71,6 +71,14 @@ struct Material
     bool valid;
 };
 
+struct RectLight
+{
+    AffineTransform localToWorld;
+    float width;
+    float height;
+    Vec3f radiance; // TODO: this can be a texture too
+};
+
 enum class GeometryType
 {
     Mesh,
@@ -279,11 +287,18 @@ struct DataContainer
     std::vector<OpenPbrMaterial> openPbrMaterials;
     std::vector<MaterialHandle> materialHandles;
 
+    std::vector<RectLight> rectLights;
+
     Attributes attributes;
 
     // BVHs
     std::array<Array<BVH>, int(GeometryType::Max)> bvhHandles;
 
+    // Default handles
+    BufferHandle defaultRectHandle;
+    BVH defaultRectBVH;
+
+    void Init(Device *device, DeviceArena *deviceArena);
     Array<BVH> &GetBVHs(GeometryType type);
     const Array<Vec3f> &GetMeshPositions(const Mesh &mesh) const;
     const Array<Vec3f> &GetMeshNormals(const Mesh &mesh) const;
