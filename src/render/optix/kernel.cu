@@ -335,8 +335,17 @@ YBI_GPU static void GetClusteredShadingInfo(const Object &object,
         object, info, cluster, clusterData, vertexIndices, shadingInfo.normals);
     shadingInfo.hasUvs = GetClusteredTriangleUVs(
         object, info, cluster, clusterData, vertexIndices, shadingInfo.uvs);
-    shadingInfo.hasMaterial =
-        GetClusteredTriangleMaterial(info, cluster, clusterData, shadingInfo.materialIndex);
+
+    if (object.materialIndex != -1)
+    {
+        shadingInfo.materialIndex = object.materialIndex;
+        shadingInfo.hasMaterial = true;
+    }
+    else
+    {
+        shadingInfo.hasMaterial =
+            GetClusteredTriangleMaterial(info, cluster, clusterData, shadingInfo.materialIndex);
+    }
 }
 
 YBI_GPU static void

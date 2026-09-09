@@ -20,14 +20,20 @@ struct Scene;
 
 struct GeometryManager
 {
-    void BuildMeshClusters(Device *device,
-                           DeviceArena *deviceArena,
-                           Scene *rootScene,
-                           DataContainer *container,
-                           DeviceScene *deviceScene,
-                           const Array<BufferHandle> &meshHandles,
-                           const std::vector<size_t> &bvhSourceIndices,
-                           Array<Object> &objects);
+    void BuildClusterMeshBVHsAndUpload(Device *device,
+                                       DeviceArena *deviceArena,
+                                       DataContainer *container,
+                                       DeviceScene *deviceScene,
+                                       const Array<BufferHandle> &meshHandles,
+                                       Array<Object> &objects,
+                                       Array<int> &objectBVHIndices);
+    void BuildTriangleMeshBVHsAndUpload(Device *device,
+                                        DeviceArena *deviceArena,
+                                        DataContainer *container,
+                                        DeviceScene *deviceScene,
+                                        const Array<BufferHandle> &meshHandles,
+                                        Array<Object> &objects,
+                                        Array<int> &objectBVHIndices);
     void Update(Device *device,
                 DeviceArena *deviceArena,
                 DataContainer *container,

@@ -96,7 +96,8 @@ struct CUDADevice : Device
     BuildTriangleBVH(DeviceArena *deviceArena, DataContainer *container, Mesh &mesh) override;
     BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                 const Array<Instance> &instances,
-                                DataContainer *container) override;
+                                DataContainer *container,
+                                const Array<int> &objectToBVHIndex) override;
     std::unique_ptr<DeviceArena> CreateArena() override;
     void CopyToHost(void *dst, void *ptr, size_t size) override;
     void CopyToHostAsync(void *dst, void *ptr, size_t size) override;

@@ -1366,7 +1366,8 @@ CUDADevice::BuildTriangleBVH(DeviceArena *deviceArena, DataContainer *container,
 
 BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
                                         const Array<Instance> &instances,
-                                        DataContainer *container)
+                                        DataContainer *container,
+                                        const Array<int> &objectToBVHIndex)
 {
     YBI_ASSERT(instances.size());
     ContextScope contextScope(this);
@@ -1382,13 +1383,15 @@ BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
         const Instance &instance = instances[index];
         YBI_ASSERT(instance.handle.type != GeometryType::Scene);
 
+        int bvhIndex = objectToBVHIndex[instance.handle.index];
+
         OptixInstance &optixInstance = sceneInstances[index];
         SetOptixInstanceDefaults(optixInstance);
         CopyTransformMatrix(instance.transform, optixInstance.transform);
         optixInstance.instanceId = instance.handle.index;
         optixInstance.sbtOffset = 0;
         optixInstance.traversableHandle =
-            (OptixTraversableHandle)container->GetBVHs(instance.handle.type)[instance.handle.index]
+            (OptixTraversableHandle)container->GetBVHs(instance.handle.type)[bvhIndex]
                 .handle.handle;
     }
 

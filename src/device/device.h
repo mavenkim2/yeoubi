@@ -136,7 +136,8 @@ struct Device
     BuildTriangleBVH(DeviceArena *deviceArena, DataContainer *container, Mesh &mesh) = 0;
     virtual BVHHandle BuildInstancesBVH(DeviceArena *deviceArena,
                                         const Array<Instance> &instances,
-                                        DataContainer *container) = 0;
+                                        DataContainer *container,
+                                        const Array<int> &objectToBVHIndex) = 0;
     virtual std::unique_ptr<DeviceArena> CreateArena() = 0;
     static std::unique_ptr<Device> CreateDevice(DeviceKind kind);
     virtual void CopyToDevice(void *dst, void *ptr, size_t size) = 0;

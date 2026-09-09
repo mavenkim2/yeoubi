@@ -7,6 +7,7 @@
 #include "device/device.h"
 #include "render/virtual_texture_manager.h"
 #include "scene/clusterizer.h"
+#include "scene/device_cluster.h"
 #include "scene/material.h"
 #include "scene/scene.h"
 #include "scene/shader_compilation.h"
@@ -139,6 +140,46 @@ static size_t CalculateBufferOffsets(const std::vector<Array<T>> &buffers,
     return totalSize;
 }
 
+template <typename T>
+static size_t CalculateBufferOffsetsForMeshes(const std::vector<Array<T>> &buffers,
+                                              std::vector<uint32_t> &offsets,
+                                              const std::vector<Mesh> &meshes,
+                                              const Array<BufferHandle> &meshHandles,
+                                              BufferHandle (Mesh::*getBufferHandle)() const)
+{
+    offsets.assign(buffers.size(), INVALID_OFFSET);
+
+    size_t totalSize = 0;
+    for (size_t i = 0; i < meshHandles.size(); i++)
+    {
+        const BufferHandle meshHandle = meshHandles[i];
+        YBI_ASSERT(meshHandle.IsValid());
+        YBI_ASSERT(meshHandle.index < meshes.size());
+
+        const BufferHandle handle = (meshes[meshHandle.index].*getBufferHandle)();
+        if (!handle.IsValid())
+        {
+            continue;
+        }
+
+        YBI_ASSERT(handle.index < buffers.size());
+
+        if (offsets[handle.index] != INVALID_OFFSET)
+        {
+            continue;
+        }
+
+        const Array<T> &buffer = buffers[handle.index];
+        if (buffer.size())
+        {
+            offsets[handle.index] = static_cast<uint32_t>(totalSize);
+            totalSize += buffer.size();
+        }
+    }
+
+    return totalSize;
+}
+
 static size_t CalculateCompressedClusterByteOffsets(const std::vector<Array<uint8_t>> &buffers,
                                                     std::vector<uint32_t> &offsets)
 {
@@ -178,12 +219,11 @@ static void UploadDeviceBuffers(Device *device,
     memset(flattenedBuffers.data(), 0, sizeof(T) * flattenedBuffers.size());
     tbb::parallel_for(size_t(0), buffers.size(), [&](size_t index) {
         const Array<T> &buffer = buffers[index];
-        if (!buffer.size())
+        if (!buffer.size() || offsets[index] == INVALID_OFFSET)
         {
             return;
         }
 
-        YBI_ASSERT(offsets[index] != INVALID_OFFSET);
         YBI_ASSERT(static_cast<size_t>(offsets[index]) + buffer.size() <= totalSize);
         memcpy(flattenedBuffers.data() + offsets[index], buffer.data(), sizeof(T) * buffer.size());
     });
@@ -204,10 +244,12 @@ static void UploadEncodedNormalBuffers(Device *device,
         return;
     }
 
+    YBI_ASSERT(offsets.size() == buffers.size());
+
     Array<uint32_t> encodedNormals(totalSize);
     tbb::parallel_for(size_t(0), buffers.size(), [&](size_t index) {
         const Array<Vec3f> &buffer = buffers[index];
-        if (!buffer.size())
+        if (!buffer.size() || offsets[index] == INVALID_OFFSET)
         {
             return;
         }
@@ -229,8 +271,11 @@ static void UploadEncodedNormalBuffers(Device *device,
     device->CopyToDevice(devicePtr, encodedNormals.data(), sizeof(uint32_t) * totalSize);
 }
 
-static void
-BuildTLAS(Device *device, DeviceArena *deviceArena, DataContainer *container, Scene *rootScene)
+static void BuildTLAS(Device *device,
+                      DeviceArena *deviceArena,
+                      DataContainer *container,
+                      const Scene *rootScene,
+                      const Array<int> &objectToBVHIndex)
 {
     YBI_ASSERT(device);
     YBI_ASSERT(deviceArena);
@@ -239,31 +284,234 @@ BuildTLAS(Device *device, DeviceArena *deviceArena, DataContainer *container, Sc
 
     // TODO: supports 2+ level scenes
     container->GetBVHs(GeometryType::Scene)
-        .EmplaceBack(device->BuildInstancesBVH(deviceArena, rootScene->instances, container));
+        .EmplaceBack(device->BuildInstancesBVH(
+            deviceArena, rootScene->instances, container, objectToBVHIndex));
 }
 
-// GeometryManager
-// void GeometryManager::UploadMeshesWithBVHs() {}
-
-void GeometryManager::BuildMeshClusters(Device *device,
-                                        DeviceArena *deviceArena,
-                                        Scene *rootScene,
-                                        DataContainer *container,
-                                        DeviceScene *deviceScene,
-                                        const Array<BufferHandle> &meshHandles,
-                                        const std::vector<size_t> &bvhSourceIndices,
-                                        Array<Object> &objects)
+void GeometryManager::BuildTriangleMeshBVHsAndUpload(Device *device,
+                                                     DeviceArena *deviceArena,
+                                                     DataContainer *container,
+                                                     DeviceScene *deviceScene,
+                                                     const Array<BufferHandle> &meshHandles,
+                                                     Array<Object> &objects,
+                                                     Array<int> &objectBVHIndices)
 {
+    YBI_ASSERT(objects.size() == objectBVHIndices.size());
+    std::vector<uint32_t> positionOffsets;
+    std::vector<uint32_t> normalOffsets;
+    std::vector<uint32_t> uvOffsets;
+    std::vector<uint32_t> uvIndexOffsets;
+    std::vector<uint32_t> triangleIndexOffsets;
+    std::vector<uint32_t> triangleMaterialIndexOffsets;
+
+    size_t totalNumVertices = CalculateBufferOffsetsForMeshes(container->meshPositions,
+                                                              positionOffsets,
+                                                              container->meshes,
+                                                              meshHandles,
+                                                              &Mesh::GetPositionsHandle);
+
+    size_t totalNumNormals = CalculateBufferOffsetsForMeshes(container->meshNormals,
+                                                             normalOffsets,
+                                                             container->meshes,
+                                                             meshHandles,
+                                                             &Mesh::GetNormalsHandle);
+
+    size_t totalNumUVs = CalculateBufferOffsetsForMeshes(
+        container->meshUVs, uvOffsets, container->meshes, meshHandles, &Mesh::GetUVsHandle);
+
+    size_t totalNumUVIndices = CalculateBufferOffsetsForMeshes(container->meshUVIndices,
+                                                               uvIndexOffsets,
+                                                               container->meshes,
+                                                               meshHandles,
+                                                               &Mesh::GetUVIndicesHandle);
+
+    size_t totalNumTriangleIndices =
+        CalculateBufferOffsetsForMeshes(container->meshTriangleIndices,
+                                        triangleIndexOffsets,
+                                        container->meshes,
+                                        meshHandles,
+                                        &Mesh::GetIndicesHandle);
+
+    size_t totalNumTriangleMaterialIndices =
+        CalculateBufferOffsetsForMeshes(container->meshFaceMaterialIndices,
+                                        triangleMaterialIndexOffsets,
+                                        container->meshes,
+                                        meshHandles,
+                                        &Mesh::GetFaceMaterialIndicesHandle);
+
+    std::vector<size_t> bvhSourceIndices;
+    bvhSourceIndices.reserve(meshHandles.size());
+    std::unordered_map<uint64_t, size_t> bvhPairToHandleIndex;
+
+    for (size_t handleIndex = 0; handleIndex < meshHandles.size(); handleIndex++)
+    {
+        const size_t meshIndex = meshHandles[handleIndex].index;
+        Mesh &mesh = container->meshes[meshIndex];
+        Object &object = objects[meshIndex];
+        object.positionOffset = INVALID_OFFSET;
+        object.normalOffset = INVALID_OFFSET;
+        object.uvOffset = INVALID_OFFSET;
+        object.uvIndexOffset = INVALID_OFFSET;
+        object.triangleIndexOffset = INVALID_OFFSET;
+        object.triangleMaterialOffset = INVALID_OFFSET;
+        object.clusterOffset = INVALID_OFFSET;
+
+        // TODO: support primvars in the non clustered path
+        YBI_ASSERT(mesh.GetPrimvars().size() == 0);
+
+        BufferHandle positionHandle = mesh.GetPositionsHandle();
+        BufferHandle normalHandle = mesh.GetNormalsHandle();
+        BufferHandle uvHandle = mesh.GetUVsHandle();
+        BufferHandle uvIndexHandle = mesh.GetUVIndicesHandle();
+        BufferHandle indexHandle = mesh.GetIndicesHandle();
+        BufferHandle triangleMaterialHandle = mesh.GetFaceMaterialIndicesHandle();
+
+        if (positionHandle.IsValid())
+        {
+            object.positionOffset = positionOffsets[positionHandle.index];
+        }
+
+        if (normalHandle.IsValid())
+        {
+            object.normalOffset = normalOffsets[normalHandle.index];
+        }
+
+        if (indexHandle.IsValid())
+        {
+            object.triangleIndexOffset = triangleIndexOffsets[indexHandle.index];
+        }
+
+        if (uvHandle.IsValid())
+        {
+            object.uvOffset = uvOffsets[uvHandle.index];
+        }
+
+        if (uvIndexHandle.IsValid())
+        {
+            object.uvIndexOffset = uvIndexOffsets[uvIndexHandle.index];
+        }
+
+        if (triangleMaterialHandle.IsValid())
+        {
+            object.triangleMaterialOffset =
+                triangleMaterialIndexOffsets[triangleMaterialHandle.index];
+        }
+
+        if (positionHandle.IsValid() && indexHandle.IsValid())
+        {
+            uint64_t key = (uint64_t(positionHandle.index) << 32) | uint64_t(indexHandle.index);
+            auto it = bvhPairToHandleIndex.find(key);
+            if (it == bvhPairToHandleIndex.end())
+            {
+                bvhPairToHandleIndex.insert({key, handleIndex});
+                bvhSourceIndices.push_back(handleIndex);
+            }
+            else
+            {
+                bvhSourceIndices.push_back(it->second);
+            }
+        }
+        else
+        {
+            bvhSourceIndices.push_back(handleIndex);
+        }
+    }
+
+    Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
+    const Timer buildTriangleBVHsTimer = StartTimer();
+    for (size_t handleIndex = 0; handleIndex < meshHandles.size(); handleIndex++)
+    {
+        const size_t meshIndex = meshHandles[handleIndex].index;
+        Mesh &mesh = container->meshes[meshIndex];
+        const size_t sourceIndex = bvhSourceIndices[handleIndex];
+
+        if (sourceIndex != handleIndex)
+        {
+            const size_t sourceMeshIndex = meshHandles[sourceIndex].index;
+            YBI_ASSERT(objectBVHIndices[sourceMeshIndex] >= 0);
+            objectBVHIndices[meshIndex] = objectBVHIndices[sourceMeshIndex];
+        }
+        else
+        {
+            bvhs.EmplaceBack(device->BuildTriangleBVH(deviceArena, container, mesh));
+            objectBVHIndices[meshIndex] = static_cast<int>(bvhs.size() - 1);
+        }
+    }
+
+    YBI_ASSERT(objects.size() == objectBVHIndices.size());
+    const double buildTriangleBVHsMilliseconds = StopTimer(buildTriangleBVHsTimer);
+    printf("BuildTriangleBVHs: %.3f ms\n", buildTriangleBVHsMilliseconds);
+
+    UploadDeviceBuffers(device,
+                        deviceScene->triangleIndices,
+                        container->meshTriangleIndices,
+                        triangleIndexOffsets,
+                        totalNumTriangleIndices);
+    UploadDeviceBuffers(device,
+                        deviceScene->positions,
+                        container->meshPositions,
+                        positionOffsets,
+                        totalNumVertices);
+    UploadEncodedNormalBuffers(
+        device, deviceScene->normals, container->meshNormals, normalOffsets, totalNumNormals);
+    UploadDeviceBuffers(device, deviceScene->uvs, container->meshUVs, uvOffsets, totalNumUVs);
+    UploadDeviceBuffers(device,
+                        deviceScene->uvIndices,
+                        container->meshUVIndices,
+                        uvIndexOffsets,
+                        totalNumUVIndices);
+    UploadDeviceBuffers(device,
+                        deviceScene->triangleMaterialIndices,
+                        container->meshFaceMaterialIndices,
+                        triangleMaterialIndexOffsets,
+                        totalNumTriangleMaterialIndices);
+}
+
+void GeometryManager::BuildClusterMeshBVHsAndUpload(Device *device,
+                                                    DeviceArena *deviceArena,
+                                                    DataContainer *container,
+                                                    DeviceScene *deviceScene,
+                                                    const Array<BufferHandle> &meshHandles,
+                                                    Array<Object> &objects,
+                                                    Array<int> &objectBVHIndices)
+{
+    YBI_ASSERT(objects.size() == objectBVHIndices.size());
     // Contains index into meshHandles
     std::vector<size_t> clusterSourceIndices;
     std::unordered_multimap<uint64_t, size_t> clusterHashToHandleIndex;
     clusterSourceIndices.reserve(meshHandles.size());
 
+    std::vector<size_t> bvhSourceIndices;
+    bvhSourceIndices.reserve(meshHandles.size());
+    std::unordered_map<uint64_t, size_t> bvhPairToHandleIndex;
+
+    // If meshes have same position/indices
     // If meshes have exact same data, then reuse their cluster data
     for (size_t handleIndex = 0; handleIndex < meshHandles.size(); handleIndex++)
     {
         BufferHandle handle = meshHandles[handleIndex];
         const Mesh &mesh = container->meshes[handle.index];
+
+        BufferHandle positionHandle = mesh.GetPositionsHandle();
+        BufferHandle indexHandle = mesh.GetIndicesHandle();
+        if (positionHandle.IsValid() && indexHandle.IsValid())
+        {
+            uint64_t key = (uint64_t(positionHandle.index) << 32) | uint64_t(indexHandle.index);
+            auto it = bvhPairToHandleIndex.find(key);
+            if (it == bvhPairToHandleIndex.end())
+            {
+                bvhPairToHandleIndex.insert({key, handleIndex});
+                bvhSourceIndices.push_back(handleIndex);
+            }
+            else
+            {
+                bvhSourceIndices.push_back(it->second);
+            }
+        }
+        else
+        {
+            bvhSourceIndices.push_back(handleIndex);
+        }
 
         const uint64_t clusterHash = HashMeshClusterData(mesh);
         const auto clusterCandidates = clusterHashToHandleIndex.equal_range(clusterHash);
@@ -382,39 +630,37 @@ void GeometryManager::BuildMeshClusters(Device *device,
         YBI_ASSERT(clusterOffsets[sourceHandleIndex] != INVALID_OFFSET);
 
         const size_t meshIndex = meshHandles[handleIndex].index;
-
-        objects[meshIndex].triangleIndexOffset = INVALID_OFFSET;
-        objects[meshIndex].clusterOffset = clusterOffsets[sourceHandleIndex];
+        Object &object = objects[meshIndex];
+        object.triangleIndexOffset = INVALID_OFFSET;
+        object.clusterOffset = clusterOffsets[sourceHandleIndex];
     }
 
     Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
+
     const Timer buildClusterBVHsTimer = StartTimer();
     for (size_t handleIndex = 0; handleIndex < meshHandles.size(); handleIndex++)
     {
-        Mesh &mesh = container->meshes[meshHandles[handleIndex].index];
+        const size_t meshIndex = meshHandles[handleIndex].index;
+        Mesh &mesh = container->meshes[meshIndex];
         const size_t sourceIndex = bvhSourceIndices[handleIndex];
 
         if (sourceIndex != handleIndex)
         {
-            bvhs.EmplaceBack(bvhs[sourceIndex]);
-            continue;
+            const size_t sourceMeshIndex = meshHandles[sourceIndex].index;
+            YBI_ASSERT(objectBVHIndices[sourceMeshIndex] >= 0);
+            objectBVHIndices[meshIndex] = objectBVHIndices[sourceMeshIndex];
         }
-
-        const MeshletClustersResult &result = clusterResults[handleIndex];
-        YBI_ASSERT(result.meshlets.size());
-        bvhs.EmplaceBack(device->BuildClusterBVH(deviceArena, container, mesh, result));
+        else
+        {
+            const MeshletClustersResult &result = clusterResults[handleIndex];
+            YBI_ASSERT(result.meshlets.size());
+            bvhs.EmplaceBack(device->BuildClusterBVH(deviceArena, container, mesh, result));
+            objectBVHIndices[meshIndex] = static_cast<int>(bvhs.size() - 1);
+        }
     }
     const double buildClusterBVHsMilliseconds = StopTimer(buildClusterBVHsTimer);
     printf("BuildClusterBVHs: %.3f ms\n", buildClusterBVHsMilliseconds);
 
-    BuildTLAS(device, deviceArena, container, rootScene);
-
-    deviceScene->positions = nullptr;
-    deviceScene->normals = nullptr;
-    deviceScene->uvs = nullptr;
-    deviceScene->uvIndices = nullptr;
-    deviceScene->triangleIndices = nullptr;
-    deviceScene->triangleMaterialIndices = nullptr;
     UploadDeviceBuffers(device,
                         deviceScene->compressedClusters,
                         compressedMeshClusters,
@@ -435,6 +681,15 @@ void GeometryManager::Update(Device *device,
 {
     // TODO: this function is a bit overloaded maybe
     ScratchArena scratch;
+
+    deviceScene->positions = nullptr;
+    deviceScene->normals = nullptr;
+    deviceScene->uvs = nullptr;
+    deviceScene->uvIndices = nullptr;
+    deviceScene->triangleIndices = nullptr;
+    deviceScene->triangleMaterialIndices = nullptr;
+    deviceScene->compressedClusters = nullptr;
+    deviceScene->compressedClusterBytes = nullptr;
 
     // Set up device scene
     Array<Object> objects;
@@ -464,6 +719,7 @@ void GeometryManager::Update(Device *device,
         deviceMaterial.valid = material.valid;
     }
 
+#if 0
     std::vector<uint32_t> positionOffsets;
     std::vector<uint32_t> normalOffsets;
     std::vector<uint32_t> uvOffsets;
@@ -497,12 +753,6 @@ void GeometryManager::Update(Device *device,
     std::vector<size_t> bvhSourceIndices;
     bvhSourceIndices.reserve(container->meshes.size());
     std::unordered_map<uint64_t, size_t> bvhPairToMeshIndex;
-
-    // Unlike a BVH, a compressed cluster embeds shading data. Reuse it only when all
-    // standard mesh buffers, material assignments, and array primvars match.
-    std::vector<size_t> clusterSourceIndices;
-    clusterSourceIndices.reserve(container->meshes.size());
-    std::unordered_multimap<uint64_t, size_t> clusterHashToMeshIndex;
 
     for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
     {
@@ -586,98 +836,107 @@ void GeometryManager::Update(Device *device,
         {
             bvhSourceIndices.push_back(meshIndex);
         }
+    }
+#endif
 
-        const uint64_t clusterHash = HashMeshClusterData(mesh);
-        const auto clusterCandidates = clusterHashToMeshIndex.equal_range(clusterHash);
-        size_t clusterSourceIndex = meshIndex;
-        for (auto it = clusterCandidates.first; it != clusterCandidates.second; ++it)
+    // Object IDs reported by the intersection API are mesh indices, so keep the
+    // device object table in that same index domain regardless of which build path
+    // handles each mesh.
+    std::vector<uint32_t> meshPrimvarOffsets(container->meshes.size());
+    size_t primvarOffset = 0;
+    objects.Resize(container->meshes.size());
+    for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+    {
+        const Mesh &mesh = container->meshes[meshIndex];
+        YBI_ASSERT(mesh.PrimvarsAreSorted());
+
+        meshPrimvarOffsets[meshIndex] = static_cast<uint32_t>(primvarOffset);
+        primvarOffset += mesh.GetPrimvars().size();
+
+        Object &object = objects[meshIndex];
+        object = {};
+        object.positionOffset = INVALID_OFFSET;
+        object.normalOffset = INVALID_OFFSET;
+        object.uvOffset = INVALID_OFFSET;
+        object.uvIndexOffset = INVALID_OFFSET;
+        object.triangleIndexOffset = INVALID_OFFSET;
+        object.triangleMaterialOffset = INVALID_OFFSET;
+        object.clusterOffset = INVALID_OFFSET;
+        object.uvType = mesh.GetUVType();
+        object.normalType = mesh.GetNormalType();
+        object.primvarOffset = meshPrimvarOffsets[meshIndex];
+        object.primvarCount = static_cast<uint32_t>(mesh.GetPrimvars().size());
+
+        const uint32_t materialIndex = mesh.GetMaterialIndex();
+        if (materialIndex < container->materialHandles.size())
         {
-            if (MeshClusterDataEqual(mesh, container->meshes[it->second]))
-            {
-                clusterSourceIndex = it->second;
-                break;
-            }
+            object.materialIndex = static_cast<int>(materialIndex);
         }
-        if (clusterSourceIndex == meshIndex)
-        {
-            clusterHashToMeshIndex.emplace(clusterHash, meshIndex);
-        }
-        clusterSourceIndices.push_back(clusterSourceIndex);
     }
 
     // Create BVHs
     container->GetBVHs(GeometryType::Mesh).Reserve(container->meshes.size());
     printf("num meshes: %zu\n", container->meshes.size());
 
+    Array<BufferHandle> clusterMeshHandles;
+    Array<BufferHandle> triangleMeshHandles;
+    // Maps object to bvh index
+    Array<int> objectToBVHIndex;
+    objectToBVHIndex.Resize(container->meshes.size());
+    for (size_t meshIndex = 0; meshIndex < objectToBVHIndex.size(); meshIndex++)
+    {
+        objectToBVHIndex[meshIndex] = -1;
+    }
 #ifdef YBI_USE_CLUSTERS
     if (device->SupportsClusterBVHs())
     {
-        Array<BufferHandle> meshHandles;
         for (uint32_t i = 0; i < container->meshes.size(); i++)
         {
-            meshHandles.EmplaceBack(BufferHandle{i});
+            const Mesh &mesh = container->meshes[i];
+
+            clusterMeshHandles.EmplaceBack(BufferHandle{i});
+            // TODO: more criteria for using clusters vs triangles
+            // if (i == container->defaultRectHandle.index)
+            // {
+            //     triangleMeshHandles.EmplaceBack(BufferHandle{i});
+            // }
+            // else
+            // {
+            //     clusterMeshHandles.EmplaceBack(BufferHandle{i});
+            // }
         }
-        BuildMeshClusters(device,
-                          deviceArena,
-                          rootScene,
-                          container,
-                          deviceScene,
-                          meshHandles,
-                          bvhSourceIndices,
-                          objects);
     }
     else
 #endif
     {
-        const Timer buildTriangleBVHsTimer = StartTimer();
-        for (size_t meshIndex = 0; meshIndex < container->meshes.size(); meshIndex++)
+        for (uint32_t i = 0; i < container->meshes.size(); i++)
         {
-            Mesh &mesh = container->meshes[meshIndex];
-            const size_t sourceIndex = bvhSourceIndices[meshIndex];
-
-            if (sourceIndex != meshIndex)
-            {
-                Array<BVH> &bvhs = container->GetBVHs(GeometryType::Mesh);
-                // TODO: this is brittle. also bvhs probably shouldn't be duplicated
-                bvhs.EmplaceBack(bvhs[sourceIndex]);
-            }
-            else
-            {
-                container->GetBVHs(GeometryType::Mesh)
-                    .EmplaceBack(device->BuildTriangleBVH(deviceArena, container, mesh));
-            }
+            triangleMeshHandles.EmplaceBack(BufferHandle{i});
         }
-        const double buildTriangleBVHsMilliseconds = StopTimer(buildTriangleBVHsTimer);
-        printf("BuildTriangleBVHs: %.3f ms\n", buildTriangleBVHsMilliseconds);
-
-        BuildTLAS(device, deviceArena, container, rootScene);
-
-        UploadDeviceBuffers(device,
-                            deviceScene->triangleIndices,
-                            container->meshTriangleIndices,
-                            triangleIndexOffsets,
-                            totalNumTriangleIndices);
-        UploadDeviceBuffers(device,
-                            deviceScene->positions,
-                            container->meshPositions,
-                            positionOffsets,
-                            totalNumVertices);
-        UploadEncodedNormalBuffers(
-            device, deviceScene->normals, container->meshNormals, normalOffsets, totalNumNormals);
-        UploadDeviceBuffers(device, deviceScene->uvs, container->meshUVs, uvOffsets, totalNumUVs);
-        UploadDeviceBuffers(device,
-                            deviceScene->uvIndices,
-                            container->meshUVIndices,
-                            uvIndexOffsets,
-                            totalNumUVIndices);
-        UploadDeviceBuffers(device,
-                            deviceScene->triangleMaterialIndices,
-                            container->meshFaceMaterialIndices,
-                            triangleMaterialIndexOffsets,
-                            totalNumTriangleMaterialIndices);
-        deviceScene->compressedClusters = nullptr;
-        deviceScene->compressedClusterBytes = nullptr;
     }
+
+    if (clusterMeshHandles.size())
+    {
+        BuildClusterMeshBVHsAndUpload(device,
+                                      deviceArena,
+                                      container,
+                                      deviceScene,
+                                      clusterMeshHandles,
+                                      objects,
+                                      objectToBVHIndex);
+    }
+    if (triangleMeshHandles.size())
+    {
+        BuildTriangleMeshBVHsAndUpload(device,
+                                       deviceArena,
+                                       container,
+                                       deviceScene,
+                                       triangleMeshHandles,
+                                       objects,
+                                       objectToBVHIndex);
+    }
+
+    BuildTLAS(device, deviceArena, container, rootScene, objectToBVHIndex);
 
     // Upload primvars
     if (primvarOffset)
@@ -708,7 +967,6 @@ void GeometryManager::Update(Device *device,
 
     Help();
 
-    printf("total num vertices: %zu\n", totalNumVertices);
     printf("num instances: %zu\n", rootScene->instances.size());
 
     deviceScene->materials = nullptr;
