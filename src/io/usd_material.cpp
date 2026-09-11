@@ -453,7 +453,6 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                         materialInputs.push_back(
                             {inputName, LoadConstant(input.GetAttr(), value, timeCode)});
                         useDefault = false;
-                        DebugPrintConstant(materialInputs.back());
                     }
                 }
 
@@ -486,7 +485,6 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                         materialInputs.push_back(
                             {inputName, LoadConstant(producer, value, timeCode)});
                         useDefault = false;
-                        DebugPrintConstant(materialInputs.back());
                         break;
                     }
                     else
@@ -531,9 +529,6 @@ LoadMtlxShader(MaterialGraph &graph, const pxr::UsdShadeShader &shader, pxr::Usd
     NodeMap nodeMap;
     graph.outputNode = LoadMtlxShaderHelper(shader, graph, nodeMap, timeCode);
 
-    // if (graph.outputNode != kInvalidMaterialNodeId)
-    //     CompileShader(graph, graph.outputNode);
-    printf("\n");
     return graph.outputNode;
 }
 
@@ -591,8 +586,6 @@ void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                     pxr::TfToken shaderId;
                     sourceShader.GetShaderId(&shaderId);
 
-                    printf("input type: %s\n", descriptor.token.GetText());
-                    printf("%s\n", shaderId.GetText());
                     material->*descriptor.member =
                         LoadMtlxShader(material->graph, sourceShader, timeCode);
                 }

@@ -11,6 +11,10 @@ namespace ybi
 
 struct OpenPbrBsdf
 {
+    float fuzzWeight;
+    Vec3f fuzzColor;
+    float fuzzRoughness;
+
     float specularIor;
     Vec2f specularRoughness;
     Vec3f specularColor;
@@ -34,6 +38,10 @@ YBI_GPU void InitializeOpenPbrBsdf(const KernelParams &params,
                                    const ShadingInfo &info,
                                    OpenPbrBsdf &bsdf)
 {
+    bsdf.fuzzWeight = EvaluateShader<float>(params, info, material.fuzz_weight);
+    bsdf.fuzzColor = EvaluateShader<Vec3f>(params, info, material.fuzz_color);
+    bsdf.fuzzRoughness = EvaluateShader<float>(params, info, material.fuzz_roughness);
+
     float specularIor = EvaluateShader<float>(params, info, material.specular_ior);
     float specularWeight = EvaluateShader<float>(params, info, material.specular_weight);
     float specularAnisotropy =

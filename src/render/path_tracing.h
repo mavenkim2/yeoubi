@@ -20,8 +20,39 @@ YBI_CPU_GPU float ReinhardToneMap(float value)
 
 YBI_CPU_GPU Vec3f ReinhardToneMap(const Vec3f &value)
 {
-    return Vec3f(
-        ReinhardToneMap(value.x), ReinhardToneMap(value.y), ReinhardToneMap(value.z));
+    return Vec3f(ReinhardToneMap(value.x), ReinhardToneMap(value.y), ReinhardToneMap(value.z));
+}
+
+YBI_CPU_GPU float FastACESToneMap(float value)
+{
+    value = Max(value, 0.f);
+
+    constexpr float a = 2.51f;
+    constexpr float b = 0.03f;
+    constexpr float c = 2.43f;
+    constexpr float d = 0.59f;
+    constexpr float e = 0.14f;
+
+    return Clamp((value * (a * value + b)) / (value * (c * value + d) + e), 0.f, 1.f);
+}
+
+YBI_CPU_GPU Vec3f FastACESToneMap(const Vec3f &value)
+{
+    return Vec3f(FastACESToneMap(value.x), FastACESToneMap(value.y), FastACESToneMap(value.z));
+}
+
+YBI_CPU_GPU float PowerHeuristic(float sampledPdf, float otherPdf)
+{
+    const double a = sampledPdf;
+    const double b = otherPdf;
+    const double aa = a * a;
+    const double bb = b * b;
+    const double sum = aa + bb;
+    return sum > 0.0 ? float(aa / sum) : 0.f;
+    // const float sampledPdfSquared = sampledPdf * sampledPdf;
+    // const float otherPdfSquared = otherPdf * otherPdf;
+    // const float sum = sampledPdfSquared + otherPdfSquared;
+    // return sum > 0.f ? sampledPdfSquared / sum : 0.f;
 }
 
 YBI_CPU_GPU Vec3f AccumulateSamples(Vec3f *history,

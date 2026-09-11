@@ -9,6 +9,7 @@
 #include "device/device_texture.h"
 #include "device/kernel_params.h"
 #include "display_device/display_device.h"
+#include "render/optix/visibility_mask.h"
 #include "scene/clusterizer.h"
 #include "scene/scene.h"
 #include <cstddef>
@@ -1104,7 +1105,7 @@ static void CopyTransformMatrix(const AffineTransform &transform, float out[12])
 static void SetOptixInstanceDefaults(OptixInstance &instance)
 {
     memset(&instance, 0, sizeof(instance));
-    instance.visibilityMask = 0xFFu;
+    instance.visibilityMask = OPTIX_VISIBILITY_ALL;
     instance.flags = OPTIX_INSTANCE_FLAG_NONE;
 }
 
@@ -1378,6 +1379,13 @@ BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
 
     View<OptixInstance> sceneInstances = scratch.arena->PushArray<OptixInstance>(instances.size());
 
+    std::vector<bool> lightMeshes(container->meshes.size(), false);
+    for (const RectLight &light : container->rectLights)
+    {
+        YBI_ASSERT(light.meshIndex < lightMeshes.size());
+        lightMeshes[light.meshIndex] = true;
+    }
+
     for (size_t index = 0; index < instances.size(); index++)
     {
         const Instance &instance = instances[index];
@@ -1387,6 +1395,10 @@ BVHHandle CUDADevice::BuildInstancesBVH(DeviceArena *deviceArena,
 
         OptixInstance &optixInstance = sceneInstances[index];
         SetOptixInstanceDefaults(optixInstance);
+        if (instance.handle.type == GeometryType::Mesh && lightMeshes[instance.handle.index])
+        {
+            optixInstance.visibilityMask = OPTIX_VISIBILITY_LIGHT;
+        }
         CopyTransformMatrix(instance.transform, optixInstance.transform);
         optixInstance.instanceId = instance.handle.index;
         optixInstance.sbtOffset = 0;

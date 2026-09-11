@@ -73,6 +73,10 @@ YBI_CPU_GPU Vec3f EvaluateDiffuseLobe(const Vec3f &viewDirection,
                                       const Vec3f &rho,
                                       float r)
 {
+    if (lightDirection.z <= 0.f)
+    {
+        return Vec3f(0.f);
+    }
     Vec3f bsdfCos(EvaluateOrenNayar(viewDirection, lightDirection, rho, r) * lightDirection.z);
     return bsdfCos;
 }

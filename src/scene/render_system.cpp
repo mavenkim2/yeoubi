@@ -691,9 +691,6 @@ void GeometryManager::Update(Device *device,
     deviceScene->compressedClusters = nullptr;
     deviceScene->compressedClusterBytes = nullptr;
 
-    // Represent each rect light as an ordinary mesh instance. The mesh only provides
-    // an object/instance ID; all rect lights share the unit rectangle BLAS created by
-    // DataContainer::Init.
     YBI_ASSERT(container->defaultRectHandle.IsValid());
     YBI_ASSERT(container->defaultRectHandle.index < container->meshes.size());
     const Mesh defaultRectMesh = container->meshes[container->defaultRectHandle.index];
@@ -1272,6 +1269,12 @@ void MaterialManager::Update(Device *device,
             ProcessMaterialGraph(material, material.specular_roughness_anisotropy, shaderNodes);
         deviceMaterial.specular_ior =
             ProcessMaterialGraph(material, material.specular_ior, shaderNodes);
+        deviceMaterial.fuzz_weight =
+            ProcessMaterialGraph(material, material.fuzz_weight, shaderNodes);
+        deviceMaterial.fuzz_color =
+            ProcessMaterialGraph(material, material.fuzz_color, shaderNodes);
+        deviceMaterial.fuzz_roughness =
+            ProcessMaterialGraph(material, material.fuzz_roughness, shaderNodes);
         // #define VISIT_PARAMETER(name, type) \
         //     deviceMaterial.name = ProcessMaterialGraph(material, #name,
         //     material.name, shaderNodes);

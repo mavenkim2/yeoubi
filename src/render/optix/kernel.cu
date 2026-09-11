@@ -11,6 +11,8 @@
 #include "render/bsdf/openpbr/substrate.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
+#include "render/lights/sample.h"
+#include "render/optix/visibility_mask.h"
 #include "render/path_tracing.h"
 #include "render/ray_cone.h"
 #include "render/ray_cone_utils.h"
@@ -414,6 +416,36 @@ extern "C" __global__ void __closesthit__kernel()
     }
 }
 
+YBI_GPU static bool TraceVisibility(OptixTraversableHandle bvhHandle,
+                                    const Vec3f &rayOrigin,
+                                    const Vec3f &rayDirection,
+                                    float tMax)
+{
+    if (tMax <= 0.f)
+        return false;
+
+    IntersectionInfo shadowInfo{};
+    const uint64_t ptr = reinterpret_cast<uint64_t>(&shadowInfo);
+    uint32_t low = static_cast<uint32_t>(ptr);
+    uint32_t high = static_cast<uint32_t>(ptr >> 32u);
+
+    optixTrace(bvhHandle,
+               make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
+               make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
+               0.f,
+               tMax,
+               0.f,
+               OPTIX_VISIBILITY_SHADOW,
+               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+               0,
+               0,
+               0,
+               low,
+               high);
+
+    return shadowInfo.type == INTERSECTION_TYPE_NONE;
+}
+
 YBI_GPU void RenderUnidirectional();
 
 extern "C" __global__ void __raygen__kernel()
@@ -614,6 +646,9 @@ YBI_GPU void RenderUnidirectional()
             atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
         Vec3f radiance(0.f);
         Vec3f throughput(1.f);
+        Vec3f previousSurfacePosition(0.f);
+        float previousBsdfPdf = 0.f;
+        bool hasPreviousBsdfSample = false;
 
         for (int depth = 0; depth <= maxDepth;)
         {
@@ -645,7 +680,7 @@ YBI_GPU void RenderUnidirectional()
                 // Vec3f environment(0.02f);
                 // if (Dot(rayDirection, sunDirection) > 0.995f)
                 //     environment = Vec3f(20.0f);
-                radiance += throughput * 0.5f; // environment; // Vec3f(0.5f);
+                // radiance += throughput * 0.5f; // environment; // Vec3f(0.5f);
                 break;
             }
 
@@ -659,7 +694,17 @@ YBI_GPU void RenderUnidirectional()
                 const Vec3f localRayDirection = light.localFromWorld.TransformVector(rayDirection);
                 if (localRayDirection.z > 0.f)
                 {
-                    radiance += throughput * light.radiance;
+                    float misWeight = 1.f;
+                    if (hasPreviousBsdfSample)
+                    {
+                        const Vec3f lightHitPosition = rayOrigin + info.t * rayDirection;
+                        const float lightPdf = PDFLight(params,
+                                                        static_cast<uint32_t>(object.lightIndex),
+                                                        previousSurfacePosition,
+                                                        lightHitPosition);
+                        misWeight = PowerHeuristic(previousBsdfPdf, lightPdf);
+                    }
+                    radiance += throughput * light.radiance * misWeight;
                 }
 
                 const Vec3f lightHitPosition = rayOrigin + info.t * rayDirection;
@@ -734,6 +779,51 @@ YBI_GPU void RenderUnidirectional()
 
             OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
             const Vec3f viewDirection = basis.WorldToLocal(-rayDirection);
+            // Sample Light
+            if (params.scene.numLights > 0)
+            {
+                int sampledLightIndex;
+                Vec3f sampledLightPosition;
+                float lightPdf;
+                Vec3f sampledLightDirection = SampleLight(params,
+                                                          shadingInfo.position,
+                                                          Vec3f(rng.Uniform(), rng.Uniform2D()),
+                                                          sampledLightIndex,
+                                                          sampledLightPosition,
+                                                          lightPdf);
+
+                if (lightPdf != 0.f)
+                {
+                    const DeviceLight &sampledLight = params.scene.deviceLights[sampledLightIndex];
+
+                    const Vec3f localLightDirection = basis.WorldToLocal(sampledLightDirection);
+                    Vec3f sampledLightBsdfWeight =
+                        EvaluateOpenPBR(bsdf, viewDirection, localLightDirection);
+                    float sampledLightBsdfPdf =
+                        PDFOpenPBR(bsdf, viewDirection, localLightDirection);
+                    if (sampledLightBsdfWeight.MaxComponent() != 0.f)
+                    {
+                        const Vec3f shadowNormal =
+                            Dot(sampledLightDirection, geometricNormal) >= 0.f ? geometricNormal
+                                                                               : -geometricNormal;
+                        const Vec3f shadowOrigin =
+                            OffsetRayOrigin(shadingInfo.position, shadowNormal);
+                        const Vec3f shadowToLight = sampledLightPosition - shadowOrigin;
+                        const float shadowDistance = Length(shadowToLight);
+                        const Vec3f shadowDirection = shadowToLight / shadowDistance;
+
+                        if (TraceVisibility(bvhHandle,
+                                            shadowOrigin,
+                                            shadowDirection,
+                                            shadowDistance * (1.f - 1e-4f)))
+                        {
+                            const float misWeight = PowerHeuristic(lightPdf, sampledLightBsdfPdf);
+                            radiance += throughput * sampledLight.radiance *
+                                        sampledLightBsdfWeight * misWeight / lightPdf;
+                        }
+                    }
+                }
+            }
 
             Vec3f lightDirection, weight;
             bool success = SampleOpenPBR(
@@ -767,6 +857,9 @@ YBI_GPU void RenderUnidirectional()
 
             if (Dot(nextDirection, geometricNormal) <= 0.f)
                 break;
+            previousSurfacePosition = shadingInfo.position;
+            previousBsdfPdf = PDFOpenPBR(bsdf, viewDirection, lightDirection);
+            hasPreviousBsdfSample = true;
             rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
             rayDirection = nextDirection;
             ++depth;
@@ -779,7 +872,7 @@ YBI_GPU void RenderUnidirectional()
     Vec3f *history = params.accumulation ? params.accumulation + pixelIndex : nullptr;
     const Vec3f linearColor =
         AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
-    const Vec3f displayColor = linearColor; // ReinhardToneMap(linearColor);
+    const Vec3f displayColor = linearColor; // FastACESToneMap(linearColor);
     image[pixelIndex] =
         make_uchar4(static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.x) + 0.5f),
                     static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.y) + 0.5f),

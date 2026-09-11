@@ -1,12 +1,13 @@
 #pragma once
 
+#include "device/cuda_compat.h"
+
 namespace ybi
 {
 
 #define LTC_ARRAY_DIM 32
 
-static const Vec3f LTC_ARRAY[LTC_ARRAY_DIM * LTC_ARRAY_DIM] = 
-{
+YBI_TABLE_GPU static const Vec3f LTC_ARRAY[LTC_ARRAY_DIM * LTC_ARRAY_DIM] = {
     Vec3f(0.01415, 0.00060, 0.00001),  Vec3f(0.00000, 0.00000, 0.00000),
     Vec3f(0.00000, 0.00000, 0.00000),  Vec3f(0.00000, 0.00000, 0.00000),
     Vec3f(0.00000, 0.00000, 0.00000),  Vec3f(0.00000, 0.00000, 0.00000),
@@ -549,7 +550,6 @@ static const Vec3f LTC_ARRAY[LTC_ARRAY_DIM * LTC_ARRAY_DIM] =
     Vec3f(0.87465, 0.00004, 0.39997),  Vec3f(0.87549, 0.00003, 0.39069),
     Vec3f(0.87626, 0.00006, 0.38171),  Vec3f(0.87676, 0.00004, 0.37342),
     Vec3f(0.87714, 0.00006, 0.36523),  Vec3f(0.87859, 0.00006, 0.35675),
-    Vec3f(0.87952, 0.00009, 0.34897),  Vec3f(0.87958, 0.00003, 0.34187)
-};
+    Vec3f(0.87952, 0.00009, 0.34897),  Vec3f(0.87958, 0.00003, 0.34187)};
 
-}
+} // namespace ybi

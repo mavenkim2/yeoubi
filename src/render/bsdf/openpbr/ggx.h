@@ -169,12 +169,21 @@ YBI_CPU_GPU Vec3f EvaluateGlossLobe(const Vec3f &viewDirection,
                                     float ior,
                                     const Vec2f &a)
 {
+    if (viewDirection.z * lightDirection.z <= 0.f)
+    {
+        return Vec3f(0.f);
+    }
     return EvaluateGGX(viewDirection, lightDirection, ior, a) * specularColor;
 }
 
 YBI_CPU_GPU float PDFGGX(const Vec3f &viewDirection, const Vec3f &lightDirection, const Vec2f &a)
 
 {
+    if (viewDirection.z * lightDirection.z <= 0.f)
+    {
+        return 0.f;
+    }
+
     // NOTE: reflection only
     const Vec3f &halfway = Normalize(viewDirection + lightDirection);
     float D = EvaluateAnisoGGX(halfway, a);

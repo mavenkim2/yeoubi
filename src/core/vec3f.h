@@ -20,6 +20,7 @@ public:
     Vec3f() = default;
     YBI_CPU_GPU constexpr explicit Vec3f(float value) : x(value), y(value), z(value) {}
     YBI_CPU_GPU constexpr explicit Vec3f(const Vec2f &v, float value) : x(v.x), y(v.y), z(value) {}
+    YBI_CPU_GPU constexpr explicit Vec3f(float value, const Vec2f &v) : x(value), y(v.x), z(v.y) {}
     YBI_CPU_GPU constexpr Vec3f(float x, float y, float z) : x(x), y(y), z(z) {}
 
     YBI_CPU_GPU float *Data()

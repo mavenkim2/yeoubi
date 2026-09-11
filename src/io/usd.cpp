@@ -1587,7 +1587,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
     YBI_ASSERT(!data.cameras.empty());
 
     printf("num cameras: %zu\n", data.cameras.size());
-    pxr::UsdGeomCamera camera = data.cameras[0];
+    pxr::UsdGeomCamera camera = data.cameras[5];
 
     printf("camera name: %s\n", camera.GetPath().GetText());
     pxr::UsdPrim cameraPrim = camera.GetPrim();
@@ -1981,8 +1981,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
 
             AffineTransform transform = ConvertAffineTransform(localToWorld);
 
-            printf("chungus: %f %f %f %f\n", width, height, intensity, exposure);
-
             RectLight light;
             light.localToWorld = transform;
             light.width = width;
@@ -1992,10 +1990,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
 
             if (normalize)
             {
-                const Vec3f worldWidth =
-                    transform.TransformVector(Vec3f(width, 0.f, 0.f));
-                const Vec3f worldHeight =
-                    transform.TransformVector(Vec3f(0.f, height, 0.f));
+                const Vec3f worldWidth = transform.TransformVector(Vec3f(width, 0.f, 0.f));
+                const Vec3f worldHeight = transform.TransformVector(Vec3f(0.f, height, 0.f));
                 const float worldArea = Length(Cross(worldWidth, worldHeight));
 
                 if (worldArea > 0.f)

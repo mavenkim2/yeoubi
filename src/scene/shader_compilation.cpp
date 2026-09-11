@@ -534,10 +534,7 @@ DeviceMaterialExpression CompileShader(
     for (MaterialNodeId nodeId : outputList)
     {
         const MaterialNode &node = graph.nodes[nodeId];
-        printf("%s ", ConvertMaterialOpcodeToString(node.type));
         NodeInfo &info = nodeInfo[nodeId];
-
-        printf("output slot: %i\n", info.outputSlotOffset);
     }
 
     return result;
