@@ -197,6 +197,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_manager.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
                ${YBI_SOURCE}
 )
@@ -249,6 +250,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
         "--use_fast_math"
         "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "-Ofc=max"
         -MD
         -MF "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
         "-o" "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"

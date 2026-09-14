@@ -16,11 +16,11 @@ constexpr const char *OpenPbrEnergyTableFilename =
 constexpr const char *OpenPbrAverageEnergyTableFilename =
     "openpbr_opaque_dielectric_average_energy_complement.bin";
 
-DeviceTexture
-LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device, const char *executablePath)
+DeviceTexture LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device,
+                                                                 const char *executablePath)
 {
-    constexpr size_t valueCount = OpenPbrEnergyTableSize * OpenPbrEnergyTableSize *
-                                  OpenPbrEnergyTableSize;
+    constexpr size_t valueCount =
+        OpenPbrEnergyTableSize * OpenPbrEnergyTableSize * OpenPbrEnergyTableSize;
     constexpr size_t byteCount = valueCount * sizeof(uint16_t);
 
     const std::filesystem::path tablePath =
@@ -39,7 +39,8 @@ LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device, const char *e
     input.read(reinterpret_cast<char *>(values.data()), byteCount);
     if (!input)
     {
-        std::fprintf(stderr, "Failed to read the OpenPBR energy table: %s\n", tablePath.string().c_str());
+        std::fprintf(
+            stderr, "Failed to read the OpenPBR energy table: %s\n", tablePath.string().c_str());
         return {};
     }
 
@@ -64,14 +65,15 @@ LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device, const char *e
     return texture;
 }
 
-DeviceTexture LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(
-    Device &device, const char *executablePath)
+DeviceTexture LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(Device &device,
+                                                                        const char *executablePath)
 {
     constexpr size_t valueCount = OpenPbrEnergyTableSize * OpenPbrEnergyTableSize;
     constexpr size_t byteCount = valueCount * sizeof(uint16_t);
 
-    const std::filesystem::path tablePath = std::filesystem::absolute(executablePath).parent_path() /
-                                            OpenPbrAverageEnergyTableFilename;
+    const std::filesystem::path tablePath =
+        std::filesystem::absolute(executablePath).parent_path() /
+        OpenPbrAverageEnergyTableFilename;
     std::ifstream input(tablePath, std::ios::binary | std::ios::ate);
     if (!input || input.tellg() != static_cast<std::streamoff>(byteCount))
     {
