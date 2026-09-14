@@ -1,10 +1,12 @@
+#pragma once
+
 #include "core/assert.h"
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
-#include "render/bsdf/bsdf.h"
 #include "render/bsdf/ltc_coefficients.h"
+#include "render/bsdf/openpbr/coat.h"
 #include "render/sampling.h"
 #include <cmath>
 
@@ -124,6 +126,120 @@ YBI_CPU_GPU float PDFSheen(const Vec3f &wo, const Vec3f &wi, float roughness)
 
     float pdf = EvaluateLTC(wiStd, ltcCoeffs);
     return pdf;
+}
+
+YBI_GPU bool SampleFuzzLayer(const OpenPbrBsdf &bsdf,
+                             const Vec3f &viewDirection,
+                             const Vec3f &throughput,
+                             Vec2f u,
+                             Vec3f &lightDirection,
+                             Vec3f &weight)
+{
+    Vec3f ltcCoefficients = GetLTCCoefficients(bsdf.fuzzRoughness, viewDirection.z);
+    float fuzzReflectance = ltcCoefficients[2];
+
+    // Calculate sheen lobe weight
+    float sheenWeight = bsdf.fuzzWeight * fuzzReflectance * bsdf.fuzzColor.MaxComponent();
+    float sheenProb = sheenWeight / (1.f + sheenWeight);
+
+#if 0
+    // Calculate specular lobe weight float Fr =
+    // FrDielectric(viewDirection.z, bsdf.specularReflectionIor);
+    float specularLobeWeight = (Fr * throughput).MaxComponent();
+
+    float diffuseLobeWeight = 0.f;
+
+    float rand = u.x;
+
+    float totalWeight = specularLobeWeight + diffuseLobeWeight;
+    float specularLobeProbability = specularLobeWeight / totalWeight;
+    float diffuseLobeProbability = 1.f - specularLobeProbability;
+#endif
+
+    // Sample fuzz layer
+    if (u.x < sheenProb)
+    {
+        u.x = u.x / sheenProb;
+
+        bool success = SampleSheen(viewDirection, u, bsdf.fuzzRoughness, lightDirection);
+        if (!success)
+            return false;
+    }
+    else
+    {
+        u.x = (u.x - sheenProb) / (1 - sheenProb);
+
+        bool success = SampleCoatLayer(bsdf, viewDirection, throughput, u, lightDirection, weight);
+        // SampleOpenPBRBaseSubstrate(bsdf, viewDirection, throughput, u, lightDirection, weight);
+
+        if (!success)
+            return false;
+    }
+
+    Vec3f coatWeight = EvaluateOpenPBRBaseSubstrate(bsdf, viewDirection, lightDirection);
+    float coatPdf = PDFCoatLayer(bsdf, viewDirection, lightDirection);
+
+    Vec3f fuzzWeight = EvaluateSheen(
+        viewDirection, lightDirection, bsdf.fuzzColor, bsdf.fuzzWeight, bsdf.fuzzRoughness);
+    float fuzzPdf = PDFSheen(viewDirection, lightDirection, bsdf.fuzzRoughness);
+
+    float totalPdf = coatPdf * (1.f - sheenProb) + fuzzPdf * sheenProb;
+
+    // NOTE: scale albedo of base substrate to account for the light reflected by the fuzz layer
+    float coatScale = 1.f - fuzzReflectance * bsdf.fuzzWeight;
+    weight = (coatScale * coatWeight + fuzzWeight) / totalPdf;
+
+    // if (sheenProb > 0.f)
+    // {
+    //     printf("%f %f %f, %f %f %f, %f %f, %f, %f\n",
+    //            substrateWeight.x,
+    //            substrateWeight.y,
+    //            substrateWeight.z,
+    //            fuzzWeight.x,
+    //            fuzzWeight.y,
+    //            fuzzWeight.z,
+    //            substratePdf,
+    //            fuzzPdf,
+    //            substrateScale,
+    //            totalPdf);
+    // }
+
+    return true;
+}
+
+YBI_GPU Vec3f EvaluateOpenPBRLocal(const OpenPbrBsdf &bsdf,
+                                   const Vec3f &viewDirection,
+                                   const Vec3f &lightDirection)
+{
+    Vec3f ltcCoefficients = GetLTCCoefficients(bsdf.fuzzRoughness, viewDirection.z);
+    float fuzzReflectance = ltcCoefficients[2];
+
+    Vec3f coatWeight = EvaluateCoatLayer(bsdf, viewDirection, lightDirection);
+    Vec3f fuzzWeight = EvaluateSheen(
+        viewDirection, lightDirection, bsdf.fuzzColor, bsdf.fuzzWeight, bsdf.fuzzRoughness);
+
+    // NOTE: scale albedo of base substrate to account for the light reflected by the fuzz layer
+    float coatScale = 1.f - fuzzReflectance * bsdf.fuzzWeight;
+    Vec3f weight = coatScale * coatWeight + fuzzWeight;
+    return weight;
+}
+
+YBI_GPU float PDFOpenPBRLocal(const OpenPbrBsdf &bsdf,
+                              const Vec3f &viewDirection,
+                              const Vec3f &lightDirection)
+{
+    float coatPdf = PDFCoatLayer(bsdf, viewDirection, lightDirection);
+    float fuzzPdf = PDFSheen(viewDirection, lightDirection, bsdf.fuzzRoughness);
+
+    // TODO: stop copy pasting this
+    Vec3f ltcCoefficients = GetLTCCoefficients(bsdf.fuzzRoughness, viewDirection.z);
+    float fuzzReflectance = ltcCoefficients[2];
+
+    float sheenWeight = bsdf.fuzzWeight * fuzzReflectance * bsdf.fuzzColor.MaxComponent();
+    float sheenProb = sheenWeight / (1.f + sheenWeight);
+
+    float totalPdf = coatPdf * (1.f - sheenProb) + fuzzPdf * sheenProb;
+    return totalPdf;
 }
 
 } // namespace ybi

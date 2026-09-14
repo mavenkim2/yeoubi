@@ -768,7 +768,7 @@ void VirtualTextureManager::Update(KernelParams *params)
             copyDesc.copy.srcRowPitch = tileSize * bytesPerTexel;
             copyDesc.copy.widthInBytes = tileSize * bytesPerTexel;
             copyDesc.copy.height = tileSize;
-            copyDesc.copy.dstLayer = info.layer;
+            copyDesc.copy.dstZ = info.layer;
 
             PageUploadCompletion &completion = completions[infoIndex];
             completion.lruIndex = info.lruIndex;

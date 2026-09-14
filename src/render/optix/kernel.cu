@@ -6,9 +6,8 @@
 #include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
-#include "render/bsdf/openpbr/ggx.h"
+#include "render/bsdf/openpbr/api.h"
 #include "render/bsdf/openpbr/init.h"
-#include "render/bsdf/openpbr/substrate.h"
 #include "render/camera.h"
 #include "render/device_attributes.h"
 #include "render/lights/sample.h"
@@ -448,6 +447,11 @@ YBI_GPU static bool TraceVisibility(OptixTraversableHandle bvhHandle,
 
 YBI_GPU void RenderUnidirectional();
 
+extern "C" __global__ void __anyhit__kernel()
+{
+    int instanceID = optixGetInstanceId();
+}
+
 extern "C" __global__ void __raygen__kernel()
 {
     if (params.pathTrace)
@@ -731,12 +735,6 @@ YBI_GPU void RenderUnidirectional()
             Vec3f geometricNormal = shadingInfo.geometricNormal;
             if (Dot(geometricNormal, rayDirection) > 0.f)
                 geometricNormal = -geometricNormal;
-            Vec3f normal = shadingInfo.shadingNormal;
-            if (Dot(normal, geometricNormal) < 0.f)
-                normal = -normal;
-            if (Dot(normal, rayDirection) >= 0.f)
-                normal = geometricNormal;
-            shadingInfo.shadingNormal = normal;
 
             UpdateRayCone(rayCone, rayDirection, info.t, shadingInfo, depth);
             shadingInfo.rayDirection = rayDirection;
@@ -744,7 +742,11 @@ YBI_GPU void RenderUnidirectional()
 
             OpenPbrBsdf bsdf;
 
+            const OrthonormalBasis tangentFrame(shadingInfo.dpdu, shadingInfo.shadingNormal);
+            const Vec3f worldViewDirection = -rayDirection;
+
             Vec3f baseColor(0.5f);
+            bool passedAlphaTest = true;
             if (shadingInfo.hasMaterial)
             {
                 const MaterialHandle &handle =
@@ -752,7 +754,15 @@ YBI_GPU void RenderUnidirectional()
                 if (handle.isGraph)
                 {
                     const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
-                    InitializeOpenPbrBsdf(params, material, shadingInfo, bsdf);
+                    passedAlphaTest = InitializeOpenPbrBsdf(params,
+                                                            material,
+                                                            shadingInfo,
+                                                            bsdf,
+                                                            shadingInfo.shadingNormal,
+                                                            worldViewDirection,
+                                                            tangentFrame,
+                                                            throughput,
+                                                            rng.Uniform());
                     // baseColor = Vec3f(
                     //     EvaluateShader<float>(params, shadingInfo,
                     //     material.specular_roughness));
@@ -770,15 +780,13 @@ YBI_GPU void RenderUnidirectional()
                 // }
             }
 
-            if (!shadingInfo.hasMaterial)
+            if (!shadingInfo.hasMaterial || !passedAlphaTest)
             {
-                rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
+                rayOrigin = OffsetRayOrigin(shadingInfo.position, -geometricNormal);
                 ++depth;
                 continue;
             }
 
-            OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
-            const Vec3f viewDirection = basis.WorldToLocal(-rayDirection);
             // Sample Light
             if (params.scene.numLights > 0)
             {
@@ -796,11 +804,10 @@ YBI_GPU void RenderUnidirectional()
                 {
                     const DeviceLight &sampledLight = params.scene.deviceLights[sampledLightIndex];
 
-                    const Vec3f localLightDirection = basis.WorldToLocal(sampledLightDirection);
                     Vec3f sampledLightBsdfWeight =
-                        EvaluateOpenPBR(bsdf, viewDirection, localLightDirection);
+                        EvaluateOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
                     float sampledLightBsdfPdf =
-                        PDFOpenPBR(bsdf, viewDirection, localLightDirection);
+                        PDFOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
                     if (sampledLightBsdfWeight.MaxComponent() != 0.f)
                     {
                         const Vec3f shadowNormal =
@@ -825,41 +832,30 @@ YBI_GPU void RenderUnidirectional()
                 }
             }
 
-            Vec3f lightDirection, weight;
+            Vec3f worldLightDirection, weight;
             bool success = SampleOpenPBR(
-                bsdf, viewDirection, throughput, rng.Uniform2D(), lightDirection, weight);
+                bsdf,
+                worldViewDirection,
+                throughput,
+                rng.Uniform2D(),
+                worldLightDirection,
+                weight);
 
             if (!success)
                 break;
 
             throughput *= weight;
-#if 0
+            const Vec3f nextDirection = worldLightDirection;
 
-            Vec3f lightDirection, weight;
-            SampleDiffuseLobe(
-                viewDirection, bsdf.baseColor, rng.Uniform2D(), lightDirection, weight);
-
-            throughput *= weight;
-            if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
-                break;
-
-#endif
-
-#if 0
-            throughput = throughput * baseColor;
-            if (Max(throughput.x, Max(throughput.y, throughput.z)) <= 0.f)
-                break;
-
-            const Vec3f sampledDirection = SampleCosineHemisphere(rng.Uniform2D());
-            OrthonormalBasis basis(shadingInfo.dpdu, shadingInfo.shadingNormal);
-#endif
-            const Vec3f nextDirection = basis.LocalToWorld(lightDirection);
-
-            if (Dot(nextDirection, geometricNormal) <= 0.f)
-                break;
             previousSurfacePosition = shadingInfo.position;
-            previousBsdfPdf = PDFOpenPBR(bsdf, viewDirection, lightDirection);
+            previousBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, worldLightDirection);
             hasPreviousBsdfSample = true;
+
+            // Both vectors must be in world space when choosing the offset side.
+            if (Dot(nextDirection, geometricNormal) < 0.f)
+            {
+                geometricNormal = -geometricNormal;
+            }
             rayOrigin = OffsetRayOrigin(shadingInfo.position, geometricNormal);
             rayDirection = nextDirection;
             ++depth;

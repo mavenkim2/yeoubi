@@ -114,11 +114,26 @@ public:
     {
         return Max<float>(x, Max<float>(y, z));
     }
+
+    YBI_CPU_GPU float MinComponent() const
+    {
+        return Min<float>(x, Min<float>(y, z));
+    }
 };
 
 YBI_CPU_GPU constexpr Vec3f operator+(Vec3f lhs, Vec3f rhs)
 {
     return Vec3f(lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z);
+}
+
+YBI_CPU_GPU constexpr Vec3f operator+(Vec3f lhs, float rhs)
+{
+    return Vec3f(lhs.x + rhs, lhs.y + rhs, lhs.z + rhs);
+}
+
+YBI_CPU_GPU constexpr Vec3f operator+(float lhs, Vec3f rhs)
+{
+    return rhs + lhs;
 }
 
 YBI_CPU_GPU constexpr Vec3f operator-(Vec3f lhs, Vec3f rhs)
@@ -156,6 +171,11 @@ YBI_CPU_GPU Vec3f operator/(Vec3f vector, float scalar)
     YBI_ASSERT(scalar != 0.0f);
     const float invScalar = 1.0f / scalar;
     return vector * invScalar;
+}
+
+YBI_CPU_GPU Vec3f operator/(float scalar, Vec3f v)
+{
+    return Vec3f(scalar / v.x, scalar / v.y, scalar / v.z);
 }
 
 YBI_CPU_GPU Vec3f operator/(Vec3f lhs, Vec3f rhs)
@@ -203,7 +223,22 @@ YBI_CPU_GPU Vec3f Normalize(Vec3f vector)
     return vector / length;
 }
 
+YBI_CPU_GPU Vec3f Sqrt(Vec3f v)
+{
+    return Vec3f(Sqrt(v.x), Sqrt(v.y), Sqrt(v.z));
+}
+
 YBI_CPU_GPU constexpr Vec3f Lerp(Vec3f a, Vec3f b, float t)
+{
+    return a + (b - a) * t;
+}
+
+YBI_CPU_GPU constexpr Vec3f Lerp(float a, Vec3f b, float t)
+{
+    return a + (b - a) * t;
+}
+
+YBI_CPU_GPU constexpr Vec3f Lerp(Vec3f a, float b, float t)
 {
     return a + (b - a) * t;
 }
@@ -246,6 +281,11 @@ YBI_CPU_GPU constexpr Vec3f Abs(Vec3f v)
 YBI_CPU_GPU constexpr Vec3f Clamp(const Vec3f &v, float low, float high)
 {
     return Max(Min(v, high), low);
+}
+
+YBI_CPU_GPU constexpr Vec3f Pow(const Vec3f &v, float power)
+{
+    return Vec3f(powf(v.x, power), powf(v.y, power), powf(v.z, power));
 }
 
 } // namespace ybi

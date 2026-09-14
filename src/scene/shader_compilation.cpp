@@ -129,17 +129,17 @@ static void CompileConstantFloat(const MaterialNode &node,
 }
 
 static void CompileConstantBool(const MaterialNode &node,
-                                const std::vector<NodeInfo> &,
-                                MaterialNodeId,
+                                const std::vector<NodeInfo> &nodeInfos,
+                                MaterialNodeId nodeId,
                                 ShaderCompilationContext &context)
 {
-    YBI_ASSERT(0);
     const bool *value = GetConstantValue<bool>(node);
     if (value == nullptr)
         return;
 
     context.nodes.push_back(static_cast<uint32_t>(node.type));
-    context.nodes.push_back(*value ? 1u : 0u);
+    context.AddUint(*value ? 1u : 0u);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
 static void CompileConstantColor(const MaterialNode &node,

@@ -8,6 +8,13 @@
 namespace ybi
 {
 
+// Booleans occupy one float register, with canonical values 0.0f and 1.0f.
+YBI_GPU bool LoadBoolRegister(float *registers, int srcRegister)
+{
+    YBI_ASSERT(srcRegister < SHADER_NUM_REGISTERS);
+    return registers[srcRegister] != 0.f;
+}
+
 YBI_GPU int LoadIntRegister(float *registers, int srcRegister)
 {
     YBI_ASSERT(srcRegister < SHADER_NUM_REGISTERS);
@@ -58,6 +65,12 @@ YBI_GPU void StoreFloatRegister(float *registers, float value, int dstRegister)
     registers[dstRegister] = value;
 }
 
+YBI_GPU void StoreBoolRegister(float *registers, bool value, int dstRegister)
+{
+    YBI_ASSERT(dstRegister < SHADER_NUM_REGISTERS);
+    registers[dstRegister] = value ? 1.f : 0.f;
+}
+
 YBI_GPU void StoreFloat2Register(float *registers, const Vec2f &value, int dstRegister)
 {
     YBI_ASSERT(dstRegister + 1 < SHADER_NUM_REGISTERS);
@@ -76,11 +89,15 @@ YBI_GPU void StoreFloat3Register(float *registers, const Vec3f &value, int dstRe
 template <typename T>
 YBI_GPU T LoadTemplateRegister(float *registers, int srcRegister)
 {
-    static_assert(std::is_same_v<T, float> || std::is_same_v<T, Vec2f> ||
+    static_assert(std::is_same_v<T, bool> || std::is_same_v<T, float> || std::is_same_v<T, Vec2f> ||
                       std::is_same_v<T, Vec3f> || std::is_same_v<T, Vec4f>,
-                  "T must be float, Vec2f, Vec3f, or Vec4f");
+                  "T must be bool, float, Vec2f, Vec3f, or Vec4f");
 
-    if constexpr (std::is_same_v<T, float>)
+    if constexpr (std::is_same_v<T, bool>)
+    {
+        return LoadBoolRegister(registers, srcRegister);
+    }
+    else if constexpr (std::is_same_v<T, float>)
     {
         return LoadFloatRegister(registers, srcRegister);
     }

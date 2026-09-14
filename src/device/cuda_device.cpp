@@ -377,29 +377,33 @@ void CUDADevice::CopyToDevice3DAsync(DeviceStream &stream,
     YBI_ASSERT(desc.srcRowPitch >= desc.widthInBytes);
     YBI_ASSERT(desc.widthInBytes > 0);
     YBI_ASSERT(desc.height > 0);
-    YBI_ASSERT(desc.dstLayer < texture.info.layers);
+    YBI_ASSERT(desc.depth > 0);
 
     const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
+    const uint32_t textureDepth = texture.info.depth ? texture.info.depth : texture.info.layers;
     YBI_ASSERT(elementSize > 0);
     YBI_ASSERT(desc.widthInBytes % elementSize == 0);
     YBI_ASSERT(desc.dstX + (desc.widthInBytes / elementSize) <= texture.info.width);
     YBI_ASSERT(desc.dstY + desc.height <= texture.info.height);
+    YBI_ASSERT(desc.dstZ + desc.depth <= textureDepth);
+    YBI_ASSERT(desc.srcSlicePitch == 0 || desc.srcSlicePitch >= desc.srcRowPitch * desc.height);
+    YBI_ASSERT(desc.srcSlicePitch == 0 || desc.srcSlicePitch % desc.srcRowPitch == 0);
 
     CUDA_MEMCPY3D copy = {};
     copy.srcMemoryType = CU_MEMORYTYPE_HOST;
     copy.srcHost = desc.src;
     copy.srcPitch = desc.srcRowPitch;
-    copy.srcHeight = desc.height;
+    copy.srcHeight = desc.srcSlicePitch ? desc.srcSlicePitch / desc.srcRowPitch : desc.height;
 
     copy.dstMemoryType = CU_MEMORYTYPE_ARRAY;
     copy.dstArray = reinterpret_cast<CUarray>(texture.array);
     copy.dstXInBytes = desc.dstX * elementSize;
     copy.dstY = desc.dstY;
-    copy.dstZ = desc.dstLayer;
+    copy.dstZ = desc.dstZ;
 
     copy.WidthInBytes = desc.widthInBytes;
     copy.Height = desc.height;
-    copy.Depth = 1;
+    copy.Depth = desc.depth;
 
     CUDA_ASSERT(cuMemcpy3DAsync(&copy, cudaStream.stream));
 }
@@ -433,14 +437,20 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
         YBI_ASSERT(copyDesc.srcRowPitch >= copyDesc.widthInBytes);
         YBI_ASSERT(copyDesc.widthInBytes > 0);
         YBI_ASSERT(copyDesc.height > 0);
-        YBI_ASSERT(copyDesc.dstLayer < texture.info.layers);
+        YBI_ASSERT(copyDesc.depth > 0);
 
         const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
+        const uint32_t textureDepth = texture.info.depth ? texture.info.depth : texture.info.layers;
         YBI_ASSERT(elementSize > 0);
         YBI_ASSERT(copyDesc.srcRowPitch % elementSize == 0);
         YBI_ASSERT(copyDesc.widthInBytes % elementSize == 0);
         YBI_ASSERT(copyDesc.dstX + (copyDesc.widthInBytes / elementSize) <= texture.info.width);
         YBI_ASSERT(copyDesc.dstY + copyDesc.height <= texture.info.height);
+        YBI_ASSERT(copyDesc.dstZ + copyDesc.depth <= textureDepth);
+        YBI_ASSERT(copyDesc.srcSlicePitch == 0 ||
+                   copyDesc.srcSlicePitch >= copyDesc.srcRowPitch * copyDesc.height);
+        YBI_ASSERT(copyDesc.srcSlicePitch == 0 ||
+                   copyDesc.srcSlicePitch % copyDesc.srcRowPitch == 0);
 
         CUDA_MEMCPY3D_BATCH_OP &op = ops[descIndex];
         op = {};
@@ -448,17 +458,19 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
         op.src.type = CU_MEMCPY_OPERAND_TYPE_POINTER;
         op.src.op.ptr.ptr = reinterpret_cast<CUdeviceptr>(copyDesc.src);
         op.src.op.ptr.rowLength = copyDesc.srcRowPitch / elementSize;
-        op.src.op.ptr.layerHeight = copyDesc.height;
+        op.src.op.ptr.layerHeight = copyDesc.srcSlicePitch
+                                            ? copyDesc.srcSlicePitch / copyDesc.srcRowPitch
+                                            : copyDesc.height;
 
         op.dst.type = CU_MEMCPY_OPERAND_TYPE_ARRAY;
         op.dst.op.array.array = reinterpret_cast<CUarray>(texture.array);
         op.dst.op.array.offset.x = copyDesc.dstX;
         op.dst.op.array.offset.y = copyDesc.dstY;
-        op.dst.op.array.offset.z = copyDesc.dstLayer;
+        op.dst.op.array.offset.z = copyDesc.dstZ;
 
         op.extent.width = copyDesc.widthInBytes / elementSize;
         op.extent.height = copyDesc.height;
-        op.extent.depth = 1;
+        op.extent.depth = copyDesc.depth;
         op.srcAccessOrder = CU_MEMCPY_SRC_ACCESS_ORDER_STREAM;
     }
 
@@ -617,6 +629,7 @@ DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
 
     YBI_ASSERT(info.width > 0);
     YBI_ASSERT(info.height > 0);
+    YBI_ASSERT(info.layers == 0 || info.depth == 0);
 
     const CUDATextureFormatInfo formatInfo = GetCUDATextureFormatInfo(info.format);
 
@@ -639,7 +652,7 @@ DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
     CUDA_ARRAY3D_DESCRIPTOR descriptor = {};
     descriptor.Width = info.width;
     descriptor.Height = info.height;
-    descriptor.Depth = info.layers;
+    descriptor.Depth = info.depth ? info.depth : info.layers;
     descriptor.Format = formatInfo.format;
     descriptor.NumChannels = formatInfo.numChannels;
     descriptor.Flags = info.layers ? CUDA_ARRAY3D_LAYERED : 0;

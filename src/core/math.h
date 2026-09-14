@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/assert.h"
 #include "device/cuda_compat.h"
 #include <cmath>
 
@@ -84,6 +85,35 @@ template <typename T>
 YBI_CPU_GPU T Sqr(const T &v)
 {
     return v * v;
+}
+
+template <typename T>
+YBI_CPU_GPU T Pow4(const T &v)
+{
+    return Sqr(v) * Sqr(v);
+}
+
+YBI_CPU_GPU float Sqrt(const float v)
+{
+    return sqrtf(v);
+}
+
+template <typename T>
+YBI_CPU_GPU T Root4(const T &v)
+{
+    return Sqrt(Sqrt(v));
+}
+
+YBI_CPU_GPU float Lerp(float a, float b, float t)
+{
+    return a + (b - a) * t;
+}
+
+YBI_GPU float ClampRandomNumber(float u)
+{
+    YBI_ASSERT(u >= 0.f);
+    u = Min(u, FLOAT_BEFORE_ONE);
+    return u;
 }
 
 } // namespace ybi

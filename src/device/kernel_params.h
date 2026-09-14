@@ -34,6 +34,9 @@ struct KernelParams
     Vec3f *accumulation;
     uint32_t accumulatedSamples;
 
+    // OpenPBR lookup tables
+    uint64_t opaqueDielectricEnergyComplementTexture;
+
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;
     PageDescriptor *pageDescriptors;

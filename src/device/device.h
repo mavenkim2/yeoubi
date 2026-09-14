@@ -105,12 +105,14 @@ struct DeviceTextureCopyDesc
 {
     const void *src = nullptr;
     size_t srcRowPitch = 0;
+    size_t srcSlicePitch = 0;
     size_t widthInBytes = 0;
     size_t height = 0;
+    size_t depth = 1;
     // Destination coordinates are in texels. Backends convert to API-specific units.
     uint32_t dstX = 0;
     uint32_t dstY = 0;
-    uint32_t dstLayer = 0;
+    uint32_t dstZ = 0;
 };
 
 struct DeviceTextureBatchCopyDesc

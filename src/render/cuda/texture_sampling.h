@@ -46,4 +46,32 @@ YBI_GPU Vec4f SampleCUDATexture(
     return {};
 }
 
+YBI_GPU Vec4f SampleCUDATexture3D(
+    uint64_t handle, TextureFormat format, float u, float v, float w)
+{
+    const cudaTextureObject_t texture = reinterpret_cast<cudaTextureObject_t>(handle);
+
+    switch (GetTextureFormatNumChannels(format))
+    {
+        case 1:
+        {
+            const float x = tex3D<float>(texture, u, v, w);
+            return Vec4f(x, x, x, 1.f);
+        }
+        case 2:
+        {
+            const float2 xy = tex3D<float2>(texture, u, v, w);
+            return Vec4f(xy.x, xy.y, 0.f, 1.f);
+        }
+        case 4:
+        {
+            const float4 xyzw = tex3D<float4>(texture, u, v, w);
+            return Vec4f(xyzw.x, xyzw.y, xyzw.z, xyzw.w);
+        }
+    }
+
+    YBI_ASSERT(false);
+    return {};
+}
+
 }

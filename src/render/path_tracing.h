@@ -43,16 +43,10 @@ YBI_CPU_GPU Vec3f FastACESToneMap(const Vec3f &value)
 
 YBI_CPU_GPU float PowerHeuristic(float sampledPdf, float otherPdf)
 {
-    const double a = sampledPdf;
-    const double b = otherPdf;
-    const double aa = a * a;
-    const double bb = b * b;
-    const double sum = aa + bb;
-    return sum > 0.0 ? float(aa / sum) : 0.f;
-    // const float sampledPdfSquared = sampledPdf * sampledPdf;
-    // const float otherPdfSquared = otherPdf * otherPdf;
-    // const float sum = sampledPdfSquared + otherPdfSquared;
-    // return sum > 0.f ? sampledPdfSquared / sum : 0.f;
+    const float sampledPdfSquared = sampledPdf * sampledPdf;
+    const float otherPdfSquared = otherPdf * otherPdf;
+    const float sum = sampledPdfSquared + otherPdfSquared;
+    return sum > 0.f ? sampledPdfSquared / sum : 0.f;
 }
 
 YBI_CPU_GPU Vec3f AccumulateSamples(Vec3f *history,

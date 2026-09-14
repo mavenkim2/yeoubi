@@ -1275,6 +1275,27 @@ void MaterialManager::Update(Device *device,
             ProcessMaterialGraph(material, material.fuzz_color, shaderNodes);
         deviceMaterial.fuzz_roughness =
             ProcessMaterialGraph(material, material.fuzz_roughness, shaderNodes);
+
+        deviceMaterial.transmission_color =
+            ProcessMaterialGraph(material, material.transmission_color, shaderNodes);
+        deviceMaterial.transmission_weight =
+            ProcessMaterialGraph(material, material.transmission_weight, shaderNodes);
+        deviceMaterial.geometry_thin_walled =
+            ProcessMaterialGraph(material, material.geometry_thin_walled, shaderNodes);
+        deviceMaterial.geometry_opacity =
+            ProcessMaterialGraph(material, material.geometry_opacity, shaderNodes);
+
+        deviceMaterial.coat_weight =
+            ProcessMaterialGraph(material, material.coat_weight, shaderNodes);
+        deviceMaterial.coat_roughness =
+            ProcessMaterialGraph(material, material.coat_roughness, shaderNodes);
+        deviceMaterial.coat_roughness_anisotropy =
+            ProcessMaterialGraph(material, material.coat_roughness_anisotropy, shaderNodes);
+        deviceMaterial.coat_darkening =
+            ProcessMaterialGraph(material, material.coat_darkening, shaderNodes);
+        deviceMaterial.coat_ior = ProcessMaterialGraph(material, material.coat_ior, shaderNodes);
+        deviceMaterial.coat_color =
+            ProcessMaterialGraph(material, material.coat_color, shaderNodes);
         // #define VISIT_PARAMETER(name, type) \
         //     deviceMaterial.name = ProcessMaterialGraph(material, #name,
         //     material.name, shaderNodes);

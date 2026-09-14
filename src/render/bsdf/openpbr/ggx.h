@@ -23,20 +23,24 @@ YBI_CPU_GPU float EvaluateAnisoGGX(const Vec3f &v, const Vec2f &a)
 
 YBI_CPU_GPU Vec3f SampleGGXVNDF(const Vec3f &wo, const Vec2f &a, const Vec2f &u)
 {
-    // fma(1 - u.y, 1 + wo.z, -wo.z)
-    // z = 1 + wo.z - u.y - u.y * wo.z - wo.z = 1 - u.y - u.y * wo.z
-
     Vec3f woStd = Normalize(Vec3f(a * wo.Xy(), wo.z));
+    float cosIncoming = Min(woStd.z, 1.f);
 
-    float z = 1 - u.y - u.y * woStd.z;
-    float sinTheta = sqrtf(Max(0.f, 1.f - z * z));
+    // Sample a spherical cap in (-cosIncoming, 1]. Evaluate 1 - z^2 as
+    // (1 + z) * (1 - z) to remain stable near either cap pole.
+    float onePlusCos = 1.f + cosIncoming;
+    float halfwayZ = (1.f - u.y) * onePlusCos;
+    float oneMinusZ = u.y * onePlusCos;
+    float onePlusZ = halfwayZ + (1.f - cosIncoming);
+    float tangentPlaneComponent = sqrtf(Max(0.f, onePlusZ * oneMinusZ));
 
     float phi = 2 * YBI_PI * u.x;
     float cosPhi = Cos(phi);
     float sinPhi = Sin(phi);
 
-    Vec3f result(sinTheta * cosPhi, sinTheta * sinPhi, z);
-    result += woStd;
+    Vec3f result(tangentPlaneComponent * cosPhi + woStd.x,
+                 tangentPlaneComponent * sinPhi + woStd.y,
+                 halfwayZ);
 
     result.x *= a.x;
     result.y *= a.y;
@@ -129,28 +133,16 @@ YBI_GPU bool SampleGGX(const Vec3f &viewDirection,
     return true;
 }
 
-YBI_GPU bool SampleGlossLobe(const Vec3f &viewDirection,
-                             const Vec2f &a,
-                             const Vec2f &u,
-                             const float eta,
-                             const Vec3f &specularColor,
-                             Vec3f &lightDirection,
-                             Vec3f &weight)
-{
-    bool success = SampleGGX(viewDirection, a, u, eta, lightDirection, weight);
-    if (success)
-    {
-        weight *= specularColor;
-    }
-    return success;
-}
-
 YBI_CPU_GPU Vec3f EvaluateGGX(const Vec3f &viewDirection,
                               const Vec3f &lightDirection,
                               float ior,
                               const Vec2f &a)
 
 {
+    if (viewDirection.z * lightDirection.z <= 0.f)
+    {
+        return Vec3f(0.f);
+    }
     // NOTE: reflection only
     const Vec3f &halfway = Normalize(viewDirection + lightDirection);
     float D = EvaluateAnisoGGX(halfway, a);
@@ -161,19 +153,6 @@ YBI_CPU_GPU Vec3f EvaluateGGX(const Vec3f &viewDirection,
     float hdotv = Dot(halfway, viewDirection);
     float bsdfCos = D * G_masking * G_shadowing * Fr / (4.f * viewDirection.z);
     return Vec3f(bsdfCos);
-}
-
-YBI_CPU_GPU Vec3f EvaluateGlossLobe(const Vec3f &viewDirection,
-                                    const Vec3f &lightDirection,
-                                    const Vec3f &specularColor,
-                                    float ior,
-                                    const Vec2f &a)
-{
-    if (viewDirection.z * lightDirection.z <= 0.f)
-    {
-        return Vec3f(0.f);
-    }
-    return EvaluateGGX(viewDirection, lightDirection, ior, a) * specularColor;
 }
 
 YBI_CPU_GPU float PDFGGX(const Vec3f &viewDirection, const Vec3f &lightDirection, const Vec2f &a)

@@ -7,6 +7,7 @@
 #include "io/usd.h"
 #include "render/progressive_state.h"
 #include "render/virtual_texture_manager.h"
+#include "scene/lut.h"
 #include "scene/render_system.h"
 #include "scene/scene.h"
 #include <cerrno>
@@ -91,6 +92,10 @@ int main(int argc, char **argv)
 
     std::unique_ptr<Device> device = Device::CreateDevice(DeviceKind::GPU);
 
+    DeviceTexture opaqueDielectricEnergyComplementTexture =
+        LoadOpenPbrOpaqueDielectricEnergyComplementTexture(*device, argv[0]);
+    YBI_ASSERT(opaqueDielectricEnergyComplementTexture.textureObject != 0);
+
     Arena arena;
     DataContainer container;
     std::unique_ptr<DeviceArena> dataContainerDeviceArena = device->CreateArena();
@@ -166,11 +171,13 @@ int main(int argc, char **argv)
     params.fovRadians = camera.verticalFovRadians;
     params.cameraFromRaster = cameraFromRaster;
     params.renderFromCamera = renderFromCamera;
-    params.maxDepth = 3;
+    params.maxDepth = 5;
     params.lensRadius = 0.f; // TODO: initialize properly
     params.imageWidth = camera.width;
     params.imageHeight = camera.height;
     params.scene = system.deviceScene;
+    params.opaqueDielectricEnergyComplementTexture =
+        opaqueDielectricEnergyComplementTexture.textureObject;
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
     DeviceBuffer accumulationBuffer;
@@ -288,6 +295,7 @@ int main(int argc, char **argv)
     displayDevice.reset();
     if (accumulationBuffer)
         device->Free(accumulationBuffer);
+    device->DestroyTexture(opaqueDielectricEnergyComplementTexture);
     device->Free(cudaParams);
 
     glfwDestroyWindow(window);

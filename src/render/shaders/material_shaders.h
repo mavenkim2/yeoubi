@@ -26,6 +26,13 @@ YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
         MaterialOpcode opcode = static_cast<MaterialOpcode>(params.scene.shaderNodes[offset++]);
         switch (opcode)
         {
+            case MaterialOpcode::ConstantBool:
+            {
+                const bool value = params.scene.shaderNodes[offset++] != 0u;
+                const uint32_t dst = params.scene.shaderNodes[offset++];
+                StoreBoolRegister(registers, value, dst);
+                break;
+            }
             case MaterialOpcode::ConstantFloat:
             {
                 float value = UintAsFloat(params.scene.shaderNodes[offset++]);

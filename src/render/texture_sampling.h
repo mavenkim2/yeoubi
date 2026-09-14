@@ -21,4 +21,14 @@ SampleDeviceTexture(uint64_t handle, TextureFormat format, float u, float v, uin
 #endif
 }
 
+YBI_GPU Vec4f
+SampleDeviceTexture3D(uint64_t handle, TextureFormat format, float u, float v, float w)
+{
+#ifdef __CUDA_ARCH__
+    return SampleCUDATexture3D(handle, format, u, v, w);
+#else
+    return Vec4f(0.f);
+#endif
+}
+
 } // namespace ybi

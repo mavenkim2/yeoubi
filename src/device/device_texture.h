@@ -39,12 +39,13 @@ enum class FilterType
 
 struct DeviceTextureInfo
 {
-    // TODO: 3D textures (not 2D texture arrays)
     TextureFormat format;
     FilterType filterType;
     uint32_t width = 0;
     uint32_t height = 0;
+    // A texture may be either a 2D array or a 3D volume, but not both.
     uint32_t layers = 0;
+    uint32_t depth = 0;
     uint32_t mips = 0;
     // bool enableSurfaceWrites = true;
 };

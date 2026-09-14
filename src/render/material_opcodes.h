@@ -23,6 +23,7 @@ namespace ybi
     X(Separate3Color3, Float)
 
 #define MATERIALX_DEFINITIONS(X) \
+    X(constant_boolean, ConstantBool) \
     X(image_color3, ImageVector3) \
     X(image_vector3, ImageVector3) \
     X(image_float, ImageFloat) \
