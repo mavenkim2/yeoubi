@@ -33,9 +33,10 @@ YBI_GPU void ShaderColorCorrectColor3(const KernelParams &params,
 
     Vec3f v = LoadFloat3Register(registers, src);
 
-    v.x = powf(v.x, gamma);
-    v.y = powf(v.y, gamma);
-    v.z = powf(v.z, gamma);
+    float ex = 1.f / gamma;
+    v.x = powf(v.x, ex);
+    v.y = powf(v.y, ex);
+    v.z = powf(v.z, ex);
 
     StoreFloat3Register(registers, v, dst);
 }
