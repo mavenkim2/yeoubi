@@ -10,4 +10,7 @@ struct Device;
 DeviceTexture
 LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device, const char *executablePath);
 
+DeviceTexture LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(
+    Device &device, const char *executablePath);
+
 } // namespace ybi

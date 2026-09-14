@@ -95,6 +95,9 @@ int main(int argc, char **argv)
     DeviceTexture opaqueDielectricEnergyComplementTexture =
         LoadOpenPbrOpaqueDielectricEnergyComplementTexture(*device, argv[0]);
     YBI_ASSERT(opaqueDielectricEnergyComplementTexture.textureObject != 0);
+    DeviceTexture opaqueDielectricAverageEnergyComplementTexture =
+        LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(*device, argv[0]);
+    YBI_ASSERT(opaqueDielectricAverageEnergyComplementTexture.textureObject != 0);
 
     Arena arena;
     DataContainer container;
@@ -178,6 +181,8 @@ int main(int argc, char **argv)
     params.scene = system.deviceScene;
     params.opaqueDielectricEnergyComplementTexture =
         opaqueDielectricEnergyComplementTexture.textureObject;
+    params.opaqueDielectricAverageEnergyComplementTexture =
+        opaqueDielectricAverageEnergyComplementTexture.textureObject;
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
     DeviceBuffer accumulationBuffer;
@@ -295,6 +300,7 @@ int main(int argc, char **argv)
     displayDevice.reset();
     if (accumulationBuffer)
         device->Free(accumulationBuffer);
+    device->DestroyTexture(opaqueDielectricAverageEnergyComplementTexture);
     device->DestroyTexture(opaqueDielectricEnergyComplementTexture);
     device->Free(cudaParams);
 

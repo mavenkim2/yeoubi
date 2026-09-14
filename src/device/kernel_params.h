@@ -36,6 +36,7 @@ struct KernelParams
 
     // OpenPBR lookup tables
     uint64_t opaqueDielectricEnergyComplementTexture;
+    uint64_t opaqueDielectricAverageEnergyComplementTexture;
 
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;
