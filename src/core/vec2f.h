@@ -120,6 +120,11 @@ YBI_CPU_GPU constexpr Vec2f operator*(float scalar, Vec2f vector)
     return vector * scalar;
 }
 
+YBI_CPU_GPU Vec2f operator/(Vec2f lhs, Vec2f rhs)
+{
+    return Vec2f(lhs.x / rhs.x, lhs.y / rhs.y);
+}
+
 YBI_CPU_GPU Vec2f operator/(Vec2f vector, float scalar)
 {
     YBI_ASSERT(scalar != 0.0f);
@@ -187,6 +192,11 @@ YBI_CPU_GPU constexpr Vec2f Min(const Vec2f &lhs, float rhs)
 YBI_CPU_GPU constexpr Vec2f Min(float lhs, const Vec2f &rhs)
 {
     return Min(rhs, lhs);
+}
+
+YBI_CPU_GPU constexpr Vec2f Clamp(const Vec2f &v, float low, float high)
+{
+    return Max(Min(v, high), low);
 }
 
 } // namespace ybi

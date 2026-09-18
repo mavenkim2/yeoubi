@@ -133,6 +133,8 @@ struct CUDADevice : Device
                               const Mesh &mesh,
                               const MeshletClustersResult &clusterResult) override;
     size_t GetBVHAllocationSize() const override;
+    void StartProfiler() const override;
+    void StopProfiler() const override;
 };
 
 } // namespace ybi

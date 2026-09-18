@@ -86,33 +86,4 @@ YBI_GPU void StoreFloat3Register(float *registers, const Vec3f &value, int dstRe
     registers[dstRegister + 2] = value[2];
 }
 
-template <typename T>
-YBI_GPU T LoadTemplateRegister(float *registers, int srcRegister)
-{
-    static_assert(std::is_same_v<T, bool> || std::is_same_v<T, float> || std::is_same_v<T, Vec2f> ||
-                      std::is_same_v<T, Vec3f> || std::is_same_v<T, Vec4f>,
-                  "T must be bool, float, Vec2f, Vec3f, or Vec4f");
-
-    if constexpr (std::is_same_v<T, bool>)
-    {
-        return LoadBoolRegister(registers, srcRegister);
-    }
-    else if constexpr (std::is_same_v<T, float>)
-    {
-        return LoadFloatRegister(registers, srcRegister);
-    }
-    else if constexpr (std::is_same_v<T, Vec2f>)
-    {
-        return LoadFloat2Register(registers, srcRegister);
-    }
-    else if constexpr (std::is_same_v<T, Vec3f>)
-    {
-        return LoadFloat3Register(registers, srcRegister);
-    }
-    else if constexpr (std::is_same_v<T, Vec4f>)
-    {
-        return LoadFloat4Register(registers, srcRegister);
-    }
-}
-
 } // namespace ybi

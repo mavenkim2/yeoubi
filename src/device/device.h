@@ -171,6 +171,8 @@ struct Device
                                       const MeshletClustersResult &clusterResult) = 0;
 
     virtual size_t GetBVHAllocationSize() const = 0;
+    virtual void StartProfiler() const = 0;
+    virtual void StopProfiler() const = 0;
 };
 
 } // namespace ybi

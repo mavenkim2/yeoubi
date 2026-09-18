@@ -16,5 +16,6 @@ pxr::UsdShadeShader GetMaterialSurfaceShader(const pxr::UsdShadeMaterial &materi
 void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                          pxr::UsdTimeCode timeCode,
                          OpenPbrMaterial *material);
+void LoadMaterialXSurface(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode);
 
 } // namespace ybi

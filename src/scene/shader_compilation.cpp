@@ -357,20 +357,32 @@ static void CompileSeparate3Color3(const MaterialNode &node,
     YBI_ASSERT(0);
 }
 
-DeviceMaterialExpression CompileShader(
-    const MaterialGraph &graph,
-    MaterialNodeId outputNode,
-    const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,
-    const std::unordered_map<std::string, AttributeId> &attributeIdMap,
-    std::vector<uint32_t> &nodes)
+static void CompileMix(const MaterialNode &node,
+                       const std::vector<NodeInfo> &,
+                       MaterialNodeId,
+                       ShaderCompilationContext &context)
 {
-    ShaderCompilationContext context{graph, nodes, textureNodeToHandle, attributeIdMap};
+    YBI_ASSERT(0);
+}
+
+static void Compilelayerbsdf()
+{
+    // 1. evaluate all of the inputs to bsdf nodes
+    // 2. can't be register file? because the state has to persist across
+    // multiple function calls. need to allocate closures or some shih
+}
+
+static void TopologicalSort(const MaterialGraph &graph,
+                            MaterialNodeId outputNode,
+                            std::vector<NodeInfo> &nodeInfo,
+                            const std::vector<uint32_t> &nodes,
+                            std::vector<MaterialNodeId> &sortedList)
+{
     const uint32_t bytecodeOffset = static_cast<uint32_t>(nodes.size());
 
     // Count number of incoming and outgoing edges
     YBI_ASSERT(outputNode < graph.nodes.size());
 
-    std::vector<NodeInfo> nodeInfo(graph.nodes.size());
     std::vector<bool> discovered(graph.nodes.size(), false);
     std::vector<MaterialNodeId> discoveryOrder;
     std::vector<MaterialNodeId> stack;
@@ -409,12 +421,11 @@ DeviceMaterialExpression CompileShader(
         }
     }
 
-    std::vector<MaterialNodeId> outputList;
     size_t index = 0;
     while (index != queue.size())
     {
         MaterialNodeId node = queue[index++];
-        outputList.push_back(node);
+        sortedList.push_back(node);
         for (MaterialNodeId neighbor : nodeInfo[node].outNodes)
         {
             YBI_ASSERT(nodeInfo[neighbor].in);
@@ -424,13 +435,29 @@ DeviceMaterialExpression CompileShader(
             }
         }
     }
+}
+
+DeviceMaterialExpression CompileShader(
+    const MaterialGraph &graph,
+    MaterialNodeId outputNode,
+    const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,
+    const std::unordered_map<std::string, AttributeId> &attributeIdMap,
+    std::vector<uint32_t> &nodes)
+{
+    ShaderCompilationContext context{graph, nodes, textureNodeToHandle, attributeIdMap};
+    const uint32_t bytecodeOffset = static_cast<uint32_t>(nodes.size());
+
+    // Count number of incoming and outgoing edges
+    YBI_ASSERT(outputNode < graph.nodes.size());
+
+    std::vector<NodeInfo> nodeInfo(graph.nodes.size());
+    std::vector<MaterialNodeId> outputList;
+
+    TopologicalSort(graph, outputNode, nodeInfo, nodes, outputList);
 
     // Allocate register slots
     ScratchArena scratch;
     BitVector slotAllocated(scratch.arena, SHADER_NUM_REGISTERS);
-
-    // std::vector<uint8_t> compiledBytes;
-    // std::vector<CompileNode> compiledNodes;
 
     for (MaterialNodeId nodeId : outputList)
     {
@@ -539,5 +566,65 @@ DeviceMaterialExpression CompileShader(
 
     return result;
 }
+
+#if 0
+void CompileBSDFShader(
+    const MaterialGraph &graph,
+    MaterialNodeId outputNode,
+    const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,
+    const std::unordered_map<std::string, AttributeId> &attributeIdMap,
+    std::vector<uint32_t> &nodes)
+{
+    ShaderCompilationContext context{graph, nodes, textureNodeToHandle, attributeIdMap};
+    const uint32_t bytecodeOffset = static_cast<uint32_t>(nodes.size());
+
+    YBI_ASSERT(outputNode < graph.nodes.size());
+
+    std::vector<NodeInfo> nodeInfo(graph.nodes.size());
+    std::vector<MaterialNodeId> outputList;
+
+    TopologicalSort(graph, outputNode, nodeInfo, nodes, outputList);
+
+    // Allocate register slots
+    ScratchArena scratch;
+    BitVector slotAllocated(scratch.arena, SHADER_NUM_REGISTERS);
+
+    for (MaterialNodeId nodeId : outputList)
+    {
+        const MaterialNode &node = graph.nodes[nodeId];
+        size_t numWords = GetMaterialOpcodeOutputRegisterCount(node.type);
+
+        // TODO: something ma jiggy
+    }
+
+    for (MaterialNodeId nodeId : outputList)
+    {
+        const MaterialNode &node = graph.nodes[nodeId];
+        switch (node.type)
+        {
+#define CASE(name, type) \
+    case MaterialOpcode::name: \
+    { \
+        Compile##name(node, nodeInfo, nodeId, context); \
+        break; \
+    }
+            RENDERER_NODE_DEFINITIONS(CASE)
+#undef CASE
+#define CASE(name) \
+    case MaterialOpcode::name: \
+    { \
+        Compile##name##bsdf(node, nodeInfo, nodeId, context); \
+        break; \
+    }
+            MATERIALX_BSDFS(CASE)
+#undef CASE
+            default:
+                YBI_LOGFATAL("Shader compilation for %s is not implemented\n",
+                             ConvertMaterialOpcodeToString(node.type));
+                break;
+        }
+    }
+}
+#endif
 
 } // namespace ybi

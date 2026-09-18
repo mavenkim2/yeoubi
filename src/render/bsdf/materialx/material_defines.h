@@ -1,0 +1,5 @@
+#pragma once
+
+#define MATERIAL_NUM_CLOSURE_BITS 3
+#define MATERIAL_NUM_CLOSURE_VALUES (1u << 3)
+#define MATERIAL_NUM_REGISTER_BITS 5

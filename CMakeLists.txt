@@ -228,6 +228,8 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         # "-I${OPENPBR_BSDF_INCLUDE_DIR}"
         -MD
         -MF "${YBI_OPTIX_PTX_DEPFILE}"
+        "-lineinfo"
+        # "-Ofc=max"
         "-o" "${YBI_OPTIX_PTX_PATH}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
         DEPENDS
@@ -250,7 +252,6 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
         "--use_fast_math"
         "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "-Ofc=max"
         -MD
         -MF "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
         "-o" "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"

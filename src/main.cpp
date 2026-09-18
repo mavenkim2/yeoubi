@@ -238,7 +238,11 @@ int main(int argc, char **argv)
         DeviceExternalBuffer &deviceImageHandle = deviceImageHandles[frameIndex];
         params.imageHandle = reinterpret_cast<uint64_t>(deviceImageHandle.buffer.Data());
         manager.UpdateParams(&params);
+
+        device->StartProfiler();
         manager.Update(&params);
+        device->StopProfiler();
+
         if (interactive)
         {
             progressiveState.BeginFrame(
@@ -251,7 +255,11 @@ int main(int argc, char **argv)
         }
         resetPending = false;
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
+
+        device->StartProfiler();
         device->DispatchKernel(camera.width, camera.height, cudaParams);
+        device->StopProfiler();
+
         if (interactive)
         {
             progressiveState.samples += samplesPerPixel;

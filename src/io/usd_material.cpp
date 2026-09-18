@@ -31,6 +31,7 @@ namespace ybi
 
 static const pxr::TfToken mtlxToken("mtlx", pxr::TfToken::Immortal);
 static const pxr::TfToken mtlxOpenPbr("ND_open_pbr_surface_surfaceshader", pxr::TfToken::Immortal);
+static const pxr::TfToken mtlxSurface("ND_surface", pxr::TfToken::Immortal);
 
 namespace mtlxTokens
 {
@@ -38,6 +39,12 @@ namespace mtlxTokens
     static const pxr::TfToken mtlxName("ND_" #mtlxName, pxr::TfToken::Immortal);
 
 MATERIALX_DEFINITIONS(MTLX_TOKENS)
+#undef MTLX_TOKENS
+
+#define MTLX_TOKENS(mtlxName) \
+    static const pxr::TfToken mtlxName("ND_" #mtlxName "_bsdf", pxr::TfToken::Immortal);
+
+MATERIALX_BSDFS(MTLX_TOKENS)
 #undef MTLX_TOKENS
 
 } // namespace mtlxTokens
@@ -435,7 +442,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
         for (const pxr::TfToken &inputName : definition->GetShaderInputNames())
         {
             const pxr::UsdShadeInput input = shader.GetInput(inputName);
-            // printf("input name: %s\n", inputName.GetText());
+            printf("input name: %s\n", inputName.GetText());
             bool useDefault = true;
 
             if (input)
@@ -452,6 +459,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     {
                         materialInputs.push_back(
                             {inputName, LoadConstant(input.GetAttr(), value, timeCode)});
+                        DebugPrintConstant(materialInputs.back());
                         useDefault = false;
                     }
                 }
@@ -466,7 +474,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                         pxr::UsdShadeShader sourceShader(producer.GetPrim());
                         pxr::TfToken shaderId;
                         sourceShader.GetShaderId(&shaderId);
-                        // printf("%s\n", shaderId.GetText());
+                        printf("%s\n", shaderId.GetText());
 
                         if (auto found = nodeMap.find(sourceShader.GetPath().GetString());
                             found == nodeMap.end())
@@ -484,6 +492,7 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     {
                         materialInputs.push_back(
                             {inputName, LoadConstant(producer, value, timeCode)});
+                        DebugPrintConstant(materialInputs.back());
                         useDefault = false;
                         break;
                     }
@@ -513,8 +522,12 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
             }
         }
 
+        printf("\n");
+
         const MaterialNodeId nodeId = static_cast<MaterialNodeId>(graph.nodes.size());
+
         MaterialOpcode opcode = ConvertTokenToMaterialOpcode(shaderId);
+        YBI_ASSERT(opcode != MaterialOpcode::Invalid);
 
         graph.nodes.push_back({opcode, std::move(materialInputs)});
         nodeMap[path] = nodeId;
@@ -598,6 +611,33 @@ void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                 else
                 {
                     YBI_LOGFATAL("Unexpected error when handling producer input\n");
+                }
+            }
+        }
+    }
+}
+
+void LoadMaterialXSurface(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
+{
+    pxr::TfToken idToken;
+    YBI_ASSERT(shader.GetShaderId(&idToken) && idToken == mtlxSurface);
+
+    MaterialGraph graph;
+    for (const pxr::UsdShadeInput &input : shader.GetInputs())
+    {
+        printf("%s\n", input.GetFullName().GetText());
+        const pxr::UsdShadeAttributeVector producers = input.GetValueProducingAttributes();
+        for (const pxr::UsdAttribute &producer : producers)
+        {
+            if (pxr::UsdShadeOutput::IsOutput(producer))
+            {
+                if (producer.GetPrim().IsA<pxr::UsdShadeShader>())
+                {
+                    pxr::UsdShadeShader sourceShader(producer.GetPrim());
+                    pxr::TfToken shaderId;
+                    sourceShader.GetShaderId(&shaderId);
+
+                    LoadMtlxShader(graph, sourceShader, timeCode);
                 }
             }
         }

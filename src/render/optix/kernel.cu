@@ -6,6 +6,7 @@
 #include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
+#include "render/bsdf/materialx/sample.h"
 #include "render/bsdf/openpbr/api.h"
 #include "render/bsdf/openpbr/init.h"
 #include "render/camera.h"
@@ -23,6 +24,7 @@
 #include "render/virtual_texture_interop.h"
 #include "render/virtual_texture_sampling.h"
 #include "scene/openpbr_parameters.h"
+#include <ctime>
 #include <optix_device.h>
 #include <optix_types.h>
 #include <vector_types.h>
@@ -564,7 +566,7 @@ extern "C" __global__ void __raygen__kernel()
                 shadingInfo.rayCone = rayCone;
 
                 const Vec3f baseColor =
-                    EvaluateShader<Vec3f>(params, shadingInfo, material.base_color);
+                    EvaluateShaderVec3(params, shadingInfo, material.base_color);
 
                 // Vec3f baseColor(0.f);
                 color =
@@ -660,6 +662,7 @@ YBI_GPU void RenderUnidirectional()
             const uint64_t ptr = reinterpret_cast<uint64_t>(&info);
             uint32_t low = static_cast<uint32_t>(ptr);
             uint32_t high = static_cast<uint32_t>(ptr >> 32u);
+
             optixTrace(bvhHandle,
                        make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
                        make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
@@ -747,6 +750,7 @@ YBI_GPU void RenderUnidirectional()
 
             Vec3f baseColor(0.5f);
             bool passedAlphaTest = true;
+
             if (shadingInfo.hasMaterial)
             {
                 const MaterialHandle &handle =
@@ -754,6 +758,7 @@ YBI_GPU void RenderUnidirectional()
                 if (handle.isGraph)
                 {
                     const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
+
                     passedAlphaTest = InitializeOpenPbrBsdf(params,
                                                             material,
                                                             shadingInfo,
@@ -763,6 +768,7 @@ YBI_GPU void RenderUnidirectional()
                                                             tangentFrame,
                                                             throughput,
                                                             rng.Uniform());
+
                     // baseColor = Vec3f(
                     //     EvaluateShader<float>(params, shadingInfo,
                     //     material.specular_roughness));
@@ -833,18 +839,29 @@ YBI_GPU void RenderUnidirectional()
             }
 
             Vec3f worldLightDirection, weight;
-            bool success = SampleOpenPBR(
-                bsdf,
-                worldViewDirection,
-                throughput,
-                rng.Uniform2D(),
-                worldLightDirection,
-                weight);
+            bool success = SampleOpenPBR(bsdf,
+                                         worldViewDirection,
+                                         throughput,
+                                         rng.Uniform2D(),
+                                         worldLightDirection,
+                                         weight);
 
             if (!success)
                 break;
 
             throughput *= weight;
+
+            // Russian roulette
+            if (throughput.MaxComponent() < 1.f && depth > 1)
+            {
+                float weight = throughput.MaxComponent();
+                if (rng.Uniform() >= weight)
+                {
+                    break;
+                }
+                throughput /= weight;
+            }
+
             const Vec3f nextDirection = worldLightDirection;
 
             previousSurfacePosition = shadingInfo.position;
@@ -868,7 +885,7 @@ YBI_GPU void RenderUnidirectional()
     Vec3f *history = params.accumulation ? params.accumulation + pixelIndex : nullptr;
     const Vec3f linearColor =
         AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
-    const Vec3f displayColor = linearColor; // FastACESToneMap(linearColor);
+    const Vec3f displayColor = FastACESToneMap(linearColor);
     image[pixelIndex] =
         make_uchar4(static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.x) + 0.5f),
                     static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.y) + 0.5f),

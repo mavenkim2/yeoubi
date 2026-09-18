@@ -13,12 +13,11 @@
 namespace ybi
 {
 
-template <typename T>
-YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
-                             const ShadingInfo &info,
-                             const DeviceMaterialExpression &shader)
+YBI_GPU void EvaluateShader(const KernelParams &params,
+                            const ShadingInfo &info,
+                            const DeviceMaterialExpression &shader,
+                            float *registers)
 {
-    float registers[SHADER_NUM_REGISTERS];
     uint32_t offset = shader.bytecodeOffset;
 
     for (;;)
@@ -81,12 +80,57 @@ YBI_CPU_GPU T EvaluateShader(const KernelParams &params,
             }
             case MaterialOpcode::Count:
             {
-                return LoadTemplateRegister<T>(registers, shader.outputRegister);
+                return;
             }
             default:
                 YBI_ASSERT(0);
         }
     }
+}
+
+YBI_GPU bool EvaluateShaderBool(const KernelParams &params,
+                                const ShadingInfo &info,
+                                const DeviceMaterialExpression &shader)
+{
+    float registers[SHADER_NUM_REGISTERS];
+    EvaluateShader(params, info, shader, registers);
+    return LoadBoolRegister(registers, shader.outputRegister);
+}
+
+YBI_GPU Vec2f EvaluateShaderVec2(const KernelParams &params,
+                                 const ShadingInfo &info,
+                                 const DeviceMaterialExpression &shader)
+{
+    float registers[SHADER_NUM_REGISTERS];
+    EvaluateShader(params, info, shader, registers);
+    return LoadFloat2Register(registers, shader.outputRegister);
+}
+
+YBI_GPU Vec3f EvaluateShaderVec3(const KernelParams &params,
+                                 const ShadingInfo &info,
+                                 const DeviceMaterialExpression &shader)
+{
+    float registers[SHADER_NUM_REGISTERS];
+    EvaluateShader(params, info, shader, registers);
+    return LoadFloat3Register(registers, shader.outputRegister);
+}
+
+YBI_GPU Vec4f EvaluateShaderVec4(const KernelParams &params,
+                                 const ShadingInfo &info,
+                                 const DeviceMaterialExpression &shader)
+{
+    float registers[SHADER_NUM_REGISTERS];
+    EvaluateShader(params, info, shader, registers);
+    return LoadFloat4Register(registers, shader.outputRegister);
+}
+
+YBI_GPU float EvaluateShaderFloat(const KernelParams &params,
+                                  const ShadingInfo &info,
+                                  const DeviceMaterialExpression &shader)
+{
+    float registers[SHADER_NUM_REGISTERS];
+    EvaluateShader(params, info, shader, registers);
+    return LoadFloatRegister(registers, shader.outputRegister);
 }
 
 } // namespace ybi

@@ -62,6 +62,11 @@ public:
         return Vec3f(x, y, z);
     }
 
+    YBI_CPU_GPU constexpr Vec2f Zw() const
+    {
+        return Vec2f(z, w);
+    }
+
     YBI_CPU_GPU constexpr Vec4f operator+() const
     {
         return *this;

@@ -6,6 +6,7 @@
 #include "core/assert.h"
 #include "core/bit.h"
 #include "core/math.h"
+#include "core/matrix4x4.h"
 #include "core/thread_context.h"
 #include "io/usd_helpers.h"
 #include "io/usd_material.h"
@@ -37,6 +38,7 @@
 #include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformCache.h>
+#include <pxr/usd/usdLux/domeLight.h>
 #include <pxr/usd/usdLux/rectLight.h>
 #include <pxr/usd/usdLux/sphereLight.h>
 #include <pxr/usd/usdShade/connectableAPI.h>
@@ -96,6 +98,7 @@ struct USDPrimTraversalData
     std::vector<pxr::UsdPrim> curves;
 
     std::vector<pxr::UsdPrim> rectLights;
+    std::vector<pxr::UsdPrim> environmentLight;
     std::vector<pxr::UsdPrim> sphereLights;
 
     std::vector<pxr::UsdGeomCamera> cameras;
@@ -1132,6 +1135,10 @@ void USDSceneLoader::TraversePrim(USDPrimTraversalData *data,
         {
             data->rectLights.push_back(prim);
         }
+        else if (prim.IsA<pxr::UsdLuxDomeLight>())
+        {
+            data->environmentLight.push_back(prim);
+        }
         else if (prim.IsA<pxr::UsdLuxSphereLight>())
         {
             data->sphereLights.push_back(prim);
@@ -1584,31 +1591,46 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
 
     // Load cameras
     USDPrimTraversalData &data = traversalDatas[0];
-    YBI_ASSERT(!data.cameras.empty());
 
-    printf("num cameras: %zu\n", data.cameras.size());
-    pxr::UsdGeomCamera camera = data.cameras[5];
+    if (data.cameras.empty())
+    {
+        container->camera.cameraFromWorld =
+            AffineTransform::LookAt(Vec3f(1.f, 0.f, 0.f), Vec3f(0.f, 1.f, 0.f), Vec3f(0.f));
+        container->camera.position = Vec3f(0.f);
+        container->camera.verticalFovRadians = DegreesToRadians(90.f);
 
-    printf("camera name: %s\n", camera.GetPath().GetText());
-    pxr::UsdPrim cameraPrim = camera.GetPrim();
-    pxr::GfCamera gfCam = camera.GetCamera(timeCode);
-    const float verticalFovRadians =
-        DegreesToRadians(float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
-    pxr::GfFrustum frustum = gfCam.GetFrustum();
-    pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
-    pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
+        // TODO: this needs to not be hardcoded
+        container->camera.clipFromCamera =
+            Perspective(container->camera.verticalFovRadians, 1920.f / 1080.f);
+    }
+    else
+    {
+        YBI_ASSERT(!data.cameras.empty());
 
-    printf("fov: %f %f\n",
-           verticalFovRadians,
-           float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
+        printf("num cameras: %zu\n", data.cameras.size());
+        pxr::UsdGeomCamera camera = data.cameras[5];
 
-    container->camera.cameraFromWorld = ConvertAffineTransform(viewMatrix);
-    AffineTransform renderFromCamera;
-    bool inverseResult = container->camera.cameraFromWorld.TryInverse(&renderFromCamera);
-    YBI_ASSERT(inverseResult);
-    container->camera.position = renderFromCamera.GetTranslation();
-    container->camera.verticalFovRadians = verticalFovRadians;
-    container->camera.clipFromCamera = ConvertMatrix4x4(projMatrix);
+        printf("camera name: %s\n", camera.GetPath().GetText());
+        pxr::UsdPrim cameraPrim = camera.GetPrim();
+        pxr::GfCamera gfCam = camera.GetCamera(timeCode);
+        const float verticalFovRadians =
+            DegreesToRadians(float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
+        pxr::GfFrustum frustum = gfCam.GetFrustum();
+        pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+        pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
+
+        printf("fov: %f %f\n",
+               verticalFovRadians,
+               float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
+
+        container->camera.cameraFromWorld = ConvertAffineTransform(viewMatrix);
+        AffineTransform renderFromCamera;
+        bool inverseResult = container->camera.cameraFromWorld.TryInverse(&renderFromCamera);
+        YBI_ASSERT(inverseResult);
+        container->camera.position = renderFromCamera.GetTranslation();
+        container->camera.verticalFovRadians = verticalFovRadians;
+        container->camera.clipFromCamera = ConvertMatrix4x4(projMatrix);
+    }
 
     // TODO: cli option
     const int targetWidth = 1920;
@@ -1864,7 +1886,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
             const std::string materialPath = material.GetPath().GetString();
 
             pxr::TfToken token;
-            if (shader.GetShaderId(&token) && token == pxr::TfToken("UsdPreviewSurface"))
+            bool foundToken = shader.GetShaderId(&token);
+
+            printf("type: %s\n", token.GetText());
+            if (foundToken && token == pxr::TfToken("UsdPreviewSurface"))
             {
                 handle.isGraph = false;
                 handle.index = container->materials.size();
@@ -1917,6 +1942,10 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
                     }
 #endif
                 }
+            }
+            else if (token == pxr::TfToken("ND_surface"))
+            {
+                LoadMaterialXSurface(shader, timeCode);
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {

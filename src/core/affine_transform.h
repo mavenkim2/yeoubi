@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
+#include "core/vec3f.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include <cmath>
@@ -214,6 +215,29 @@ public:
         const bool success = TryInverse(&inverse, epsilon);
         YBI_ASSERT(success);
         return inverse;
+    }
+
+    static YBI_CPU_GPU AffineTransform LookAt(const Vec3f &to,
+                                              const Vec3f &worldUp,
+                                              const Vec3f &cameraP)
+    {
+        Vec3f forward = Normalize(cameraP - to);
+        Vec3f right = Normalize(Cross(worldUp, forward));
+        Vec3f up = Normalize(Cross(forward, right));
+
+        AffineTransform result(right.x,
+                               right.y,
+                               right.z,
+                               -Dot(right, cameraP),
+                               up.x,
+                               up.y,
+                               up.z,
+                               -Dot(up, cameraP),
+                               forward.x,
+                               forward.y,
+                               forward.z,
+                               -Dot(forward, cameraP));
+        return result;
     }
 };
 

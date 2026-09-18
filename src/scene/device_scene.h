@@ -92,6 +92,12 @@ struct DeviceLight
     Vec3f radiance;
 };
 
+struct MaterialDescriptor
+{
+    MaterialOpcode materialType;
+    uint32_t bits;
+};
+
 struct DeviceScene
 {
     Object *objects;
@@ -111,6 +117,8 @@ struct DeviceScene
 
     DeviceAttribute *deviceAttributes;
     uint32_t *shaderNodes;
+
+    MaterialDescriptor *materialDescriptors;
 
     DeviceLight *deviceLights;
     uint32_t numLights;

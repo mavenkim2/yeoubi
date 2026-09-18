@@ -20,7 +20,8 @@ namespace ybi
     X(ColorCorrectColor3, Vec3) \
     X(RemapColor3, Vec3) \
     X(Ramp4Float, Float) \
-    X(Separate3Color3, Float)
+    X(Separate3Color3, Float) \
+    X(Mix, Float)
 
 #define MATERIALX_DEFINITIONS(X) \
     X(constant_boolean, ConstantBool) \
@@ -37,7 +38,17 @@ namespace ybi
     X(colorcorrect_color3, ColorCorrectColor3) \
     X(remap_color3, RemapColor3) \
     X(ramp4_float, Ramp4Float) \
-    X(separate3_color3, Separate3Color3)
+    X(separate3_color3, Separate3Color3) \
+    X(mix_float, Mix) \
+    X(constant_color3, ConstantColor)
+
+#define MATERIALX_BSDFS(X) \
+    X(layer) \
+    X(mix) \
+    X(sheen) \
+    X(oren_nayar_diffuse) \
+    X(dielectric) \
+    X(conductor)
 
 enum class MaterialValueType : uint8_t
 {
@@ -78,8 +89,11 @@ enum class MaterialOpcode : uint8_t
 #define ENUM(name, outputType) name,
     RENDERER_NODE_DEFINITIONS(ENUM)
 #undef ENUM
+#define ENUM(name) name##_bsdf,
+        MATERIALX_BSDFS(ENUM)
+#undef ENUM
 
-        Count,
+            Count,
 };
 
 constexpr const char *ConvertMaterialOpcodeToString(MaterialOpcode opcode)

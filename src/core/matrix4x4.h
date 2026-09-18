@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
+#include "core/vec3f.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include <cmath>
@@ -237,6 +238,33 @@ public:
         YBI_ASSERT(success);
         return inverse;
     }
+
+    static YBI_CPU_GPU Matrix4x4 LookAt(const Vec3f &to,
+                                        const Vec3f &worldUp,
+                                        const Vec3f &cameraP)
+    {
+        Vec3f forward = Normalize(cameraP - to);
+        Vec3f right = Normalize(Cross(worldUp, forward));
+        Vec3f up = Normalize(Cross(forward, right));
+
+        Matrix4x4 result(right.x,
+                         right.y,
+                         right.z,
+                         -Dot(right, cameraP),
+                         up.x,
+                         up.y,
+                         up.z,
+                         -Dot(up, cameraP),
+                         forward.x,
+                         forward.y,
+                         forward.z,
+                         -Dot(forward, cameraP),
+                         0.f,
+                         0.f,
+                         0.f,
+                         1.f);
+        return result;
+    }
 };
 
 YBI_CPU_GPU constexpr Matrix4x4 operator*(const Matrix4x4 &a, const Matrix4x4 &b)
@@ -258,6 +286,28 @@ YBI_CPU_GPU constexpr Matrix4x4 operator*(const Matrix4x4 &a, const Matrix4x4 &b
 YBI_CPU_GPU constexpr Vec4f operator*(const Matrix4x4 &matrix, Vec4f vector)
 {
     return matrix.Transform(vector);
+}
+
+YBI_CPU_GPU Matrix4x4 Perspective(float fov, float aspectRatio, float n = 1e-2f, float f = 1000.f)
+{
+    float divTanHalf = 1.f / tanf(fov / 2.f);
+    Matrix4x4 result(divTanHalf / aspectRatio,
+                     0.f,
+                     0.f,
+                     0.f,
+                     0.f,
+                     divTanHalf,
+                     0.f,
+                     0.f,
+                     0.f,
+                     0.f,
+                     f / (n - f),
+                     n * f / (n - f),
+                     0.f,
+                     0.f,
+                     -1.f,
+                     0.f);
+    return result;
 }
 
 } // namespace ybi

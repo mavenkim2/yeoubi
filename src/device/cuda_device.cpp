@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cuda.h>
+#include <cuda_profiler_api.h>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <fstream>
@@ -440,7 +441,8 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
         YBI_ASSERT(copyDesc.depth > 0);
 
         const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
-        const uint32_t textureDepth = texture.info.depth ? texture.info.depth : texture.info.layers;
+        const uint32_t textureDepth =
+            texture.info.depth ? texture.info.depth : texture.info.layers;
         YBI_ASSERT(elementSize > 0);
         YBI_ASSERT(copyDesc.srcRowPitch % elementSize == 0);
         YBI_ASSERT(copyDesc.widthInBytes % elementSize == 0);
@@ -459,8 +461,8 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
         op.src.op.ptr.ptr = reinterpret_cast<CUdeviceptr>(copyDesc.src);
         op.src.op.ptr.rowLength = copyDesc.srcRowPitch / elementSize;
         op.src.op.ptr.layerHeight = copyDesc.srcSlicePitch
-                                            ? copyDesc.srcSlicePitch / copyDesc.srcRowPitch
-                                            : copyDesc.height;
+                                        ? copyDesc.srcSlicePitch / copyDesc.srcRowPitch
+                                        : copyDesc.height;
 
         op.dst.type = CU_MEMCPY_OPERAND_TYPE_ARRAY;
         op.dst.op.array.array = reinterpret_cast<CUarray>(texture.array);
@@ -858,7 +860,8 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     OptixModuleCompileOptions moduleCompileOptions = {};
     moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
     moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
-    moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_DEFAULT;
+    // moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_DEFAULT;
+    moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
 
     OptixPipelineCompileOptions pipelineCompileOptions = {};
     pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
@@ -1452,6 +1455,16 @@ BVHHandle CUDADevice::BuildClusterBVH(DeviceArena *deviceArena,
 size_t CUDADevice::GetBVHAllocationSize() const
 {
     return bvhTotalAllocated;
+}
+
+void CUDADevice::StartProfiler() const
+{
+    cudaProfilerStart();
+}
+
+void CUDADevice::StopProfiler() const
+{
+    cudaProfilerStop();
 }
 
 #if 0
