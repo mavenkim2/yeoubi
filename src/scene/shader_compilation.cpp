@@ -96,24 +96,6 @@ static const T *GetConstantValue(const MaterialNode &node)
     return value;
 }
 
-template <typename Func>
-static void IterateNamedInput(const MaterialNode &node, const std::string &name, Func &&func)
-{
-    for (const MaterialInput &input : node.inputs)
-    {
-        if (input.name == name)
-        {
-            std::visit(
-                [&](const auto &value) {
-                    using T = std::decay_t<decltype(value)>;
-                    func(value);
-                },
-                input.value);
-            break;
-        }
-    }
-}
-
 static void CompileConstantFloat(const MaterialNode &node,
                                  const std::vector<NodeInfo> &nodeInfos,
                                  MaterialNodeId nodeId,
@@ -175,6 +157,28 @@ static MaterialTextureHandle GetTextureHandle(const MaterialNode &node,
 
 // TODO: add address mode
 static void CompileImageVector3(const MaterialNode &node,
+                                const std::vector<NodeInfo> &nodeInfos,
+                                MaterialNodeId nodeId,
+                                ShaderCompilationContext &context)
+{
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    MaterialTextureHandle handle = GetTextureHandle(node, context);
+    context.AddTextureHandle(handle);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
+}
+
+static void CompileImageVector2(const MaterialNode &node,
+                                const std::vector<NodeInfo> &nodeInfos,
+                                MaterialNodeId nodeId,
+                                ShaderCompilationContext &context)
+{
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    MaterialTextureHandle handle = GetTextureHandle(node, context);
+    context.AddTextureHandle(handle);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
+}
+
+static void CompileImageVector4(const MaterialNode &node,
                                 const std::vector<NodeInfo> &nodeInfos,
                                 MaterialNodeId nodeId,
                                 ShaderCompilationContext &context)
@@ -566,65 +570,5 @@ DeviceMaterialExpression CompileShader(
 
     return result;
 }
-
-#if 0
-void CompileBSDFShader(
-    const MaterialGraph &graph,
-    MaterialNodeId outputNode,
-    const std::unordered_map<const MaterialNode *, MaterialTextureHandle> &textureNodeToHandle,
-    const std::unordered_map<std::string, AttributeId> &attributeIdMap,
-    std::vector<uint32_t> &nodes)
-{
-    ShaderCompilationContext context{graph, nodes, textureNodeToHandle, attributeIdMap};
-    const uint32_t bytecodeOffset = static_cast<uint32_t>(nodes.size());
-
-    YBI_ASSERT(outputNode < graph.nodes.size());
-
-    std::vector<NodeInfo> nodeInfo(graph.nodes.size());
-    std::vector<MaterialNodeId> outputList;
-
-    TopologicalSort(graph, outputNode, nodeInfo, nodes, outputList);
-
-    // Allocate register slots
-    ScratchArena scratch;
-    BitVector slotAllocated(scratch.arena, SHADER_NUM_REGISTERS);
-
-    for (MaterialNodeId nodeId : outputList)
-    {
-        const MaterialNode &node = graph.nodes[nodeId];
-        size_t numWords = GetMaterialOpcodeOutputRegisterCount(node.type);
-
-        // TODO: something ma jiggy
-    }
-
-    for (MaterialNodeId nodeId : outputList)
-    {
-        const MaterialNode &node = graph.nodes[nodeId];
-        switch (node.type)
-        {
-#define CASE(name, type) \
-    case MaterialOpcode::name: \
-    { \
-        Compile##name(node, nodeInfo, nodeId, context); \
-        break; \
-    }
-            RENDERER_NODE_DEFINITIONS(CASE)
-#undef CASE
-#define CASE(name) \
-    case MaterialOpcode::name: \
-    { \
-        Compile##name##bsdf(node, nodeInfo, nodeId, context); \
-        break; \
-    }
-            MATERIALX_BSDFS(CASE)
-#undef CASE
-            default:
-                YBI_LOGFATAL("Shader compilation for %s is not implemented\n",
-                             ConvertMaterialOpcodeToString(node.type));
-                break;
-        }
-    }
-}
-#endif
 
 } // namespace ybi

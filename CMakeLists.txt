@@ -51,7 +51,7 @@ if (WITH_CUDA)
         find_package(CUDAToolkit REQUIRED)
         enable_language(CUDA)
         message(STATUS "CUDA Found: ${CMAKE_CUDA_COMPILER} (${CUDA_VERSION})")
-        list (APPEND YBI_DEPENDENCIES CUDA::cuda_driver CUDA::cudart)
+        list (APPEND YBI_DEPENDENCIES CUDA::cuda_driver CUDA::cudart CUDA::nvrtc)
         list (APPEND YBI_COMPILE_DEFINITIONS WITH_CUDA)
 
         find_package(OptiX)
@@ -190,6 +190,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/shader_compilation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/material_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
@@ -210,20 +211,30 @@ list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES
 if (YBI_HAS_CUDA AND OPTIX_FOUND)
     get_filename_component(YBI_CUDA_HOST_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
 
+    set(YBI_CUDA_ARCHITECTURE "compute_75")
+    set(YBI_CUDA_STANDARD "c++${CMAKE_CXX_STANDARD}")
+    list(GET CUDAToolkit_INCLUDE_DIRS 0 YBI_CUDA_INCLUDE_PATH)
+    list(LENGTH CUDAToolkit_INCLUDE_DIRS YBI_CUDA_INCLUDE_PATH_COUNT)
+    if (YBI_CUDA_INCLUDE_PATH_COUNT GREATER 1)
+        list(GET CUDAToolkit_INCLUDE_DIRS 1 YBI_CUDA_CCCL_INCLUDE_PATH)
+    endif()
+
     set(YBI_OPTIX_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx")
     set(YBI_OPTIX_PTX_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx.d")
+    set(YBI_OPTIX_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set(YBI_OPTIX_SDK_INCLUDE_PATH "${OPTIX_INCLUDE_DIR}")
     add_custom_command(
         OUTPUT "${YBI_OPTIX_PTX_PATH}"
         COMMAND "${CMAKE_CUDA_COMPILER}"
         --ptx
-        "--gpu-architecture=compute_75"
-        "--std=c++17"
+        "--gpu-architecture=${YBI_CUDA_ARCHITECTURE}"
+        "--std=${YBI_CUDA_STANDARD}"
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
         # "--expt-relaxed-constexpr"
         "--use_fast_math"
         "-DOPTIX_VERSION=${OPTIX_VERSION}"
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "-I${OPTIX_INCLUDE_DIR}"
+        "-I${YBI_OPTIX_INCLUDE_PATH}"
+        "-I${YBI_OPTIX_SDK_INCLUDE_PATH}"
         # "-I${YBI_CUDA_INCLUDE_DIR}"
         # "-I${OPENPBR_BSDF_INCLUDE_DIR}"
         -MD
@@ -264,8 +275,45 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_virtual_texture_kernel DEPENDS ${YBI_VIRTUAL_TEXTURE_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_virtual_texture_kernel)
 
+    # Accumulation
+    set(YBI_ACCUMULATE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx")
+    set(YBI_ACCUMULATE_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx.d")
+
+    add_custom_command(
+        OUTPUT "${YBI_ACCUMULATE_KERNEL_PATH}"
+        COMMAND "${CMAKE_CUDA_COMPILER}"
+        --ptx
+        "--gpu-architecture=sm_75"
+        "--std=c++17"
+        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
+        "--use_fast_math"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
+        -MD
+        -MF "${YBI_ACCUMULATE_KERNEL_DEPFILE}"
+        "-o" "${YBI_ACCUMULATE_KERNEL_PATH}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/accumulate.cu"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/accumulate.cu"
+        DEPFILE "${YBI_ACCUMULATE_KERNEL_DEPFILE}"
+        VERBATIM
+    )
+    add_custom_target(yeoubi_accumulate_kernel DEPENDS ${YBI_ACCUMULATE_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_accumulate_kernel)
+
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_PTX_PATH=\"${YBI_OPTIX_PTX_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_VIRTUAL_TEXTURE_KERNEL_PATH=\"${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_ACCUMULATE_KERNEL_PATH=\"${YBI_ACCUMULATE_KERNEL_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_INCLUDE_PATH=\"${YBI_OPTIX_INCLUDE_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_SDK_INCLUDE_PATH=\"${YBI_OPTIX_SDK_INCLUDE_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_CUDA_INCLUDE_PATH=\"${YBI_CUDA_INCLUDE_PATH}\")
+    if (YBI_CUDA_CCCL_INCLUDE_PATH)
+        list (APPEND YBI_COMPILE_DEFINITIONS YBI_CUDA_CCCL_INCLUDE_PATH=\"${YBI_CUDA_CCCL_INCLUDE_PATH}\")
+    endif()
+    list(APPEND YBI_COMPILE_DEFINITIONS
+         YBI_NVRTC_COMPAT_INCLUDE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/src/device/nvrtc\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_CUDA_ARCHITECTURE=\"${YBI_CUDA_ARCHITECTURE}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_CUDA_STANDARD=\"${YBI_CUDA_STANDARD}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_VERSION_STRING=\"${OPTIX_VERSION}\")
 endif()
 
 target_include_directories(yeoubi PRIVATE
@@ -286,3 +334,37 @@ target_compile_definitions(yeoubi PRIVATE
     ${YBI_COMPILE_DEFINITIONS}
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
 )
+
+add_executable(material_compilation_dielectric_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/material_compilation_dielectric_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/clusters.cu
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/material_compilation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+)
+
+target_include_directories(material_compilation_dielectric_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${OPENUSD_INCLUDE_DIRS}
+    ${YBI_INCLUDE_DIRS}
+)
+
+target_include_directories(material_compilation_dielectric_test SYSTEM PRIVATE
+    ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES}
+)
+
+target_link_libraries(material_compilation_dielectric_test PRIVATE
+    ${YBI_DEPENDENCIES}
+)
+
+target_compile_definitions(material_compilation_dielectric_test PRIVATE
+    ${YBI_COMPILE_DEFINITIONS}
+    $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
+)
+
+if (YBI_HAS_CUDA AND OPTIX_FOUND)
+    add_dependencies(material_compilation_dielectric_test yeoubi_optix_kernel)
+endif()

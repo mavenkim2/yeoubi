@@ -143,7 +143,7 @@ int main(int argc, char **argv)
     YBI_ASSERT(result);
     result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
     YBI_ASSERT(result);
-    CameraController cameraController(window, renderFromCamera);
+    CameraController cameraController(window, renderFromCamera, camera.worldUp);
 
     const size_t imageSize =
         static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
@@ -186,6 +186,10 @@ int main(int argc, char **argv)
 
     DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
     DeviceBuffer accumulationBuffer;
+    DeviceBuffer kernelOutputBuffer = device->Alloc(
+        static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * sizeof(Vec3f));
+    params.kernelOutput = reinterpret_cast<Vec3f *>(kernelOutputBuffer.Data());
+
     if (interactive)
     {
         accumulationBuffer = device->Alloc(static_cast<size_t>(camera.width) *
@@ -193,6 +197,11 @@ int main(int argc, char **argv)
         params.accumulation = reinterpret_cast<Vec3f *>(accumulationBuffer.Data());
     }
     ProgressiveState progressiveState;
+
+    DeviceKernelDesc desc;
+    desc.filename = YBI_ACCUMULATE_KERNEL_PATH;
+    desc.entryName = "AccumulateSamples";
+    std::unique_ptr<DeviceKernel> accumulateSamplesKernel = device->CreateDeviceKernel(desc);
 
     uint32_t lastFrameIndex = 0;
     double lastTime = glfwGetTime();
@@ -259,6 +268,17 @@ int main(int argc, char **argv)
         device->StartProfiler();
         device->DispatchKernel(camera.width, camera.height, cudaParams);
         device->StopProfiler();
+
+        void *arguments[] = {&params};
+
+        DeviceKernelLaunchDesc desc;
+        desc.gridX = (params.imageWidth + 8 - 1) / 8;
+        desc.gridY = (params.imageHeight + 8 - 1) / 8;
+        desc.blockX = 8;
+        desc.blockY = 8;
+        desc.arguments = arguments;
+
+        device->ExecuteKernel(*accumulateSamplesKernel, desc);
 
         if (interactive)
         {

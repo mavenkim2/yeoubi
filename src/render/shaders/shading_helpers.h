@@ -86,4 +86,13 @@ YBI_GPU void StoreFloat3Register(float *registers, const Vec3f &value, int dstRe
     registers[dstRegister + 2] = value[2];
 }
 
+YBI_GPU void StoreFloat4Register(float *registers, const Vec4f &value, int dstRegister)
+{
+    YBI_ASSERT(dstRegister + 3 < SHADER_NUM_REGISTERS);
+    registers[dstRegister] = value[0];
+    registers[dstRegister + 1] = value[1];
+    registers[dstRegister + 2] = value[2];
+    registers[dstRegister + 3] = value[3];
+}
+
 } // namespace ybi

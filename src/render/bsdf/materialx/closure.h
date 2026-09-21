@@ -1,51 +1,54 @@
 #pragma once
 
-#include "core/assert.h"
+#include "core/vec2f.h"
+#include "core/vec3f.h"
+#include "core/vec4f.h"
 #include "device/cuda_compat.h"
-#include "render/bsdf/materialx/material_defines.h"
+#include <cstdint>
 
 namespace ybi
 {
 
 struct BsdfClosure
 {
-    float values[MATERIAL_NUM_CLOSURE_VALUES];
+    const float *values = nullptr;
+    uint32_t valueCount = 0;
 
-    YBI_GPU float LoadFloat(int src)
+    YBI_CPU_GPU bool CanLoad(uint32_t src, uint32_t count) const
     {
-        YBI_ASSERT(src < MATERIAL_NUM_CLOSURE_VALUES);
-        float result = values[src];
-        return result;
+        return values != nullptr && src <= valueCount && count <= valueCount - src;
     }
 
-    YBI_GPU Vec2f LoadFloat2(int src)
+    YBI_CPU_GPU bool LoadFloat(uint32_t src, float &result) const
     {
-        YBI_ASSERT(src + 1 < MATERIAL_NUM_CLOSURE_VALUES);
-        Vec2f v;
-        v[0] = values[src];
-        v[1] = values[src + 1];
-        return v;
+        if (!CanLoad(src, 1))
+            return false;
+        result = values[src];
+        return true;
     }
 
-    YBI_GPU Vec3f LoadFloat3(int src)
+    YBI_CPU_GPU bool LoadFloat2(uint32_t src, Vec2f &result) const
     {
-        YBI_ASSERT(src + 2 < MATERIAL_NUM_CLOSURE_VALUES);
-        Vec3f v;
-        v[0] = values[src];
-        v[1] = values[src + 1];
-        v[2] = values[src + 2];
-        return v;
+        if (!CanLoad(src, 2))
+            return false;
+        result = Vec2f(values[src], values[src + 1]);
+        return true;
     }
 
-    YBI_GPU Vec4f LoadFloat4(int src)
+    YBI_CPU_GPU bool LoadFloat3(uint32_t src, Vec3f &result) const
     {
-        YBI_ASSERT(src + 3 < MATERIAL_NUM_CLOSURE_VALUES);
-        Vec4f v;
-        v[0] = values[src];
-        v[1] = values[src + 1];
-        v[2] = values[src + 2];
-        v[3] = values[src + 3];
-        return v;
+        if (!CanLoad(src, 3))
+            return false;
+        result = Vec3f(values[src], values[src + 1], values[src + 2]);
+        return true;
+    }
+
+    YBI_CPU_GPU bool LoadFloat4(uint32_t src, Vec4f &result) const
+    {
+        if (!CanLoad(src, 4))
+            return false;
+        result = Vec4f(values[src], values[src + 1], values[src + 2], values[src + 3]);
+        return true;
     }
 };
 

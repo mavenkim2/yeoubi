@@ -7,8 +7,10 @@
 #include "core/vec3f.h"
 #include "device/kernel_params.h"
 #include "render/bsdf/materialx/sample.h"
+#if 0
 #include "render/bsdf/openpbr/api.h"
 #include "render/bsdf/openpbr/init.h"
+#endif
 #include "render/camera.h"
 #include "render/device_attributes.h"
 #include "render/lights/sample.h"
@@ -19,11 +21,16 @@
 #include "render/ray_utils.h"
 #include "render/rng.h"
 #include "render/sampling.h"
+#if 0
 #include "render/shaders/material_shaders.h"
+#endif
+#include "render/shaders/image.h"
 #include "render/shaders/shading.h"
 #include "render/virtual_texture_interop.h"
 #include "render/virtual_texture_sampling.h"
+#if 0
 #include "scene/openpbr_parameters.h"
+#endif
 #include <ctime>
 #include <optix_device.h>
 #include <optix_types.h>
@@ -447,8 +454,6 @@ YBI_GPU static bool TraceVisibility(OptixTraversableHandle bvhHandle,
     return shadowInfo.type == INTERSECTION_TYPE_NONE;
 }
 
-YBI_GPU void RenderUnidirectional();
-
 extern "C" __global__ void __anyhit__kernel()
 {
     int instanceID = optixGetInstanceId();
@@ -456,11 +461,6 @@ extern "C" __global__ void __anyhit__kernel()
 
 extern "C" __global__ void __raygen__kernel()
 {
-    if (params.pathTrace)
-    {
-        RenderUnidirectional();
-        return;
-    }
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDimensions = optixGetLaunchDimensions();
 
@@ -541,7 +541,8 @@ extern "C" __global__ void __raygen__kernel()
         {
             const MaterialHandle &handle = params.scene.materialHandles[shadingInfo.materialIndex];
 
-            if (handle.isGraph)
+#if 0
+            if (handle.type == MaterialHandleType::OpenPbr)
             {
                 const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
                 const Vec3f hitPosition = rayOrigin + rayDirection * info.t;
@@ -575,8 +576,10 @@ extern "C" __global__ void __raygen__kernel()
                                 static_cast<unsigned char>(Clamp(baseColor.z, 0.f, 1.f) * 255.f),
                                 255);
             }
-            // TODO: get rid of this legacy path
             else
+#endif
+            // TODO: get rid of this legacy path
+            if (handle.type == MaterialHandleType::Preview)
             {
                 DeviceMaterial &material = params.scene.materials[handle.index];
                 if (material.valid && shadingInfo.hasUvs)
@@ -682,12 +685,13 @@ YBI_GPU void RenderUnidirectional()
                 // Place the procedural sun outside the open front of the room (+Z).
                 // Environment rays point toward the source, so its light travels along
                 // -sunDirection, directly into the room with a slight downward angle.
-                // const Vec3f sunDirection = Normalize(Vec3f(0.0f, 0.25f, 1.0f));
+                const Vec3f sunDirection = Normalize(Vec3f(0.0f, 0.25f, 1.0f));
                 //
-                // Vec3f environment(0.02f);
+                Vec3f environment(0.5f);
                 // if (Dot(rayDirection, sunDirection) > 0.995f)
                 //     environment = Vec3f(20.0f);
-                // radiance += throughput * 0.5f; // environment; // Vec3f(0.5f);
+                radiance += throughput * environment;
+                //     Vec3f(0.5f);
                 break;
             }
 
@@ -743,19 +747,26 @@ YBI_GPU void RenderUnidirectional()
             shadingInfo.rayDirection = rayDirection;
             shadingInfo.rayCone = rayCone;
 
+#if 0
             OpenPbrBsdf bsdf;
+#endif
 
             const OrthonormalBasis tangentFrame(shadingInfo.dpdu, shadingInfo.shadingNormal);
             const Vec3f worldViewDirection = -rayDirection;
+            OrthonormalBasis materialXFrame = tangentFrame;
+            Vec3f materialXViewDirection;
+            const DeviceMaterial3 *materialXMaterial = nullptr;
 
             Vec3f baseColor(0.5f);
             bool passedAlphaTest = true;
+            bool hasBsdf = false;
 
             if (shadingInfo.hasMaterial)
             {
                 const MaterialHandle &handle =
                     params.scene.materialHandles[shadingInfo.materialIndex];
-                if (handle.isGraph)
+#if 0
+                if (handle.type == MaterialHandleType::OpenPbr)
                 {
                     const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
 
@@ -768,10 +779,25 @@ YBI_GPU void RenderUnidirectional()
                                                             tangentFrame,
                                                             throughput,
                                                             rng.Uniform());
+                    hasBsdf = true;
 
                     // baseColor = Vec3f(
                     //     EvaluateShader<float>(params, shadingInfo,
                     //     material.specular_roughness));
+                }
+                else
+#endif
+                if (handle.type == MaterialHandleType::MaterialX)
+                {
+                    materialXMaterial = &params.scene.deviceMaterial3s[handle.index];
+                    if (Dot(worldViewDirection, shadingInfo.shadingNormal) < 0.f)
+                    {
+                        materialXFrame.x = -materialXFrame.x;
+                        materialXFrame.y = -materialXFrame.y;
+                        materialXFrame.z = -materialXFrame.z;
+                    }
+                    materialXViewDirection = materialXFrame.WorldToLocal(worldViewDirection);
+                    hasBsdf = true;
                 }
                 // else
                 // {
@@ -786,7 +812,7 @@ YBI_GPU void RenderUnidirectional()
                 // }
             }
 
-            if (!shadingInfo.hasMaterial || !passedAlphaTest)
+            if (!shadingInfo.hasMaterial || !hasBsdf || !passedAlphaTest)
             {
                 rayOrigin = OffsetRayOrigin(shadingInfo.position, -geometricNormal);
                 ++depth;
@@ -810,10 +836,34 @@ YBI_GPU void RenderUnidirectional()
                 {
                     const DeviceLight &sampledLight = params.scene.deviceLights[sampledLightIndex];
 
-                    Vec3f sampledLightBsdfWeight =
-                        EvaluateOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
-                    float sampledLightBsdfPdf =
-                        PDFOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
+                    Vec3f sampledLightBsdfWeight;
+                    float sampledLightBsdfPdf;
+                    if (materialXMaterial)
+                    {
+                        const Vec3f localLightDirection =
+                            materialXFrame.WorldToLocal(sampledLightDirection);
+                        sampledLightBsdfWeight =
+                            optixDirectCall<Vec3f>(materialXMaterial->evaluateCallableIndex,
+                                                   &params,
+                                                   &shadingInfo,
+                                                   materialXViewDirection,
+                                                   localLightDirection);
+                        sampledLightBsdfPdf =
+                            optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
+                                                   &params,
+                                                   &shadingInfo,
+                                                   materialXViewDirection,
+                                                   localLightDirection);
+                    }
+#if 0
+                    else
+                    {
+                        sampledLightBsdfWeight =
+                            EvaluateOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
+                        sampledLightBsdfPdf =
+                            PDFOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
+                    }
+#endif
                     if (sampledLightBsdfWeight.MaxComponent() != 0.f)
                     {
                         const Vec3f shadowNormal =
@@ -839,12 +889,54 @@ YBI_GPU void RenderUnidirectional()
             }
 
             Vec3f worldLightDirection, weight;
-            bool success = SampleOpenPBR(bsdf,
-                                         worldViewDirection,
-                                         throughput,
-                                         rng.Uniform2D(),
-                                         worldLightDirection,
-                                         weight);
+            bool success;
+            if (materialXMaterial)
+            {
+                Vec3f localLightDirection;
+                localLightDirection.x = 0.f;
+                localLightDirection.y = 0.f;
+                localLightDirection.z = 0.f;
+                success = optixDirectCall<bool>(materialXMaterial->sampleCallableIndex,
+                                                &params,
+                                                &shadingInfo,
+                                                materialXViewDirection,
+                                                &localLightDirection,
+                                                Vec3f(rng.Uniform(), rng.Uniform2D()));
+
+                if (success)
+                {
+                    const float pdf = optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
+                                                             &params,
+                                                             &shadingInfo,
+                                                             materialXViewDirection,
+                                                             localLightDirection);
+                    if (pdf > 0.f)
+                    {
+                        weight = optixDirectCall<Vec3f>(materialXMaterial->evaluateCallableIndex,
+                                                        &params,
+                                                        &shadingInfo,
+                                                        materialXViewDirection,
+                                                        localLightDirection) /
+                                 pdf;
+                        worldLightDirection = materialXFrame.LocalToWorld(localLightDirection);
+                    }
+                    else
+                    {
+                        success = false;
+                    }
+                }
+            }
+#if 0
+            else
+            {
+                success = SampleOpenPBR(bsdf,
+                                        worldViewDirection,
+                                        throughput,
+                                        rng.Uniform2D(),
+                                        worldLightDirection,
+                                        weight);
+            }
+#endif
 
             if (!success)
                 break;
@@ -865,7 +957,21 @@ YBI_GPU void RenderUnidirectional()
             const Vec3f nextDirection = worldLightDirection;
 
             previousSurfacePosition = shadingInfo.position;
-            previousBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, worldLightDirection);
+            if (materialXMaterial)
+            {
+                previousBsdfPdf =
+                    optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
+                                           &params,
+                                           &shadingInfo,
+                                           materialXViewDirection,
+                                           materialXFrame.WorldToLocal(worldLightDirection));
+            }
+#if 0
+            else
+            {
+                previousBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, worldLightDirection);
+            }
+#endif
             hasPreviousBsdfSample = true;
 
             // Both vectors must be in world space when choosing the offset side.
@@ -880,9 +986,11 @@ YBI_GPU void RenderUnidirectional()
         sum += radiance;
     }
 
+#if 0
     uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
     Vec3f *history = params.accumulation ? params.accumulation + pixelIndex : nullptr;
+
     const Vec3f linearColor =
         AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
     const Vec3f displayColor = FastACESToneMap(linearColor);
@@ -891,6 +999,10 @@ YBI_GPU void RenderUnidirectional()
                     static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.y) + 0.5f),
                     static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.z) + 0.5f),
                     255);
+#endif
+    Vec3f *image = params.kernelOutput;
+    const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
+    image[pixelIndex] = sum;
 }
 
 extern "C" __global__ void __raygen__unidirectional()

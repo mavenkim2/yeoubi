@@ -1072,9 +1072,9 @@ void GeometryManager::Update(Device *device,
     printf("bvh total allocated: %zu\n", device->GetBVHAllocationSize());
 }
 
-void MaterialManager::AddTextures(OpenPbrMaterial &material, MaterialNodeId member)
+void MaterialManager::AddTextures(MaterialGraph &graph, MaterialNodeId nodeId)
 {
-    const MaterialNode *node = &material.graph.nodes[member];
+    const MaterialNode *node = &graph.nodes[nodeId];
 
     // TODO: allow enable/disable vt system
     if (IsTextureOpcode(node->type))
@@ -1106,6 +1106,11 @@ DeviceMaterialExpression MaterialManager::ProcessMaterialGraph(OpenPbrMaterial &
 {
     return CompileShader(
         material.graph, member, textureNodeToHandle, attributeManager.attributeIdMap, nodes);
+}
+
+std::string MaterialManager::ProcessMaterialXMaterial(MaterialGraph &material)
+{
+    return materialCompiler.Compile(material, textureNodeToHandle);
 }
 
 AttributeId AttributeManager::GetOrAdd(const std::string &name)
@@ -1181,7 +1186,7 @@ void AttributeManager::FindPrimvars(DataContainer *container, SceneImportContext
         for (int materialIndex : materialIndices)
         {
             const MaterialHandle &handle = container->materialHandles[materialIndex];
-            if (!handle.isGraph)
+            if (handle.type != MaterialHandleType::OpenPbr)
             {
                 continue;
             }
@@ -1235,8 +1240,40 @@ void MaterialManager::Update(Device *device,
              nodeId < static_cast<MaterialNodeId>(material.graph.nodes.size());
              nodeId++)
         {
+            AddTextures(material.graph, nodeId);
+        }
+    }
+
+    for (MaterialGraph &material : container->materialXMaterials)
+    {
+        for (MaterialNodeId nodeId = 0;
+             nodeId < static_cast<MaterialNodeId>(material.nodes.size());
+             nodeId++)
+        {
             AddTextures(material, nodeId);
         }
+    }
+
+    materialCompiler = MaterialCompiler{};
+    for (MaterialGraph &material : container->materialXMaterials)
+    {
+        ProcessMaterialXMaterial(material);
+    }
+
+    MaterialCompilationResult materialXCompilation = materialCompiler.Finalize(*device);
+    YBI_ASSERT(materialXCompilation.succeeded);
+    YBI_ASSERT(materialXCompilation.materials.size() == container->materialXMaterials.size());
+
+    deviceScene->deviceMaterial3s = nullptr;
+    if (!materialXCompilation.materials.empty())
+    {
+        const size_t materialBytes =
+            sizeof(DeviceMaterial3) * materialXCompilation.materials.size();
+        deviceScene->deviceMaterial3s = reinterpret_cast<DeviceMaterial3 *>(
+            device->Alloc(materialBytes).Data());
+        device->CopyToDevice(deviceScene->deviceMaterial3s,
+                             materialXCompilation.materials.data(),
+                             materialBytes);
     }
 
     // Compile shader nodes

@@ -24,6 +24,7 @@
 #include <istream>
 #include <iterator>
 #include <memory>
+#include <nvrtc.h>
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
 #include <optix_stubs.h>
@@ -33,6 +34,81 @@
 
 namespace ybi
 {
+
+// Helpers
+
+static void PrintLog(const char *log, size_t logSize)
+{
+    if (log && logSize)
+    {
+        fprintf(stderr, "%.*s\n", int(logSize), log);
+    }
+}
+
+#if defined(WITH_CUDA) && defined(WITH_OPTIX)
+static OptixResult
+CreateOptixModuleCompat(OptixDeviceContext context,
+                        const OptixModuleCompileOptions *moduleCompileOptions,
+                        const OptixPipelineCompileOptions *pipelineCompileOptions,
+                        const char *ptx,
+                        size_t ptxSize,
+                        char *log,
+                        size_t *logSize,
+                        OptixModule *moduleOut)
+{
+#if (OPTIX_VERSION >= 80000)
+    return optixModuleCreate(context,
+                             moduleCompileOptions,
+                             pipelineCompileOptions,
+                             ptx,
+                             ptxSize,
+                             log,
+                             logSize,
+                             moduleOut);
+#else
+    return optixModuleCreateFromPTX(context,
+                                    moduleCompileOptions,
+                                    pipelineCompileOptions,
+                                    ptx,
+                                    ptxSize,
+                                    log,
+                                    logSize,
+                                    moduleOut);
+#endif
+}
+
+static OptixResult AccumulateStackSizesCompat(OptixProgramGroup programGroup,
+                                              OptixStackSizes *stackSizes,
+                                              OptixPipeline pipeline)
+{
+#if (OPTIX_VERSION >= 80000)
+    return optixUtilAccumulateStackSizes(programGroup, stackSizes, pipeline);
+#else
+    (void)pipeline;
+    return optixUtilAccumulateStackSizes(programGroup, stackSizes);
+#endif
+}
+
+static bool CheckOptixResult(OptixResult result,
+                             const char *operation,
+                             const char *log = nullptr,
+                             size_t logSize = 0)
+{
+    if (result == OPTIX_SUCCESS)
+    {
+        return true;
+    }
+
+    fprintf(stderr,
+            "OptiX Error (%s): %s while calling %s\n",
+            optixGetErrorName(result),
+            optixGetErrorString(result),
+            operation);
+    PrintLog(log, logSize);
+    return false;
+}
+
+#endif
 
 void BuildMeshCLAS(CUDADevice *cudaDevice,
                    DataContainer *container,
@@ -115,7 +191,7 @@ CUDADevice::ContextScope::~ContextScope()
     CUDA_ASSERT(cuCtxPopCurrent(0));
 }
 
-CUDADevice::CUDADevice()
+CUDADevice::CUDADevice(bool createRendererPipeline)
     : device(0), cudaContext(nullptr), optixDeviceContext(nullptr), totalAllocated(0),
       bvhTotalAllocated(0)
 {
@@ -123,7 +199,7 @@ CUDADevice::CUDADevice()
     CUDA_ASSERT(cuDeviceGet(&device, 0));
     CUDA_ASSERT(cuDevicePrimaryCtxRetain(&cudaContext, device));
 
-    InitializeOptix();
+    InitializeOptix(createRendererPipeline);
 }
 
 CUDADevice::~CUDADevice()
@@ -524,6 +600,178 @@ std::unique_ptr<DeviceKernel> CUDADevice::CreateDeviceKernel(const DeviceKernelD
     return std::make_unique<CUDADeviceKernel>(cudaContext, module, function);
 }
 
+bool CUDADevice::CompileKernel(const std::string &source, DeviceModule &deviceModule)
+{
+    nvrtcProgram program;
+
+    nvrtcResult result =
+        nvrtcCreateProgram(&program, source.c_str(), nullptr, 0, nullptr, nullptr);
+
+    YBI_ASSERT(result == NVRTC_SUCCESS);
+
+    std::vector<std::string> optionStorage = {
+        "--std=" YBI_CUDA_STANDARD,
+        "--gpu-architecture=" YBI_CUDA_ARCHITECTURE,
+        "--device-as-default-execution-space",
+        "--relocatable-device-code=true",
+        "--use_fast_math",
+        "--generate-line-info",
+        "-DOPTIX_VERSION=" YBI_OPTIX_VERSION_STRING,
+        "-I" YBI_NVRTC_COMPAT_INCLUDE_PATH,
+        "-I" YBI_OPTIX_INCLUDE_PATH,
+        "-I" YBI_OPTIX_SDK_INCLUDE_PATH,
+        "-I" YBI_CUDA_INCLUDE_PATH,
+#if defined(YBI_CUDA_CCCL_INCLUDE_PATH)
+        "-I" YBI_CUDA_CCCL_INCLUDE_PATH,
+#endif
+    };
+
+    std::vector<const char *> options;
+    options.reserve(optionStorage.size());
+    for (const std::string &option : optionStorage)
+        options.push_back(option.c_str());
+
+    nvrtcResult compileResult =
+        nvrtcCompileProgram(program, static_cast<int>(options.size()), options.data());
+
+    size_t logSize = 0;
+    result = nvrtcGetProgramLogSize(program, &logSize);
+
+    std::vector<char> log(Max(4096llu, logSize));
+    if (logSize)
+    {
+        result = nvrtcGetProgramLog(program, log.data());
+    }
+
+    if (compileResult != NVRTC_SUCCESS)
+    {
+        PrintLog(log.data(), logSize);
+        nvrtcDestroyProgram(&program);
+        return false;
+    }
+
+    size_t ptxSize = 0;
+    nvrtcGetPTXSize(program, &ptxSize);
+
+    std::vector<char> ptx(ptxSize);
+    nvrtcGetPTX(program, ptx.data());
+
+    nvrtcDestroyProgram(&program);
+
+    YBI_ERROR(optixDeviceContext, "Must initialize OptiX device context before compiling kernel");
+
+#if defined(WITH_OPTIX)
+    ContextScope contextScope(this);
+
+    OptixModuleCompileOptions moduleCompileOptions = {};
+    OptixPipelineCompileOptions pipelineCompileOptions = {};
+
+    GetOptixCompileOptions(moduleCompileOptions, pipelineCompileOptions);
+
+    OptixModule module = nullptr;
+    if (!CheckOptixResult(CreateOptixModuleCompat(optixDeviceContext,
+                                                  &moduleCompileOptions,
+                                                  &pipelineCompileOptions,
+                                                  ptx.data(),
+                                                  ptx.size(),
+                                                  log.data(),
+                                                  &logSize,
+                                                  &module),
+                          "optixModuleCreate",
+                          log.data(),
+                          logSize))
+    {
+        return false;
+    }
+
+    deviceModule = reinterpret_cast<DeviceModule>(module);
+    return true;
+#else
+#error cuda w/out optix not supported
+    return false;
+#endif
+}
+
+bool CUDADevice::RegisterDirectCallables(DeviceModule deviceModule,
+                                         const std::vector<std::string> &entryNames,
+                                         std::vector<uint32_t> &callableIndices)
+{
+#if defined(WITH_OPTIX)
+    ContextScope contextScope(this);
+
+    callableIndices.clear();
+    if (deviceModule == 0 || entryNames.empty() || !optixPipeline.raygenProgramGroup)
+        return false;
+
+    const OptixModule module = reinterpret_cast<OptixModule>(deviceModule);
+    const size_t firstCallableIndex = optixPipeline.callableProgramGroups.size();
+    OptixProgramGroupOptions programGroupOptions = {};
+    char log[4096] = {};
+
+    for (const std::string &entryName : entryNames)
+    {
+        OptixProgramGroupDesc desc = {};
+        desc.kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
+        desc.callables.moduleDC = module;
+        desc.callables.entryFunctionNameDC = entryName.c_str();
+
+        OptixProgramGroup programGroup = nullptr;
+        size_t logSize = sizeof(log);
+        if (!CheckOptixResult(optixProgramGroupCreate(optixDeviceContext,
+                                                      &desc,
+                                                      1,
+                                                      &programGroupOptions,
+                                                      log,
+                                                      &logSize,
+                                                      &programGroup),
+                              "optixProgramGroupCreate(callable)",
+                              log,
+                              logSize))
+        {
+            for (size_t index = firstCallableIndex;
+                 index < optixPipeline.callableProgramGroups.size();
+                 ++index)
+            {
+                OPTIX_ASSERT(optixProgramGroupDestroy(optixPipeline.callableProgramGroups[index]));
+            }
+            optixPipeline.callableProgramGroups.resize(firstCallableIndex);
+            OPTIX_ASSERT(optixModuleDestroy(module));
+            return false;
+        }
+
+        optixPipeline.callableProgramGroups.push_back(programGroup);
+    }
+
+    optixPipeline.callableModules.push_back(module);
+
+    OptixModuleCompileOptions moduleCompileOptions = {};
+    OptixPipelineCompileOptions pipelineCompileOptions = {};
+    GetOptixCompileOptions(moduleCompileOptions, pipelineCompileOptions);
+    if (!LinkOptixPipeline(pipelineCompileOptions))
+        return false;
+
+    callableIndices.reserve(entryNames.size());
+    for (uint32_t index = 0; index < static_cast<uint32_t>(entryNames.size()); ++index)
+    {
+        callableIndices.push_back(static_cast<uint32_t>(firstCallableIndex) + index);
+    }
+    return true;
+#else
+    (void)deviceModule;
+    (void)entryNames;
+    (void)callableIndices;
+    return false;
+#endif
+}
+
+std::string CUDADevice::GetCallableFunctionSignature(const std::string &returnType,
+                                                     const std::string &functionName,
+                                                     const std::string &parameters) const
+{
+    return "extern \"C\" __device__ " + returnType + " __direct_callable__" + functionName + "(" +
+           parameters + ")";
+}
+
 void CUDADevice::ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc)
 {
     ContextScope contextScope(this);
@@ -731,72 +979,7 @@ struct EmptySbtData
 {
 };
 
-static OptixResult
-CreateOptixModuleCompat(OptixDeviceContext context,
-                        const OptixModuleCompileOptions *moduleCompileOptions,
-                        const OptixPipelineCompileOptions *pipelineCompileOptions,
-                        const char *ptx,
-                        size_t ptxSize,
-                        char *log,
-                        size_t *logSize,
-                        OptixModule *moduleOut)
-{
-#if (OPTIX_VERSION >= 80000)
-    return optixModuleCreate(context,
-                             moduleCompileOptions,
-                             pipelineCompileOptions,
-                             ptx,
-                             ptxSize,
-                             log,
-                             logSize,
-                             moduleOut);
-#else
-    return optixModuleCreateFromPTX(context,
-                                    moduleCompileOptions,
-                                    pipelineCompileOptions,
-                                    ptx,
-                                    ptxSize,
-                                    log,
-                                    logSize,
-                                    moduleOut);
-#endif
-}
-
-static OptixResult AccumulateStackSizesCompat(OptixProgramGroup programGroup,
-                                              OptixStackSizes *stackSizes,
-                                              OptixPipeline pipeline)
-{
-#if (OPTIX_VERSION >= 80000)
-    return optixUtilAccumulateStackSizes(programGroup, stackSizes, pipeline);
-#else
-    (void)pipeline;
-    return optixUtilAccumulateStackSizes(programGroup, stackSizes);
-#endif
-}
-
-static bool CheckOptixResult(OptixResult result,
-                             const char *operation,
-                             const char *log = nullptr,
-                             size_t logSize = 0)
-{
-    if (result == OPTIX_SUCCESS)
-    {
-        return true;
-    }
-
-    fprintf(stderr,
-            "OptiX Error (%s): %s while calling %s\n",
-            optixGetErrorName(result),
-            optixGetErrorString(result),
-            operation);
-    if (log && logSize > 1)
-    {
-        fprintf(stderr, "%.*s\n", int(logSize), log);
-    }
-    return false;
-}
-
-void CUDADevice::InitializeOptix()
+void CUDADevice::InitializeOptix(bool createRendererPipeline)
 {
     OPTIX_ASSERT(optixInit());
 
@@ -834,22 +1017,54 @@ void CUDADevice::InitializeOptix()
         supportsClusterBVHs = false;
     }
 
+    if (!createRendererPipeline)
+        return;
+
     const std::string ptxFilename = YBI_OPTIX_PTX_PATH;
 
     std::ifstream input(ptxFilename, std::ios::binary);
     YBI_ERROR(input.is_open(), "Failed to open PTX file: %s\n", ptxFilename.c_str());
 
-    const std::string ptx((std::istreambuf_iterator<char>(input)),
-                          std::istreambuf_iterator<char>());
+    ptx = std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     YBI_ERROR(!ptx.empty(), "PTX file is empty: %s\n", ptxFilename.c_str());
 
     const bool result = CreateOptixPipeline(ptx);
-    YBI_ASSERT(result);
+    // YBI_ASSERT(result);
 }
 
 bool CUDADevice::SupportsClusterBVHs() const
 {
     return supportsClusterBVHs;
+}
+
+void CUDADevice::GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions,
+                                        OptixPipelineCompileOptions &pipelineOptions)
+{
+    moduleOptions = {};
+    moduleOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
+    moduleOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
+    // moduleOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_DEFAULT;
+    moduleOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
+
+    pipelineOptions = {};
+    pipelineOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
+    pipelineOptions.usesMotionBlur = 0;
+    pipelineOptions.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
+    pipelineOptions.numPayloadValues = 2;
+    pipelineOptions.numAttributeValues = 2;
+    pipelineOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
+    pipelineOptions.pipelineLaunchParamsVariableName = "params";
+    pipelineOptions.pipelineLaunchParamsSizeInBytes = sizeof(KernelParams);
+
+    if (SupportsClusterBVHs())
+    {
+        pipelineOptions.allowClusteredGeometry = 1;
+    }
+}
+
+void CUDADevice::CreatePipeline()
+{
+    CreateOptixPipeline(ptx);
 }
 
 bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
@@ -858,25 +1073,9 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     DestroyOptixPipeline();
 
     OptixModuleCompileOptions moduleCompileOptions = {};
-    moduleCompileOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
-    moduleCompileOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
-    // moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_DEFAULT;
-    moduleCompileOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
-
     OptixPipelineCompileOptions pipelineCompileOptions = {};
-    pipelineCompileOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
-    pipelineCompileOptions.usesMotionBlur = 0;
-    pipelineCompileOptions.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE;
-    pipelineCompileOptions.numPayloadValues = 2;
-    pipelineCompileOptions.numAttributeValues = 2;
-    pipelineCompileOptions.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
-    pipelineCompileOptions.pipelineLaunchParamsVariableName = "params";
-    pipelineCompileOptions.pipelineLaunchParamsSizeInBytes = sizeof(KernelParams);
 
-    if (SupportsClusterBVHs())
-    {
-        pipelineCompileOptions.allowClusteredGeometry = 1;
-    }
+    GetOptixCompileOptions(moduleCompileOptions, pipelineCompileOptions);
 
     char log[4096] = {};
     size_t logSize = sizeof(log);
@@ -900,7 +1099,7 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     OptixProgramGroupDesc raygenDesc = {};
     raygenDesc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
     raygenDesc.raygen.module = optixPipeline.module;
-    raygenDesc.raygen.entryFunctionName = "__raygen__kernel";
+    raygenDesc.raygen.entryFunctionName = "__raygen__unidirectional";
     logSize = sizeof(log);
     if (!CheckOptixResult(optixProgramGroupCreate(optixDeviceContext,
                                                   &raygenDesc,
@@ -957,65 +1156,7 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
         return false;
     }
 
-    OptixProgramGroup groups[] = {
-        optixPipeline.raygenProgramGroup,
-        optixPipeline.missProgramGroup,
-        optixPipeline.hitgroupProgramGroup,
-    };
-
-    OptixPipelineLinkOptions pipelineLinkOptions = {};
-    pipelineLinkOptions.maxTraceDepth = 1;
-    logSize = sizeof(log);
-    if (!CheckOptixResult(optixPipelineCreate(optixDeviceContext,
-                                              &pipelineCompileOptions,
-                                              &pipelineLinkOptions,
-                                              groups,
-                                              3,
-                                              log,
-                                              &logSize,
-                                              &optixPipeline.pipeline),
-                          "optixPipelineCreate",
-                          log,
-                          logSize))
-    {
-        DestroyOptixPipeline();
-        return false;
-    }
-
-    OptixStackSizes stackSizes = {};
-    if (!CheckOptixResult(AccumulateStackSizesCompat(optixPipeline.raygenProgramGroup,
-                                                     &stackSizes,
-                                                     optixPipeline.pipeline),
-                          "optixUtilAccumulateStackSizes(raygen)") ||
-        !CheckOptixResult(AccumulateStackSizesCompat(
-                              optixPipeline.missProgramGroup, &stackSizes, optixPipeline.pipeline),
-                          "optixUtilAccumulateStackSizes(miss)") ||
-        !CheckOptixResult(AccumulateStackSizesCompat(optixPipeline.hitgroupProgramGroup,
-                                                     &stackSizes,
-                                                     optixPipeline.pipeline),
-                          "optixUtilAccumulateStackSizes(hitgroup)"))
-    {
-        DestroyOptixPipeline();
-        return false;
-    }
-
-    uint32_t directCallableStackSizeFromTraversal = 0;
-    uint32_t directCallableStackSizeFromState = 0;
-    uint32_t continuationStackSize = 0;
-    if (!CheckOptixResult(optixUtilComputeStackSizes(&stackSizes,
-                                                     1,
-                                                     0,
-                                                     0,
-                                                     &directCallableStackSizeFromTraversal,
-                                                     &directCallableStackSizeFromState,
-                                                     &continuationStackSize),
-                          "optixUtilComputeStackSizes") ||
-        !CheckOptixResult(optixPipelineSetStackSize(optixPipeline.pipeline,
-                                                    directCallableStackSizeFromTraversal,
-                                                    directCallableStackSizeFromState,
-                                                    continuationStackSize,
-                                                    2),
-                          "optixPipelineSetStackSize"))
+    if (!LinkOptixPipeline(pipelineCompileOptions))
     {
         DestroyOptixPipeline();
         return false;
@@ -1056,8 +1197,122 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     return true;
 }
 
+bool CUDADevice::LinkOptixPipeline(const OptixPipelineCompileOptions &pipelineCompileOptions)
+{
+    DestroyLinkedOptixPipeline();
+
+    std::vector<OptixProgramGroup> groups = {
+        optixPipeline.raygenProgramGroup,
+        optixPipeline.missProgramGroup,
+        optixPipeline.hitgroupProgramGroup,
+    };
+    groups.insert(groups.end(),
+                  optixPipeline.callableProgramGroups.begin(),
+                  optixPipeline.callableProgramGroups.end());
+
+    OptixPipelineLinkOptions pipelineLinkOptions = {};
+    pipelineLinkOptions.maxTraceDepth = 1;
+    char log[4096] = {};
+    size_t logSize = sizeof(log);
+    if (!CheckOptixResult(optixPipelineCreate(optixDeviceContext,
+                                              &pipelineCompileOptions,
+                                              &pipelineLinkOptions,
+                                              groups.data(),
+                                              static_cast<unsigned int>(groups.size()),
+                                              log,
+                                              &logSize,
+                                              &optixPipeline.pipeline),
+                          "optixPipelineCreate",
+                          log,
+                          logSize))
+    {
+        return false;
+    }
+
+    OptixStackSizes stackSizes = {};
+    for (OptixProgramGroup group : groups)
+    {
+        if (!CheckOptixResult(
+                AccumulateStackSizesCompat(group, &stackSizes, optixPipeline.pipeline),
+                "optixUtilAccumulateStackSizes"))
+        {
+            DestroyLinkedOptixPipeline();
+            return false;
+        }
+    }
+
+    uint32_t directCallableStackSizeFromTraversal = 0;
+    uint32_t directCallableStackSizeFromState = 0;
+    uint32_t continuationStackSize = 0;
+    const uint32_t maxDirectCallableDepth = optixPipeline.callableProgramGroups.empty() ? 0u : 1u;
+    if (!CheckOptixResult(optixUtilComputeStackSizes(&stackSizes,
+                                                     1,
+                                                     0,
+                                                     maxDirectCallableDepth,
+                                                     &directCallableStackSizeFromTraversal,
+                                                     &directCallableStackSizeFromState,
+                                                     &continuationStackSize),
+                          "optixUtilComputeStackSizes") ||
+        !CheckOptixResult(optixPipelineSetStackSize(optixPipeline.pipeline,
+                                                    directCallableStackSizeFromTraversal,
+                                                    directCallableStackSizeFromState,
+                                                    continuationStackSize,
+                                                    2),
+                          "optixPipelineSetStackSize"))
+    {
+        DestroyLinkedOptixPipeline();
+        return false;
+    }
+
+    if (!optixPipeline.callableProgramGroups.empty())
+    {
+        using CallableRecord = PipelineSbtRecord<EmptySbtData>;
+        std::vector<CallableRecord> records(optixPipeline.callableProgramGroups.size());
+        for (size_t index = 0; index < records.size(); ++index)
+        {
+            if (!CheckOptixResult(optixSbtRecordPackHeader(
+                                      optixPipeline.callableProgramGroups[index], &records[index]),
+                                  "optixSbtRecordPackHeader(callable)"))
+            {
+                DestroyLinkedOptixPipeline();
+                return false;
+            }
+        }
+
+        const size_t recordsSize = sizeof(CallableRecord) * records.size();
+        CUDA_ASSERT(cuMemAlloc(&optixPipeline.callableRecords, recordsSize));
+        CUDA_ASSERT(cuMemcpyHtoD(optixPipeline.callableRecords, records.data(), recordsSize));
+        optixPipeline.shaderBindingTable.callablesRecordBase = optixPipeline.callableRecords;
+        optixPipeline.shaderBindingTable.callablesRecordStrideInBytes = sizeof(CallableRecord);
+        optixPipeline.shaderBindingTable.callablesRecordCount =
+            static_cast<unsigned int>(records.size());
+    }
+
+    return true;
+}
+
+void CUDADevice::DestroyLinkedOptixPipeline()
+{
+    if (optixPipeline.callableRecords)
+    {
+        CUDA_ASSERT(cuMemFree(optixPipeline.callableRecords));
+        optixPipeline.callableRecords = 0;
+    }
+    optixPipeline.shaderBindingTable.callablesRecordBase = 0;
+    optixPipeline.shaderBindingTable.callablesRecordStrideInBytes = 0;
+    optixPipeline.shaderBindingTable.callablesRecordCount = 0;
+
+    if (optixPipeline.pipeline)
+    {
+        OPTIX_ASSERT(optixPipelineDestroy(optixPipeline.pipeline));
+        optixPipeline.pipeline = nullptr;
+    }
+}
+
 void CUDADevice::DestroyOptixPipeline()
 {
+    DestroyLinkedOptixPipeline();
+
     if (optixPipeline.hitgroupRecord)
     {
         CUDA_ASSERT(cuMemFree(optixPipeline.hitgroupRecord));
@@ -1073,11 +1328,11 @@ void CUDADevice::DestroyOptixPipeline()
         CUDA_ASSERT(cuMemFree(optixPipeline.raygenRecord));
         optixPipeline.raygenRecord = 0;
     }
-    if (optixPipeline.pipeline)
+    for (OptixProgramGroup programGroup : optixPipeline.callableProgramGroups)
     {
-        OPTIX_ASSERT(optixPipelineDestroy(optixPipeline.pipeline));
-        optixPipeline.pipeline = nullptr;
+        OPTIX_ASSERT(optixProgramGroupDestroy(programGroup));
     }
+    optixPipeline.callableProgramGroups.clear();
     if (optixPipeline.hitgroupProgramGroup)
     {
         OPTIX_ASSERT(optixProgramGroupDestroy(optixPipeline.hitgroupProgramGroup));
@@ -1098,6 +1353,11 @@ void CUDADevice::DestroyOptixPipeline()
         OPTIX_ASSERT(optixModuleDestroy(optixPipeline.module));
         optixPipeline.module = nullptr;
     }
+    for (OptixModule module : optixPipeline.callableModules)
+    {
+        OPTIX_ASSERT(optixModuleDestroy(module));
+    }
+    optixPipeline.callableModules.clear();
     optixPipeline.shaderBindingTable = {};
 }
 

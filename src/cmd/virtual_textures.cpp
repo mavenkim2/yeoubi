@@ -161,13 +161,12 @@ static void FlipImageVertically(Image *image)
     }
 }
 
-static float ReadChannelAsFloat(
-    const void *data,
-    int pixelIndex,
-    int channel,
-    int numChannels,
-    int numBytesPerChannel,
-    SampleFormat sampleFormat)
+static float ReadChannelAsFloat(const void *data,
+                                int pixelIndex,
+                                int channel,
+                                int numChannels,
+                                int numBytesPerChannel,
+                                SampleFormat sampleFormat)
 {
     if (channel >= numChannels)
     {
@@ -204,14 +203,13 @@ static float ReadChannelAsFloat(
     }
 }
 
-static void WriteChannelFromFloat(
-    void *data,
-    int pixelIndex,
-    int channel,
-    int numChannels,
-    int numBytesPerChannel,
-    SampleFormat sampleFormat,
-    float value)
+static void WriteChannelFromFloat(void *data,
+                                  int pixelIndex,
+                                  int channel,
+                                  int numChannels,
+                                  int numBytesPerChannel,
+                                  SampleFormat sampleFormat,
+                                  float value)
 {
     if (channel >= numChannels)
     {
@@ -258,36 +256,48 @@ GetTextureFormat(uint32_t samplesPerPixel, uint32_t bitsPerSample, SampleFormat 
     {
         switch (samplesPerPixel)
         {
-            case 1: return TextureFormat::R8_UNORM;
-            case 2: return TextureFormat::RG8_UNORM;
-            case 4: return TextureFormat::RGBA8_UNORM;
+            case 1:
+                return TextureFormat::R8_UNORM;
+            case 2:
+                return TextureFormat::RG8_UNORM;
+            case 4:
+                return TextureFormat::RGBA8_UNORM;
         }
     }
     else if (sampleFormat == SampleFormat::Unorm && bitsPerSample == 16)
     {
         switch (samplesPerPixel)
         {
-            case 1: return TextureFormat::R16_UNORM;
-            case 2: return TextureFormat::RG16_UNORM;
-            case 4: return TextureFormat::RGBA16_UNORM;
+            case 1:
+                return TextureFormat::R16_UNORM;
+            case 2:
+                return TextureFormat::RG16_UNORM;
+            case 4:
+                return TextureFormat::RGBA16_UNORM;
         }
     }
     else if (sampleFormat == SampleFormat::Float && bitsPerSample == 16)
     {
         switch (samplesPerPixel)
         {
-            case 1: return TextureFormat::R16_FLOAT;
-            case 2: return TextureFormat::RG16_FLOAT;
-            case 4: return TextureFormat::RGBA16_FLOAT;
+            case 1:
+                return TextureFormat::R16_FLOAT;
+            case 2:
+                return TextureFormat::RG16_FLOAT;
+            case 4:
+                return TextureFormat::RGBA16_FLOAT;
         }
     }
     else if (sampleFormat == SampleFormat::Float && bitsPerSample == 32)
     {
         switch (samplesPerPixel)
         {
-            case 1: return TextureFormat::R32_FLOAT;
-            case 2: return TextureFormat::RG32_FLOAT;
-            case 4: return TextureFormat::RGBA32_FLOAT;
+            case 1:
+                return TextureFormat::R32_FLOAT;
+            case 2:
+                return TextureFormat::RG32_FLOAT;
+            case 4:
+                return TextureFormat::RGBA32_FLOAT;
         }
     }
 
@@ -307,13 +317,12 @@ static Vec4f CalculateFallbackColor(const Image &texture, SampleFormat sampleFor
     {
         for (int channel = 0; channel < 4; channel++)
         {
-            sum[channel] += ReadChannelAsFloat(
-                texture.ptr,
-                pixelIndex,
-                channel,
-                texture.numChannels,
-                texture.numBytesPerChannel,
-                sampleFormat);
+            sum[channel] += ReadChannelAsFloat(texture.ptr,
+                                               pixelIndex,
+                                               channel,
+                                               texture.numChannels,
+                                               texture.numBytesPerChannel,
+                                               sampleFormat);
         }
     }
 
@@ -354,13 +363,12 @@ static View<uint8_t> GenerateNextMip(Arena &arena,
                         const int srcX = std::min(srcWidth - 1, x * 2 + dx);
                         const int srcY = std::min(srcHeight - 1, y * 2 + dy);
                         const int srcPixelIndex = srcY * srcWidth + srcX;
-                        sum += ReadChannelAsFloat(
-                            src,
-                            srcPixelIndex,
-                            channel,
-                            numChannels,
-                            numBytesPerChannel,
-                            sampleFormat);
+                        sum += ReadChannelAsFloat(src,
+                                                  srcPixelIndex,
+                                                  channel,
+                                                  numChannels,
+                                                  numBytesPerChannel,
+                                                  sampleFormat);
                     }
                 }
 
@@ -439,11 +447,10 @@ static SampleFormat LoadImageFile(Image *texture, const std::string &filename)
     int height = 0;
     int channels = 0;
     const bool is16Bit = stbi_is_16_bit(filename.c_str()) != 0;
-    void *stbiPixels = is16Bit
-                           ? static_cast<void *>(
-                                 stbi_load_16(filename.c_str(), &width, &height, &channels, 0))
-                           : static_cast<void *>(
-                                 stbi_load(filename.c_str(), &width, &height, &channels, 0));
+    void *stbiPixels =
+        is16Bit
+            ? static_cast<void *>(stbi_load_16(filename.c_str(), &width, &height, &channels, 0))
+            : static_cast<void *>(stbi_load(filename.c_str(), &width, &height, &channels, 0));
     YBI_ERROR(stbiPixels, "Failed to load image: %s\n", filename.c_str());
 
     const int numBytesPerChannel = is16Bit ? 2 : 1;
@@ -464,8 +471,7 @@ static SampleFormat LoadImageFile(Image *texture, const std::string &filename)
 static bool EXRChannelHasComponent(const char *name, char component)
 {
     const size_t length = strlen(name);
-    return length > 0 && name[length - 1] == component &&
-           (length == 1 || name[length - 2] == '.');
+    return length > 0 && name[length - 1] == component && (length == 1 || name[length - 2] == '.');
 }
 
 static SampleFormat LoadEXRFile(Image *texture, const std::string &filename)
@@ -554,16 +560,13 @@ static SampleFormat LoadEXRFile(Image *texture, const std::string &filename)
     for (int channel = 0; channel < header.num_channels; channel++)
     {
         const char *name = header.channels[channel].name;
-        numColorComponents += EXRChannelHasComponent(name, 'R') ||
-                                      EXRChannelHasComponent(name, 'G') ||
-                                      EXRChannelHasComponent(name, 'B') ||
-                                      EXRChannelHasComponent(name, 'A')
-                                  ? 1
-                                  : 0;
-        numLuminanceComponents += EXRChannelHasComponent(name, 'Y') ||
-                                          EXRChannelHasComponent(name, 'A')
-                                      ? 1
-                                      : 0;
+        numColorComponents +=
+            EXRChannelHasComponent(name, 'R') || EXRChannelHasComponent(name, 'G') ||
+                    EXRChannelHasComponent(name, 'B') || EXRChannelHasComponent(name, 'A')
+                ? 1
+                : 0;
+        numLuminanceComponents +=
+            EXRChannelHasComponent(name, 'Y') || EXRChannelHasComponent(name, 'A') ? 1 : 0;
     }
 
     if (numColorComponents == header.num_channels)
@@ -708,8 +711,7 @@ static SampleFormat LoadTIFFFile(Image *texture, const std::string &filename)
         std::vector<uint8_t> tile(static_cast<size_t>(tileSize));
 
         const uint16_t numPlanes = planarConfig == PLANARCONFIG_CONTIG ? 1 : samplesPerPixel;
-        const uint16_t samplesPerPlane =
-            planarConfig == PLANARCONFIG_CONTIG ? samplesPerPixel : 1;
+        const uint16_t samplesPerPlane = planarConfig == PLANARCONFIG_CONTIG ? samplesPerPixel : 1;
         const size_t sourceTexelSize = samplesPerPlane * numBytesPerChannel;
         YBI_ASSERT(static_cast<size_t>(tileRowSize) >= tileWidth * sourceTexelSize);
 
@@ -729,8 +731,7 @@ static SampleFormat LoadTIFFFile(Image *texture, const std::string &filename)
                     const uint32_t copyHeight = std::min(tileHeight, height - tileY);
                     for (uint32_t localY = 0; localY < copyHeight; localY++)
                     {
-                        const uint32_t dstRow =
-                            GetTopDownRow(tileY + localY, height, orientation);
+                        const uint32_t dstRow = GetTopDownRow(tileY + localY, height, orientation);
                         uint8_t *dstRowBytes =
                             pixels + static_cast<size_t>(dstRow) * numBytesPerRow;
                         const uint8_t *srcRowBytes =
@@ -738,9 +739,8 @@ static SampleFormat LoadTIFFFile(Image *texture, const std::string &filename)
 
                         for (uint32_t localX = 0; localX < copyWidth; localX++)
                         {
-                            uint8_t *dst =
-                                dstRowBytes + static_cast<size_t>(tileX + localX) *
-                                                  samplesPerPixel * numBytesPerChannel;
+                            uint8_t *dst = dstRowBytes + static_cast<size_t>(tileX + localX) *
+                                                             samplesPerPixel * numBytesPerChannel;
                             const uint8_t *src =
                                 srcRowBytes + static_cast<size_t>(localX) * sourceTexelSize;
                             if (planarConfig == PLANARCONFIG_CONTIG)
@@ -749,9 +749,7 @@ static SampleFormat LoadTIFFFile(Image *texture, const std::string &filename)
                             }
                             else
                             {
-                                memcpy(dst + plane * numBytesPerChannel,
-                                       src,
-                                       numBytesPerChannel);
+                                memcpy(dst + plane * numBytesPerChannel, src, numBytesPerChannel);
                             }
                         }
                     }
@@ -870,9 +868,8 @@ static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t u
     }
 
     PadRGBToRGBA(&texture, sampleFormat);
-    const TextureFormat format = GetTextureFormat(texture.numChannels,
-                                                  texture.numBytesPerChannel * 8,
-                                                  sampleFormat);
+    const TextureFormat format =
+        GetTextureFormat(texture.numChannels, texture.numBytesPerChannel * 8, sampleFormat);
 
     // Texture sampling treats v = 0 as the bottom row, so store ybvt source data bottom-up.
     FlipImageVertically(&texture);
@@ -1095,8 +1092,27 @@ static void Run(const std::string &filename)
 
     for (const OpenPbrMaterial &material : container.openPbrMaterials)
     {
-        std::vector<const UdimTextureVector *> materialTextures;
         for (const MaterialNode &node : material.graph.nodes)
+        {
+            for (const MaterialInput &input : node.inputs)
+            {
+                const UdimTextureVector *textureFiles =
+                    std::get_if<UdimTextureVector>(&input.value);
+
+                if (textureFiles)
+                {
+                    for (const auto &[filename, udim] : *textureFiles)
+                    {
+                        AddTexture(filename, udim);
+                    }
+                }
+            }
+        }
+    }
+
+    for (const MaterialGraph &graph : container.materialXMaterials)
+    {
+        for (const MaterialNode &node : graph.nodes)
         {
             for (const MaterialInput &input : node.inputs)
             {

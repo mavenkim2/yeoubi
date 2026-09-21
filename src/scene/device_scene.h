@@ -3,9 +3,9 @@
 #include "core/affine_transform.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
-#include "device/device_memory.h"
+#include "render/material_opcodes.h"
 #include "scene/device_cluster.h"
-#include "scene/openpbr_parameters.h"
+#include "scene/openpbr_parameter_list.h"
 #include <cstdint>
 
 namespace ybi
@@ -20,11 +20,17 @@ enum class AttributeType
     FaceVarying,
 };
 
-// NOTE: temporary bridge to allow meshes to reference either Material or MaterialGraph
+enum class MaterialHandleType : uint32_t
+{
+    Preview,
+    OpenPbr,
+    MaterialX,
+};
+
 struct MaterialHandle
 {
-    bool isGraph;
-    uint32_t index;
+    MaterialHandleType type = MaterialHandleType::Preview;
+    uint32_t index = 0;
 };
 
 struct DeviceMaterial
@@ -47,6 +53,13 @@ struct DeviceMaterial2
 #define DECLARE(name, type) DeviceMaterialExpression name;
     OPENPBR_PARAMETERS(DECLARE)
 #undef DECLARE
+};
+
+struct DeviceMaterial3
+{
+    uint32_t sampleCallableIndex;
+    uint32_t evaluateCallableIndex;
+    uint32_t pdfCallableIndex;
 };
 
 struct DeviceAttribute
@@ -94,8 +107,14 @@ struct DeviceLight
 
 struct MaterialDescriptor
 {
-    MaterialOpcode materialType;
-    uint32_t bits;
+    // Indices are local to a child-before-parent descriptor array. For layer,
+    // child0 is top and child1 is base; for mix, they are bg and fg.
+    MaterialOpcode materialType = MaterialOpcode::Invalid;
+    uint32_t child0 = 0xffffffffu;
+    uint32_t child1 = 0xffffffffu;
+    uint32_t parameterOffset = 0xffffffffu;
+    // Only the lion's default BSDF modes are currently supported.
+    uint32_t flags = 0;
 };
 
 struct DeviceScene
@@ -103,6 +122,7 @@ struct DeviceScene
     Object *objects;
     DeviceMaterial *materials;
     DeviceMaterial2 *deviceMaterial2s;
+    DeviceMaterial3 *deviceMaterial3s;
     MaterialHandle *materialHandles;
 
     Vec3f *positions;

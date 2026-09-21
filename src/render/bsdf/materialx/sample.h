@@ -1,70 +1,122 @@
 #pragma once
 
-#include "device/kernel_params.h"
+#include "core/assert.h"
+#include "core/math.h"
+#include "core/vec3f.h"
+#include "render/bsdf/materialx/conductor_bsdf.h"
 #include "render/bsdf/materialx/dielectric_bsdf.h"
+#include "render/bsdf/materialx/oren_nayar_bsdf.h"
 #include "render/bsdf/materialx/sheen.h"
 #include "render/material_opcodes.h"
+#include "scene/device_scene.h"
+#include <cstdint>
 
 namespace ybi
 {
 
-YBI_CPU_GPU void CalculateTransmittance(const KernelParams &params,
+struct MaterialNodeSummary
+{
+    Vec3f albedo;
+    Vec3f transmittance;
+};
+
+// The descriptors must be child-before-parent, with local child indices. The
+// caller owns both the resolved parameter records and the per-node summaries.
+// The root summary is summaries[nodeCount - 1]. viewDirection is already
+// normalized and expressed in the material's local shading frame.
+YBI_CPU_GPU bool CalculateTransmittance(const MaterialDescriptor *descriptors,
+                                        uint32_t nodeCount,
                                         const BsdfClosure &closure,
                                         const Vec3f &viewDirection,
-                                        float *transmittances)
+                                        MaterialNodeSummary *summaries,
+                                        uint32_t summaryCapacity)
 {
-    uint32_t nodeCount = 5;
+    YBI_ASSERT(descriptors && summaries && nodeCount > 0 && summaryCapacity >= nodeCount);
 
-    // Nodes supported in reverse topological sort order
-    for (int nodeIndex = nodeCount - 1; nodeIndex >= 0; nodeIndex--)
+    const float nDotV = viewDirection.z;
+
+    for (uint32_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
     {
-        const MaterialDescriptor &materialDescriptor = params.scene.materialDescriptors[nodeIndex];
+        const MaterialDescriptor &descriptor = descriptors[nodeIndex];
+        MaterialNodeSummary &summary = summaries[nodeIndex];
+        if (descriptor.flags != 0)
+            return false;
 
-        switch (materialDescriptor.materialType)
+        switch (descriptor.materialType)
         {
             case MaterialOpcode::layer_bsdf:
             {
-                float transmittanceTop;
-                float transmittanceBottom;
-
-                float transmittance = transmittanceTop * transmittanceBottom;
-
-                // TODO: store
+                if (descriptor.child0 >= nodeIndex || descriptor.child1 >= nodeIndex)
+                    return false;
+                const MaterialNodeSummary &top = summaries[descriptor.child0];
+                const MaterialNodeSummary &base = summaries[descriptor.child1];
+                summary.albedo = top.albedo + top.transmittance * base.albedo;
+                summary.transmittance = top.transmittance * base.transmittance;
                 break;
             }
             case MaterialOpcode::mix_bsdf:
             {
-                float transmittanceBg;
-                float transmittanceFg;
+                if (descriptor.child0 >= nodeIndex || descriptor.child1 >= nodeIndex)
+                    return false;
                 float weight;
-
-                float transmittance = (1.f - weight) * transmittanceBg + weight * transmittanceFg;
-
-                // TODO: store
+                if (!closure.LoadFloat(descriptor.parameterOffset, weight))
+                    return false;
+                const MaterialNodeSummary &bg = summaries[descriptor.child0];
+                const MaterialNodeSummary &fg = summaries[descriptor.child1];
+                summary.albedo = (1.f - weight) * bg.albedo + weight * fg.albedo;
+                summary.transmittance =
+                    (1.f - weight) * bg.transmittance + weight * fg.transmittance;
                 break;
             }
             case MaterialOpcode::sheen_bsdf:
             {
                 SheenBSDF sheen;
-                GetSheenParameters(materialDescriptor, closure, sheen);
-
-                float transmittance = 1.f - SheenAlbedo(sheen, viewDirection);
-                // TODO: store
-
+                if (!GetSheenParameters(descriptor, closure, sheen))
+                    return false;
+                const float physicalAlbedo = sheen.weight * SheenAlbedo(sheen.roughness, nDotV);
+                summary.albedo = physicalAlbedo * Max(sheen.color, 0.f);
+                summary.transmittance = Vec3f(1.f - physicalAlbedo);
                 break;
             }
             case MaterialOpcode::dielectric_bsdf:
             {
-                // TODO: transmitting dielectric bsdf
-                float transmittance =
-                    1.f - CalculateDielectricBsdfAlbedo(const DielectricBsdf &bsdf,
-                                                        const int &viewDirection) break;
+                DielectricBsdf dielectric;
+                if (!GetDielectricParameters(descriptor, closure, dielectric))
+                    return false;
+                const Vec3f physicalAlbedo = CalculateDielectricBsdfAlbedo(dielectric, nDotV);
+                summary.albedo = physicalAlbedo * Max(dielectric.tint, 0.f);
+                summary.transmittance = Vec3f(1.f) - physicalAlbedo;
                 break;
             }
+            case MaterialOpcode::oren_nayar_diffuse_bsdf:
+            {
+                OrenNayarBsdf diffuse;
+                if (!GetOrenNayarParameters(descriptor, closure, diffuse))
+                    return false;
+                summary.albedo = diffuse.weight * Max(diffuse.color, 0.f) *
+                                 OrenNayarDirectionalAlbedo(nDotV, diffuse.roughness);
+                summary.transmittance = Vec3f(1.f - diffuse.weight);
+                break;
+            }
+            case MaterialOpcode::conductor_bsdf:
+            {
+                ConductorBsdf conductor;
+                if (!GetConductorParameters(descriptor, closure, conductor))
+                    return false;
+                summary.albedo = ConductorDirectionalAlbedo(conductor, nDotV);
+                summary.transmittance = Vec3f(1.f - conductor.weight);
+                break;
+            }
+            default:
+                return false;
         }
     }
+    return true;
 }
 
+// The sampling/evaluation prototype is intentionally deferred. Only the
+// transmittance and directional-albedo summary pass is implemented here.
+#if 0
 YBI_CPU_GPU Vec3f EvaluateBsdf() {}
 
 YBI_GPU void SelectLobe(const KernelParams &params,
@@ -149,5 +201,6 @@ YBI_GPU void SelectLobe(const KernelParams &params,
         }
     }
 }
+#endif
 
 } // namespace ybi

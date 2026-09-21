@@ -50,10 +50,13 @@ struct CUDAOptixPipeline
     OptixProgramGroup raygenProgramGroup = nullptr;
     OptixProgramGroup missProgramGroup = nullptr;
     OptixProgramGroup hitgroupProgramGroup = nullptr;
+    std::vector<OptixModule> callableModules;
+    std::vector<OptixProgramGroup> callableProgramGroups;
     OptixPipeline pipeline = nullptr;
     CUdeviceptr raygenRecord = 0;
     CUdeviceptr missRecord = 0;
     CUdeviceptr hitgroupRecord = 0;
+    CUdeviceptr callableRecords = 0;
     OptixShaderBindingTable shaderBindingTable = {};
 };
 
@@ -81,7 +84,7 @@ struct CUDADevice : Device
     std::vector<ImportedExternalBuffer> importedExternalBuffers;
     bool supportsClusterBVHs;
 
-    CUDADevice();
+    explicit CUDADevice(bool createRendererPipeline = true);
     ~CUDADevice() override;
     DeviceBuffer Alloc(size_t bytes) override;
     void Free(DeviceBuffer &buffer) override;
@@ -120,9 +123,16 @@ struct CUDADevice : Device
                                   const DeviceTextureBatchCopyDesc *descs,
                                   size_t numDescs) override;
     std::unique_ptr<DeviceKernel> CreateDeviceKernel(const DeviceKernelDesc &desc) override;
+    bool CompileKernel(const std::string &source, DeviceModule &deviceModule) override;
+    bool RegisterDirectCallables(DeviceModule deviceModule,
+                                 const std::vector<std::string> &entryNames,
+                                 std::vector<uint32_t> &callableIndices) override;
+    std::string GetCallableFunctionSignature(const std::string &returnType,
+                                             const std::string &functionName,
+                                             const std::string &parameters) const override;
     void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) override;
 
-    void InitializeOptix();
+    void InitializeOptix(bool createRendererPipeline);
     bool CreateOptixPipeline(const std::string &ptx);
     void DestroyOptixPipeline();
 
@@ -135,6 +145,15 @@ struct CUDADevice : Device
     size_t GetBVHAllocationSize() const override;
     void StartProfiler() const override;
     void StopProfiler() const override;
+    void CreatePipeline() override;
+
+private:
+    void GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions,
+                                OptixPipelineCompileOptions &pipelineOptions);
+    bool LinkOptixPipeline(const OptixPipelineCompileOptions &pipelineCompileOptions);
+    void DestroyLinkedOptixPipeline();
+
+    std::string ptx;
 };
 
 } // namespace ybi

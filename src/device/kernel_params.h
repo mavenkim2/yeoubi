@@ -24,6 +24,7 @@ struct KernelParams
     uint64_t bvhHandle;
 
     uint64_t imageHandle;
+    Vec3f *kernelOutput;
 
     // Geometry
     DeviceScene scene;

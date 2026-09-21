@@ -12,13 +12,16 @@ class CameraController
 {
 public:
     Vec3f position = Vec3f(0.0f);
+    Vec3f worldUp = Vec3f(0.f, 1.f, 0.f);
     float yaw = 0.0f;
     float pitch = 0.0f;
     float moveSpeed = 5.0f;
     float mouseSensitivity = 0.002f;
 
     CameraController() = default;
-    explicit CameraController(GLFWwindow *window, const AffineTransform &renderFromCamera);
+    CameraController(GLFWwindow *window,
+                     const AffineTransform &renderFromCamera,
+                     const Vec3f &worldUp);
 
     void UpdateCamera(GLFWwindow *window, float deltaTime);
     void AddScrollInput(double yOffset);
@@ -27,10 +30,13 @@ public:
     void SetMovementEnabled(bool enabled);
 
 private:
+    Vec3f yawZeroForward = Vec3f(0.f, 0.f, -1.f);
     bool firstMouse = true;
     bool enableMovement = false;
     double lastMouseX = 0.0;
     double lastMouseY = 0.0;
+
+    Vec3f GetForward() const;
 };
 
 } // namespace ybi

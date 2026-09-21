@@ -1,3 +1,8 @@
+#pragma once
+
+#include <cstdint>
+#include <cstring>
+
 namespace ybi
 {
 
@@ -13,7 +18,7 @@ inline uint64_t MurmurHash64A(const uint8_t *key, size_t len, uint64_t seed)
     while (key != end)
     {
         uint64_t k;
-        std::memcpy(&k, key, sizeof(uint64_t));
+        memcpy(&k, key, sizeof(uint64_t));
         key += 8;
 
         k *= m;

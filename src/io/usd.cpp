@@ -10,6 +10,7 @@
 #include "core/thread_context.h"
 #include "io/usd_helpers.h"
 #include "io/usd_material.h"
+#include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
 #include "scene/scene.h"
 #include <algorithm>
@@ -31,8 +32,10 @@
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
+#include <pxr/usd/usdGeom/bboxCache.h>
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdGeom/subset.h>
@@ -1592,11 +1595,40 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
     // Load cameras
     USDPrimTraversalData &data = traversalDatas[0];
 
+    const pxr::TfToken upAxis = pxr::UsdGeomGetStageUpAxis(stage);
+    const Vec3f worldUp =
+        upAxis == pxr::UsdGeomTokens->z ? Vec3f(0.f, 0.f, 1.f) : Vec3f(0.f, 1.f, 0.f);
+    container->camera.worldUp = worldUp;
+
     if (data.cameras.empty())
     {
+        const pxr::TfTokenVector purposes = {
+            pxr::UsdGeomTokens->default_,
+            pxr::UsdGeomTokens->render,
+            pxr::UsdGeomTokens->proxy,
+        };
+
+        pxr::UsdGeomBBoxCache bboxCache(timeCode, purposes);
+
+        pxr::UsdPrim boundsRoot = stage->GetDefaultPrim();
+        if (!boundsRoot)
+            boundsRoot = stage->GetPseudoRoot();
+
+        const pxr::GfBBox3d worldBounds = bboxCache.ComputeWorldBound(boundsRoot);
+        const pxr::GfRange3d range = worldBounds.ComputeAlignedRange();
+        YBI_ASSERT(!range.IsEmpty());
+        const pxr::GfVec3d usdCenter = range.GetMidpoint();
+        const pxr::GfVec3d usdSize = range.GetSize();
+
+        const Vec3f targetPos(static_cast<float>(usdCenter[0]),
+                              static_cast<float>(usdCenter[1]),
+                              static_cast<float>(usdCenter[2]));
+
+        const Vec3f cameraPosition = targetPos + Vec3f(1.f, 0.f, 0.f) * 10.f;
+
         container->camera.cameraFromWorld =
-            AffineTransform::LookAt(Vec3f(1.f, 0.f, 0.f), Vec3f(0.f, 1.f, 0.f), Vec3f(0.f));
-        container->camera.position = Vec3f(0.f);
+            AffineTransform::LookAt(targetPos, worldUp, cameraPosition);
+        container->camera.position = cameraPosition;
         container->camera.verticalFovRadians = DegreesToRadians(90.f);
 
         // TODO: this needs to not be hardcoded
@@ -1891,7 +1923,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
             printf("type: %s\n", token.GetText());
             if (foundToken && token == pxr::TfToken("UsdPreviewSurface"))
             {
-                handle.isGraph = false;
+                handle.type = MaterialHandleType::Preview;
                 handle.index = container->materials.size();
 
                 Material &mat = container->materials.emplace_back();
@@ -1945,11 +1977,17 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
             }
             else if (token == pxr::TfToken("ND_surface"))
             {
-                LoadMaterialXSurface(shader, timeCode);
+                handle.type = MaterialHandleType::MaterialX;
+                handle.index = container->materialXMaterials.size();
+
+                MaterialGraph &mat = container->materialXMaterials.emplace_back();
+                LoadMaterialXSurface(shader, timeCode, &mat);
+
+                printf("no bueno\n");
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {
-                handle.isGraph = true;
+                handle.type = MaterialHandleType::OpenPbr;
                 handle.index = container->openPbrMaterials.size();
 
                 OpenPbrMaterial &mat = container->openPbrMaterials.emplace_back();
@@ -1983,6 +2021,7 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
     {
         const USDPrimTraversalData &data = traversalDatas[sceneIndex];
 
+        printf("num lights: %u\n", data.rectLights.size());
         for (size_t i = 0; i < data.rectLights.size(); i++)
         {
             pxr::UsdLuxRectLight rectLight(data.rectLights[i]);

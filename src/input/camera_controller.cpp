@@ -21,16 +21,40 @@ static void ScrollCallback(GLFWwindow *window, double xOffset, double yOffset)
     cameraController->AddScrollInput(yOffset);
 }
 
-CameraController::CameraController(GLFWwindow *window, const AffineTransform &renderFromCamera)
+CameraController::CameraController(GLFWwindow *window,
+                                   const AffineTransform &renderFromCamera,
+                                   const Vec3f &inputWorldUp)
 {
     glfwSetWindowUserPointer(window, this);
     glfwSetScrollCallback(window, ScrollCallback);
 
+    YBI_ASSERT(LengthSquared(inputWorldUp) > 0.f);
+    worldUp = Normalize(inputWorldUp);
     position = renderFromCamera.GetTranslation();
 
-    Vec3f forward = Normalize(renderFromCamera.TransformVector(Vec3f(0.0f, 0.0f, -1.0f)));
-    pitch = std::asinf(Clamp(forward.y, -1.0f, 1.0f));
-    yaw = std::atan2f(forward.x, -forward.z);
+    const Vec3f forward =
+        Normalize(renderFromCamera.TransformVector(Vec3f(0.0f, 0.0f, -1.0f)));
+    const float verticalComponent = Clamp(Dot(forward, worldUp), -1.f, 1.f);
+    pitch = Clamp(std::asinf(verticalComponent), -1.55f, 1.55f);
+
+    Vec3f horizontalForward = forward - verticalComponent * worldUp;
+    if (LengthSquared(horizontalForward) <= 1e-8f)
+    {
+        const Vec3f cameraRight =
+            Normalize(renderFromCamera.TransformVector(Vec3f(1.f, 0.f, 0.f)));
+        horizontalForward = Cross(worldUp, cameraRight);
+    }
+    YBI_ASSERT(LengthSquared(horizontalForward) > 0.f);
+    yawZeroForward = Normalize(horizontalForward);
+    yaw = 0.f;
+}
+
+Vec3f CameraController::GetForward() const
+{
+    const Vec3f yawZeroRight = Normalize(Cross(yawZeroForward, worldUp));
+    const Vec3f horizontalForward =
+        std::cosf(yaw) * yawZeroForward + std::sinf(yaw) * yawZeroRight;
+    return Normalize(std::cosf(pitch) * horizontalForward + std::sinf(pitch) * worldUp);
 }
 
 void CameraController::UpdateCamera(GLFWwindow *window, float deltaTime)
@@ -60,11 +84,7 @@ void CameraController::UpdateCamera(GLFWwindow *window, float deltaTime)
     pitch -= mouseDeltaY * mouseSensitivity;
     pitch = Clamp(pitch, -1.55f, 1.55f);
 
-    const float cosPitch = std::cosf(pitch);
-    Vec3f forward(std::sinf(yaw) * cosPitch, std::sinf(pitch), -std::cosf(yaw) * cosPitch);
-    forward = Normalize(forward);
-
-    const Vec3f worldUp(0.0f, 1.0f, 0.0f);
+    const Vec3f forward = GetForward();
     const Vec3f right = Normalize(Cross(forward, worldUp));
 
     Vec3f move(0.0f);
@@ -113,11 +133,7 @@ void CameraController::AddScrollInput(double yOffset)
 
 AffineTransform CameraController::GetRenderFromCamera() const
 {
-    const float cosPitch = std::cosf(pitch);
-    Vec3f forward(std::sinf(yaw) * cosPitch, std::sinf(pitch), -std::cosf(yaw) * cosPitch);
-    forward = Normalize(forward);
-
-    const Vec3f worldUp(0.0f, 1.0f, 0.0f);
+    const Vec3f forward = GetForward();
     const Vec3f right = Normalize(Cross(forward, worldUp));
     const Vec3f up = Normalize(Cross(right, forward));
     const Vec3f cameraZ = -forward;

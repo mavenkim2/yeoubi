@@ -1,21 +1,26 @@
 #pragma once
 
 #include "core/vec3f.h"
-#include "render/bsdf/materialx/material_defines.h"
+#include <cstdint>
 
 namespace ybi
 {
 
-#define SHEEN_TINT_OFFSET 0
-#define SHEEN_ROUGHNESS_OFFSET (SHEEN_TINT_OFFSET + MATERIAL_NUM_CLOSURE_BITS)
-#define SHEEN_PROB_INDEX_OFFSET (SHEEN_ROUGHNESS_OFFSET + MATERIAL_NUM_CLOSURE_BITS)
+enum SheenParameterOffset : uint32_t
+{
+    SheenWeight = 0,
+    SheenColor = 1,
+    SheenRoughness = 4,
+    SheenNormal = 5,
+    SheenParameterCount = 8,
+};
 
 struct SheenBSDF
 {
-    Vec3f tint;
+    float weight;
+    Vec3f color;
     float roughness;
-
-    int probabilityIndex;
+    Vec3f normal;
 };
 
 } // namespace ybi

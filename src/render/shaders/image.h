@@ -106,6 +106,26 @@ YBI_CPU_GPU void ShaderImageVector3(const KernelParams &params,
     StoreFloat3Register(registers, result.Xyz(), dst);
 }
 
+YBI_CPU_GPU void ShaderImageVector2(const KernelParams &params,
+                                    const ShadingInfo &info,
+                                    float *registers,
+                                    uint32_t &nodeOffset)
+{
+    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
+    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    StoreFloat2Register(registers, result.Xy(), dst);
+}
+
+YBI_CPU_GPU void ShaderImageVector4(const KernelParams &params,
+                                    const ShadingInfo &info,
+                                    float *registers,
+                                    uint32_t &nodeOffset)
+{
+    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
+    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    StoreFloat4Register(registers, result, dst);
+}
+
 YBI_CPU_GPU void ShaderImageFloat(const KernelParams &params,
                                   const ShadingInfo &info,
                                   float *registers,

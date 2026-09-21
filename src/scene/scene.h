@@ -203,6 +203,7 @@ struct Camera
     AffineTransform cameraFromWorld;
     Matrix4x4 clipFromCamera;
     Matrix4x4 rasterFromCamera;
+    Vec3f worldUp = Vec3f(0.f, 1.f, 0.f);
     float verticalFovRadians;
 
     int width;
@@ -286,6 +287,7 @@ struct DataContainer
     SubdivisionMesh *subdivisionMeshes;
 
     std::vector<OpenPbrMaterial> openPbrMaterials;
+    std::vector<MaterialGraph> materialXMaterials;
     std::vector<MaterialHandle> materialHandles;
 
     std::vector<RectLight> rectLights;

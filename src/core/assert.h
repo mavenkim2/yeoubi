@@ -1,6 +1,8 @@
 #pragma once
 
+#if !defined(__CUDA_ARCH__)
 #include <cstdio>
+#endif
 
 #ifdef YBI_DEBUG
 #if defined(__CUDA_ARCH__)

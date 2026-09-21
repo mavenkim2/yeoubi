@@ -53,9 +53,19 @@ YBI_GPU void EvaluateShader(const KernelParams &params,
                 ShaderImageFloat(params, info, registers, offset);
                 break;
             }
+            case MaterialOpcode::ImageVector2:
+            {
+                ShaderImageVector2(params, info, registers, offset);
+                break;
+            }
             case MaterialOpcode::ImageVector3:
             {
                 ShaderImageVector3(params, info, registers, offset);
+                break;
+            }
+            case MaterialOpcode::ImageVector4:
+            {
+                ShaderImageVector4(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::AttributeValueVector2:

@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace ybi
 {
@@ -68,6 +69,7 @@ public:
     };
 };
 
+typedef uint64_t DeviceModule;
 struct DeviceKernel
 {
     virtual ~DeviceKernel() = default;
@@ -162,6 +164,13 @@ struct Device
                                           const DeviceTextureBatchCopyDesc *descs,
                                           size_t numDescs) = 0;
     virtual std::unique_ptr<DeviceKernel> CreateDeviceKernel(const DeviceKernelDesc &desc) = 0;
+    virtual bool CompileKernel(const std::string &source, DeviceModule &deviceModule) = 0;
+    virtual bool RegisterDirectCallables(DeviceModule deviceModule,
+                                         const std::vector<std::string> &entryNames,
+                                         std::vector<uint32_t> &callableIndices) = 0;
+    virtual std::string GetCallableFunctionSignature(const std::string &returnType,
+                                                     const std::string &functionName,
+                                                     const std::string &parameters) const = 0;
     virtual void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) = 0;
 
     virtual bool SupportsClusterBVHs() const = 0;
@@ -173,6 +182,8 @@ struct Device
     virtual size_t GetBVHAllocationSize() const = 0;
     virtual void StartProfiler() const = 0;
     virtual void StopProfiler() const = 0;
+
+    virtual void CreatePipeline() = 0;
 };
 
 } // namespace ybi

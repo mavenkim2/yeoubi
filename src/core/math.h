@@ -87,6 +87,11 @@ YBI_CPU_GPU T Sqr(const T &v)
     return v * v;
 }
 
+YBI_CPU_GPU float Pow(float x, float y)
+{
+    return powf(x, y);
+}
+
 template <typename T>
 YBI_CPU_GPU T Pow4(const T &v)
 {

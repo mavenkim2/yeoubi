@@ -2,6 +2,7 @@
 #include "render/virtual_texture_manager.h"
 #include "scene/device_scene.h"
 #include "scene/material.h"
+#include "scene/material_compilation.h"
 #include <memory>
 #include <unordered_map>
 
@@ -13,6 +14,7 @@ class VirtualTextureManager;
 
 struct BufferHandle;
 struct DataContainer;
+struct OpenPbrMaterial;
 struct SceneImportContext;
 struct DisplayDevice;
 struct Device;
@@ -58,12 +60,14 @@ struct MaterialManager
     std::unordered_map<const MaterialNode *, MaterialTextureHandle> textureNodeToHandle;
     VirtualTextureManager *virtualTextureManager = nullptr;
     AttributeManager attributeManager;
+    MaterialCompiler materialCompiler;
 
     ~MaterialManager();
-    void AddTextures(OpenPbrMaterial &material, MaterialNodeId member);
+    void AddTextures(MaterialGraph &graph, MaterialNodeId nodeId);
     DeviceMaterialExpression ProcessMaterialGraph(OpenPbrMaterial &material,
                                                   MaterialNodeId member,
                                                   std::vector<uint32_t> &nodes);
+    std::string ProcessMaterialXMaterial(MaterialGraph &material);
     void Update(Device *device,
                 DisplayDevice *displayDevice,
                 DataContainer *container,

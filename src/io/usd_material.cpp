@@ -56,9 +56,17 @@ static MaterialOpcode ConvertTokenToMaterialOpcode(const pxr::TfToken &token)
         return MaterialOpcode::rendererOpcode;
 
     MATERIALX_DEFINITIONS(SWITCH)
+#undef SWITCH
+
+#define SWITCH(mtlxName) \
+    if (token == mtlxTokens::mtlxName) \
+        return MaterialOpcode::mtlxName##_bsdf;
+
+    MATERIALX_BSDFS(SWITCH)
+#undef SWITCH
+
     YBI_LOGFATAL("MaterialX node %s not supported\n", token.GetText());
     return MaterialOpcode::Invalid;
-#undef SWITCH
 }
 
 struct OpenPbrParameterDescriptor
@@ -432,93 +440,55 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
     if (shader && shader.GetShaderId(&shaderId))
     {
         std::string path = shader.GetPath().GetString();
-        const pxr::SdrShaderNodeConstPtr definition = shader.GetShaderNodeForSourceType(mtlxToken);
-
-        if (!definition)
-            return kInvalidMaterialNodeId;
-
         std::vector<MaterialInput> materialInputs;
 
-        for (const pxr::TfToken &inputName : definition->GetShaderInputNames())
+        for (const pxr::UsdShadeInput &input : shader.GetInputs())
         {
-            const pxr::UsdShadeInput input = shader.GetInput(inputName);
+            const pxr::TfToken inputName = input.GetBaseName();
             printf("input name: %s\n", inputName.GetText());
-            bool useDefault = true;
+            const pxr::UsdShadeAttributeVector producers = input.GetValueProducingAttributes();
+            YBI_ASSERT(producers.size() <= 1 &&
+                       "MaterialX inputs with multiple value producers are unsupported");
 
-            if (input)
+            if (producers.empty())
             {
-                const auto producers = input.GetValueProducingAttributes();
-                YBI_ASSERT(producers.size() <= 1 &&
-                           "MaterialX inputs with multiple value producers are unsupported");
                 pxr::VtValue value;
-
-                if (producers.empty())
+                if (input.Get(&value, timeCode))
                 {
-                    pxr::VtValue value;
-                    if (input.Get(&value, timeCode))
-                    {
-                        materialInputs.push_back(
-                            {inputName, LoadConstant(input.GetAttr(), value, timeCode)});
-                        DebugPrintConstant(materialInputs.back());
-                        useDefault = false;
-                    }
+                    materialInputs.push_back(
+                        {inputName, LoadConstant(input.GetAttr(), value, timeCode)});
+                    DebugPrintConstant(materialInputs.back());
                 }
-
-                for (const pxr::UsdAttribute &producer : producers)
-                {
-                    bool isShader = pxr::UsdShadeOutput::IsOutput(producer) &&
-                                    producer.GetPrim().IsA<pxr::UsdShadeShader>();
-
-                    if (isShader)
-                    {
-                        pxr::UsdShadeShader sourceShader(producer.GetPrim());
-                        pxr::TfToken shaderId;
-                        sourceShader.GetShaderId(&shaderId);
-                        printf("%s\n", shaderId.GetText());
-
-                        if (auto found = nodeMap.find(sourceShader.GetPath().GetString());
-                            found == nodeMap.end())
-                        {
-                            LoadMtlxShaderHelper(sourceShader, graph, nodeMap, timeCode);
-                        }
-
-                        auto found = nodeMap.find(sourceShader.GetPath().GetString());
-                        YBI_ASSERT(found != nodeMap.end());
-
-                        materialInputs.push_back({inputName, found->second});
-                        useDefault = false;
-                    }
-                    else if (producer.Get(&value, timeCode))
-                    {
-                        materialInputs.push_back(
-                            {inputName, LoadConstant(producer, value, timeCode)});
-                        DebugPrintConstant(materialInputs.back());
-                        useDefault = false;
-                        break;
-                    }
-                    else
-                    {
-                        YBI_LOGFATAL("Unexpected error when handling producer input\n");
-                    }
-                }
+                continue;
             }
 
-            if (useDefault)
+            const pxr::UsdAttribute &producer = producers.front();
+            const bool isShader = pxr::UsdShadeOutput::IsOutput(producer) &&
+                                  producer.GetPrim().IsA<pxr::UsdShadeShader>();
+
+            if (isShader)
             {
-                // The USD prim did not provide this input.
-                const pxr::SdrShaderPropertyConstPtr property =
-                    definition->GetShaderInput(inputName);
+                pxr::UsdShadeShader sourceShader(producer.GetPrim());
+                pxr::TfToken sourceShaderId;
+                sourceShader.GetShaderId(&sourceShaderId);
+                printf("%s\n", sourceShaderId.GetText());
 
-                if (property)
-                {
-                    const pxr::VtValue &defaultValue = property->GetDefaultValueAsSdfType();
+                const std::string sourcePath = sourceShader.GetPath().GetString();
+                if (nodeMap.find(sourcePath) == nodeMap.end())
+                    LoadMtlxShaderHelper(sourceShader, graph, nodeMap, timeCode);
 
-                    if (!defaultValue.IsEmpty())
-                    {
-                        materialInputs.push_back(
-                            {inputName, LoadConstant(input.GetAttr(), defaultValue, timeCode)});
-                    }
-                }
+                const auto found = nodeMap.find(sourcePath);
+                YBI_ASSERT(found != nodeMap.end());
+                materialInputs.push_back({inputName, found->second});
+            }
+            else
+            {
+                pxr::VtValue value;
+                if (!producer.Get(&value, timeCode))
+                    YBI_LOGFATAL("Unexpected error when handling producer input\n");
+
+                materialInputs.push_back({inputName, LoadConstant(producer, value, timeCode)});
+                DebugPrintConstant(materialInputs.back());
             }
         }
 
@@ -617,30 +587,35 @@ void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
     }
 }
 
-void LoadMaterialXSurface(const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
+void LoadMaterialXSurface(const pxr::UsdShadeShader &shader,
+                          pxr::UsdTimeCode timeCode,
+                          MaterialGraph *material)
 {
+    YBI_ASSERT(shader && material);
+    *material = MaterialGraph{};
+
     pxr::TfToken idToken;
     YBI_ASSERT(shader.GetShaderId(&idToken) && idToken == mtlxSurface);
 
-    MaterialGraph graph;
-    for (const pxr::UsdShadeInput &input : shader.GetInputs())
-    {
-        printf("%s\n", input.GetFullName().GetText());
-        const pxr::UsdShadeAttributeVector producers = input.GetValueProducingAttributes();
-        for (const pxr::UsdAttribute &producer : producers)
-        {
-            if (pxr::UsdShadeOutput::IsOutput(producer))
-            {
-                if (producer.GetPrim().IsA<pxr::UsdShadeShader>())
-                {
-                    pxr::UsdShadeShader sourceShader(producer.GetPrim());
-                    pxr::TfToken shaderId;
-                    sourceShader.GetShaderId(&shaderId);
+    const pxr::UsdShadeInput bsdfInput = shader.GetInput(pxr::TfToken("bsdf"));
+    if (!bsdfInput)
+        return;
 
-                    LoadMtlxShader(graph, sourceShader, timeCode);
-                }
-            }
+    const pxr::UsdShadeAttributeVector producers = bsdfInput.GetValueProducingAttributes();
+    YBI_ASSERT(producers.size() <= 1 &&
+               "MaterialX surface inputs with multiple value producers are unsupported");
+
+    for (const pxr::UsdAttribute &producer : producers)
+    {
+        if (pxr::UsdShadeOutput::IsOutput(producer) &&
+            producer.GetPrim().IsA<pxr::UsdShadeShader>())
+        {
+            pxr::UsdShadeShader sourceShader(producer.GetPrim());
+            LoadMtlxShader(*material, sourceShader, timeCode);
+            return;
         }
+
+        YBI_LOGFATAL("MaterialX surface bsdf input must be connected to a shader output\n");
     }
 }
 
