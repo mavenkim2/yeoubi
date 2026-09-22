@@ -11,23 +11,6 @@
 namespace ybi
 {
 
-enum OrenNayarParameterOffset : uint32_t
-{
-    OrenNayarWeight = 0,
-    OrenNayarColor = 1,
-    OrenNayarRoughness = 4,
-    OrenNayarNormal = 5,
-    OrenNayarParameterCount = 8,
-};
-
-struct OrenNayarBsdf
-{
-    float weight;
-    Vec3f color;
-    float roughness;
-    Vec3f normal;
-};
-
 YBI_CPU_GPU bool GetOrenNayarParameters(const MaterialDescriptor &descriptor,
                                         const BsdfClosure &closure,
                                         OrenNayarBsdf &bsdf)

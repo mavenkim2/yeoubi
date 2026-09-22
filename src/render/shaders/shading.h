@@ -4,6 +4,7 @@
 #include "core/frame.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "render/bsdf/materialx/bsdf_types.h"
 #include "render/ray_cone.h"
 
 namespace ybi
@@ -34,6 +35,8 @@ struct ShadingInfo
     bool hasNormals;
     bool hasUvs;
     bool hasMaterial;
+
+    float closureData[MAX_CLOSURE_SIZE];
 
     YBI_GPU void TransformToWorld(const AffineTransform &objectToWorld)
     {

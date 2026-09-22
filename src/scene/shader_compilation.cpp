@@ -124,6 +124,21 @@ static void CompileConstantBool(const MaterialNode &node,
     context.AddUint(nodeInfos[nodeId].outputSlotOffset);
 }
 
+static void CompileConstantVector2(const MaterialNode &node,
+                                   const std::vector<NodeInfo> &nodeInfos,
+                                   MaterialNodeId nodeId,
+                                   ShaderCompilationContext &context)
+{
+    const Vec2f *value = GetConstantValue<Vec2f>(node);
+    if (value == nullptr)
+        return;
+
+    context.nodes.push_back(static_cast<uint32_t>(node.type));
+    context.AddFloat(value->x);
+    context.AddFloat(value->y);
+    context.AddUint(nodeInfos[nodeId].outputSlotOffset);
+}
+
 static void CompileConstantColor(const MaterialNode &node,
                                  const std::vector<NodeInfo> &nodeInfos,
                                  MaterialNodeId nodeId,

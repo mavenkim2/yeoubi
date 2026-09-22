@@ -3,6 +3,7 @@
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "render/bsdf/materialx/bsdf_types.h"
 #include "render/bsdf/materialx/closure.h"
 #include "render/bsdf/materialx/dielectric_bsdf.h"
 #include "scene/device_scene.h"
@@ -19,15 +20,6 @@ enum ConductorParameterOffset : uint32_t
     ConductorRoughness = 7,
     ConductorNormal = 9,
     ConductorParameterCount = 12,
-};
-
-struct ConductorBsdf
-{
-    float weight;
-    Vec3f ior;
-    Vec3f extinction;
-    Vec2f alpha;
-    Vec3f normal;
 };
 
 YBI_CPU_GPU bool GetConductorParameters(const MaterialDescriptor &descriptor,
@@ -61,9 +53,68 @@ YBI_CPU_GPU Vec3f ConductorDirectionalAlbedo(const ConductorBsdf &bsdf, float nD
     const float alpha = Sqrt(Max(1e-8f, bsdf.alpha.x) * Max(1e-8f, bsdf.alpha.y));
     const Vec3f fAvg = f0 + (Vec3f(1.f) - f0) * (1.f / 21.f);
     const Vec3f comp = GGXEnergyCompensation(nDotV, alpha, fAvg);
-    return Clamp(bsdf.weight * DielectricBsdfAlbedo(nDotV, alpha, f0, Vec3f(1.f)) * comp,
-                 0.f,
-                 1.f);
+    return Clamp(
+        bsdf.weight * DielectricBsdfAlbedo(nDotV, alpha, f0, Vec3f(1.f)) * comp, 0.f, 1.f);
+}
+
+YBI_CPU_GPU bool SampleConductorBsdf(const Vec3f &viewDirection,
+                                     const Vec2f &u,
+                                     const Vec2f &roughness,
+                                     Vec3f &lightDirection)
+{
+    if (viewDirection.z <= 0.f)
+        return false;
+
+    const Vec2f alpha = Clamp(roughness, 1e-8f, 1.f);
+    const Vec3f h = SampleMaterialXGGXVNDF(u, viewDirection, alpha);
+    const float hDotV = Dot(h, viewDirection);
+    if (hDotV <= 0.f)
+        return false;
+
+    lightDirection = -viewDirection + 2.f * hDotV * h;
+    return true;
+}
+
+YBI_CPU_GPU Vec3f EvaluateConductorBsdf(const Vec3f &viewDirection,
+                                        const Vec3f &lightDirection,
+                                        float weight,
+                                        const Vec3f &ior,
+                                        const Vec3f &extinction,
+                                        const Vec2f &roughness)
+{
+    if (weight < 1e-8f || viewDirection.z <= 0.f || lightDirection.z <= 0.f)
+        return Vec3f(0.f);
+
+    const Vec2f alpha = Clamp(roughness, 1e-8f, 1.f);
+    const float nDotV = Clamp(viewDirection.z, 1e-8f, 1.f);
+    const float nDotL = Clamp(lightDirection.z, 1e-8f, 1.f);
+    const float averageAlpha = Sqrt(alpha.x * alpha.y);
+    const Vec3f h = Normalize(lightDirection + viewDirection);
+    const float vDotH = Clamp(Dot(viewDirection, h), 1e-8f, 1.f);
+
+    const float d = GGXNDF(h, alpha);
+    const float g = GGXSmithG2(nDotL, nDotV, averageAlpha);
+    const Vec3f f = FresnelConductor(vDotH, ior, extinction);
+    const Vec3f compensation = GGXEnergyCompensation(nDotV, averageAlpha, Vec3f(f));
+
+    return d * f * g * compensation * weight / (4.f * nDotV);
+}
+
+YBI_CPU_GPU float
+PDFConductorBsdf(const Vec3f &viewDirection, const Vec3f &lightDirection, const Vec2f &roughness)
+{
+    if (viewDirection.z <= 0.f || lightDirection.z <= 0.f)
+        return 0.f;
+
+    const Vec2f alpha = Clamp(roughness, 1e-8f, 1.f);
+    const Vec3f h = Normalize(viewDirection + lightDirection);
+    if (Dot(h, viewDirection) <= 0.f)
+        return 0.f;
+
+    const float nDotV = Clamp(viewDirection.z, 1e-8f, 1.f);
+    const float averageAlpha = Sqrt(alpha.x * alpha.y);
+    const float g1V = GGXSmithG1(nDotV, averageAlpha);
+    return GGXNDF(h, alpha) * g1V / (4.f * nDotV);
 }
 
 } // namespace ybi

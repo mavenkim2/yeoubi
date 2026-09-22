@@ -797,6 +797,9 @@ YBI_GPU void RenderUnidirectional()
                         materialXFrame.z = -materialXFrame.z;
                     }
                     materialXViewDirection = materialXFrame.WorldToLocal(worldViewDirection);
+
+                    optixDirectCall<void>(
+                        materialXMaterial->initializeCallableIndex, &params, &shadingInfo);
                     hasBsdf = true;
                 }
                 // else
@@ -986,20 +989,6 @@ YBI_GPU void RenderUnidirectional()
         sum += radiance;
     }
 
-#if 0
-    uchar4 *image = reinterpret_cast<uchar4 *>(params.imageHandle);
-    const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
-    Vec3f *history = params.accumulation ? params.accumulation + pixelIndex : nullptr;
-
-    const Vec3f linearColor =
-        AccumulateSamples(history, params.accumulatedSamples, sum, sampleCount);
-    const Vec3f displayColor = FastACESToneMap(linearColor);
-    image[pixelIndex] =
-        make_uchar4(static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.x) + 0.5f),
-                    static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.y) + 0.5f),
-                    static_cast<unsigned char>(255.f * LinearToDisplay(displayColor.z) + 0.5f),
-                    255);
-#endif
     Vec3f *image = params.kernelOutput;
     const uint32_t pixelIndex = launchIndex.x + launchIndex.y * launchDimensions.x;
     image[pixelIndex] = sum;

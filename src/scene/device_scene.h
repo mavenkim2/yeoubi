@@ -57,6 +57,7 @@ struct DeviceMaterial2
 
 struct DeviceMaterial3
 {
+    uint32_t initializeCallableIndex;
     uint32_t sampleCallableIndex;
     uint32_t evaluateCallableIndex;
     uint32_t pdfCallableIndex;

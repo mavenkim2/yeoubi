@@ -1982,8 +1982,6 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
 
                 MaterialGraph &mat = container->materialXMaterials.emplace_back();
                 LoadMaterialXSurface(shader, timeCode, &mat);
-
-                printf("no bueno\n");
             }
             else if (token == pxr::TfToken("ND_open_pbr_surface_surfaceshader"))
             {

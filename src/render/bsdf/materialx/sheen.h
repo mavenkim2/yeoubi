@@ -2,8 +2,8 @@
 
 #include "core/math.h"
 #include "device/cuda_compat.h"
+#include "render/bsdf/materialx/bsdf_types.h"
 #include "render/bsdf/materialx/closure.h"
-#include "render/bsdf/materialx/sheen_types.h"
 #include "scene/device_scene.h"
 
 namespace ybi
@@ -11,7 +11,7 @@ namespace ybi
 
 YBI_CPU_GPU bool GetSheenParameters(const MaterialDescriptor &descriptor,
                                     const BsdfClosure &closure,
-                                    SheenBSDF &bsdf)
+                                    SheenBsdf &bsdf)
 {
     const uint32_t base = descriptor.parameterOffset;
     if (!closure.CanLoad(base, SheenParameterCount))
@@ -112,9 +112,8 @@ YBI_CPU_GPU Vec3f EvaluateContyKullaSheen(const Vec3f &viewDirection,
     return result;
 }
 
-YBI_CPU_GPU float PDFContyKullaSheen(const Vec3f &viewDirection,
-                                     const Vec3f &lightDirection,
-                                     float roughness)
+YBI_CPU_GPU float
+PDFContyKullaSheen(const Vec3f &viewDirection, const Vec3f &lightDirection, float roughness)
 {
     if (viewDirection.z * lightDirection.z <= 0.f)
     {

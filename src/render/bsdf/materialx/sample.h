@@ -70,7 +70,7 @@ YBI_CPU_GPU bool CalculateTransmittance(const MaterialDescriptor *descriptors,
             }
             case MaterialOpcode::sheen_bsdf:
             {
-                SheenBSDF sheen;
+                SheenBsdf sheen;
                 if (!GetSheenParameters(descriptor, closure, sheen))
                     return false;
                 const float physicalAlbedo = sheen.weight * SheenAlbedo(sheen.roughness, nDotV);

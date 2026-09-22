@@ -4,32 +4,15 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "core/vec4f.h"
+#include "render/bsdf/materialx/bsdf_types.h"
 #include "render/bsdf/materialx/closure.h"
+#include "render/bsdf/materialx/ggx_helpers.h"
 #include "scene/device_scene.h"
 #include <cmath>
 #include <cstdint>
 
 namespace ybi
 {
-
-struct DielectricBsdf
-{
-    Vec2f alpha;
-    float weight;
-    float ior;
-    Vec3f tint;
-    Vec3f normal;
-};
-
-enum DielectricParameterOffset : uint32_t
-{
-    DielectricWeight = 0,
-    DielectricTint = 1,
-    DielectricIor = 4,
-    DielectricRoughness = 5,
-    DielectricNormal = 7,
-    DielectricParameterCount = 10,
-};
 
 YBI_CPU_GPU bool GetDielectricParameters(const MaterialDescriptor &descriptor,
                                          const BsdfClosure &closure,
@@ -43,33 +26,6 @@ YBI_CPU_GPU bool GetDielectricParameters(const MaterialDescriptor &descriptor,
            closure.LoadFloat(base + DielectricIor, bsdf.ior) &&
            closure.LoadFloat2(base + DielectricRoughness, bsdf.alpha) &&
            closure.LoadFloat3(base + DielectricNormal, bsdf.normal);
-}
-
-// NOTE: these are taken from MaterialX implementations
-YBI_CPU_GPU float GGXNDF(const Vec3f &h, const Vec2f &alpha)
-{
-    const Vec2f &he = h.Xy() / alpha;
-    float denom = Dot(he, he) + Sqr(h.z);
-    return 1.f / (YBI_PI * alpha.x * alpha.y * Sqr(denom));
-}
-
-// Height-correlated Smith masking-shadowing
-// http://jcgt.org/published/0003/02/03/paper.pdf
-// Equations 72 and 99
-YBI_CPU_GPU float GGXSmithG2(float nDotL, float nDotV, float alpha)
-{
-    float alpha2 = Sqr(alpha);
-    float lambdaL = Sqrt(alpha2 + (1.f - alpha2) * Sqr(nDotL));
-    float lambdaV = Sqrt(alpha2 + (1.f - alpha2) * Sqr(nDotV));
-    return 2.f / (lambdaL / nDotL + lambdaV / nDotV);
-}
-
-// MaterialX mx_ggx_smith_G1 from mx_microfacet_specular.glsl.
-YBI_CPU_GPU float GGXSmithG1(float cosTheta, float alpha)
-{
-    const float cosTheta2 = Sqr(cosTheta);
-    const float tanTheta2 = (1.f - cosTheta2) / cosTheta2;
-    return 2.f / (1.f + Sqrt(1.f + Sqr(alpha) * tanTheta2));
 }
 
 // Direct port of MaterialX mx_ggx_importance_sample_VNDF.
@@ -111,9 +67,8 @@ YBI_CPU_GPU bool SampleDielectricBsdf(const Vec3f &viewDirection,
 
 // Reflected-direction PDF used by MaterialX mx_environment_radiance after
 // sampling mx_ggx_importance_sample_VNDF.
-YBI_CPU_GPU float PDFDielectricBsdf(const Vec3f &viewDirection,
-                                    const Vec3f &lightDirection,
-                                    const Vec2f &roughness)
+YBI_CPU_GPU float
+PDFDielectricBsdf(const Vec3f &viewDirection, const Vec3f &lightDirection, const Vec2f &roughness)
 {
     if (viewDirection.z <= 0.f || lightDirection.z <= 0.f)
         return 0.f;
@@ -148,10 +103,7 @@ YBI_CPU_GPU float IorToF0(float ior)
     return Sqr((ior - 1.0) / (ior + 1.0));
 }
 
-YBI_CPU_GPU Vec3f DielectricBsdfAlbedo(float nDotV,
-                                      float alpha,
-                                      const Vec3f &f0,
-                                      const Vec3f &f90)
+YBI_CPU_GPU Vec3f DielectricBsdfAlbedo(float nDotV, float alpha, const Vec3f &f0, const Vec3f &f90)
 {
     float x = nDotV;
     float y = alpha;
@@ -196,8 +148,7 @@ YBI_CPU_GPU Vec3f CalculateDielectricBsdfAlbedo(const DielectricBsdf &bsdf, floa
 
     Vec3f fAvg = FresnelAverage(bsdf.ior);
     Vec3f comp = GGXEnergyCompensation(nDotV, alpha, fAvg);
-    Vec3f albedo =
-        bsdf.weight * DielectricBsdfAlbedo(nDotV, alpha, Vec3f(f0), Vec3f(1.f)) * comp;
+    Vec3f albedo = bsdf.weight * DielectricBsdfAlbedo(nDotV, alpha, Vec3f(f0), Vec3f(1.f)) * comp;
     return Clamp(albedo, 0.f, 1.f);
 }
 
@@ -223,16 +174,12 @@ YBI_CPU_GPU Vec3f EvaluateDielectricBsdf(const Vec3f &viewDirection,
     const float d = GGXNDF(h, alpha);
     const float g = GGXSmithG2(nDotL, nDotV, averageAlpha);
     const float f = FresnelDielectric(vDotH, ior);
-    const Vec3f compensation =
-        GGXEnergyCompensation(nDotV, averageAlpha, Vec3f(f));
+    const Vec3f compensation = GGXEnergyCompensation(nDotV, averageAlpha, Vec3f(f));
 
     return d * f * g * compensation * Max(tint, 0.f) * weight / (4.f * nDotV);
 }
 
-YBI_CPU_GPU float DielectricAlbedo(float nDotV,
-                                   float weight,
-                                   float ior,
-                                   const Vec2f &roughness)
+YBI_CPU_GPU float DielectricAlbedo(float nDotV, float weight, float ior, const Vec2f &roughness)
 {
     DielectricBsdf bsdf;
     bsdf.alpha = roughness;

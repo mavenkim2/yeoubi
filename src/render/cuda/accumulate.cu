@@ -1,5 +1,5 @@
-#include "render/accumulator.h"
 #include "device/kernel_params.h"
+#include "render/accumulator.h"
 
 namespace ybi
 {

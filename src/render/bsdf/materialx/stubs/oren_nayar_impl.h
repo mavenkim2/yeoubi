@@ -14,9 +14,9 @@ YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
 {
     return EvaluateOrenNayarBsdf(viewDirection,
                                  lightDirection,
-                                 YBI_MATERIAL_WEIGHT(params, info),
-                                 YBI_MATERIAL_COLOR(params, info),
-                                 YBI_MATERIAL_ROUGHNESS(params, info));
+                                 YBI_MATERIAL_WEIGHT(info),
+                                 YBI_MATERIAL_COLOR(info),
+                                 YBI_MATERIAL_ROUGHNESS(info));
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,
@@ -31,14 +31,14 @@ YBI_GPU float YBI_MATERIAL_SELF_ALBEDO(const KernelParams &params,
                                        const ShadingInfo &info,
                                        const Vec3f &viewDirection)
 {
-    return YBI_MATERIAL_WEIGHT(params, info) *
+    return YBI_MATERIAL_WEIGHT(info) *
            OrenNayarDirectionalAlbedo(viewDirection.z,
-                                      YBI_MATERIAL_ROUGHNESS(params, info));
+                                      YBI_MATERIAL_ROUGHNESS(info));
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_TRANSMITTANCE(const KernelParams &params,
                                               const ShadingInfo &info,
                                               const Vec3f &viewDirection)
 {
-    return 1.f - YBI_MATERIAL_WEIGHT(params, info);
+    return 1.f - YBI_MATERIAL_WEIGHT(info);
 }

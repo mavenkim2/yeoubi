@@ -9,6 +9,7 @@ namespace ybi
     X(ConstantFloat, Float) \
     X(ConstantBool, Bool) \
     X(ConstantColor, Vec3) \
+    X(ConstantVector2, Vec2) \
     X(ImageVector2, Vec2) \
     X(ImageVector3, Vec3) \
     X(ImageVector4, Vec4) \
@@ -87,6 +88,42 @@ constexpr uint8_t GetMaterialValueRegisterCount(MaterialValueType type)
     return 0;
 }
 
+constexpr const char *GetMaterialValueTypeString(MaterialValueType type)
+{
+    switch (type)
+    {
+        case MaterialValueType::Bool:
+        {
+            return "bool";
+        }
+        case MaterialValueType::Int:
+        {
+            return "int";
+        }
+        case MaterialValueType::Float:
+        {
+            return "float";
+        }
+        case MaterialValueType::Vec2:
+        {
+            return "Vec2f";
+        }
+        case MaterialValueType::Vec3:
+        {
+            return "Vec3f";
+        }
+        case MaterialValueType::Vec4:
+        {
+            return "Vec4f";
+        }
+        case MaterialValueType::None:
+        {
+            return "";
+        }
+    }
+    return "";
+}
+
 enum class MaterialOpcode : uint8_t
 {
     Invalid = 0,
@@ -143,6 +180,11 @@ constexpr uint8_t GetMaterialOpcodeOutputRegisterCount(MaterialOpcode opcode)
     return GetMaterialValueRegisterCount(GetMaterialOpcodeOutputType(opcode));
 }
 
+constexpr const char *GetMaterialOpcodeOutputString(MaterialOpcode opcode)
+{
+    return GetMaterialValueTypeString(GetMaterialOpcodeOutputType(opcode));
+}
+
 constexpr bool IsTextureOpcode(MaterialOpcode opcode)
 {
     return opcode == MaterialOpcode::ImageFloat || opcode == MaterialOpcode::ImageVector2 ||
@@ -152,6 +194,12 @@ constexpr bool IsTextureOpcode(MaterialOpcode opcode)
 constexpr bool IsAttributeOpcode(MaterialOpcode opcode)
 {
     return opcode == MaterialOpcode::AttributeValueVector2;
+}
+
+constexpr bool IsConstantOpcode(MaterialOpcode opcode)
+{
+    return opcode == MaterialOpcode::ConstantFloat || opcode == MaterialOpcode::ConstantBool ||
+           opcode == MaterialOpcode::ConstantColor || opcode == MaterialOpcode::ConstantVector2;
 }
 
 } // namespace ybi

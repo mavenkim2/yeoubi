@@ -1,8 +1,8 @@
 #include "scene/material_compilation.h"
-
 #include "core/assert.h"
 #include "device/device.h"
-
+#include "render/bsdf/materialx/bsdf_types.h"
+#include "render/bsdf/materialx/dielectric_bsdf.h"
 #include <functional>
 #include <initializer_list>
 #include <iomanip>
@@ -17,6 +17,8 @@ namespace ybi
 {
 namespace
 {
+
+static const std::string GET_CLOSURE_PREFIX = "GetClosure_";
 
 struct MaterialCompilationContext;
 struct MaterialNodeBase;
@@ -60,6 +62,11 @@ struct MaterialNodeBase
                                 const std::string &materialPrefix) const = 0;
     virtual MaterialOpcode GetNodeType() const = 0;
 
+    virtual bool IsBsdf() const
+    {
+        return false;
+    }
+
     std::string Name() const
     {
         return "n" + std::to_string(index);
@@ -70,8 +77,75 @@ struct MaterialNodeBase
         return materialPrefix + "_" + Name();
     }
 
+    std::string CompileClosureAccessors(const std::string &materialPrefix,
+                                        size_t closureOffset) const
+    {
+        if (!IsBsdf() && !IsConstantOpcode(GetNodeType()))
+        {
+            std::string nodeName = FullName(materialPrefix);
+            const char *returnType = GetMaterialOpcodeOutputString(GetNodeType());
+            return CompileWithMacros(
+                "render/bsdf/materialx/stubs/closure_impl.h",
+                {
+                    {"YBI_MATERIAL_VALUE_TYPE", returnType},
+                    {"YBI_MATERIAL_SELF_GET_CLOSURE", GET_CLOSURE_PREFIX + nodeName},
+                    {"YBI_MATERIAL_SELF_SET_CLOSURE", "SetClosure_" + nodeName},
+                    {"YBI_MATERIAL_VALUE", "Value_" + nodeName},
+                    {"YBI_MATERIAL_CLOSURE_OFFSET", std::to_string(closureOffset)},
+                });
+        }
+        return "";
+    }
+
     uint32_t index = kInvalidMaterialNodeId;
     std::vector<MaterialNodeBase *> inputs;
+};
+
+struct BsdfNodeBase : MaterialNodeBase
+{
+    virtual ~BsdfNodeBase() = default;
+
+    virtual bool IsBsdf() const override
+    {
+        return true;
+    }
+
+    size_t GetClosureSize() const
+    {
+        size_t count = 0;
+        for (MaterialNodeBase *input : inputs)
+        {
+            if (!input->IsBsdf() && !IsConstantOpcode(input->GetNodeType()))
+            {
+                count += GetMaterialOpcodeOutputRegisterCount(input->GetNodeType());
+            }
+        }
+        return count;
+    }
+
+    std::string CompileInitialization(const MaterialCompilationContext &,
+                                      const std::string &materialPrefix) const
+    {
+        std::string source = "YBI_GPU void Initialize_" + FullName(materialPrefix) +
+                             "(const KernelParams &params, ShadingInfo &info)\n{\n    ";
+
+        for (MaterialNodeBase *node : inputs)
+        {
+            if (node->IsBsdf())
+            {
+                source += "Initialize_" + node->FullName(materialPrefix) + "(params, info);\n";
+            }
+            else if (!node->IsBsdf() && !IsConstantOpcode(node->GetNodeType()))
+            {
+                std::string nodeName = node->FullName(materialPrefix);
+                const char *returnType = GetMaterialOpcodeOutputString(node->GetNodeType());
+
+                source += "SetClosure_" + nodeName + "(params, info);\n";
+            }
+        }
+        source += "}\n";
+        return source;
+    }
 };
 
 struct MaterialCompilationContext
@@ -132,9 +206,8 @@ struct ConstantFloatNode final : MaterialNodeBase
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
     {
-        return "YBI_GPU float Value_" + FullName(materialPrefix) +
-               "(const KernelParams &, const ShadingInfo &)\n{\n    return " +
-               FloatLiteral(value) + ";\n}\n";
+        return "YBI_GPU float " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
+               "(const ShadingInfo &)\n{\n    return " + FloatLiteral(value) + ";\n}\n";
     }
 
     MaterialOpcode GetNodeType() const override
@@ -152,10 +225,9 @@ struct ConstantColor3Node final : MaterialNodeBase
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
     {
-        return "YBI_GPU Vec3f Value_" + FullName(materialPrefix) +
-               "(const KernelParams &, const ShadingInfo &)\n{\n    return Vec3f(" +
-               FloatLiteral(value.x) + ", " + FloatLiteral(value.y) + ", " +
-               FloatLiteral(value.z) + ");\n}\n";
+        return "YBI_GPU Vec3f " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
+               "(const ShadingInfo &)\n{\n    return Vec3f(" + FloatLiteral(value.x) + ", " +
+               FloatLiteral(value.y) + ", " + FloatLiteral(value.z) + ");\n}\n";
     }
 
     MaterialOpcode GetNodeType() const override
@@ -173,14 +245,14 @@ struct ConstantVector2Node final : MaterialNodeBase
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
     {
-        return "YBI_GPU Vec2f Value_" + FullName(materialPrefix) +
-               "(const KernelParams &, const ShadingInfo &)\n{\n    return Vec2f(" +
-               FloatLiteral(value.x) + ", " + FloatLiteral(value.y) + ");\n}\n";
+        return "YBI_GPU Vec2f " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
+               "(const ShadingInfo &)\n{\n    return Vec2f(" + FloatLiteral(value.x) + ", " +
+               FloatLiteral(value.y) + ");\n}\n";
     }
 
     MaterialOpcode GetNodeType() const override
     {
-        return MaterialOpcode::Invalid;
+        return MaterialOpcode::ConstantVector2;
     }
 
     Vec2f value;
@@ -246,7 +318,7 @@ struct ImageNode final : MaterialNodeBase
     const MaterialNode *sourceNode;
 };
 
-struct SheenBsdfNode final : MaterialNodeBase
+struct SheenBsdfNode final : BsdfNodeBase
 {
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
@@ -262,9 +334,9 @@ struct SheenBsdfNode final : MaterialNodeBase
                                   {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
                                   {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
                                   {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
-                                  {"YBI_MATERIAL_WEIGHT", "Value_" + weightName},
-                                  {"YBI_MATERIAL_COLOR", "Value_" + colorName},
-                                  {"YBI_MATERIAL_ROUGHNESS", "Value_" + roughnessName}});
+                                  {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
+                                  {"YBI_MATERIAL_COLOR", GET_CLOSURE_PREFIX + colorName},
+                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -277,7 +349,7 @@ struct SheenBsdfNode final : MaterialNodeBase
     MaterialNodeBase *roughness = nullptr;
 };
 
-struct DielectricBsdfNode final : MaterialNodeBase
+struct DielectricBsdfNode final : BsdfNodeBase
 {
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
@@ -294,10 +366,10 @@ struct DielectricBsdfNode final : MaterialNodeBase
                                   {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
                                   {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
                                   {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
-                                  {"YBI_MATERIAL_WEIGHT", "Value_" + weightName},
-                                  {"YBI_MATERIAL_TINT", "Value_" + tintName},
-                                  {"YBI_MATERIAL_IOR", "Value_" + iorName},
-                                  {"YBI_MATERIAL_ROUGHNESS", "Value_" + roughnessName}});
+                                  {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
+                                  {"YBI_MATERIAL_TINT", GET_CLOSURE_PREFIX + tintName},
+                                  {"YBI_MATERIAL_IOR", GET_CLOSURE_PREFIX + iorName},
+                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -311,7 +383,7 @@ struct DielectricBsdfNode final : MaterialNodeBase
     MaterialNodeBase *roughness = nullptr;
 };
 
-struct OrenNayarBsdfNode final : MaterialNodeBase
+struct OrenNayarBsdfNode final : BsdfNodeBase
 {
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
@@ -327,9 +399,9 @@ struct OrenNayarBsdfNode final : MaterialNodeBase
                                   {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
                                   {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
                                   {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
-                                  {"YBI_MATERIAL_WEIGHT", "Value_" + weightName},
-                                  {"YBI_MATERIAL_COLOR", "Value_" + colorName},
-                                  {"YBI_MATERIAL_ROUGHNESS", "Value_" + roughnessName}});
+                                  {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
+                                  {"YBI_MATERIAL_COLOR", GET_CLOSURE_PREFIX + colorName},
+                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -342,7 +414,7 @@ struct OrenNayarBsdfNode final : MaterialNodeBase
     MaterialNodeBase *roughness = nullptr;
 };
 
-struct LayerBsdfNode final : MaterialNodeBase
+struct LayerBsdfNode final : BsdfNodeBase
 {
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
@@ -688,11 +760,26 @@ std::string MaterialCompiler::Compile(
         result += "#include \"render/shaders/image.h\"\n";
     result += "\nnamespace ybi\n{\n\n";
 
+    size_t closureOffset = 0;
     for (MaterialNodeBase *node : context.compilationOrder)
     {
         result += node->Compile(context, materialPrefix);
-        result += "\n";
+
+        // If the node is used to poopulate the closure, compile those accessors
+        if (!node->IsBsdf() && !IsConstantOpcode(node->GetNodeType()))
+        {
+            result += node->CompileClosureAccessors(materialPrefix, closureOffset);
+            closureOffset += GetMaterialOpcodeOutputRegisterCount(node->GetNodeType());
+        }
+
+        if (node->IsBsdf())
+        {
+            result +=
+                static_cast<BsdfNodeBase *>(node)->CompileInitialization(context, materialPrefix);
+        }
     }
+
+    YBI_ASSERT(closureOffset <= MAX_CLOSURE_SIZE);
 
     result += "} // namespace ybi\n";
     generatedMaterialSources.push_back(result);
@@ -722,10 +809,15 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
         const std::string materialName = "m" + std::to_string(materialIndex);
         const std::string rootName = materialName + "_n0";
 
+        const std::string initializeName = "Initialize_" + materialName;
         const std::string sampleName = "Sample_" + materialName;
         const std::string evaluateName = "Evaluate_" + materialName;
         const std::string pdfName = "Pdf_" + materialName;
 
+        result.source +=
+            device.GetCallableFunctionSignature(
+                "void", initializeName, "const KernelParams *params, ShadingInfo *info") +
+            "\n{\n    " + "Initialize_" + rootName + "(*params, *info);\n}\n\n";
         result.source += device.GetCallableFunctionSignature(
                              "bool",
                              sampleName,
@@ -750,6 +842,7 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
                          "\n{\n    return Pdf_" + rootName +
                          "(*params, *info, viewDirection, lightDirection);\n}\n\n";
 
+        entryNames.push_back("__direct_callable__" + initializeName);
         entryNames.push_back("__direct_callable__" + sampleName);
         entryNames.push_back("__direct_callable__" + evaluateName);
         entryNames.push_back("__direct_callable__" + pdfName);
@@ -777,9 +870,10 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
          ++materialIndex)
     {
         DeviceMaterial3 &material = result.materials[materialIndex];
-        material.sampleCallableIndex = callableIndices[3 * materialIndex];
-        material.evaluateCallableIndex = callableIndices[3 * materialIndex + 1];
-        material.pdfCallableIndex = callableIndices[3 * materialIndex + 2];
+        material.initializeCallableIndex = callableIndices[4 * materialIndex + 0];
+        material.sampleCallableIndex = callableIndices[4 * materialIndex + 1];
+        material.evaluateCallableIndex = callableIndices[4 * materialIndex + 2];
+        material.pdfCallableIndex = callableIndices[4 * materialIndex + 3];
     }
 
     result.succeeded = true;
