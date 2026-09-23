@@ -3,6 +3,7 @@
 #include "device/device.h"
 #include "render/bsdf/materialx/bsdf_types.h"
 #include "render/bsdf/materialx/dielectric_bsdf.h"
+#include "render/material_opcodes.h"
 #include <functional>
 #include <initializer_list>
 #include <iomanip>
@@ -10,6 +11,7 @@
 #include <memory>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -19,6 +21,14 @@ namespace
 {
 
 static const std::string GET_CLOSURE_PREFIX = "GetClosure_";
+static const std::string SET_CLOSURE_PREFIX = "SetClosure_";
+static const std::string VALUE_PREFIX = "Value_";
+static const std::string INITIALIZE_PREFIX = "Initialize_";
+static const std::string SAMPLE_PREFIX = "Sample_";
+static const std::string EVALUATE_PREFIX = "Evaluate_";
+static const std::string PDF_PREFIX = "Pdf_";
+static const std::string ALBEDO_PREFIX = "Albedo_";
+static const std::string TRANSMITTANCE_PREFIX = "Transmittance_";
 
 struct MaterialCompilationContext;
 struct MaterialNodeBase;
@@ -89,8 +99,8 @@ struct MaterialNodeBase
                 {
                     {"YBI_MATERIAL_VALUE_TYPE", returnType},
                     {"YBI_MATERIAL_SELF_GET_CLOSURE", GET_CLOSURE_PREFIX + nodeName},
-                    {"YBI_MATERIAL_SELF_SET_CLOSURE", "SetClosure_" + nodeName},
-                    {"YBI_MATERIAL_VALUE", "Value_" + nodeName},
+                    {"YBI_MATERIAL_SELF_SET_CLOSURE", SET_CLOSURE_PREFIX + nodeName},
+                    {"YBI_MATERIAL_VALUE", VALUE_PREFIX + nodeName},
                     {"YBI_MATERIAL_CLOSURE_OFFSET", std::to_string(closureOffset)},
                 });
         }
@@ -100,6 +110,13 @@ struct MaterialNodeBase
     uint32_t index = kInvalidMaterialNodeId;
     std::vector<MaterialNodeBase *> inputs;
 };
+
+static std::string ValueCall(const MaterialNodeBase *node, const std::string &materialPrefix)
+{
+    const bool constant = IsConstantOpcode(node->GetNodeType());
+    return (constant ? GET_CLOSURE_PREFIX : VALUE_PREFIX) + node->FullName(materialPrefix) +
+           (constant ? "(info)" : "(params, info)");
+}
 
 struct BsdfNodeBase : MaterialNodeBase
 {
@@ -126,26 +143,28 @@ struct BsdfNodeBase : MaterialNodeBase
     std::string CompileInitialization(const MaterialCompilationContext &,
                                       const std::string &materialPrefix) const
     {
-        std::string source = "YBI_GPU void Initialize_" + FullName(materialPrefix) +
+        std::string source = "YBI_GPU void " + INITIALIZE_PREFIX + FullName(materialPrefix) +
                              "(const KernelParams &params, ShadingInfo &info)\n{\n    ";
 
         for (MaterialNodeBase *node : inputs)
         {
             if (node->IsBsdf())
             {
-                source += "Initialize_" + node->FullName(materialPrefix) + "(params, info);\n";
+                source += INITIALIZE_PREFIX + node->FullName(materialPrefix) + "(params, info);\n";
             }
             else if (!node->IsBsdf() && !IsConstantOpcode(node->GetNodeType()))
             {
                 std::string nodeName = node->FullName(materialPrefix);
                 const char *returnType = GetMaterialOpcodeOutputString(node->GetNodeType());
 
-                source += "SetClosure_" + nodeName + "(params, info);\n";
+                source += SET_CLOSURE_PREFIX + nodeName + "(params, info);\n";
             }
         }
         source += "}\n";
         return source;
     }
+
+    MaterialNodeBase *normal = nullptr;
 };
 
 struct MaterialCompilationContext
@@ -258,6 +277,216 @@ struct ConstantVector2Node final : MaterialNodeBase
     Vec2f value;
 };
 
+struct ExpressionNode final : MaterialNodeBase
+{
+    explicit ExpressionNode(MaterialOpcode opcode) : opcode(opcode) {}
+
+    MaterialOpcode GetNodeType() const override { return opcode; }
+
+    std::string Compile(const MaterialCompilationContext &,
+                        const std::string &materialPrefix) const override
+    {
+        const auto arg = [&](size_t index) { return ValueCall(inputs[index], materialPrefix); };
+        std::string body;
+        switch (opcode)
+        {
+            case MaterialOpcode::ViewDirectionVector3:
+                body = "return -info.rayDirection;";
+                break;
+            case MaterialOpcode::NormalVector3:
+                body = "return info.shadingNormal;";
+                break;
+            case MaterialOpcode::DotProductVector3:
+                body = "return Dot(" + arg(0) + ", " + arg(1) + ");";
+                break;
+            case MaterialOpcode::AbsValFloat:
+                body = "return Abs(" + arg(0) + ");";
+                break;
+            case MaterialOpcode::AsinFloat:
+                body = "return asinf(" + arg(0) + ");";
+                break;
+            case MaterialOpcode::DivideFloat:
+            case MaterialOpcode::DivideVector3:
+                body = "return " + arg(0) + " / " + arg(1) + ";";
+                break;
+            case MaterialOpcode::MultiplyVector3:
+                body = "return " + arg(0) + " * " + arg(1) + ";";
+                break;
+            case MaterialOpcode::ExpVector3:
+                body = "const Vec3f value = " + arg(0) +
+                       "; return Vec3f(expf(value.x), expf(value.y), expf(value.z));";
+                break;
+            case MaterialOpcode::LnVector3:
+                body = "const Vec3f value = " + arg(0) +
+                       "; return Vec3f(logf(value.x), logf(value.y), logf(value.z));";
+                break;
+            case MaterialOpcode::NormalizeVector3:
+                body = "const Vec3f value = " + arg(0) +
+                       "; return LengthSquared(value) > 0.f ? Normalize(value) : Vec3f(0.f);";
+                break;
+            case MaterialOpcode::ConvertFloatVector2:
+                body = "return Vec2f(" + arg(0) + ");";
+                break;
+            case MaterialOpcode::ConvertFloatVector3:
+                body = "return Vec3f(" + arg(0) + ");";
+                break;
+            case MaterialOpcode::ConvertVector3Color3:
+            case MaterialOpcode::ConvertColor3Vector3:
+                body = "return " + arg(0) + ";";
+                break;
+            case MaterialOpcode::ExtractVector3:
+                body = "return " + arg(0) + "[" + std::to_string(component) + "];";
+                break;
+            case MaterialOpcode::AddFloat:
+            case MaterialOpcode::AddVector3:
+                body = "return " + arg(0) + " + " + arg(1) + ";";
+                break;
+            case MaterialOpcode::InvertFloat:
+                body = "return " + arg(1) + " - " + arg(0) + ";";
+                break;
+            case MaterialOpcode::MixFloat:
+                body = "return Lerp(" + arg(0) + ", " + arg(1) + ", " + arg(2) + ");";
+                break;
+            case MaterialOpcode::ContrastFloat:
+                body = "const float value = " + arg(0) + "; const float amount = " + arg(1) +
+                       "; const float pivot = " + arg(2) +
+                       "; return (value - pivot) * amount + pivot;";
+                break;
+            case MaterialOpcode::ClampFloat:
+                body = "return Clamp(" + arg(0) + ", " + arg(1) + ", " + arg(2) + ");";
+                break;
+            default:
+                YBI_ASSERT(false && "Unsupported MaterialX value expression");
+                return {};
+        }
+
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/value_impl.h",
+            {{"YBI_MATERIAL_VALUE_TYPE", GetMaterialOpcodeOutputString(opcode)},
+             {"YBI_MATERIAL_SELF", VALUE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_VALUE_BODY", body}});
+    }
+
+    MaterialOpcode opcode;
+    int component = 0;
+};
+
+struct RemapNode final : MaterialNodeBase
+{
+    RemapNode(MaterialValueType valueType) : valueType(valueType) {}
+
+    std::string Compile(const MaterialCompilationContext &context,
+                        const std::string &materialPrefix) const override
+    {
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/remap_impl.h",
+            {
+                {"YBI_VALUE", ValueCall(value, materialPrefix)},
+                {"YBI_IN_LOW", ValueCall(inLow, materialPrefix)},
+                {"YBI_IN_HIGH", ValueCall(inHigh, materialPrefix)},
+                {"YBI_OUT_LOW", ValueCall(outLow, materialPrefix)},
+                {"YBI_OUT_HIGH", ValueCall(outHigh, materialPrefix)},
+                {"YBI_SELF", VALUE_PREFIX + FullName(materialPrefix)},
+                {"YBI_VALUE_TYPE", std::string(GetMaterialValueTypeString(valueType))},
+            });
+    }
+
+    MaterialOpcode GetNodeType() const override
+    {
+        switch (valueType)
+        {
+            case MaterialValueType::Vec3:
+            {
+                return MaterialOpcode::RemapVector3;
+            }
+            case MaterialValueType::Float:
+                return MaterialOpcode::RemapFloat;
+            default:
+            {
+                YBI_ASSERT(0);
+                return MaterialOpcode::Invalid;
+            }
+        }
+    }
+
+    MaterialNodeBase *value;
+    MaterialNodeBase *inLow;
+    MaterialNodeBase *inHigh;
+    MaterialNodeBase *outLow;
+    MaterialNodeBase *outHigh;
+
+    MaterialValueType valueType;
+};
+
+struct NormalMapNode final : MaterialNodeBase
+{
+    MaterialOpcode GetNodeType() const override { return MaterialOpcode::NormalMapFloat; }
+
+    std::string Compile(const MaterialCompilationContext &,
+                        const std::string &materialPrefix) const override
+    {
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/normalmap_impl.h",
+            {{"YBI_MATERIAL_SELF", VALUE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_INPUT", ValueCall(value, materialPrefix)},
+             {"YBI_MATERIAL_SCALE", ValueCall(scale, materialPrefix)},
+             {"YBI_MATERIAL_NORMAL", ValueCall(normal, materialPrefix)},
+             {"YBI_MATERIAL_TANGENT",
+              tangent ? ValueCall(tangent, materialPrefix) : "info.dpdu"},
+             {"YBI_MATERIAL_BITANGENT",
+              bitangent ? ValueCall(bitangent, materialPrefix)
+                        : "Cross(normal, tangent)"}});
+    }
+
+    MaterialNodeBase *value = nullptr;
+    MaterialNodeBase *scale = nullptr;
+    MaterialNodeBase *normal = nullptr;
+    MaterialNodeBase *tangent = nullptr;
+    MaterialNodeBase *bitangent = nullptr;
+};
+
+struct ArtisticIorIorNode final : MaterialNodeBase
+{
+    MaterialOpcode GetNodeType() const override
+    {
+        return MaterialOpcode::ArtisticIorIor;
+    }
+
+    std::string Compile(const MaterialCompilationContext &,
+                        const std::string &materialPrefix) const override
+    {
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/artistic_ior_ior_impl.h",
+            {{"YBI_MATERIAL_SELF", VALUE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_REFLECTIVITY", ValueCall(reflectivity, materialPrefix)},
+             {"YBI_MATERIAL_EDGE_COLOR", ValueCall(edgeColor, materialPrefix)}});
+    }
+
+    MaterialNodeBase *reflectivity = nullptr;
+    MaterialNodeBase *edgeColor = nullptr;
+};
+
+struct ArtisticIorExtinctionNode final : MaterialNodeBase
+{
+    MaterialOpcode GetNodeType() const override
+    {
+        return MaterialOpcode::ArtisticIorExtinction;
+    }
+
+    std::string Compile(const MaterialCompilationContext &,
+                        const std::string &materialPrefix) const override
+    {
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/artistic_ior_extinction_impl.h",
+            {{"YBI_MATERIAL_SELF", VALUE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_REFLECTIVITY", ValueCall(reflectivity, materialPrefix)},
+             {"YBI_MATERIAL_EDGE_COLOR", ValueCall(edgeColor, materialPrefix)}});
+    }
+
+    MaterialNodeBase *reflectivity = nullptr;
+    MaterialNodeBase *edgeColor = nullptr;
+};
+
 struct ImageNode final : MaterialNodeBase
 {
     ImageNode(MaterialValueType valueType, const MaterialNode *sourceNode)
@@ -301,9 +530,29 @@ struct ImageNode final : MaterialNodeBase
                                           std::to_string(handle.udimBase) + "u, " +
                                           std::to_string(handle.udimTableOffset) + "u}";
 
+        const bool tiled = sourceNode->type == MaterialOpcode::TiledImageFloat ||
+                           sourceNode->type == MaterialOpcode::TiledImageVector2 ||
+                           sourceNode->type == MaterialOpcode::TiledImageVector3 ||
+                           sourceNode->type == MaterialOpcode::TiledImageVector4;
+        if (tiled)
+        {
+            return CompileWithMacros(
+                "render/bsdf/materialx/stubs/tiledimage_impl.h",
+                {{"YBI_MATERIAL_RETURN", returnType},
+                 {"YBI_MATERIAL_SELF", VALUE_PREFIX + FullName(materialPrefix)},
+                 {"YBI_MATERIAL_HANDLE", handleLiteral},
+                 {"YBI_MATERIAL_RESULT", returnExpression},
+                 {"YBI_MATERIAL_UV_TILING", ValueCall(uvTiling, materialPrefix)},
+                 {"YBI_MATERIAL_UV_OFFSET", ValueCall(uvOffset, materialPrefix)},
+                 {"YBI_MATERIAL_REALWORLD_IMAGE_SIZE",
+                  ValueCall(realWorldImageSize, materialPrefix)},
+                 {"YBI_MATERIAL_REALWORLD_TILE_SIZE",
+                  ValueCall(realWorldTileSize, materialPrefix)}});
+        }
+
         return CompileWithMacros("render/bsdf/materialx/stubs/image_impl.h",
                                  {{"YBI_MATERIAL_RETURN", returnType},
-                                  {"YBI_MATERIAL_SELF", "Value_" + FullName(materialPrefix)},
+                                  {"YBI_MATERIAL_SELF", VALUE_PREFIX + FullName(materialPrefix)},
                                   {"YBI_MATERIAL_HANDLE", handleLiteral},
                                   {"YBI_MATERIAL_RESULT", returnExpression}});
     }
@@ -316,6 +565,10 @@ struct ImageNode final : MaterialNodeBase
     MaterialValueType valueType;
     // Temporary bridge to the texture handle assigned before source compilation.
     const MaterialNode *sourceNode;
+    MaterialNodeBase *uvTiling = nullptr;
+    MaterialNodeBase *uvOffset = nullptr;
+    MaterialNodeBase *realWorldImageSize = nullptr;
+    MaterialNodeBase *realWorldTileSize = nullptr;
 };
 
 struct SheenBsdfNode final : BsdfNodeBase
@@ -329,14 +582,16 @@ struct SheenBsdfNode final : BsdfNodeBase
         const std::string roughnessName = roughness->FullName(materialPrefix);
 
         return CompileWithMacros("render/bsdf/materialx/stubs/sheen_impl.h",
-                                 {{"YBI_MATERIAL_SELF_SAMPLE", "Sample_" + self},
-                                  {"YBI_MATERIAL_SELF_EVALUATE", "Evaluate_" + self},
-                                  {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
-                                  {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
-                                  {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
+                                 {{"YBI_MATERIAL_SELF_SAMPLE", SAMPLE_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_EVALUATE", EVALUATE_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
                                   {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
                                   {"YBI_MATERIAL_COLOR", GET_CLOSURE_PREFIX + colorName},
-                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName}});
+                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName},
+                                  {"YBI_MATERIAL_NORMAL",
+                                   GET_CLOSURE_PREFIX + normal->FullName(materialPrefix)}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -361,15 +616,17 @@ struct DielectricBsdfNode final : BsdfNodeBase
         const std::string roughnessName = roughness->FullName(materialPrefix);
 
         return CompileWithMacros("render/bsdf/materialx/stubs/dielectric_impl.h",
-                                 {{"YBI_MATERIAL_SELF_SAMPLE", "Sample_" + self},
-                                  {"YBI_MATERIAL_SELF_EVALUATE", "Evaluate_" + self},
-                                  {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
-                                  {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
-                                  {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
+                                 {{"YBI_MATERIAL_SELF_SAMPLE", SAMPLE_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_EVALUATE", EVALUATE_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
                                   {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
                                   {"YBI_MATERIAL_TINT", GET_CLOSURE_PREFIX + tintName},
                                   {"YBI_MATERIAL_IOR", GET_CLOSURE_PREFIX + iorName},
-                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName}});
+                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName},
+                                  {"YBI_MATERIAL_NORMAL",
+                                   GET_CLOSURE_PREFIX + normal->FullName(materialPrefix)}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -394,14 +651,16 @@ struct OrenNayarBsdfNode final : BsdfNodeBase
         const std::string roughnessName = roughness->FullName(materialPrefix);
 
         return CompileWithMacros("render/bsdf/materialx/stubs/oren_nayar_impl.h",
-                                 {{"YBI_MATERIAL_SELF_SAMPLE", "Sample_" + self},
-                                  {"YBI_MATERIAL_SELF_EVALUATE", "Evaluate_" + self},
-                                  {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
-                                  {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
-                                  {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
+                                 {{"YBI_MATERIAL_SELF_SAMPLE", SAMPLE_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_EVALUATE", EVALUATE_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
+                                  {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
                                   {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
                                   {"YBI_MATERIAL_COLOR", GET_CLOSURE_PREFIX + colorName},
-                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName}});
+                                  {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName},
+                                  {"YBI_MATERIAL_NORMAL",
+                                   GET_CLOSURE_PREFIX + normal->FullName(materialPrefix)}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -412,6 +671,72 @@ struct OrenNayarBsdfNode final : BsdfNodeBase
     MaterialNodeBase *weight = nullptr;
     MaterialNodeBase *color = nullptr;
     MaterialNodeBase *roughness = nullptr;
+};
+
+struct ConductorBsdfNode final : BsdfNodeBase
+{
+    std::string Compile(const MaterialCompilationContext &,
+                        const std::string &materialPrefix) const override
+    {
+        const std::string self = FullName(materialPrefix);
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/conductor_impl.h",
+            {{"YBI_MATERIAL_SELF_SAMPLE", SAMPLE_PREFIX + self},
+             {"YBI_MATERIAL_SELF_EVALUATE", EVALUATE_PREFIX + self},
+             {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
+             {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
+             {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
+             {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weight->FullName(materialPrefix)},
+             {"YBI_MATERIAL_IOR", GET_CLOSURE_PREFIX + ior->FullName(materialPrefix)},
+             {"YBI_MATERIAL_EXTINCTION",
+              GET_CLOSURE_PREFIX + extinction->FullName(materialPrefix)},
+             {"YBI_MATERIAL_ROUGHNESS",
+              GET_CLOSURE_PREFIX + roughness->FullName(materialPrefix)},
+             {"YBI_MATERIAL_NORMAL",
+              GET_CLOSURE_PREFIX + normal->FullName(materialPrefix)}});
+    }
+
+    MaterialOpcode GetNodeType() const override { return MaterialOpcode::conductor_bsdf; }
+
+    MaterialNodeBase *weight = nullptr;
+    MaterialNodeBase *ior = nullptr;
+    MaterialNodeBase *extinction = nullptr;
+    MaterialNodeBase *roughness = nullptr;
+};
+
+struct MixBsdfNode final : BsdfNodeBase
+{
+    std::string Compile(const MaterialCompilationContext &,
+                        const std::string &materialPrefix) const override
+    {
+        const std::string self = FullName(materialPrefix);
+        const std::string bgName = bg->FullName(materialPrefix);
+        const std::string fgName = fg->FullName(materialPrefix);
+        return CompileWithMacros(
+            "render/bsdf/materialx/stubs/mix_impl.h",
+            {{"YBI_MATERIAL_SELF_SAMPLE", SAMPLE_PREFIX + self},
+             {"YBI_MATERIAL_SELF_EVALUATE", EVALUATE_PREFIX + self},
+             {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
+             {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
+             {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
+             {"YBI_MATERIAL_MIX", GET_CLOSURE_PREFIX + mix->FullName(materialPrefix)},
+             {"YBI_MATERIAL_SAMPLE_BG", SAMPLE_PREFIX + bgName},
+             {"YBI_MATERIAL_EVALUATE_BG", EVALUATE_PREFIX + bgName},
+             {"YBI_MATERIAL_PDF_BG", PDF_PREFIX + bgName},
+             {"YBI_MATERIAL_ALBEDO_BG", ALBEDO_PREFIX + bgName},
+             {"YBI_MATERIAL_TRANSMITTANCE_BG", TRANSMITTANCE_PREFIX + bgName},
+             {"YBI_MATERIAL_SAMPLE_FG", SAMPLE_PREFIX + fgName},
+             {"YBI_MATERIAL_EVALUATE_FG", EVALUATE_PREFIX + fgName},
+             {"YBI_MATERIAL_PDF_FG", PDF_PREFIX + fgName},
+             {"YBI_MATERIAL_ALBEDO_FG", ALBEDO_PREFIX + fgName},
+             {"YBI_MATERIAL_TRANSMITTANCE_FG", TRANSMITTANCE_PREFIX + fgName}});
+    }
+
+    MaterialOpcode GetNodeType() const override { return MaterialOpcode::mix_bsdf; }
+
+    MaterialNodeBase *bg = nullptr;
+    MaterialNodeBase *fg = nullptr;
+    MaterialNodeBase *mix = nullptr;
 };
 
 struct LayerBsdfNode final : BsdfNodeBase
@@ -425,21 +750,21 @@ struct LayerBsdfNode final : BsdfNodeBase
 
         return CompileWithMacros(
             "render/bsdf/materialx/stubs/layer_impl.h",
-            {{"YBI_MATERIAL_SELF_SAMPLE", "Sample_" + self},
-             {"YBI_MATERIAL_SELF_EVALUATE", "Evaluate_" + self},
-             {"YBI_MATERIAL_SELF_PDF", "Pdf_" + self},
-             {"YBI_MATERIAL_SELF_ALBEDO", "Albedo_" + self},
-             {"YBI_MATERIAL_SELF_TRANSMITTANCE", "Transmittance_" + self},
-             {"YBI_MATERIAL_SAMPLE_TOP", "Sample_" + topName},
-             {"YBI_MATERIAL_EVALUATE_TOP", "Evaluate_" + topName},
-             {"YBI_MATERIAL_PDF_TOP", "Pdf_" + topName},
-             {"YBI_MATERIAL_ALBEDO_TOP", "Albedo_" + topName},
-             {"YBI_MATERIAL_TRANSMITTANCE_TOP", "Transmittance_" + topName},
-             {"YBI_MATERIAL_SAMPLE_BOTTOM", "Sample_" + baseName},
-             {"YBI_MATERIAL_EVALUATE_BOTTOM", "Evaluate_" + baseName},
-             {"YBI_MATERIAL_PDF_BOTTOM", "Pdf_" + baseName},
-             {"YBI_MATERIAL_ALBEDO_BOTTOM", "Albedo_" + baseName},
-             {"YBI_MATERIAL_TRANSMITTANCE_BOTTOM", "Transmittance_" + baseName}});
+            {{"YBI_MATERIAL_SELF_SAMPLE", SAMPLE_PREFIX + self},
+             {"YBI_MATERIAL_SELF_EVALUATE", EVALUATE_PREFIX + self},
+             {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
+             {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
+             {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
+             {"YBI_MATERIAL_SAMPLE_TOP", SAMPLE_PREFIX + topName},
+             {"YBI_MATERIAL_EVALUATE_TOP", EVALUATE_PREFIX + topName},
+             {"YBI_MATERIAL_PDF_TOP", PDF_PREFIX + topName},
+             {"YBI_MATERIAL_ALBEDO_TOP", ALBEDO_PREFIX + topName},
+             {"YBI_MATERIAL_TRANSMITTANCE_TOP", TRANSMITTANCE_PREFIX + topName},
+             {"YBI_MATERIAL_SAMPLE_BOTTOM", SAMPLE_PREFIX + baseName},
+             {"YBI_MATERIAL_EVALUATE_BOTTOM", EVALUATE_PREFIX + baseName},
+             {"YBI_MATERIAL_PDF_BOTTOM", PDF_PREFIX + baseName},
+             {"YBI_MATERIAL_ALBEDO_BOTTOM", ALBEDO_PREFIX + baseName},
+             {"YBI_MATERIAL_TRANSMITTANCE_BOTTOM", TRANSMITTANCE_PREFIX + baseName}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -512,6 +837,16 @@ static MaterialNodeBase *AddColor3Input(MaterialCompilationContext &context,
     const Vec3f *value = std::get_if<Vec3f>(&input->value);
     YBI_ASSERT(value);
     return context.AddNode<ConstantColor3Node>(*value);
+}
+
+static MaterialNodeBase *AddNormalInput(MaterialCompilationContext &context,
+                                        const SourceNodeMap &sourceNodes,
+                                        const MaterialNode &node,
+                                        MaterialNodeBase *defaultNormal)
+{
+    if (!FindInput(node, "normal"))
+        return defaultNormal;
+    return AddColor3Input(context, sourceNodes, node, "normal", Vec3f(0.f));
 }
 
 static MaterialNodeBase *AddVector2Input(MaterialCompilationContext &context,
@@ -591,6 +926,11 @@ static MaterialCompilationContext ConvertGraph(
     MaterialCompilationContext context(textureNodeToHandle);
     YBI_ASSERT(graph.outputNode < graph.nodes.size());
 
+    // Shared default for every unconnected MaterialX normal input. An unused node is
+    // excluded from compilationOrder by the traversal from graph.outputNode.
+    MaterialNodeBase *defaultNormal =
+        context.AddNode<ExpressionNode>(MaterialOpcode::NormalVector3);
+
     const std::vector<bool> reachable = FindReachableNodes(graph);
     SourceNodeMap sourceNodes(graph.nodes.size(), nullptr);
 
@@ -621,10 +961,53 @@ static MaterialCompilationContext ConvertGraph(
                 newNode = context.AddNode<ConstantColor3Node>(*value);
                 break;
             }
+            case MaterialOpcode::RemapVector3:
+            case MaterialOpcode::RemapFloat:
+            {
+                newNode = context.AddNode<RemapNode>(GetMaterialOpcodeOutputType(node.type));
+                break;
+            }
+            case MaterialOpcode::ArtisticIorIor:
+                newNode = context.AddNode<ArtisticIorIorNode>();
+                break;
+            case MaterialOpcode::ArtisticIorExtinction:
+                newNode = context.AddNode<ArtisticIorExtinctionNode>();
+                break;
+            case MaterialOpcode::NormalMapFloat:
+                newNode = context.AddNode<NormalMapNode>();
+                break;
+            case MaterialOpcode::ViewDirectionVector3:
+            case MaterialOpcode::NormalVector3:
+            case MaterialOpcode::DotProductVector3:
+            case MaterialOpcode::AbsValFloat:
+            case MaterialOpcode::AsinFloat:
+            case MaterialOpcode::DivideFloat:
+            case MaterialOpcode::DivideVector3:
+            case MaterialOpcode::MultiplyVector3:
+            case MaterialOpcode::ExpVector3:
+            case MaterialOpcode::LnVector3:
+            case MaterialOpcode::NormalizeVector3:
+            case MaterialOpcode::ConvertFloatVector2:
+            case MaterialOpcode::ConvertFloatVector3:
+            case MaterialOpcode::ConvertVector3Color3:
+            case MaterialOpcode::ConvertColor3Vector3:
+            case MaterialOpcode::ExtractVector3:
+            case MaterialOpcode::AddFloat:
+            case MaterialOpcode::AddVector3:
+            case MaterialOpcode::InvertFloat:
+            case MaterialOpcode::MixFloat:
+            case MaterialOpcode::ContrastFloat:
+            case MaterialOpcode::ClampFloat:
+                newNode = context.AddNode<ExpressionNode>(node.type);
+                break;
             case MaterialOpcode::ImageFloat:
             case MaterialOpcode::ImageVector2:
             case MaterialOpcode::ImageVector3:
             case MaterialOpcode::ImageVector4:
+            case MaterialOpcode::TiledImageFloat:
+            case MaterialOpcode::TiledImageVector2:
+            case MaterialOpcode::TiledImageVector3:
+            case MaterialOpcode::TiledImageVector4:
                 newNode =
                     context.AddNode<ImageNode>(GetMaterialOpcodeOutputType(node.type), &node);
                 break;
@@ -636,6 +1019,12 @@ static MaterialCompilationContext ConvertGraph(
                 break;
             case MaterialOpcode::oren_nayar_diffuse_bsdf:
                 newNode = context.AddNode<OrenNayarBsdfNode>();
+                break;
+            case MaterialOpcode::conductor_bsdf:
+                newNode = context.AddNode<ConductorBsdfNode>();
+                break;
+            case MaterialOpcode::mix_bsdf:
+                newNode = context.AddNode<MixBsdfNode>();
                 break;
             case MaterialOpcode::layer_bsdf:
                 newNode = context.AddNode<LayerBsdfNode>();
@@ -660,6 +1049,192 @@ static MaterialCompilationContext ConvertGraph(
 
         switch (node.type)
         {
+            case MaterialOpcode::TiledImageFloat:
+            case MaterialOpcode::TiledImageVector2:
+            case MaterialOpcode::TiledImageVector3:
+            case MaterialOpcode::TiledImageVector4:
+            {
+                YBI_ASSERT(!FindInput(node, "texcoord") &&
+                           "Explicit tiledimage texcoord requires UV derivatives");
+                auto *image = static_cast<ImageNode *>(newNode);
+                image->uvTiling =
+                    AddVector2Input(context, sourceNodes, node, "uvtiling", Vec2f(1.f));
+                image->uvOffset =
+                    AddVector2Input(context, sourceNodes, node, "uvoffset", Vec2f(0.f));
+                image->realWorldImageSize = AddVector2Input(
+                    context, sourceNodes, node, "realworldimagesize", Vec2f(1.f));
+                image->realWorldTileSize = AddVector2Input(
+                    context, sourceNodes, node, "realworldtilesize", Vec2f(1.f));
+                image->inputs = {image->uvTiling,
+                                 image->uvOffset,
+                                 image->realWorldImageSize,
+                                 image->realWorldTileSize};
+                break;
+            }
+            case MaterialOpcode::ViewDirectionVector3:
+            case MaterialOpcode::NormalVector3:
+                AssertStringInput(node, "space", "world");
+                break;
+            case MaterialOpcode::DotProductVector3:
+            case MaterialOpcode::DivideVector3:
+            case MaterialOpcode::MultiplyVector3:
+            case MaterialOpcode::AddVector3:
+            {
+                auto *expression = static_cast<ExpressionNode *>(newNode);
+                expression->inputs = {
+                    AddColor3Input(context, sourceNodes, node, "in1", Vec3f(0.f)),
+                    AddColor3Input(context,
+                                   sourceNodes,
+                                   node,
+                                   "in2",
+                                   node.type == MaterialOpcode::DivideVector3 ? Vec3f(1.f)
+                                                                               : Vec3f(0.f))};
+                break;
+            }
+            case MaterialOpcode::DivideFloat:
+            case MaterialOpcode::AddFloat:
+            {
+                auto *expression = static_cast<ExpressionNode *>(newNode);
+                expression->inputs = {
+                    AddFloatInput(context, sourceNodes, node, "in1", 0.f),
+                    AddFloatInput(context,
+                                  sourceNodes,
+                                  node,
+                                  "in2",
+                                  node.type == MaterialOpcode::DivideFloat ? 1.f : 0.f)};
+                break;
+            }
+            case MaterialOpcode::InvertFloat:
+            {
+                static_cast<ExpressionNode *>(newNode)->inputs = {
+                    AddFloatInput(context, sourceNodes, node, "in", 0.f),
+                    AddFloatInput(context, sourceNodes, node, "amount", 1.f)};
+                break;
+            }
+            case MaterialOpcode::AbsValFloat:
+            case MaterialOpcode::AsinFloat:
+            case MaterialOpcode::ConvertFloatVector2:
+            case MaterialOpcode::ConvertFloatVector3:
+            {
+                static_cast<ExpressionNode *>(newNode)->inputs = {
+                    AddFloatInput(context, sourceNodes, node, "in", 0.f)};
+                break;
+            }
+            case MaterialOpcode::ExpVector3:
+            case MaterialOpcode::LnVector3:
+            case MaterialOpcode::NormalizeVector3:
+            case MaterialOpcode::ConvertVector3Color3:
+            case MaterialOpcode::ConvertColor3Vector3:
+            {
+                static_cast<ExpressionNode *>(newNode)->inputs = {
+                    AddColor3Input(context, sourceNodes, node, "in", Vec3f(0.f))};
+                break;
+            }
+            case MaterialOpcode::ExtractVector3:
+            {
+                auto *expression = static_cast<ExpressionNode *>(newNode);
+                expression->inputs = {
+                    AddColor3Input(context, sourceNodes, node, "in", Vec3f(0.f))};
+                const MaterialInput *index = FindInput(node, "index");
+                if (index)
+                {
+                    const int *component = std::get_if<int>(&index->value);
+                    YBI_ASSERT(component && *component >= 0 && *component < 3);
+                    expression->component = *component;
+                }
+                break;
+            }
+            case MaterialOpcode::MixFloat:
+            {
+                static_cast<ExpressionNode *>(newNode)->inputs = {
+                    AddFloatInput(context, sourceNodes, node, "bg", 0.f),
+                    AddFloatInput(context, sourceNodes, node, "fg", 0.f),
+                    AddFloatInput(context, sourceNodes, node, "mix", 0.f)};
+                break;
+            }
+            case MaterialOpcode::ContrastFloat:
+            {
+                static_cast<ExpressionNode *>(newNode)->inputs = {
+                    AddFloatInput(context, sourceNodes, node, "in", 0.f),
+                    AddFloatInput(context, sourceNodes, node, "amount", 1.f),
+                    AddFloatInput(context, sourceNodes, node, "pivot", 0.5f)};
+                break;
+            }
+            case MaterialOpcode::ClampFloat:
+            {
+                static_cast<ExpressionNode *>(newNode)->inputs = {
+                    AddFloatInput(context, sourceNodes, node, "in", 0.f),
+                    AddFloatInput(context, sourceNodes, node, "low", 0.f),
+                    AddFloatInput(context, sourceNodes, node, "high", 1.f)};
+                break;
+            }
+            case MaterialOpcode::RemapFloat:
+            {
+                auto *remap = static_cast<RemapNode *>(newNode);
+                remap->value = AddFloatInput(context, sourceNodes, node, "in", 0.f);
+                remap->inLow = AddFloatInput(context, sourceNodes, node, "inlow", 0.f);
+                remap->inHigh = AddFloatInput(context, sourceNodes, node, "inhigh", 1.f);
+                remap->outLow = AddFloatInput(context, sourceNodes, node, "outlow", 0.f);
+                remap->outHigh = AddFloatInput(context, sourceNodes, node, "outhigh", 1.f);
+                remap->inputs = {
+                    remap->value, remap->inLow, remap->inHigh, remap->outLow, remap->outHigh};
+                break;
+            }
+            case MaterialOpcode::RemapVector3:
+            {
+                auto *remap = static_cast<RemapNode *>(newNode);
+                remap->value = AddColor3Input(context, sourceNodes, node, "in", Vec3f(0.f));
+                remap->inLow = AddColor3Input(context, sourceNodes, node, "inlow", Vec3f(0.f));
+                remap->inHigh = AddColor3Input(context, sourceNodes, node, "inhigh", Vec3f(1.f));
+                remap->outLow = AddColor3Input(context, sourceNodes, node, "outlow", Vec3f(0.f));
+                remap->outHigh = AddColor3Input(context, sourceNodes, node, "outhigh", Vec3f(1.f));
+                remap->inputs = {
+                    remap->value, remap->inLow, remap->inHigh, remap->outLow, remap->outHigh};
+                break;
+            }
+            case MaterialOpcode::ArtisticIorIor:
+            {
+                auto *artisticIor = static_cast<ArtisticIorIorNode *>(newNode);
+                artisticIor->reflectivity = AddColor3Input(
+                    context, sourceNodes, node, "reflectivity", Vec3f(0.944f, 0.776f, 0.373f));
+                artisticIor->edgeColor = AddColor3Input(
+                    context, sourceNodes, node, "edge_color", Vec3f(0.998f, 0.981f, 0.751f));
+                artisticIor->inputs = {artisticIor->reflectivity, artisticIor->edgeColor};
+                break;
+            }
+            case MaterialOpcode::ArtisticIorExtinction:
+            {
+                auto *artisticIor = static_cast<ArtisticIorExtinctionNode *>(newNode);
+                artisticIor->reflectivity = AddColor3Input(
+                    context, sourceNodes, node, "reflectivity", Vec3f(0.944f, 0.776f, 0.373f));
+                artisticIor->edgeColor = AddColor3Input(
+                    context, sourceNodes, node, "edge_color", Vec3f(0.998f, 0.981f, 0.751f));
+                artisticIor->inputs = {artisticIor->reflectivity, artisticIor->edgeColor};
+                break;
+            }
+            case MaterialOpcode::NormalMapFloat:
+            {
+                AssertStringInput(node, "space", "tangent");
+                auto *normalMap = static_cast<NormalMapNode *>(newNode);
+                normalMap->value =
+                    AddColor3Input(context, sourceNodes, node, "in", Vec3f(0.5f, 0.5f, 1.f));
+                normalMap->scale = AddFloatInput(context, sourceNodes, node, "scale", 1.f);
+                normalMap->normal = AddNormalInput(context, sourceNodes, node, defaultNormal);
+                normalMap->inputs = {normalMap->value, normalMap->scale, normalMap->normal};
+                if (FindInput(node, "tangent"))
+                {
+                    normalMap->tangent =
+                        AddColor3Input(context, sourceNodes, node, "tangent", Vec3f(0.f));
+                    normalMap->inputs.push_back(normalMap->tangent);
+                }
+                if (FindInput(node, "bitangent"))
+                {
+                    normalMap->bitangent =
+                        AddColor3Input(context, sourceNodes, node, "bitangent", Vec3f(0.f));
+                    normalMap->inputs.push_back(normalMap->bitangent);
+                }
+                break;
+            }
             case MaterialOpcode::sheen_bsdf:
             {
                 if (const MaterialInput *mode = FindInput(node, "mode"))
@@ -673,6 +1248,8 @@ static MaterialCompilationContext ConvertGraph(
                 sheen->color = AddColor3Input(context, sourceNodes, node, "color", Vec3f(1.0f));
                 sheen->roughness = AddFloatInput(context, sourceNodes, node, "roughness", 0.3f);
                 sheen->inputs = {sheen->weight, sheen->color, sheen->roughness};
+                sheen->normal = AddNormalInput(context, sourceNodes, node, defaultNormal);
+                sheen->inputs.push_back(sheen->normal);
                 break;
             }
             case MaterialOpcode::dielectric_bsdf:
@@ -689,6 +1266,8 @@ static MaterialCompilationContext ConvertGraph(
                     AddVector2Input(context, sourceNodes, node, "roughness", Vec2f(0.05f));
                 dielectric->inputs = {
                     dielectric->weight, dielectric->tint, dielectric->ior, dielectric->roughness};
+                dielectric->normal = AddNormalInput(context, sourceNodes, node, defaultNormal);
+                dielectric->inputs.push_back(dielectric->normal);
                 break;
             }
             case MaterialOpcode::oren_nayar_diffuse_bsdf:
@@ -700,6 +1279,38 @@ static MaterialCompilationContext ConvertGraph(
                 diffuse->color = AddColor3Input(context, sourceNodes, node, "color", Vec3f(0.18f));
                 diffuse->roughness = AddFloatInput(context, sourceNodes, node, "roughness", 0.0f);
                 diffuse->inputs = {diffuse->weight, diffuse->color, diffuse->roughness};
+                diffuse->normal = AddNormalInput(context, sourceNodes, node, defaultNormal);
+                diffuse->inputs.push_back(diffuse->normal);
+                break;
+            }
+            case MaterialOpcode::conductor_bsdf:
+            {
+                AssertStringInput(node, "distribution", "ggx");
+                AssertZeroFloatInput(node, "thinfilm_thickness");
+
+                auto *conductor = static_cast<ConductorBsdfNode *>(newNode);
+                conductor->weight = AddFloatInput(context, sourceNodes, node, "weight", 1.f);
+                conductor->ior = AddColor3Input(
+                    context, sourceNodes, node, "ior", Vec3f(0.18f, 0.42f, 1.37f));
+                conductor->extinction = AddColor3Input(
+                    context, sourceNodes, node, "extinction", Vec3f(3.42f, 2.35f, 1.77f));
+                conductor->roughness =
+                    AddVector2Input(context, sourceNodes, node, "roughness", Vec2f(0.f));
+                conductor->inputs = {conductor->weight,
+                                     conductor->ior,
+                                     conductor->extinction,
+                                     conductor->roughness};
+                conductor->normal = AddNormalInput(context, sourceNodes, node, defaultNormal);
+                conductor->inputs.push_back(conductor->normal);
+                break;
+            }
+            case MaterialOpcode::mix_bsdf:
+            {
+                auto *mix = static_cast<MixBsdfNode *>(newNode);
+                mix->bg = GetNodeInput(sourceNodes, node, "bg");
+                mix->fg = GetNodeInput(sourceNodes, node, "fg");
+                mix->mix = AddFloatInput(context, sourceNodes, node, "mix", 0.f);
+                mix->inputs = {mix->bg, mix->fg, mix->mix};
                 break;
             }
             case MaterialOpcode::layer_bsdf:
@@ -740,12 +1351,14 @@ std::string MaterialCompiler::Compile(
     bool hasSheen = false;
     bool hasDielectric = false;
     bool hasOrenNayar = false;
+    bool hasConductor = false;
     bool hasImage = false;
     for (MaterialNodeBase *node : context.compilationOrder)
     {
         hasSheen |= node->GetNodeType() == MaterialOpcode::sheen_bsdf;
         hasDielectric |= node->GetNodeType() == MaterialOpcode::dielectric_bsdf;
         hasOrenNayar |= node->GetNodeType() == MaterialOpcode::oren_nayar_diffuse_bsdf;
+        hasConductor |= node->GetNodeType() == MaterialOpcode::conductor_bsdf;
         hasImage |= IsTextureOpcode(node->GetNodeType());
     }
 
@@ -756,17 +1369,32 @@ std::string MaterialCompiler::Compile(
         result += "#include \"render/bsdf/materialx/dielectric_bsdf.h\"\n";
     if (hasOrenNayar)
         result += "#include \"render/bsdf/materialx/oren_nayar_bsdf.h\"\n";
+    if (hasConductor)
+        result += "#include \"render/bsdf/materialx/conductor_bsdf.h\"\n";
     if (hasImage)
         result += "#include \"render/shaders/image.h\"\n";
+    result += "#include \"render/bsdf/materialx/bsdf_frame.h\"\n";
     result += "\nnamespace ybi\n{\n\n";
+
+    std::unordered_set<const MaterialNodeBase *> closureInputs;
+    for (const MaterialNodeBase *node : context.compilationOrder)
+    {
+        if (!node->IsBsdf())
+            continue;
+
+        for (const MaterialNodeBase *input : node->inputs)
+        {
+            if (!input->IsBsdf() && !IsConstantOpcode(input->GetNodeType()))
+                closureInputs.insert(input);
+        }
+    }
 
     size_t closureOffset = 0;
     for (MaterialNodeBase *node : context.compilationOrder)
     {
         result += node->Compile(context, materialPrefix);
 
-        // If the node is used to poopulate the closure, compile those accessors
-        if (!node->IsBsdf() && !IsConstantOpcode(node->GetNodeType()))
+        if (closureInputs.count(node) != 0)
         {
             result += node->CompileClosureAccessors(materialPrefix, closureOffset);
             closureOffset += GetMaterialOpcodeOutputRegisterCount(node->GetNodeType());
@@ -799,7 +1427,10 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
     }
 
     std::vector<std::string> entryNames;
-    entryNames.reserve(generatedMaterialSources.size() * 3);
+    entryNames.reserve(generatedMaterialSources.size() * 4);
+
+    const std::string callableSignature = device.GetCallableFunctionSignature();
+    const std::string directCallablePrefix = device.GetDirectCallablePrefix();
 
     result.source += "namespace ybi\n{\n\n";
     for (uint32_t materialIndex = 0;
@@ -809,43 +1440,39 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
         const std::string materialName = "m" + std::to_string(materialIndex);
         const std::string rootName = materialName + "_n0";
 
-        const std::string initializeName = "Initialize_" + materialName;
-        const std::string sampleName = "Sample_" + materialName;
-        const std::string evaluateName = "Evaluate_" + materialName;
-        const std::string pdfName = "Pdf_" + materialName;
+        const std::string initializeName = INITIALIZE_PREFIX + materialName;
+        const std::string sampleName = SAMPLE_PREFIX + materialName;
+        const std::string evaluateName = EVALUATE_PREFIX + materialName;
+        const std::string pdfName = PDF_PREFIX + materialName;
 
-        result.source +=
-            device.GetCallableFunctionSignature(
-                "void", initializeName, "const KernelParams *params, ShadingInfo *info") +
-            "\n{\n    " + "Initialize_" + rootName + "(*params, *info);\n}\n\n";
-        result.source += device.GetCallableFunctionSignature(
-                             "bool",
-                             sampleName,
-                             "const KernelParams *params, const ShadingInfo *info, "
-                             "Vec3f viewDirection, Vec3f *lightDirection, Vec3f u") +
-                         "\n{\n    return Sample_" + rootName +
+        result.source += callableSignature + " void " + directCallablePrefix + initializeName +
+                         "(const KernelParams *params, ShadingInfo *info)\n{\n    " +
+                         INITIALIZE_PREFIX + rootName + "(*params, *info);\n}\n\n";
+        result.source += callableSignature + " bool " + directCallablePrefix + sampleName +
+                         "(const KernelParams *params, const ShadingInfo *info, "
+                         "Vec3f viewDirection, Vec3f *lightDirection, Vec3f u)\n"
+                         "{\n    return " +
+                         SAMPLE_PREFIX + rootName +
                          "(*params, *info, viewDirection, *lightDirection, u);\n}\n\n";
 
-        result.source += device.GetCallableFunctionSignature(
-                             "Vec3f",
-                             evaluateName,
-                             "const KernelParams *params, const ShadingInfo *info, "
-                             "Vec3f viewDirection, Vec3f lightDirection") +
-                         "\n{\n    return Evaluate_" + rootName +
+        result.source += callableSignature + " Vec3f " + directCallablePrefix + evaluateName +
+                         "(const KernelParams *params, const ShadingInfo *info, "
+                         "Vec3f viewDirection, Vec3f lightDirection)\n"
+                         "{\n    return " +
+                         EVALUATE_PREFIX + rootName +
                          "(*params, *info, viewDirection, lightDirection);\n}\n\n";
 
-        result.source += device.GetCallableFunctionSignature(
-                             "float",
-                             pdfName,
-                             "const KernelParams *params, const ShadingInfo *info, "
-                             "Vec3f viewDirection, Vec3f lightDirection") +
-                         "\n{\n    return Pdf_" + rootName +
+        result.source += callableSignature + " float " + directCallablePrefix + pdfName +
+                         "(const KernelParams *params, const ShadingInfo *info, "
+                         "Vec3f viewDirection, Vec3f lightDirection)\n"
+                         "{\n    return " +
+                         PDF_PREFIX + rootName +
                          "(*params, *info, viewDirection, lightDirection);\n}\n\n";
 
-        entryNames.push_back("__direct_callable__" + initializeName);
-        entryNames.push_back("__direct_callable__" + sampleName);
-        entryNames.push_back("__direct_callable__" + evaluateName);
-        entryNames.push_back("__direct_callable__" + pdfName);
+        entryNames.push_back(directCallablePrefix + initializeName);
+        entryNames.push_back(directCallablePrefix + sampleName);
+        entryNames.push_back(directCallablePrefix + evaluateName);
+        entryNames.push_back(directCallablePrefix + pdfName);
     }
     result.source += "} // namespace ybi\n";
 

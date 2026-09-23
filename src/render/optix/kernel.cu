@@ -753,8 +753,6 @@ YBI_GPU void RenderUnidirectional()
 
             const OrthonormalBasis tangentFrame(shadingInfo.dpdu, shadingInfo.shadingNormal);
             const Vec3f worldViewDirection = -rayDirection;
-            OrthonormalBasis materialXFrame = tangentFrame;
-            Vec3f materialXViewDirection;
             const DeviceMaterial3 *materialXMaterial = nullptr;
 
             Vec3f baseColor(0.5f);
@@ -790,14 +788,6 @@ YBI_GPU void RenderUnidirectional()
                 if (handle.type == MaterialHandleType::MaterialX)
                 {
                     materialXMaterial = &params.scene.deviceMaterial3s[handle.index];
-                    if (Dot(worldViewDirection, shadingInfo.shadingNormal) < 0.f)
-                    {
-                        materialXFrame.x = -materialXFrame.x;
-                        materialXFrame.y = -materialXFrame.y;
-                        materialXFrame.z = -materialXFrame.z;
-                    }
-                    materialXViewDirection = materialXFrame.WorldToLocal(worldViewDirection);
-
                     optixDirectCall<void>(
                         materialXMaterial->initializeCallableIndex, &params, &shadingInfo);
                     hasBsdf = true;
@@ -843,20 +833,18 @@ YBI_GPU void RenderUnidirectional()
                     float sampledLightBsdfPdf;
                     if (materialXMaterial)
                     {
-                        const Vec3f localLightDirection =
-                            materialXFrame.WorldToLocal(sampledLightDirection);
                         sampledLightBsdfWeight =
                             optixDirectCall<Vec3f>(materialXMaterial->evaluateCallableIndex,
                                                    &params,
                                                    &shadingInfo,
-                                                   materialXViewDirection,
-                                                   localLightDirection);
+                                                   worldViewDirection,
+                                                   sampledLightDirection);
                         sampledLightBsdfPdf =
                             optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
                                                    &params,
                                                    &shadingInfo,
-                                                   materialXViewDirection,
-                                                   localLightDirection);
+                                                   worldViewDirection,
+                                                   sampledLightDirection);
                     }
 #if 0
                     else
@@ -895,15 +883,11 @@ YBI_GPU void RenderUnidirectional()
             bool success;
             if (materialXMaterial)
             {
-                Vec3f localLightDirection;
-                localLightDirection.x = 0.f;
-                localLightDirection.y = 0.f;
-                localLightDirection.z = 0.f;
                 success = optixDirectCall<bool>(materialXMaterial->sampleCallableIndex,
                                                 &params,
                                                 &shadingInfo,
-                                                materialXViewDirection,
-                                                &localLightDirection,
+                                                worldViewDirection,
+                                                &worldLightDirection,
                                                 Vec3f(rng.Uniform(), rng.Uniform2D()));
 
                 if (success)
@@ -911,17 +895,16 @@ YBI_GPU void RenderUnidirectional()
                     const float pdf = optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
                                                              &params,
                                                              &shadingInfo,
-                                                             materialXViewDirection,
-                                                             localLightDirection);
+                                                             worldViewDirection,
+                                                             worldLightDirection);
                     if (pdf > 0.f)
                     {
                         weight = optixDirectCall<Vec3f>(materialXMaterial->evaluateCallableIndex,
                                                         &params,
                                                         &shadingInfo,
-                                                        materialXViewDirection,
-                                                        localLightDirection) /
+                                                        worldViewDirection,
+                                                        worldLightDirection) /
                                  pdf;
-                        worldLightDirection = materialXFrame.LocalToWorld(localLightDirection);
                     }
                     else
                     {
@@ -966,8 +949,8 @@ YBI_GPU void RenderUnidirectional()
                     optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
                                            &params,
                                            &shadingInfo,
-                                           materialXViewDirection,
-                                           materialXFrame.WorldToLocal(worldLightDirection));
+                                           worldViewDirection,
+                                           worldLightDirection);
             }
 #if 0
             else

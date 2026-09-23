@@ -20,11 +20,9 @@ YBI_CPU_GPU MaterialTextureHandle LoadTextureHandle(const uint32_t *nodes, uint3
     return result;
 }
 
-YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
-                                            MaterialTextureHandle handle,
-                                            const ShadingInfo &shadingInfo)
+YBI_CPU_GPU uint32_t GetUdimTableIndex(MaterialTextureHandle handle, const Vec2f &uv)
 {
-    Vec2f flooredUv = Floor(shadingInfo.uv);
+    Vec2f flooredUv = Floor(uv);
 
     uint32_t udimTableIndex = 0u;
     if (handle.udimBase != ~0u)
@@ -37,16 +35,25 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
     {
         udimTableIndex = handle.udimTableOffset;
     }
+    return udimTableIndex;
+}
 
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
+                                            MaterialTextureHandle handle,
+                                            const ShadingInfo &shadingInfo,
+                                            uint32_t udimTableIndex,
+                                            const Vec2f &uv,
+                                            const Vec2f (&uvs)[3])
+{
     DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
     const uint32_t pageShift = 7;
 
     float lod = ComputeTextureLOD(shadingInfo.positions[0],
                                   shadingInfo.positions[1],
                                   shadingInfo.positions[2],
-                                  shadingInfo.uvs[0],
-                                  shadingInfo.uvs[1],
-                                  shadingInfo.uvs[2],
+                                  uvs[0],
+                                  uvs[1],
+                                  uvs[2],
                                   shadingInfo.rayDirection,
                                   shadingInfo.shadingNormal,
                                   shadingInfo.rayCone.width,
@@ -64,7 +71,7 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
     Vec4f lowerValue = SamplePointVirtualTexture(params,
                                                  textureDescriptor,
                                                  pageShift,
-                                                 shadingInfo.uv,
+                                                 uv,
                                                  baseMip,
                                                  &lowR,
                                                  udimTableIndex,
@@ -73,7 +80,7 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
     Vec4f higherValue = SamplePointVirtualTexture(params,
                                                   textureDescriptor,
                                                   pageShift,
-                                                  shadingInfo.uv,
+                                                  uv,
                                                   nextMip,
                                                   &highR,
                                                   udimTableIndex,
@@ -86,6 +93,38 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
     float t = lod - float(baseMip);
     Vec4f value = Lerp(lowerValue, higherValue, t);
     return value;
+}
+
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
+                                            MaterialTextureHandle handle,
+                                            const ShadingInfo &shadingInfo)
+{
+    return VirtualTextureSampleImage(params,
+                                     handle,
+                                     shadingInfo,
+                                     GetUdimTableIndex(handle, shadingInfo.uv),
+                                     shadingInfo.uv,
+                                     shadingInfo.uvs);
+}
+
+YBI_CPU_GPU Vec4f VirtualTextureSampleTiledImage(const KernelParams &params,
+                                                 MaterialTextureHandle handle,
+                                                 const ShadingInfo &shadingInfo,
+                                                 Vec2f uvTiling,
+                                                 Vec2f uvOffset,
+                                                 Vec2f realWorldImageSize,
+                                                 Vec2f realWorldTileSize)
+{
+    // The texture file is selected from the original UV tile. Tiling only changes
+    // coordinates within that image; keep vertex UVs unwrapped for the LOD area.
+    const uint32_t udimTableIndex = GetUdimTableIndex(handle, shadingInfo.uv);
+    const Vec2f scale = uvTiling / realWorldImageSize * realWorldTileSize;
+    const Vec2f offset = uvOffset / realWorldImageSize * realWorldTileSize;
+    const Vec2f uv = shadingInfo.uv * scale - offset;
+    const Vec2f uvs[3] = {shadingInfo.uvs[0] * scale - offset,
+                          shadingInfo.uvs[1] * scale - offset,
+                          shadingInfo.uvs[2] * scale - offset};
+    return VirtualTextureSampleImage(params, handle, shadingInfo, udimTableIndex, uv, uvs);
 }
 
 YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,

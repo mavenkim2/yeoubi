@@ -127,9 +127,8 @@ struct CUDADevice : Device
     bool RegisterDirectCallables(DeviceModule deviceModule,
                                  const std::vector<std::string> &entryNames,
                                  std::vector<uint32_t> &callableIndices) override;
-    std::string GetCallableFunctionSignature(const std::string &returnType,
-                                             const std::string &functionName,
-                                             const std::string &parameters) const override;
+    std::string GetCallableFunctionSignature() const override;
+    std::string GetDirectCallablePrefix() const override;
     void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) override;
 
     void InitializeOptix(bool createRendererPipeline);

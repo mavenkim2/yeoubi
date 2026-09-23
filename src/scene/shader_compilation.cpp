@@ -352,10 +352,10 @@ static void CompileColorCorrectColor3(const MaterialNode &node,
     context.AddUint(nodeInfo.outputSlotOffset);
 }
 
-static void CompileRemapColor3(const MaterialNode &node,
-                               const std::vector<NodeInfo> &,
-                               MaterialNodeId,
-                               ShaderCompilationContext &context)
+static void CompileRemapVector3(const MaterialNode &node,
+                                const std::vector<NodeInfo> &,
+                                MaterialNodeId,
+                                ShaderCompilationContext &context)
 {
     YBI_ASSERT(0);
 }

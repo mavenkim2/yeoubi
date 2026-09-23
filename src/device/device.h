@@ -168,9 +168,8 @@ struct Device
     virtual bool RegisterDirectCallables(DeviceModule deviceModule,
                                          const std::vector<std::string> &entryNames,
                                          std::vector<uint32_t> &callableIndices) = 0;
-    virtual std::string GetCallableFunctionSignature(const std::string &returnType,
-                                                     const std::string &functionName,
-                                                     const std::string &parameters) const = 0;
+    virtual std::string GetCallableFunctionSignature() const = 0;
+    virtual std::string GetDirectCallablePrefix() const = 0;
     virtual void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) = 0;
 
     virtual bool SupportsClusterBVHs() const = 0;

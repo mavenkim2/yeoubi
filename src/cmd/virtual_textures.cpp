@@ -841,7 +841,53 @@ static void PadRGBToRGBA(Image *texture, SampleFormat sampleFormat)
     texture->numChannels = 4;
 }
 
-static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t udim)
+static float SrgbToLinear(float value)
+{
+    return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+}
+
+static void LinearizeSrgbTexture(Image *texture, SampleFormat sourceFormat)
+{
+    const int numTexels = texture->width * texture->height;
+    const int colorChannels = texture->numChannels == 2 ? 1 : std::min(texture->numChannels, 3);
+    const int linearBytesPerChannel =
+        sourceFormat == SampleFormat::Float && texture->numBytesPerChannel == 4 ? 4 : 2;
+    void *linearPixels =
+        malloc(static_cast<size_t>(numTexels) * texture->numChannels * linearBytesPerChannel);
+    YBI_ASSERT(linearPixels);
+
+    for (int pixelIndex = 0; pixelIndex < numTexels; pixelIndex++)
+    {
+        for (int channel = 0; channel < texture->numChannels; channel++)
+        {
+            float value = ReadChannelAsFloat(texture->ptr,
+                                             pixelIndex,
+                                             channel,
+                                             texture->numChannels,
+                                             texture->numBytesPerChannel,
+                                             sourceFormat);
+            if (channel < colorChannels)
+                value = SrgbToLinear(value);
+
+            WriteChannelFromFloat(linearPixels,
+                                  pixelIndex,
+                                  channel,
+                                  texture->numChannels,
+                                  linearBytesPerChannel,
+                                  SampleFormat::Float,
+                                  value);
+        }
+    }
+
+    free(texture->ptr);
+    texture->ptr = linearPixels;
+    texture->numBytesPerChannel = linearBytesPerChannel;
+}
+
+static void ProcessTexture(Arena &arena,
+                           const std::string &filename,
+                           uint32_t udim,
+                           MaterialColorSpace colorSpace)
 {
     std::string ext = std::filesystem::path(filename).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
@@ -868,6 +914,11 @@ static void ProcessTexture(Arena &arena, const std::string &filename, uint32_t u
     }
 
     PadRGBToRGBA(&texture, sampleFormat);
+    if (colorSpace == MaterialColorSpace::SRGB)
+    {
+        LinearizeSrgbTexture(&texture, sampleFormat);
+        sampleFormat = SampleFormat::Float;
+    }
     const TextureFormat format =
         GetTextureFormat(texture.numChannels, texture.numBytesPerChannel * 8, sampleFormat);
 
@@ -969,30 +1020,41 @@ static void Run(const std::string &filename)
     Scene *scene = sceneLoader->LoadScene(&arena, &container, &importContext);
     (void)scene;
 
-    std::vector<std::pair<std::string, uint32_t>> textures;
-    std::unordered_map<std::string, uint32_t> filenameToUdim;
-    const auto AddTexture = [&](const std::string &filename, uint32_t udim) {
-        YBI_ASSERT(!filename.empty());
-        const auto [it, inserted] = filenameToUdim.emplace(filename, udim);
-        if (inserted)
-        {
-            textures.emplace_back(filename, udim);
-        }
-        else
-        {
-            YBI_ERROR(it->second == udim,
-                      "Texture has conflicting UDIM values: %s (%u and %u)\n",
-                      filename.c_str(),
-                      it->second,
-                      udim);
-        }
+    struct TextureToProcess
+    {
+        std::string filename;
+        uint32_t udim;
+        MaterialColorSpace colorSpace;
     };
+    std::vector<TextureToProcess> textures;
+    std::unordered_map<std::string, std::pair<uint32_t, MaterialColorSpace>> textureSettings;
+    const auto AddTexture =
+        [&](const std::string &filename, uint32_t udim, MaterialColorSpace colorSpace) {
+            YBI_ASSERT(!filename.empty());
+            const auto [it, inserted] =
+                textureSettings.emplace(filename, std::make_pair(udim, colorSpace));
+            if (inserted)
+            {
+                textures.push_back({filename, udim, colorSpace});
+            }
+            else
+            {
+                YBI_ERROR(it->second.first == udim,
+                          "Texture has conflicting UDIM values: %s (%u and %u)\n",
+                          filename.c_str(),
+                          it->second.first,
+                          udim);
+                YBI_ERROR(it->second.second == colorSpace,
+                          "Texture is used with conflicting color spaces: %s\n",
+                          filename.c_str());
+            }
+        };
 
     for (const Material &material : container.materials)
     {
         for (const auto &[diffuseUdimPath, udim] : material.diffuseUdimPaths)
         {
-            AddTexture(diffuseUdimPath, udim);
+            AddTexture(diffuseUdimPath, udim, MaterialColorSpace::Linear);
         }
     }
 
@@ -1085,7 +1147,7 @@ static void Run(const std::string &filename)
     {
         for (const auto &[filename, udim] : *textureVector)
         {
-            AddTexture(filename, udim);
+            AddTexture(filename, udim, MaterialColorSpace::Linear);
         }
     }
 #endif
@@ -1103,7 +1165,7 @@ static void Run(const std::string &filename)
                 {
                     for (const auto &[filename, udim] : *textureFiles)
                     {
-                        AddTexture(filename, udim);
+                        AddTexture(filename, udim, MaterialColorSpace::Linear);
                     }
                 }
             }
@@ -1123,7 +1185,7 @@ static void Run(const std::string &filename)
                 {
                     for (const auto &[filename, udim] : *textureFiles)
                     {
-                        AddTexture(filename, udim);
+                        AddTexture(filename, udim, input.colorSpace);
                     }
                 }
             }
@@ -1143,8 +1205,8 @@ static void Run(const std::string &filename)
 
     tbb::parallel_for(size_t(0), textures.size(), [&](size_t i) {
         ScratchArena scratch;
-        const auto &[textureFilename, udim] = textures[i];
-        ProcessTexture(*scratch.arena, textureFilename, udim);
+        const TextureToProcess &texture = textures[i];
+        ProcessTexture(*scratch.arena, texture.filename, texture.udim, texture.colorSpace);
 
         const size_t finished = numFinished.fetch_add(1) + 1;
         {

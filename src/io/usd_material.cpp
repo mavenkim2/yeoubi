@@ -69,6 +69,22 @@ static MaterialOpcode ConvertTokenToMaterialOpcode(const pxr::TfToken &token)
     return MaterialOpcode::Invalid;
 }
 
+static MaterialOpcode ConvertOutputToMaterialOpcode(const pxr::TfToken &shaderId,
+                                                    const pxr::TfToken &outputName)
+{
+    if (shaderId == pxr::TfToken("ND_artistic_ior"))
+    {
+        if (outputName == pxr::TfToken("ior"))
+            return MaterialOpcode::ArtisticIorIor;
+        if (outputName == pxr::TfToken("extinction"))
+            return MaterialOpcode::ArtisticIorExtinction;
+        YBI_LOGFATAL("Unknown artistic_ior output '%s'\n", outputName.GetText());
+        return MaterialOpcode::Invalid;
+    }
+
+    return ConvertTokenToMaterialOpcode(shaderId);
+}
+
 struct OpenPbrParameterDescriptor
 {
     pxr::TfToken token;
@@ -430,16 +446,39 @@ static void DebugPrintConstant(const MaterialInput &input)
 
 using NodeMap = std::unordered_map<std::string, MaterialNodeId>;
 
-static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
+static MaterialColorSpace GetMaterialColorSpace(const pxr::UsdAttribute &attribute)
+{
+    const pxr::TfToken colorSpace = attribute.GetColorSpace();
+    if (colorSpace.IsEmpty() || colorSpace == pxr::TfToken("raw") ||
+        colorSpace == pxr::TfToken("lin_rec709") || colorSpace == pxr::TfToken("lin_srgb"))
+    {
+        return MaterialColorSpace::Linear;
+    }
+    if (colorSpace == pxr::TfToken("srgb_texture"))
+    {
+        return MaterialColorSpace::SRGB;
+    }
+
+    YBI_LOGFATAL("Unsupported MaterialX image color space '%s' on %s\n",
+                 colorSpace.GetText(),
+                 attribute.GetPath().GetText());
+    return MaterialColorSpace::Linear;
+}
+
+static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeOutput &shaderOutput,
                                            MaterialGraph &graph,
                                            NodeMap &nodeMap,
                                            pxr::UsdTimeCode timeCode)
 {
+    const std::string outputPath = shaderOutput.GetAttr().GetPath().GetString();
+    if (const auto found = nodeMap.find(outputPath); found != nodeMap.end())
+        return found->second;
+
+    pxr::UsdShadeShader shader(shaderOutput.GetPrim());
     pxr::TfToken shaderId;
 
     if (shader && shader.GetShaderId(&shaderId))
     {
-        std::string path = shader.GetPath().GetString();
         std::vector<MaterialInput> materialInputs;
 
         for (const pxr::UsdShadeInput &input : shader.GetInputs())
@@ -457,6 +496,10 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                 {
                     materialInputs.push_back(
                         {inputName, LoadConstant(input.GetAttr(), value, timeCode)});
+                    if (std::holds_alternative<UdimTextureVector>(materialInputs.back().value))
+                    {
+                        materialInputs.back().colorSpace = GetMaterialColorSpace(input.GetAttr());
+                    }
                     DebugPrintConstant(materialInputs.back());
                 }
                 continue;
@@ -468,18 +511,10 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
 
             if (isShader)
             {
-                pxr::UsdShadeShader sourceShader(producer.GetPrim());
-                pxr::TfToken sourceShaderId;
-                sourceShader.GetShaderId(&sourceShaderId);
-                printf("%s\n", sourceShaderId.GetText());
-
-                const std::string sourcePath = sourceShader.GetPath().GetString();
-                if (nodeMap.find(sourcePath) == nodeMap.end())
-                    LoadMtlxShaderHelper(sourceShader, graph, nodeMap, timeCode);
-
-                const auto found = nodeMap.find(sourcePath);
-                YBI_ASSERT(found != nodeMap.end());
-                materialInputs.push_back({inputName, found->second});
+                const MaterialNodeId sourceId = LoadMtlxShaderHelper(
+                    pxr::UsdShadeOutput(producer), graph, nodeMap, timeCode);
+                YBI_ASSERT(sourceId != kInvalidMaterialNodeId);
+                materialInputs.push_back({inputName, sourceId});
             }
             else
             {
@@ -488,6 +523,12 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
                     YBI_LOGFATAL("Unexpected error when handling producer input\n");
 
                 materialInputs.push_back({inputName, LoadConstant(producer, value, timeCode)});
+                if (std::holds_alternative<UdimTextureVector>(materialInputs.back().value))
+                {
+                    const pxr::UsdAttribute &colorSpaceAttribute =
+                        input.GetAttr().GetColorSpace().IsEmpty() ? producer : input.GetAttr();
+                    materialInputs.back().colorSpace = GetMaterialColorSpace(colorSpaceAttribute);
+                }
                 DebugPrintConstant(materialInputs.back());
             }
         }
@@ -496,21 +537,24 @@ static MaterialNodeId LoadMtlxShaderHelper(const pxr::UsdShadeShader &shader,
 
         const MaterialNodeId nodeId = static_cast<MaterialNodeId>(graph.nodes.size());
 
-        MaterialOpcode opcode = ConvertTokenToMaterialOpcode(shaderId);
+        MaterialOpcode opcode =
+            ConvertOutputToMaterialOpcode(shaderId, shaderOutput.GetBaseName());
         YBI_ASSERT(opcode != MaterialOpcode::Invalid);
 
         graph.nodes.push_back({opcode, std::move(materialInputs)});
-        nodeMap[path] = nodeId;
+
+        nodeMap[outputPath] = nodeId;
         return nodeId;
     }
     return kInvalidMaterialNodeId;
 }
 
-static MaterialNodeId
-LoadMtlxShader(MaterialGraph &graph, const pxr::UsdShadeShader &shader, pxr::UsdTimeCode timeCode)
+static MaterialNodeId LoadMtlxShader(MaterialGraph &graph,
+                                     const pxr::UsdShadeOutput &shadeOutput,
+                                     pxr::UsdTimeCode timeCode)
 {
     NodeMap nodeMap;
-    graph.outputNode = LoadMtlxShaderHelper(shader, graph, nodeMap, timeCode);
+    graph.outputNode = LoadMtlxShaderHelper(shadeOutput, graph, nodeMap, timeCode);
 
     return graph.outputNode;
 }
@@ -570,7 +614,7 @@ void LoadOpenPbrMaterial(const pxr::UsdShadeShader &shader,
                     sourceShader.GetShaderId(&shaderId);
 
                     material->*descriptor.member =
-                        LoadMtlxShader(material->graph, sourceShader, timeCode);
+                        LoadMtlxShader(material->graph, pxr::UsdShadeOutput(producer), timeCode);
                 }
                 else if (producer.Get(&value, timeCode) &&
                          descriptor.assignConstant(
@@ -611,7 +655,7 @@ void LoadMaterialXSurface(const pxr::UsdShadeShader &shader,
             producer.GetPrim().IsA<pxr::UsdShadeShader>())
         {
             pxr::UsdShadeShader sourceShader(producer.GetPrim());
-            LoadMtlxShader(*material, sourceShader, timeCode);
+            LoadMtlxShader(*material, pxr::UsdShadeOutput(producer), timeCode);
             return;
         }
 

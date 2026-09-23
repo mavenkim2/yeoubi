@@ -764,12 +764,14 @@ bool CUDADevice::RegisterDirectCallables(DeviceModule deviceModule,
 #endif
 }
 
-std::string CUDADevice::GetCallableFunctionSignature(const std::string &returnType,
-                                                     const std::string &functionName,
-                                                     const std::string &parameters) const
+std::string CUDADevice::GetCallableFunctionSignature() const
 {
-    return "extern \"C\" __device__ " + returnType + " __direct_callable__" + functionName + "(" +
-           parameters + ")";
+    return "extern \"C\" __device__";
+}
+
+std::string CUDADevice::GetDirectCallablePrefix() const
+{
+    return "__direct_callable__";
 }
 
 void CUDADevice::ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc)

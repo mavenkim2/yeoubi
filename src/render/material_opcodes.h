@@ -21,19 +21,57 @@ namespace ybi
     X(Combine3Vector3, Vec3) \
     X(NormalMapVector2, Vec3) \
     X(ColorCorrectColor3, Vec3) \
-    X(RemapColor3, Vec3) \
+    X(RemapVector3, Vec3) \
     X(Ramp4Float, Float) \
     X(Separate3Color3, Float) \
     X(Mix, Float)
 
+// Value nodes compiled into MaterialX callables rather than the legacy shader bytecode.
+#define MATERIALX_VALUE_NODE_DEFINITIONS(X) \
+    X(TiledImageVector2, Vec2) \
+    X(TiledImageVector3, Vec3) \
+    X(TiledImageVector4, Vec4) \
+    X(TiledImageFloat, Float) \
+    X(ViewDirectionVector3, Vec3) \
+    X(NormalVector3, Vec3) \
+    X(DotProductVector3, Float) \
+    X(AbsValFloat, Float) \
+    X(AsinFloat, Float) \
+    X(DivideFloat, Float) \
+    X(DivideVector3, Vec3) \
+    X(MultiplyVector3, Vec3) \
+    X(ExpVector3, Vec3) \
+    X(LnVector3, Vec3) \
+    X(ConvertFloatVector2, Vec2) \
+    X(ConvertFloatVector3, Vec3) \
+    X(ConvertVector3Color3, Vec3) \
+    X(ConvertColor3Vector3, Vec3) \
+    X(RemapFloat, Float) \
+    X(AddFloat, Float) \
+    X(AddVector3, Vec3) \
+    X(NormalizeVector3, Vec3) \
+    X(MixFloat, Float) \
+    X(ContrastFloat, Float) \
+    X(ClampFloat, Float) \
+    X(NormalMapFloat, Vec3) \
+    X(ArtisticIorIor, Vec3) \
+    X(ArtisticIorExtinction, Vec3)
+
 #define MATERIALX_DEFINITIONS(X) \
     X(constant_boolean, ConstantBool) \
+    X(constant_float, ConstantFloat) \
     X(image_vector2, ImageVector2) \
     X(image_color3, ImageVector3) \
     X(image_vector3, ImageVector3) \
     X(image_color4, ImageVector4) \
     X(image_vector4, ImageVector4) \
     X(image_float, ImageFloat) \
+    X(tiledimage_vector2, TiledImageVector2) \
+    X(tiledimage_vector3, TiledImageVector3) \
+    X(tiledimage_color3, TiledImageVector3) \
+    X(tiledimage_vector4, TiledImageVector4) \
+    X(tiledimage_color4, TiledImageVector4) \
+    X(tiledimage_float, TiledImageFloat) \
     X(geompropvalue_vector2, AttributeValueVector2) \
     X(heighttonormal_vector3, HeightToNormalVector3) \
     X(invert_float, InvertFloat) \
@@ -41,12 +79,37 @@ namespace ybi
     X(extract_color3, ExtractVector3) \
     X(combine3_vector3, Combine3Vector3) \
     X(normalmap_vector2, NormalMapVector2) \
+    X(normalmap, NormalMapFloat) \
+    X(normalmap_float, NormalMapFloat) \
     X(colorcorrect_color3, ColorCorrectColor3) \
-    X(remap_color3, RemapColor3) \
+    X(remap_color3, RemapVector3) \
+    X(remap_vector3, RemapVector3) \
     X(ramp4_float, Ramp4Float) \
     X(separate3_color3, Separate3Color3) \
-    X(mix_float, Mix) \
-    X(constant_color3, ConstantColor)
+    X(mix_float, MixFloat) \
+    X(constant_color3, ConstantColor) \
+    X(constant_vector3, ConstantColor) \
+    X(viewdirection_vector3, ViewDirectionVector3) \
+    X(normal_vector3, NormalVector3) \
+    X(dotproduct_vector3, DotProductVector3) \
+    X(absval_float, AbsValFloat) \
+    X(asin_float, AsinFloat) \
+    X(divide_float, DivideFloat) \
+    X(divide_vector3, DivideVector3) \
+    X(multiply_vector3, MultiplyVector3) \
+    X(multiply_color3, MultiplyVector3) \
+    X(exp_vector3, ExpVector3) \
+    X(ln_vector3, LnVector3) \
+    X(convert_float_vector2, ConvertFloatVector2) \
+    X(convert_float_vector3, ConvertFloatVector3) \
+    X(convert_vector3_color3, ConvertVector3Color3) \
+    X(convert_color3_vector3, ConvertColor3Vector3) \
+    X(remap_float, RemapFloat) \
+    X(add_float, AddFloat) \
+    X(add_vector3, AddVector3) \
+    X(normalize_vector3, NormalizeVector3) \
+    X(contrast_float, ContrastFloat) \
+    X(clamp_float, ClampFloat)
 
 #define MATERIALX_BSDFS(X) \
     X(layer) \
@@ -129,7 +192,7 @@ enum class MaterialOpcode : uint8_t
     Invalid = 0,
 
 #define ENUM(name, outputType) name,
-    RENDERER_NODE_DEFINITIONS(ENUM)
+    RENDERER_NODE_DEFINITIONS(ENUM) MATERIALX_VALUE_NODE_DEFINITIONS(ENUM)
 #undef ENUM
 #define ENUM(name) name##_bsdf,
         MATERIALX_BSDFS(ENUM)
@@ -146,6 +209,7 @@ constexpr const char *ConvertMaterialOpcodeToString(MaterialOpcode opcode)
     case MaterialOpcode::name: \
         return #name;
         RENDERER_NODE_DEFINITIONS(CASE)
+        MATERIALX_VALUE_NODE_DEFINITIONS(CASE)
 #undef CASE
 
         case MaterialOpcode::Invalid:
@@ -165,6 +229,7 @@ constexpr MaterialValueType GetMaterialOpcodeOutputType(MaterialOpcode opcode)
     case MaterialOpcode::name: \
         return MaterialValueType::outputType;
         RENDERER_NODE_DEFINITIONS(CASE)
+        MATERIALX_VALUE_NODE_DEFINITIONS(CASE)
 #undef CASE
 
         case MaterialOpcode::Invalid:
@@ -188,7 +253,11 @@ constexpr const char *GetMaterialOpcodeOutputString(MaterialOpcode opcode)
 constexpr bool IsTextureOpcode(MaterialOpcode opcode)
 {
     return opcode == MaterialOpcode::ImageFloat || opcode == MaterialOpcode::ImageVector2 ||
-           opcode == MaterialOpcode::ImageVector3 || opcode == MaterialOpcode::ImageVector4;
+           opcode == MaterialOpcode::ImageVector3 || opcode == MaterialOpcode::ImageVector4 ||
+           opcode == MaterialOpcode::TiledImageFloat ||
+           opcode == MaterialOpcode::TiledImageVector2 ||
+           opcode == MaterialOpcode::TiledImageVector3 ||
+           opcode == MaterialOpcode::TiledImageVector4;
 }
 
 constexpr bool IsAttributeOpcode(MaterialOpcode opcode)

@@ -31,10 +31,17 @@ using MaterialInputValue = std::variant<MaterialNodeId,
                                         std::string,
                                         UdimTextureVector>;
 
+enum class MaterialColorSpace : uint8_t
+{
+    Linear,
+    SRGB,
+};
+
 struct MaterialInput
 {
     std::string name;
     MaterialInputValue value;
+    MaterialColorSpace colorSpace = MaterialColorSpace::Linear;
 };
 
 struct MaterialNode
