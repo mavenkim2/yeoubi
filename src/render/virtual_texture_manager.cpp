@@ -175,9 +175,12 @@ bool VirtualTextureManager::AllocatePage(uint32_t textureIndex,
         }
     }
 
+    const uint32_t gutterSize = descriptor.tileFileHeader.gutterSize;
+    const int paddedPageSize = pageSize + 2 * gutterSize;
+
     // TODO: not hardcoded
     const int physicalPoolNumLayers = 32;
-    const int physicalPoolByteSize = pageSize * pageSize * physicalPoolNumLayers *
+    const int physicalPoolByteSize = paddedPageSize * paddedPageSize * physicalPoolNumLayers *
                                      GetTextureFormatSize(descriptor.tileFileHeader.format);
     if (physicalPoolByteSize + totalPhysicalAllocation > physicalAllocationLimit)
     {
@@ -186,9 +189,9 @@ bool VirtualTextureManager::AllocatePage(uint32_t textureIndex,
 
     DeviceTextureInfo info;
     info.format = descriptor.tileFileHeader.format;
-    info.filterType = FilterType::Point;
-    info.width = pageSize;
-    info.height = pageSize;
+    info.filterType = FilterType::Linear; // FilterType::Point;
+    info.width = paddedPageSize;
+    info.height = paddedPageSize;
     info.layers = physicalPoolNumLayers;
 
     DeviceTexture texture = device->CreateTexture(info);
@@ -287,7 +290,7 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
         input.read(reinterpret_cast<char *>(&header), sizeof(header));
         YBI_ASSERT(input.good());
         YBI_ASSERT(header.magic == YBVT_MAGIC);
-        YBI_ASSERT(header.version == 1);
+        YBI_ASSERT(header.version == 2);
         YBI_ASSERT(header.numPages > 0);
         YBI_ASSERT(header.width > 0);
         YBI_ASSERT(header.height > 0);
@@ -368,6 +371,7 @@ void VirtualTextureManager::Finalize()
         deviceDescriptor.pageDescriptorCount = descriptor.tileFileHeader.numPages;
         deviceDescriptor.width = descriptor.tileFileHeader.width;
         deviceDescriptor.height = descriptor.tileFileHeader.height;
+        deviceDescriptor.gutterSize = descriptor.tileFileHeader.gutterSize;
         deviceDescriptor.fallback = descriptor.tileFileHeader.fallbackColor;
     }
 
@@ -757,7 +761,9 @@ void VirtualTextureManager::Update(KernelParams *params)
                 LoadVirtualTextureTile(scratch.arena, descriptor, pageEntryIndex);
 
             const uint32_t bytesPerTexel = GetTextureFormatSize(descriptor.tileFileHeader.format);
-            const uint32_t tileSize = descriptor.tileFileHeader.pageSize;
+
+            const uint32_t tileSize =
+                descriptor.tileFileHeader.pageSize + 2 * descriptor.tileFileHeader.gutterSize;
             YBI_ASSERT(tileBytes.size() ==
                        tileSize * tileSize * static_cast<size_t>(bytesPerTexel));
 

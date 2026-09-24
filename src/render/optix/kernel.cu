@@ -687,7 +687,7 @@ YBI_GPU void RenderUnidirectional()
                 // -sunDirection, directly into the room with a slight downward angle.
                 const Vec3f sunDirection = Normalize(Vec3f(0.0f, 0.25f, 1.0f));
                 //
-                Vec3f environment(0.5f);
+                Vec3f environment(0.05f);
                 // if (Dot(rayDirection, sunDirection) > 0.995f)
                 //     environment = Vec3f(20.0f);
                 radiance += throughput * environment;

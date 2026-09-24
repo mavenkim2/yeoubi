@@ -394,28 +394,23 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
                                  int mipHeight,
                                  int numChannels,
                                  int numBytesPerChannel,
-                                 int pageSize)
+                                 int pageSize,
+                                 int gutterSize)
 {
     const int numBytesPerTexel = numChannels * numBytesPerChannel;
-    const int pageNumBytes = pageSize * pageSize * numBytesPerTexel;
+    const int paddedPageSize = pageSize + 2 * gutterSize;
+    const int pageNumBytes = Sqr(paddedPageSize) * numBytesPerTexel;
     const int rowStride = mipWidth * numBytesPerTexel;
-    const int pageStride = pageSize * numBytesPerTexel;
+    const int pageStride = paddedPageSize * numBytesPerTexel;
     const int xSteps = (mipWidth + pageSize - 1) / pageSize;
     const int ySteps = (mipHeight + pageSize - 1) / pageSize;
+    const uint8_t *mipBytes = reinterpret_cast<const uint8_t *>(mipData);
 
     for (int y = 0; y < ySteps; y++)
     {
         for (int x = 0; x < xSteps; x++)
         {
             const uint32_t pageIndex = firstPageIndex + static_cast<uint32_t>(y * xSteps + x);
-
-            const int yStart = pageSize * y;
-            const int yEnd = Min(mipHeight, pageSize * (y + 1));
-
-            const int xStart = pageSize * x;
-            const int xEnd = Min(mipWidth, pageSize * (x + 1));
-
-            const int sizeToCopy = (xEnd - xStart) * numBytesPerTexel;
 
             uint64_t offset = fileBuilder.Allocate(pageNumBytes);
             VirtualTexturePageEntry *pageEntry =
@@ -426,16 +421,28 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
             pageEntry->unpackedSize = pageNumBytes;
 
             uint8_t *dst = fileBuilder.GetPtr(offset);
-            memset(dst, 0, pageNumBytes);
-
-            const uint8_t *src = reinterpret_cast<const uint8_t *>(mipData) +
-                                 (yStart * mipWidth + xStart) * numBytesPerTexel;
-
-            for (int row = yStart; row < yEnd; row++)
+            for (int row = 0; row < paddedPageSize; row++)
             {
-                memcpy(dst, src, sizeToCopy);
-                dst += pageStride;
-                src += rowStride;
+                int sourceY = (pageSize * y + row - gutterSize) % mipHeight;
+                if (sourceY < 0)
+                    sourceY += mipHeight;
+
+                const uint8_t *srcRow = mipBytes + sourceY * rowStride;
+                uint8_t *dstRow = dst + row * pageStride;
+
+                int sourceX = (pageSize * x - gutterSize) % mipWidth;
+                if (sourceX < 0)
+                    sourceX += mipWidth;
+
+                for (int column = 0; column < paddedPageSize;)
+                {
+                    const int count = Min(paddedPageSize - column, mipWidth - sourceX);
+                    memcpy(dstRow + column * numBytesPerTexel,
+                           srcRow + sourceX * numBytesPerTexel,
+                           count * numBytesPerTexel);
+                    column += count;
+                    sourceX = 0;
+                }
             }
         }
     }
@@ -952,14 +959,18 @@ static void ProcessTexture(Arena &arena,
         reinterpret_cast<VirtualTextureFileHeader *>(fileBuilder.GetPtr(headerOffset));
     memset(fileBuilder.GetPtr(pageTableOffset), 0, sizeof(VirtualTexturePageEntry) * numPages);
 
+    // TODO: select this based on the filter
+    const int gutterSize = 1;
+
     *header = {};
     header->magic = YBVT_MAGIC;
-    header->version = 1;
+    header->version = 2;
     header->udim = udim;
     header->pageSize = pageSize;
     header->width = texture.width;
     header->height = texture.height;
     header->numMips = numMips;
+    header->gutterSize = gutterSize;
     // header->numChannels = texture.numChannels;
     // header->numBytesPerChannel = texture.numBytesPerChannel;
     header->format = format;
@@ -987,7 +998,8 @@ static void ProcessTexture(Arena &arena,
                              mipHeight,
                              texture.numChannels,
                              texture.numBytesPerChannel,
-                             pageSize);
+                             pageSize,
+                             gutterSize);
         pageIndex += static_cast<uint32_t>(xSteps * ySteps);
 
         const int nextMipWidth = std::max(1, mipWidth / 2);

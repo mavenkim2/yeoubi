@@ -47,6 +47,7 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
                                         uint32_t offset = 0)
 {
     const uint32_t pageSize = (1u << pageShift);
+    const uint32_t paddedPageSize = pageSize + 2 * descriptor.gutterSize;
     Vec2f normalizedUv = uv - Floor(uv);
     // Floating-point cancellation can make fract(uv) exactly 1 for values just below an
     // integer, particularly for negative or large UVs. Keep the repeated coordinate in
@@ -74,9 +75,9 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
 
     Vec2f texel = normalizedUv * Vec2f(mipWidth, mipHeight);
     const Vec2f page = Floor(texel / float(pageSize));
-    const Vec2f texelInPage = texel - page * pageSize;
+    const Vec2f texelInPage = texel - page * pageSize + descriptor.gutterSize;
 
-    const Vec2f pageUv = texelInPage / pageSize;
+    const Vec2f pageUv = texelInPage / paddedPageSize;
 
     const uint32_t pageOffset = CalculatePageDescriptorOffset(descriptor.width,
                                                               descriptor.height,

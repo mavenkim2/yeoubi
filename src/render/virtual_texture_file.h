@@ -19,6 +19,7 @@ struct VirtualTextureFileHeader
     uint32_t width;
     uint32_t height;
     uint32_t numMips;
+    uint32_t gutterSize;
     TextureFormat format;
     uint32_t compression;
     uint32_t numPages;
