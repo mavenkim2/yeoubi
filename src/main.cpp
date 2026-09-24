@@ -174,7 +174,7 @@ int main(int argc, char **argv)
     params.fovRadians = camera.verticalFovRadians;
     params.cameraFromRaster = cameraFromRaster;
     params.renderFromCamera = renderFromCamera;
-    params.maxDepth = 5;
+    params.maxDepth = 10;
     params.lensRadius = 0.f; // TODO: initialize properly
     params.imageWidth = camera.width;
     params.imageHeight = camera.height;

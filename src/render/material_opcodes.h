@@ -55,11 +55,16 @@ namespace ybi
     X(ClampFloat, Float) \
     X(NormalMapFloat, Vec3) \
     X(ArtisticIorIor, Vec3) \
-    X(ArtisticIorExtinction, Vec3)
+    X(ArtisticIorExtinction, Vec3) \
+    X(PowerFloat, Float) \
+    X(MixVector3, Vec3) \
+    X(MixVector2, Vec2) \
+    X(MultiplyFloat, Float)
 
 #define MATERIALX_DEFINITIONS(X) \
     X(constant_boolean, ConstantBool) \
     X(constant_float, ConstantFloat) \
+    X(constant_vector2, ConstantVector2) \
     X(image_vector2, ImageVector2) \
     X(image_color3, ImageVector3) \
     X(image_vector3, ImageVector3) \
@@ -87,6 +92,8 @@ namespace ybi
     X(ramp4_float, Ramp4Float) \
     X(separate3_color3, Separate3Color3) \
     X(mix_float, MixFloat) \
+    X(mix_vector3, MixVector3) \
+    X(mix_vector2, MixVector2) \
     X(constant_color3, ConstantColor) \
     X(constant_vector3, ConstantColor) \
     X(viewdirection_vector3, ViewDirectionVector3) \
@@ -94,10 +101,12 @@ namespace ybi
     X(dotproduct_vector3, DotProductVector3) \
     X(absval_float, AbsValFloat) \
     X(asin_float, AsinFloat) \
+    X(power_float, PowerFloat) \
     X(divide_float, DivideFloat) \
     X(divide_vector3, DivideVector3) \
     X(multiply_vector3, MultiplyVector3) \
     X(multiply_color3, MultiplyVector3) \
+    X(multiply_float, MultiplyFloat) \
     X(exp_vector3, ExpVector3) \
     X(ln_vector3, LnVector3) \
     X(convert_float_vector2, ConvertFloatVector2) \

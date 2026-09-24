@@ -29,6 +29,7 @@ YBI_GPU OrthonormalBasis MaterialXBsdfFrame(const ShadingInfo &info,
         normal = -normal;
         bitangent = -bitangent;
     }
+
     return OrthonormalBasis(tangent, bitangent, normal);
 }
 

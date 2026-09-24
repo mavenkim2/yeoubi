@@ -743,6 +743,11 @@ YBI_GPU void RenderUnidirectional()
             if (Dot(geometricNormal, rayDirection) > 0.f)
                 geometricNormal = -geometricNormal;
 
+            // if (Dot(geometricNormal, rayDirection) > 0.f)
+            // {
+            //     shadingInfo.shadingNormal = -shadingInfo.shadingNormal;
+            // }
+
             UpdateRayCone(rayCone, rayDirection, info.t, shadingInfo, depth);
             shadingInfo.rayDirection = rayDirection;
             shadingInfo.rayCone = rayCone;

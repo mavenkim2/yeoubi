@@ -72,6 +72,12 @@ YBI_CPU_GPU bool SampleConductorBsdf(const Vec3f &viewDirection,
         return false;
 
     lightDirection = -viewDirection + 2.f * hDotV * h;
+
+    if (lightDirection.z <= 0.f)
+    {
+        return false;
+    }
+
     return true;
 }
 
