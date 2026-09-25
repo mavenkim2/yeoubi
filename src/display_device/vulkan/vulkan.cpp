@@ -2,6 +2,9 @@
 #include "display_device/vulkan/vulkan.h"
 #include "core/math.h"
 #include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -493,6 +496,58 @@ Vulkan::Vulkan(GLFWwindow *window, ValidationMode validationMode, GPUDevicePrefe
         vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
     swapchainImageLayouts.resize(swapchainImageCount, VK_IMAGE_LAYOUT_UNDEFINED);
 
+    VkAttachmentDescription colorAttachment = {};
+    colorAttachment.format = swapchainImageFormat;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference colorReference = {};
+    colorReference.attachment = 0;
+    colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorReference;
+
+    VkRenderPassCreateInfo renderPassInfo = {};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    VK_CHECK(vkCreateRenderPass(device, &renderPassInfo, nullptr, &uiRenderPass));
+
+    swapchainImageViews.resize(swapchainImageCount);
+    uiFramebuffers.resize(swapchainImageCount);
+    for (uint32_t index = 0; index < swapchainImageCount; ++index)
+    {
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = swapchainImages[index];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = swapchainImageFormat;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+        VK_CHECK(vkCreateImageView(device, &viewInfo, nullptr, &swapchainImageViews[index]));
+
+        VkFramebufferCreateInfo framebufferInfo = {};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = uiRenderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = &swapchainImageViews[index];
+        framebufferInfo.width = swapchainExtent.width;
+        framebufferInfo.height = swapchainExtent.height;
+        framebufferInfo.layers = 1;
+        VK_CHECK(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &uiFramebuffers[index]));
+    }
+
     VkCommandPoolCreateInfo commandPoolInfo = {};
     commandPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     commandPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -529,6 +584,34 @@ Vulkan::Vulkan(GLFWwindow *window, ValidationMode validationMode, GPUDevicePrefe
     {
         VK_CHECK(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore));
     }
+
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16};
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.maxSets = 16;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &uiDescriptorPool));
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    const bool glfwBackendReady = ImGui_ImplGlfw_InitForVulkan(window, true);
+    YBI_ASSERT(glfwBackendReady);
+    ImGui_ImplVulkan_InitInfo imguiInfo = {};
+    imguiInfo.Instance = instance;
+    imguiInfo.PhysicalDevice = physicalDevice;
+    imguiInfo.Device = device;
+    imguiInfo.QueueFamily = graphicsQueueFamily;
+    imguiInfo.Queue = graphicsQueue;
+    imguiInfo.DescriptorPool = uiDescriptorPool;
+    imguiInfo.RenderPass = uiRenderPass;
+    imguiInfo.MinImageCount = std::max(2u, surfaceCapabilities.minImageCount);
+    imguiInfo.ImageCount = swapchainImageCount;
+    imguiInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    const bool vulkanBackendReady = ImGui_ImplVulkan_Init(&imguiInfo);
+    YBI_ASSERT(vulkanBackendReady);
 }
 
 void Vulkan::WaitIdle()
@@ -542,6 +625,17 @@ Vulkan::~Vulkan()
     if (device)
     {
         WaitIdle();
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        if (uiDescriptorPool)
+            vkDestroyDescriptorPool(device, uiDescriptorPool, nullptr);
+        for (VkFramebuffer framebuffer : uiFramebuffers)
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        for (VkImageView view : swapchainImageViews)
+            vkDestroyImageView(device, view, nullptr);
+        if (uiRenderPass)
+            vkDestroyRenderPass(device, uiRenderPass, nullptr);
         for (VkFence fence : inFlightFences)
         {
             if (fence)
@@ -756,6 +850,10 @@ bool Vulkan::BeginFrame()
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
     return true;
 }
 
@@ -820,31 +918,40 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
                            1,
                            &copyRegion);
 
-    VkImageMemoryBarrier presentBarrier = {};
-    presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    presentBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    presentBarrier.dstAccessMask = 0;
-    presentBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    presentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    presentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    presentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    presentBarrier.image = swapchainImage;
-    presentBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    presentBarrier.subresourceRange.baseMipLevel = 0;
-    presentBarrier.subresourceRange.levelCount = 1;
-    presentBarrier.subresourceRange.baseArrayLayer = 0;
-    presentBarrier.subresourceRange.layerCount = 1;
+    VkImageMemoryBarrier colorBarrier = {};
+    colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    colorBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    colorBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.image = swapchainImage;
+    colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorBarrier.subresourceRange.levelCount = 1;
+    colorBarrier.subresourceRange.layerCount = 1;
 
     vkCmdPipelineBarrier(commandBuffer,
                          VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          0,
                          0,
                          nullptr,
                          0,
                          nullptr,
                          1,
-                         &presentBarrier);
+                         &colorBarrier);
+
+    ImGui::Render();
+    VkRenderPassBeginInfo uiPassInfo = {};
+    uiPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    uiPassInfo.renderPass = uiRenderPass;
+    uiPassInfo.framebuffer = uiFramebuffers[currentSwapchainImageIndex];
+    uiPassInfo.renderArea.extent = swapchainExtent;
+    vkCmdBeginRenderPass(commandBuffer, &uiPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    vkCmdEndRenderPass(commandBuffer);
 
     VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -853,7 +960,7 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
         vulkanCudaFinishedSemaphore.semaphore,
     };
     VkPipelineStageFlags waitStages[] = {
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
     };
     VkSemaphore signalSemaphore = renderFinishedSemaphores[currentSwapchainImageIndex];

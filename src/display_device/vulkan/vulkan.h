@@ -58,6 +58,10 @@ struct Vulkan : DisplayDevice
     VkExtent2D swapchainExtent = {};
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageLayout> swapchainImageLayouts;
+    std::vector<VkImageView> swapchainImageViews;
+    std::vector<VkFramebuffer> uiFramebuffers;
+    VkRenderPass uiRenderPass = VK_NULL_HANDLE;
+    VkDescriptorPool uiDescriptorPool = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers;
     std::vector<VkSemaphore> imageAvailableSemaphores;

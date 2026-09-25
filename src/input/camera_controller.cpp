@@ -9,16 +9,10 @@ namespace ybi
 
 static void ScrollCallback(GLFWwindow *window, double xOffset, double yOffset)
 {
-    (void)xOffset;
-
     CameraController *cameraController =
         static_cast<CameraController *>(glfwGetWindowUserPointer(window));
-    if (!cameraController)
-    {
-        return;
-    }
-
-    cameraController->AddScrollInput(yOffset);
+    if (cameraController)
+        cameraController->HandleScroll(window, xOffset, yOffset);
 }
 
 CameraController::CameraController(GLFWwindow *window,
@@ -26,7 +20,7 @@ CameraController::CameraController(GLFWwindow *window,
                                    const Vec3f &inputWorldUp)
 {
     glfwSetWindowUserPointer(window, this);
-    glfwSetScrollCallback(window, ScrollCallback);
+    previousScrollCallback = glfwSetScrollCallback(window, ScrollCallback);
 
     YBI_ASSERT(LengthSquared(inputWorldUp) > 0.f);
     worldUp = Normalize(inputWorldUp);
@@ -129,6 +123,13 @@ void CameraController::AddScrollInput(double yOffset)
 {
     moveSpeed *= std::pow(1.2f, static_cast<float>(yOffset));
     moveSpeed = Clamp(moveSpeed, 0.01f, 1000.0f);
+}
+
+void CameraController::HandleScroll(GLFWwindow *window, double xOffset, double yOffset)
+{
+    if (previousScrollCallback)
+        previousScrollCallback(window, xOffset, yOffset);
+    AddScrollInput(yOffset);
 }
 
 AffineTransform CameraController::GetRenderFromCamera() const

@@ -83,6 +83,16 @@ if (WITH_VULKAN)
     list (APPEND YBI_DEPENDENCIES Vulkan::Vulkan)
     list (APPEND YBI_COMPILE_DEFINITIONS WITH_VULKAN)
     list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/vulkan/vulkan.cpp)
+    list(APPEND YBI_SOURCE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui_draw.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui_tables.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui_widgets.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends/imgui_impl_glfw.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends/imgui_impl_vulkan.cpp)
+    list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends")
 endif()
 
 # GLFW

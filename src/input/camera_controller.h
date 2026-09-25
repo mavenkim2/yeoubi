@@ -24,6 +24,7 @@ public:
                      const Vec3f &worldUp);
 
     void UpdateCamera(GLFWwindow *window, float deltaTime);
+    void HandleScroll(GLFWwindow *window, double xOffset, double yOffset);
     void AddScrollInput(double yOffset);
     AffineTransform GetRenderFromCamera() const;
     void ToggleMovement();
@@ -35,6 +36,7 @@ private:
     bool enableMovement = false;
     double lastMouseX = 0.0;
     double lastMouseY = 0.0;
+    void (*previousScrollCallback)(GLFWwindow *, double, double) = nullptr;
 
     Vec3f GetForward() const;
 };

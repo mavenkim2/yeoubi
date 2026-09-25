@@ -405,12 +405,20 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
     const int xSteps = (mipWidth + pageSize - 1) / pageSize;
     const int ySteps = (mipHeight + pageSize - 1) / pageSize;
     const uint8_t *mipBytes = reinterpret_cast<const uint8_t *>(mipData);
+    YBI_ASSERT(gutterSize <= Min(mipWidth, mipHeight));
 
     for (int y = 0; y < ySteps; y++)
     {
         for (int x = 0; x < xSteps; x++)
         {
             const uint32_t pageIndex = firstPageIndex + static_cast<uint32_t>(y * xSteps + x);
+            const int yStart = Max(0, pageSize * y - gutterSize);
+            const int yEnd = Min(mipHeight, pageSize * (y + 1) + gutterSize);
+            const int xStart = Max(0, pageSize * x - gutterSize);
+            const int xEnd = Min(mipWidth, pageSize * (x + 1) + gutterSize);
+            const int copyWidth = (xEnd - xStart) * numBytesPerTexel;
+            const int dstX = x == 0 ? gutterSize : 0;
+            const int dstY = y == 0 ? gutterSize : 0;
 
             uint64_t offset = fileBuilder.Allocate(pageNumBytes);
             VirtualTexturePageEntry *pageEntry =
@@ -421,28 +429,43 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
             pageEntry->unpackedSize = pageNumBytes;
 
             uint8_t *dst = fileBuilder.GetPtr(offset);
-            for (int row = 0; row < paddedPageSize; row++)
-            {
-                int sourceY = (pageSize * y + row - gutterSize) % mipHeight;
-                if (sourceY < 0)
-                    sourceY += mipHeight;
+            memset(dst, 0, pageNumBytes);
 
+            auto copyRow = [&](int sourceY, int destinationY) {
                 const uint8_t *srcRow = mipBytes + sourceY * rowStride;
-                uint8_t *dstRow = dst + row * pageStride;
+                uint8_t *dstRow = dst + destinationY * pageStride;
+                memcpy(dstRow + dstX * numBytesPerTexel,
+                       srcRow + xStart * numBytesPerTexel,
+                       copyWidth);
 
-                int sourceX = (pageSize * x - gutterSize) % mipWidth;
-                if (sourceX < 0)
-                    sourceX += mipWidth;
-
-                for (int column = 0; column < paddedPageSize;)
+                if (gutterSize && x == 0)
                 {
-                    const int count = Min(paddedPageSize - column, mipWidth - sourceX);
-                    memcpy(dstRow + column * numBytesPerTexel,
-                           srcRow + sourceX * numBytesPerTexel,
-                           count * numBytesPerTexel);
-                    column += count;
-                    sourceX = 0;
+                    memcpy(dstRow,
+                           srcRow + (mipWidth - gutterSize) * numBytesPerTexel,
+                           gutterSize * numBytesPerTexel);
                 }
+                if (gutterSize && x == xSteps - 1)
+                {
+                    memcpy(dstRow + dstX * numBytesPerTexel + copyWidth,
+                           srcRow,
+                           gutterSize * numBytesPerTexel);
+                }
+            };
+
+            for (int row = yStart; row < yEnd; row++)
+            {
+                copyRow(row, dstY + row - yStart);
+            }
+
+            if (gutterSize && y == 0)
+            {
+                for (int row = 0; row < gutterSize; row++)
+                    copyRow(mipHeight - gutterSize + row, row);
+            }
+            if (gutterSize && y == ySteps - 1)
+            {
+                for (int row = 0; row < gutterSize; row++)
+                    copyRow(row, dstY + yEnd - yStart + row);
             }
         }
     }

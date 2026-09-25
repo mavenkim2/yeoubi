@@ -18,6 +18,9 @@
 #include <vector>
 
 #include <GLFW/glfw3.h>
+#ifdef WITH_VULKAN
+#include <imgui.h>
+#endif
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -105,7 +108,7 @@ int main(int argc, char **argv)
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow *window = glfwCreateWindow(1920, 1080, "Yeoubi", nullptr, nullptr);
+    GLFWwindow *window = glfwCreateWindow(1920, 1080, "yeoubi", nullptr, nullptr);
     YBI_ASSERT(window);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
@@ -283,17 +286,31 @@ int main(int argc, char **argv)
         if (interactive)
         {
             progressiveState.samples += samplesPerPixel;
-            char title[128];
-            std::snprintf(title,
-                          sizeof(title),
-                          "Yeoubi | Diffuse path tracing | %u spp | R: reset",
-                          progressiveState.samples);
-            glfwSetWindowTitle(window, title);
         }
         else if (params.pathTrace)
             params.sampleOffset += params.samplesPerPixel;
         manager.CopyFeedback();
         device->SignalExternalSemaphore(deviceFrameFinishedSemaphores[frameIndex]);
+
+#ifdef WITH_VULKAN
+        const Vec3f forward = params.renderFromCamera.TransformVector(Vec3f(0.f, 0.f, -1.f));
+        const Vec3f up = params.renderFromCamera.TransformVector(Vec3f(0.f, 1.f, 0.f));
+        ImGui::SetNextWindowPos(ImVec2(16.f, 16.f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowBgAlpha(0.85f);
+        ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Text("Position:  %.3f, %.3f, %.3f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+        ImGui::Text("Forward:   %.3f, %.3f, %.3f", forward.x, forward.y, forward.z);
+        ImGui::Text("Up:        %.3f, %.3f, %.3f", up.x, up.y, up.z);
+        ImGui::Text("Vertical FOV: %.2f deg", params.fovRadians * (180.f / 3.14159265358979323846f));
+        ImGui::Text("Resolution: %u x %u", params.imageWidth, params.imageHeight);
+        ImGui::Text("Lens radius: %.3f", params.lensRadius);
+        ImGui::Text("Move speed: %.2f", cameraController.moveSpeed);
+        ImGui::Separator();
+        ImGui::Text("SPP per frame: %u", params.samplesPerPixel);
+        if (interactive)
+            ImGui::Text("Accumulated SPP: %u", progressiveState.samples);
+        ImGui::End();
+#endif
 
         displayDevice->EndFrame(*displayImageHandles[frameIndex],
                                 *displayFrameFinishedSemaphores[frameIndex],
