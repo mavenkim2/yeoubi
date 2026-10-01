@@ -450,18 +450,19 @@ static MaterialColorSpace GetMaterialColorSpace(const pxr::UsdAttribute &attribu
 {
     const pxr::TfToken colorSpace = attribute.GetColorSpace();
     if (colorSpace.IsEmpty() || colorSpace == pxr::TfToken("raw") ||
-        colorSpace == pxr::TfToken("lin_rec709") || colorSpace == pxr::TfToken("lin_srgb"))
+        colorSpace == pxr::TfToken("lin_rec709") ||
+        colorSpace == pxr::TfToken("lin_rec709_scene") ||
+        colorSpace == pxr::TfToken("lin_srgb"))
     {
         return MaterialColorSpace::Linear;
     }
-    if (colorSpace == pxr::TfToken("srgb_texture"))
+    if (colorSpace == pxr::TfToken("srgb_texture") ||
+        colorSpace == pxr::TfToken("srgb_tx") ||
+        colorSpace == pxr::TfToken("srgb_rec709_scene"))
     {
         return MaterialColorSpace::SRGB;
     }
 
-    YBI_LOGFATAL("Unsupported MaterialX image color space '%s' on %s\n",
-                 colorSpace.GetText(),
-                 attribute.GetPath().GetText());
     return MaterialColorSpace::Linear;
 }
 

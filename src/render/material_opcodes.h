@@ -220,6 +220,11 @@ constexpr const char *ConvertMaterialOpcodeToString(MaterialOpcode opcode)
         RENDERER_NODE_DEFINITIONS(CASE)
         MATERIALX_VALUE_NODE_DEFINITIONS(CASE)
 #undef CASE
+#define CASE(name) \
+    case MaterialOpcode::name##_bsdf: \
+        return #name;
+        MATERIALX_BSDFS(CASE)
+#undef CASE
 
         case MaterialOpcode::Invalid:
             return "Invalid";

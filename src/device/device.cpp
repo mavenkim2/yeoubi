@@ -4,7 +4,7 @@
 namespace ybi 
 {
 
-std::unique_ptr<Device> Device::CreateDevice(DeviceKind kind)
+std::unique_ptr<Device> Device::CreateDevice(DeviceKind kind, bool createRendererPipeline)
 {
     if (kind == DeviceKind::CPU)
     {
@@ -19,7 +19,7 @@ std::unique_ptr<Device> Device::CreateDevice(DeviceKind kind)
     if (kind == DeviceKind::GPU)
     {
 #if defined(WITH_CUDA) && defined(WITH_OPTIX)
-        return std::make_unique<CUDADevice>();
+        return std::make_unique<CUDADevice>(createRendererPipeline);
 #else
         fprintf(stderr, "GPU backend requires WITH_CUDA and WITH_OPTIX.\n");
         return nullptr;

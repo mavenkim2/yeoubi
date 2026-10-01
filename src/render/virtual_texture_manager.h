@@ -7,7 +7,6 @@
 #include "device/device_texture.h"
 #include "render/virtual_texture_file.h"
 #include "render/virtual_texture_interop.h"
-#include <array>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -20,6 +19,7 @@ namespace ybi
 {
 
 struct Device;
+struct DeviceEvent;
 struct DeviceKernel;
 struct DeviceStream;
 struct DeviceTexture;
@@ -103,7 +103,7 @@ class VirtualTextureManager
     DeviceBuffer deviceTextureDescriptors;
     DeviceBuffer deviceTexturePools;
     DeviceBuffer devicePageDescriptors;
-    std::array<DeviceBuffer, 2> pageDescriptorBits;
+    std::vector<DeviceBuffer> pageDescriptorBits;
     std::vector<DeviceBuffer> hostPinnedFeedbackRequests;
     std::vector<DeviceBuffer> hostPinnedUpdateRequests;
     std::vector<DeviceBuffer> deviceUpdateRequests;
@@ -127,6 +127,14 @@ class VirtualTextureManager
     void LinkLRU(int index);
     bool AllocatePage(uint32_t textureIndex, uint32_t &poolIndex, uint32_t &layer);
 
+    void ProcessFeedback(Arena *arena,
+                         View<PageUploadCompletion> completions,
+                         View<FeedbackRequest> requests,
+                         Array<PageAllocationInfo> &allocationInfos,
+                         Array<PageDescriptorUpdateRequest> &updateRequests);
+
+    void LoadPages(std::shared_ptr<DeviceEvent> pageTableUpdatesDone);
+
 public:
     VirtualTextureManager(Arena &arena, Device *device, DisplayDevice *displayDevice);
     ~VirtualTextureManager();
@@ -134,9 +142,13 @@ public:
     AddTexture(const std::vector<std::pair<std::string, uint32_t>> &filenames);
     void Finalize();
     void Update(KernelParams *params);
+    void UpdateSync(KernelParams *params);
     void UpdateParams(KernelParams *params);
     void CopyFeedback();
-    uint64_t GetResidencyRevision() const { return residencyRevision; }
+    uint64_t GetResidencyRevision() const
+    {
+        return residencyRevision;
+    }
 };
 
 } // namespace ybi

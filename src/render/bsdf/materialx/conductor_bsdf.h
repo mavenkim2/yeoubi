@@ -36,25 +36,30 @@ YBI_CPU_GPU bool GetConductorParameters(const MaterialDescriptor &descriptor,
            closure.LoadFloat3(base + ConductorNormal, bsdf.normal);
 }
 
+YBI_CPU_GPU Vec3f ConductorF0(const Vec3f &ior, const Vec3f &extinction)
+{
+    Vec3f f0;
+    for (int channel = 0; channel < 3; ++channel)
+    {
+        const float n = ior[channel];
+        const float k2 = Sqr(extinction[channel]);
+        f0[channel] = (Sqr(n - 1.f) + k2) / (Sqr(n + 1.f) + k2);
+    }
+    return f0;
+}
+
 // A directional-albedo estimate for lobe importance, not a conductor BRDF.
 YBI_CPU_GPU Vec3f ConductorDirectionalAlbedo(const ConductorBsdf &bsdf, float nDotV)
 {
     if (bsdf.weight <= 0.f)
         return Vec3f(0.f);
 
-    Vec3f f0;
-    for (int channel = 0; channel < 3; ++channel)
-    {
-        const float n = bsdf.ior[channel];
-        const float k2 = Sqr(bsdf.extinction[channel]);
-        f0[channel] = (Sqr(n - 1.f) + k2) / (Sqr(n + 1.f) + k2);
-    }
-
+    const Vec3f f0 = ConductorF0(bsdf.ior, bsdf.extinction);
     const float alpha = Sqrt(Max(1e-8f, bsdf.alpha.x) * Max(1e-8f, bsdf.alpha.y));
-    const Vec3f fAvg = f0 + (Vec3f(1.f) - f0) * (1.f / 21.f);
-    const Vec3f comp = GGXEnergyCompensation(nDotV, alpha, fAvg);
+    const Vec3f f = FresnelConductor(nDotV, bsdf.ior, bsdf.extinction);
+    const Vec3f comp = GGXEnergyCompensation(nDotV, alpha, f);
     return Clamp(
-        bsdf.weight * DielectricBsdfAlbedo(nDotV, alpha, f0, Vec3f(1.f)) * comp, 0.f, 1.f);
+        bsdf.weight * GGXDirectionalAlbedo(nDotV, alpha, f0, Vec3f(1.f)) * comp, 0.f, 1.f);
 }
 
 YBI_CPU_GPU bool SampleConductorBsdf(const Vec3f &viewDirection,
@@ -101,9 +106,11 @@ YBI_CPU_GPU Vec3f EvaluateConductorBsdf(const Vec3f &viewDirection,
     const float d = GGXNDF(h, alpha);
     const float g = GGXSmithG2(nDotL, nDotV, averageAlpha);
     const Vec3f f = FresnelConductor(vDotH, ior, extinction);
-    const Vec3f compensation = GGXEnergyCompensation(nDotV, averageAlpha, Vec3f(f));
+    const Vec3f compensation = GGXEnergyCompensation(nDotV, averageAlpha, f);
 
-    return d * f * g * compensation * weight / (4.f * nDotV);
+    Vec3f result = d * f * g * compensation * weight / (4.f * nDotV);
+    // printf("%f %f %f\n", result.x, result.y, result.z);
+    return result;
 }
 
 YBI_CPU_GPU float

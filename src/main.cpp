@@ -1,5 +1,8 @@
+#include "application.h"
 #include "core/arena.h"
 #include "core/assert.h"
+#include "core/math.h"
+#include "core/platform.h"
 #include "device/device.h"
 #include "device/kernel_params.h"
 #include "display_device/display_device.h"
@@ -11,10 +14,15 @@
 #include "scene/render_system.h"
 #include "scene/scene.h"
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <GLFW/glfw3.h>
@@ -22,10 +30,114 @@
 #include <imgui.h>
 #endif
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-
 using namespace ybi;
+
+namespace
+{
+constexpr int RenderWidth = 1920;
+constexpr int RenderHeight = 1080;
+
+struct SceneSession
+{
+    Device *device;
+    DisplayDevice *displayDevice;
+    std::string filename;
+    DeviceTexture dielectricEnergy;
+    DeviceTexture dielectricAverage;
+    std::unique_ptr<Arena> arena = std::make_unique<Arena>();
+    DataContainer container;
+    std::unique_ptr<DeviceArena> containerDeviceArena;
+    std::unique_ptr<VirtualTextureManager> textures;
+    std::unique_ptr<RenderSystem> renderSystem;
+    Scene *scene = nullptr;
+    size_t selectedCamera = 0;
+
+    SceneSession(Device *device, DisplayDevice *displayDevice, std::string filename)
+        : device(device), displayDevice(displayDevice), filename(std::move(filename))
+    {
+    }
+
+    ~SceneSession()
+    {
+        device->DestroyTexture(dielectricAverage);
+        device->DestroyTexture(dielectricEnergy);
+    }
+
+    bool Load(std::string *error)
+    {
+        std::unique_ptr<SceneLoader> loader = SceneLoader::CreateSceneLoader(filename);
+        if (!loader)
+        {
+            *error = "Choose a .usd, .usda, .usdc, or .usdz file.";
+            return false;
+        }
+
+        SceneImportContext importContext;
+        scene = loader->LoadScene(arena.get(), &container, &importContext);
+        if (!scene)
+        {
+            *error = "Unable to open a renderable USD stage.";
+            return false;
+        }
+
+        const bool hasOpenPbr = !container.openPbrMaterials.empty();
+        const bool hasMaterialX = !container.materialXMaterials.empty();
+        if (hasOpenPbr && hasMaterialX)
+        {
+            *error = "Scenes containing both OpenPBR and MaterialX materials are not supported.";
+            return false;
+        }
+        const MaterialBackend materialBackend =
+            hasMaterialX ? MaterialBackend::MaterialX : MaterialBackend::OpenPbr;
+        if (!device->CreatePipeline(materialBackend))
+        {
+            *error = "Unable to create the material rendering pipeline.";
+            return false;
+        }
+        if (hasOpenPbr)
+        {
+            dielectricEnergy = LoadOpenPbrOpaqueDielectricEnergyComplementTexture(*device);
+            dielectricAverage = LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(*device);
+            if (!dielectricEnergy.textureObject || !dielectricAverage.textureObject)
+            {
+                *error = "Unable to load the OpenPBR lookup tables.";
+                return false;
+            }
+        }
+
+        containerDeviceArena = device->CreateArena();
+        container.Init(device, containerDeviceArena.get());
+        textures = std::make_unique<VirtualTextureManager>(*arena, device, displayDevice);
+        for (Material &material : container.materials)
+        {
+            MaterialTextureHandle handle = textures->AddTexture(material.diffuseUdimPaths);
+            material.udimBase = handle.udimBase;
+            material.udimTableOffset = handle.udimTableOffset;
+            material.valid = material.udimBase != 0u;
+        }
+        renderSystem = std::make_unique<RenderSystem>(
+            device, displayDevice, &container, scene, textures.get());
+        renderSystem->Update(&importContext);
+        textures->Finalize();
+
+        if (container.GetBVHs(GeometryType::Scene).size() != 1)
+        {
+            *error = "The USD stage has no renderable scene.";
+            return false;
+        }
+        AffineTransform renderFromCamera;
+        Matrix4x4 cameraFromRaster;
+        if (!container.camera.cameraFromWorld.TryInverse(&renderFromCamera) ||
+            !container.camera.rasterFromCamera.TryInverse(&cameraFromRaster))
+        {
+            *error = "The USD camera is invalid.";
+            return false;
+        }
+        return true;
+    }
+};
+
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -33,15 +145,31 @@ int main(int argc, char **argv)
     bool interactive = false;
     uint32_t samplesPerPixel = 0;
     std::string filename;
+    std::string outputPath = "render.png";
+    std::string cameraPath;
+    std::optional<Vec2u> pixel;
     bool positionalOnly = false;
     const auto printUsage = []() {
         std::printf(
-            "Usage: yeoubi <scene> [--path-trace | --interactive] [--spp 1..4096]\n"
-            "The scene filename and options may appear in any order.\n"
-            "Default: base-color preview. --path-trace: 16 samples per frame.\n"
-            "--interactive: progressive diffuse tracing, 1 sample per frame.\n"
-            "--spp overrides samples per frame. Lighting is a constant environment.\n"
+            "Usage: yeoubi [scene] [--path-trace | --interactive] [--spp 1..4096] [--output file.png] [--camera file.json] [--pixel X Y]\n"
+            "A scene path selects offline rendering; --interactive opens the window instead.\n"
+            "With no scene, open a USD file from File > Open USD.\n"
+            "--spp sets offline samples (default 16). --output sets its PNG name (default render.png).\n"
+            "Interactive mode ignores --output.\n"
+            "--camera overrides USD cameras in either mode. Export one from the interactive File menu.\n"
+            "--pixel renders one offline pixel and writes a 1x1 PNG.\n"
             "Esc: toggle camera controls; WASD/QE: move; mouse: look; R: reset accumulation.\n");
+    };
+    const auto parsePixelCoordinate = [](const char *text, uint32_t *coordinate) {
+        if (!text[0] || text[0] == '-' || text[0] == '+')
+            return false;
+        char *end = nullptr;
+        errno = 0;
+        const unsigned long long value = std::strtoull(text, &end, 10);
+        if (errno || end == text || *end || value > std::numeric_limits<uint32_t>::max())
+            return false;
+        *coordinate = static_cast<uint32_t>(value);
+        return true;
     };
     for (int i = 1; i < argc; ++i)
     {
@@ -71,6 +199,37 @@ int main(int argc, char **argv)
             }
             samplesPerPixel = static_cast<uint32_t>(value);
         }
+        else if (!positionalOnly && std::strcmp(argv[i], "--output") == 0)
+        {
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                std::fprintf(stderr, "--output requires a PNG filename.\n");
+                return 1;
+            }
+            outputPath = argv[++i];
+        }
+        else if (!positionalOnly && std::strcmp(argv[i], "--camera") == 0)
+        {
+            if (i + 1 >= argc || argv[i + 1][0] == '-')
+            {
+                std::fprintf(stderr, "--camera requires a JSON filename.\n");
+                return 1;
+            }
+            cameraPath = argv[++i];
+        }
+        else if (!positionalOnly && std::strcmp(argv[i], "--pixel") == 0)
+        {
+            uint32_t x = 0;
+            uint32_t y = 0;
+            if (i + 2 >= argc || !parsePixelCoordinate(argv[i + 1], &x) ||
+                !parsePixelCoordinate(argv[i + 2], &y))
+            {
+                std::fprintf(stderr, "--pixel requires non-negative X and Y coordinates.\n");
+                return 1;
+            }
+            pixel = Vec2u(x, y);
+            i += 2;
+        }
         else if (!positionalOnly && argv[i][0] == '-')
         {
             std::fprintf(stderr, "Unknown or incomplete option: %s\n", argv[i]);
@@ -84,273 +243,42 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    if (filename.empty())
-    {
-        std::fprintf(stderr, "A scene filename is required.\n");
-        printUsage();
-        return 1;
-    }
     if (samplesPerPixel == 0)
         samplesPerPixel = interactive ? 1u : 16u;
-
-    std::unique_ptr<Device> device = Device::CreateDevice(DeviceKind::GPU);
-
-    DeviceTexture opaqueDielectricEnergyComplementTexture =
-        LoadOpenPbrOpaqueDielectricEnergyComplementTexture(*device, argv[0]);
-    YBI_ASSERT(opaqueDielectricEnergyComplementTexture.textureObject != 0);
-    DeviceTexture opaqueDielectricAverageEnergyComplementTexture =
-        LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(*device, argv[0]);
-    YBI_ASSERT(opaqueDielectricAverageEnergyComplementTexture.textureObject != 0);
-
-    Arena arena;
-    DataContainer container;
-    std::unique_ptr<DeviceArena> dataContainerDeviceArena = device->CreateArena();
-
-    glfwInit();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow *window = glfwCreateWindow(1920, 1080, "yeoubi", nullptr, nullptr);
-    YBI_ASSERT(window);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-
-    std::unique_ptr<DisplayDevice> displayDevice = DisplayDevice::CreateDevice(window);
-    YBI_ASSERT(displayDevice);
-
-    std::unique_ptr<SceneLoader> sceneLoader = SceneLoader::CreateSceneLoader(filename);
-    YBI_ASSERT(sceneLoader);
-    SceneImportContext importContext;
-    Scene *scene = sceneLoader->LoadScene(&arena, &container, &importContext);
-    container.Init(device.get(), dataContainerDeviceArena.get());
-
-    // Virtual textures
-    VirtualTextureManager manager(arena, device.get(), displayDevice.get());
-    for (Material &mat : container.materials)
+    if (pixel && (interactive || filename.empty()))
     {
-        MaterialTextureHandle handle = manager.AddTexture(mat.diffuseUdimPaths);
-        mat.udimBase = handle.udimBase;
-        mat.udimTableOffset = handle.udimTableOffset;
-
-        // TODO: this disables materials with no diffuse map. support actual materials
-        mat.valid = mat.udimBase != 0u;
-    }
-    RenderSystem system(device.get(), displayDevice.get(), &container, scene, &manager);
-    system.Update(&importContext);
-    manager.Finalize();
-
-    YBI_ASSERT(scene->container->GetBVHs(GeometryType::Scene).size() == 1);
-
-    AffineTransform renderFromCamera;
-    Matrix4x4 cameraFromRaster;
-
-    const Camera &camera = scene->container->camera;
-    bool result = camera.cameraFromWorld.TryInverse(&renderFromCamera);
-    YBI_ASSERT(result);
-    result = camera.rasterFromCamera.TryInverse(&cameraFromRaster);
-    YBI_ASSERT(result);
-    CameraController cameraController(window, renderFromCamera, camera.worldUp);
-
-    const size_t imageSize =
-        static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
-    const uint32_t numFramesInFlight = displayDevice->GetNumFramesInFlight();
-    std::vector<std::unique_ptr<DisplayBuffer>> displayImageHandles;
-    std::vector<DeviceExternalBuffer> deviceImageHandles;
-    std::vector<std::unique_ptr<DisplaySemaphore>> displayFrameFinishedSemaphores;
-    std::vector<DeviceExternalSemaphore> deviceFrameFinishedSemaphores;
-    displayImageHandles.reserve(numFramesInFlight);
-    deviceImageHandles.reserve(numFramesInFlight);
-    displayFrameFinishedSemaphores.reserve(numFramesInFlight);
-    deviceFrameFinishedSemaphores.reserve(numFramesInFlight);
-
-    for (uint32_t frameIndex = 0; frameIndex < numFramesInFlight; ++frameIndex)
-    {
-        displayImageHandles.push_back(displayDevice->AllocateExternalBuffer(imageSize));
-        deviceImageHandles.push_back(device->ImportExternalBuffer(*displayImageHandles.back()));
-        displayFrameFinishedSemaphores.push_back(displayDevice->CreateDisplaySemaphore());
-        deviceFrameFinishedSemaphores.push_back(
-            device->ImportExternalSemaphore(*displayFrameFinishedSemaphores.back()));
+        std::fprintf(stderr, "--pixel is available only for offline rendering with a scene.\n");
+        return 1;
     }
 
-    KernelParams params{};
-    params.pathTrace = pathTrace;
-    params.samplesPerPixel = samplesPerPixel;
-    params.bvhHandle = scene->container->GetBVHs(GeometryType::Scene)[0].handle.handle;
-    params.cameraPosition = camera.position;
-    params.fovRadians = camera.verticalFovRadians;
-    params.cameraFromRaster = cameraFromRaster;
-    params.renderFromCamera = renderFromCamera;
-    params.maxDepth = 10;
-    params.lensRadius = 0.f; // TODO: initialize properly
-    params.imageWidth = camera.width;
-    params.imageHeight = camera.height;
-    params.scene = system.deviceScene;
-    params.opaqueDielectricEnergyComplementTexture =
-        opaqueDielectricEnergyComplementTexture.textureObject;
-    params.opaqueDielectricAverageEnergyComplementTexture =
-        opaqueDielectricAverageEnergyComplementTexture.textureObject;
-
-    DeviceBuffer cudaParams = device->Alloc(sizeof(KernelParams));
-    DeviceBuffer accumulationBuffer;
-    DeviceBuffer kernelOutputBuffer = device->Alloc(
-        static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * sizeof(Vec3f));
-    params.kernelOutput = reinterpret_cast<Vec3f *>(kernelOutputBuffer.Data());
-
-    if (interactive)
+    std::optional<CameraJson> cameraOverride;
+    if (!cameraPath.empty())
     {
-        accumulationBuffer = device->Alloc(static_cast<size_t>(camera.width) *
-                                           static_cast<size_t>(camera.height) * sizeof(Vec3f));
-        params.accumulation = reinterpret_cast<Vec3f *>(accumulationBuffer.Data());
-    }
-    ProgressiveState progressiveState;
-
-    DeviceKernelDesc desc;
-    desc.filename = YBI_ACCUMULATE_KERNEL_PATH;
-    desc.entryName = "AccumulateSamples";
-    std::unique_ptr<DeviceKernel> accumulateSamplesKernel = device->CreateDeviceKernel(desc);
-
-    uint32_t lastFrameIndex = 0;
-    double lastTime = glfwGetTime();
-    bool wasEscapePressed = false;
-    bool wasResetPressed = false;
-    bool resetPending = false;
-
-    while (!glfwWindowShouldClose(window))
-    {
-        const double currentTime = glfwGetTime();
-        const float deltaTime = static_cast<float>(currentTime - lastTime);
-        lastTime = currentTime;
-
-        glfwPollEvents();
-        cameraController.UpdateCamera(window, deltaTime);
-        params.renderFromCamera = cameraController.GetRenderFromCamera();
-        Vec3f cameraPosition = params.renderFromCamera.GetTranslation();
-        params.cameraPosition = cameraPosition;
-
-        const bool escapePressed = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-        if (escapePressed && !wasEscapePressed)
+        CameraJson camera;
+        std::string error;
+        if (!LoadCameraJson(cameraPath, &camera, &error))
         {
-            int currentMode = glfwGetInputMode(window, GLFW_CURSOR);
-            int cursorMode =
-                currentMode == GLFW_CURSOR_DISABLED ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED;
-
-            glfwSetInputMode(window, GLFW_CURSOR, cursorMode);
-            cameraController.SetMovementEnabled(cursorMode == GLFW_CURSOR_DISABLED);
+            std::fprintf(stderr, "%s\n", error.c_str());
+            return 1;
         }
-        wasEscapePressed = escapePressed;
-        const bool resetPressed = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
-        resetPending |= resetPressed && !wasResetPressed;
-        wasResetPressed = resetPressed;
-
-        if (!displayDevice->BeginFrame())
-        {
-            continue;
-        }
-
-        const uint32_t frameIndex = displayDevice->GetCurrentFrameIndex();
-        lastFrameIndex = frameIndex;
-
-        DeviceExternalBuffer &deviceImageHandle = deviceImageHandles[frameIndex];
-        params.imageHandle = reinterpret_cast<uint64_t>(deviceImageHandle.buffer.Data());
-        manager.UpdateParams(&params);
-
-        device->StartProfiler();
-        manager.Update(&params);
-        device->StopProfiler();
-
-        if (interactive)
-        {
-            progressiveState.BeginFrame(
-                params.renderFromCamera,
-                progressiveState.textureRevision, // manager.GetResidencyRevision(),
-                samplesPerPixel,
-                resetPending);
-            params.accumulatedSamples = progressiveState.samples;
-            params.sampleOffset = progressiveState.samples;
-        }
-        resetPending = false;
-        device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
-
-        device->StartProfiler();
-        device->DispatchKernel(camera.width, camera.height, cudaParams);
-        device->StopProfiler();
-
-        void *arguments[] = {&params};
-
-        DeviceKernelLaunchDesc desc;
-        desc.gridX = (params.imageWidth + 8 - 1) / 8;
-        desc.gridY = (params.imageHeight + 8 - 1) / 8;
-        desc.blockX = 8;
-        desc.blockY = 8;
-        desc.arguments = arguments;
-
-        device->ExecuteKernel(*accumulateSamplesKernel, desc);
-
-        if (interactive)
-        {
-            progressiveState.samples += samplesPerPixel;
-        }
-        else if (params.pathTrace)
-            params.sampleOffset += params.samplesPerPixel;
-        manager.CopyFeedback();
-        device->SignalExternalSemaphore(deviceFrameFinishedSemaphores[frameIndex]);
-
-#ifdef WITH_VULKAN
-        const Vec3f forward = params.renderFromCamera.TransformVector(Vec3f(0.f, 0.f, -1.f));
-        const Vec3f up = params.renderFromCamera.TransformVector(Vec3f(0.f, 1.f, 0.f));
-        ImGui::SetNextWindowPos(ImVec2(16.f, 16.f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("Position:  %.3f, %.3f, %.3f", cameraPosition.x, cameraPosition.y, cameraPosition.z);
-        ImGui::Text("Forward:   %.3f, %.3f, %.3f", forward.x, forward.y, forward.z);
-        ImGui::Text("Up:        %.3f, %.3f, %.3f", up.x, up.y, up.z);
-        ImGui::Text("Vertical FOV: %.2f deg", params.fovRadians * (180.f / 3.14159265358979323846f));
-        ImGui::Text("Resolution: %u x %u", params.imageWidth, params.imageHeight);
-        ImGui::Text("Lens radius: %.3f", params.lensRadius);
-        ImGui::Text("Move speed: %.2f", cameraController.moveSpeed);
-        ImGui::Separator();
-        ImGui::Text("SPP per frame: %u", params.samplesPerPixel);
-        if (interactive)
-            ImGui::Text("Accumulated SPP: %u", progressiveState.samples);
-        ImGui::End();
-#endif
-
-        displayDevice->EndFrame(*displayImageHandles[frameIndex],
-                                *displayFrameFinishedSemaphores[frameIndex],
-                                camera.width,
-                                camera.height);
+        cameraOverride = camera;
     }
 
-    // Finish presentation before reading back or releasing shared CUDA/Vulkan resources.
-    displayDevice->WaitIdle();
-
-    const size_t outputSize =
-        static_cast<size_t>(camera.width) * static_cast<size_t>(camera.height) * 4;
-    void *outBytes = malloc(outputSize);
-    device->CopyToHost(outBytes, deviceImageHandles[lastFrameIndex].buffer.Data(), outputSize);
-
-    stbi_write_png("test.png", camera.width, camera.height, 4, outBytes, camera.width * 4);
-    free(outBytes);
-
-    for (DeviceExternalSemaphore &deviceFrameFinishedSemaphore : deviceFrameFinishedSemaphores)
+    if (interactive || filename.empty())
     {
-        device->FreeExternalSemaphore(deviceFrameFinishedSemaphore);
+        glfwInit();
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        {
+            InteractiveApplication app(DeviceKind::GPU, filename, cameraOverride);
+            app.Run();
+        }
+        glfwTerminate();
     }
-    deviceFrameFinishedSemaphores.clear();
-    displayFrameFinishedSemaphores.clear();
-
-    for (DeviceExternalBuffer &deviceImageHandle : deviceImageHandles)
+    else
     {
-        device->FreeExternalBuffer(deviceImageHandle);
+        OfflineApplication app(DeviceKind::GPU, filename, samplesPerPixel, outputPath,
+                               cameraOverride, pixel);
+        app.Run();
     }
-    deviceImageHandles.clear();
-    displayImageHandles.clear();
-    displayDevice.reset();
-    if (accumulationBuffer)
-        device->Free(accumulationBuffer);
-    device->DestroyTexture(opaqueDielectricAverageEnergyComplementTexture);
-    device->DestroyTexture(opaqueDielectricEnergyComplementTexture);
-    device->Free(cudaParams);
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
-
     return 0;
 }

@@ -29,6 +29,12 @@ enum class DeviceKind
     GPU,
 };
 
+enum class MaterialBackend
+{
+    OpenPbr,
+    MaterialX,
+};
+
 class DeviceArena
 {
 protected:
@@ -127,6 +133,8 @@ struct Device
 {
     virtual ~Device() = default;
 
+    virtual void WaitIdle() = 0;
+
     virtual DeviceBuffer Alloc(size_t bytes) = 0;
     virtual void Free(DeviceBuffer &buffer) = 0;
     virtual DeviceBuffer AllocHost(size_t bytes) = 0;
@@ -143,7 +151,8 @@ struct Device
                                         DataContainer *container,
                                         const Array<int> &objectToBVHIndex) = 0;
     virtual std::unique_ptr<DeviceArena> CreateArena() = 0;
-    static std::unique_ptr<Device> CreateDevice(DeviceKind kind);
+    static std::unique_ptr<Device> CreateDevice(DeviceKind kind,
+                                                bool createRendererPipeline = true);
     virtual void CopyToDevice(void *dst, void *ptr, size_t size) = 0;
     virtual void CopyToDeviceAsync(void *dst, void *ptr, size_t size) = 0;
     virtual void CopyToHost(void *dst, void *ptr, size_t size) = 0;
@@ -183,6 +192,14 @@ struct Device
     virtual void StopProfiler() const = 0;
 
     virtual void CreatePipeline() = 0;
+    virtual void DestroyPipeline() {}
+    virtual bool CreatePipeline(MaterialBackend backend)
+    {
+        if (backend != MaterialBackend::OpenPbr)
+            return false;
+        CreatePipeline();
+        return true;
+    }
 };
 
 } // namespace ybi

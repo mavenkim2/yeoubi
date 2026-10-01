@@ -38,12 +38,20 @@ YBI_CPU_GPU uint32_t GetUdimTableIndex(MaterialTextureHandle handle, const Vec2f
     return udimTableIndex;
 }
 
+struct VirtualTextureMipSelection
+{
+    float lod;
+    uint32_t baseMip;
+    uint32_t nextMip;
+};
+
 YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
                                             MaterialTextureHandle handle,
                                             const ShadingInfo &shadingInfo,
                                             uint32_t udimTableIndex,
                                             const Vec2f &uv,
-                                            const Vec2f (&uvs)[3])
+                                            const Vec2f (&uvs)[3],
+                                            VirtualTextureMipSelection *mipSelection = nullptr)
 {
     DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
     const uint32_t pageShift = 7;
@@ -65,6 +73,8 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
 
     uint32_t baseMip = uint32_t(Floor(lod));
     uint32_t nextMip = Min(baseMip + 1, maxMip);
+    if (mipSelection)
+        *mipSelection = {lod, baseMip, nextMip};
 
     // TODO: don't hardcode
     UnpackedFeedbackRequest lowR, highR;
@@ -113,7 +123,8 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleTiledImage(const KernelParams &params,
                                                  Vec2f uvTiling,
                                                  Vec2f uvOffset,
                                                  Vec2f realWorldImageSize,
-                                                 Vec2f realWorldTileSize)
+                                                 Vec2f realWorldTileSize,
+                                                 VirtualTextureMipSelection *mipSelection = nullptr)
 {
     // The texture file is selected from the original UV tile. Tiling only changes
     // coordinates within that image; keep vertex UVs unwrapped for the LOD area.
@@ -124,7 +135,8 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleTiledImage(const KernelParams &params,
     const Vec2f uvs[3] = {shadingInfo.uvs[0] * scale - offset,
                           shadingInfo.uvs[1] * scale - offset,
                           shadingInfo.uvs[2] * scale - offset};
-    return VirtualTextureSampleImage(params, handle, shadingInfo, udimTableIndex, uv, uvs);
+    return VirtualTextureSampleImage(
+        params, handle, shadingInfo, udimTableIndex, uv, uvs, mipSelection);
 }
 
 YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,

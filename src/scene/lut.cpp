@@ -1,5 +1,6 @@
 #include "scene/lut.h"
 
+#include "core/executable_path.h"
 #include "device/device.h"
 #include <cstdio>
 #include <filesystem>
@@ -16,15 +17,19 @@ constexpr const char *OpenPbrEnergyTableFilename =
 constexpr const char *OpenPbrAverageEnergyTableFilename =
     "openpbr_opaque_dielectric_average_energy_complement.bin";
 
-DeviceTexture LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device,
-                                                                 const char *executablePath)
+DeviceTexture LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device)
 {
     constexpr size_t valueCount =
         OpenPbrEnergyTableSize * OpenPbrEnergyTableSize * OpenPbrEnergyTableSize;
     constexpr size_t byteCount = valueCount * sizeof(uint16_t);
 
-    const std::filesystem::path tablePath =
-        std::filesystem::absolute(executablePath).parent_path() / OpenPbrEnergyTableFilename;
+    const std::filesystem::path executableDirectory = ExecutableDirectory();
+    if (executableDirectory.empty())
+    {
+        std::fprintf(stderr, "Unable to locate the executable directory.\n");
+        return {};
+    }
+    const std::filesystem::path tablePath = executableDirectory / OpenPbrEnergyTableFilename;
     std::ifstream input(tablePath, std::ios::binary | std::ios::ate);
     if (!input || input.tellg() != static_cast<std::streamoff>(byteCount))
     {
@@ -65,15 +70,19 @@ DeviceTexture LoadOpenPbrOpaqueDielectricEnergyComplementTexture(Device &device,
     return texture;
 }
 
-DeviceTexture LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(Device &device,
-                                                                        const char *executablePath)
+DeviceTexture LoadOpenPbrOpaqueDielectricAverageEnergyComplementTexture(Device &device)
 {
     constexpr size_t valueCount = OpenPbrEnergyTableSize * OpenPbrEnergyTableSize;
     constexpr size_t byteCount = valueCount * sizeof(uint16_t);
 
+    const std::filesystem::path executableDirectory = ExecutableDirectory();
+    if (executableDirectory.empty())
+    {
+        std::fprintf(stderr, "Unable to locate the executable directory.\n");
+        return {};
+    }
     const std::filesystem::path tablePath =
-        std::filesystem::absolute(executablePath).parent_path() /
-        OpenPbrAverageEnergyTableFilename;
+        executableDirectory / OpenPbrAverageEnergyTableFilename;
     std::ifstream input(tablePath, std::ios::binary | std::ios::ate);
     if (!input || input.tellg() != static_cast<std::streamoff>(byteCount))
     {

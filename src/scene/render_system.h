@@ -80,7 +80,7 @@ struct RenderSystem
     Scene *rootScene;
     DataContainer *dataContainer;
 
-    DeviceScene deviceScene;
+    DeviceScene deviceScene{};
 
     Device *device;
     DisplayDevice *displayDevice;

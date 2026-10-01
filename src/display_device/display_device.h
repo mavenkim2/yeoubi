@@ -10,6 +10,8 @@ struct GLFWwindow;
 namespace ybi
 {
 
+struct Device;
+
 enum class ExternalMemoryHandleType
 {
     None,
@@ -37,7 +39,15 @@ struct DisplayBuffer
 
 struct DeviceExternalBuffer
 {
+    DeviceExternalBuffer() = default;
+    DeviceExternalBuffer(const DeviceExternalBuffer &) = delete;
+    DeviceExternalBuffer &operator=(const DeviceExternalBuffer &) = delete;
+    DeviceExternalBuffer(DeviceExternalBuffer &&other) noexcept;
+    DeviceExternalBuffer &operator=(DeviceExternalBuffer &&other);
+    ~DeviceExternalBuffer();
+
     void *handle = nullptr;
+    Device *device = nullptr;
     DeviceBuffer buffer;
 };
 
@@ -50,7 +60,15 @@ struct DisplaySemaphore
 
 struct DeviceExternalSemaphore
 {
+    DeviceExternalSemaphore() = default;
+    DeviceExternalSemaphore(const DeviceExternalSemaphore &) = delete;
+    DeviceExternalSemaphore &operator=(const DeviceExternalSemaphore &) = delete;
+    DeviceExternalSemaphore(DeviceExternalSemaphore &&other) noexcept;
+    DeviceExternalSemaphore &operator=(DeviceExternalSemaphore &&other);
+    ~DeviceExternalSemaphore();
+
     void *handle = nullptr;
+    Device *device = nullptr;
 };
 
 struct DisplayDevice
@@ -64,11 +82,12 @@ struct DisplayDevice
     static std::unique_ptr<DisplayDevice> CreateDevice(GLFWwindow *window);
     virtual std::unique_ptr<DisplayBuffer> AllocateExternalBuffer(size_t size) = 0;
     virtual std::unique_ptr<DisplaySemaphore> CreateDisplaySemaphore() = 0;
-    // Complete submitted display work before releasing resources it references.
     virtual void WaitIdle() = 0;
     virtual bool BeginFrame() = 0;
-    virtual bool
-    EndFrame(DisplayBuffer &framebuffer, DisplaySemaphore &cudaFinishedSemaphore, int width, int height) = 0;
+    virtual bool EndFrame(DisplayBuffer *framebuffer,
+                          DisplaySemaphore *cudaFinishedSemaphore,
+                          int width,
+                          int height) = 0;
 
     uint32_t GetNumFramesInFlight() const
     {

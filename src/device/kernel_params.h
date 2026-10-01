@@ -19,6 +19,8 @@ struct KernelParams
     float lensRadius;
     int imageWidth;
     int imageHeight;
+    uint32_t pixelOffsetX;
+    uint32_t pixelOffsetY;
 
     // BVH
     uint64_t bvhHandle;
@@ -29,7 +31,6 @@ struct KernelParams
     // Geometry
     DeviceScene scene;
     int maxDepth;
-    bool pathTrace;
     uint32_t samplesPerPixel;
     uint32_t sampleOffset;
     Vec3f *accumulation;

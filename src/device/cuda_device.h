@@ -86,6 +86,7 @@ struct CUDADevice : Device
 
     explicit CUDADevice(bool createRendererPipeline = true);
     ~CUDADevice() override;
+    void WaitIdle() override;
     DeviceBuffer Alloc(size_t bytes) override;
     void Free(DeviceBuffer &buffer) override;
     DeviceBuffer AllocHost(size_t bytes) override;
@@ -145,6 +146,8 @@ struct CUDADevice : Device
     void StartProfiler() const override;
     void StopProfiler() const override;
     void CreatePipeline() override;
+    void DestroyPipeline() override;
+    bool CreatePipeline(MaterialBackend backend) override;
 
 private:
     void GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions,
@@ -152,7 +155,6 @@ private:
     bool LinkOptixPipeline(const OptixPipelineCompileOptions &pipelineCompileOptions);
     void DestroyLinkedOptixPipeline();
 
-    std::string ptx;
 };
 
 } // namespace ybi

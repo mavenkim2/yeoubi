@@ -22,6 +22,7 @@ public:
     CameraController(GLFWwindow *window,
                      const AffineTransform &renderFromCamera,
                      const Vec3f &worldUp);
+    void ResetCamera(const AffineTransform &renderFromCamera, const Vec3f &worldUp);
 
     void UpdateCamera(GLFWwindow *window, float deltaTime);
     void HandleScroll(GLFWwindow *window, double xOffset, double yOffset);

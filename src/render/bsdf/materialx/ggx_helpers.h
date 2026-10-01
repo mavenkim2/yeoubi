@@ -1,6 +1,9 @@
 #pragma once
 
 #include "core/math.h"
+#include "core/vec2f.h"
+#include "core/vec3f.h"
+#include "core/vec4f.h"
 #include "device/cuda_compat.h"
 
 namespace ybi
@@ -31,6 +34,33 @@ YBI_CPU_GPU float GGXSmithG1(float cosTheta, float alpha)
     const float cosTheta2 = Sqr(cosTheta);
     const float tanTheta2 = (1.f - cosTheta2) / cosTheta2;
     return 2.f / (1.f + Sqrt(1.f + Sqr(alpha) * tanTheta2));
+}
+
+YBI_CPU_GPU Vec3f GGXDirectionalAlbedo(float nDotV,
+                                      float alpha,
+                                      const Vec3f &f0,
+                                      const Vec3f &f90)
+{
+    const float x = nDotV;
+    const float y = alpha;
+    const float x2 = Sqr(x);
+    const float y2 = Sqr(y);
+    const Vec4f r =
+        Vec4f(0.1003, 0.9345, 1.0, 1.0) + Vec4f(-0.6303, -2.323, -1.765, 0.2281) * x +
+        Vec4f(9.748, 2.229, 8.263, 15.94) * y + Vec4f(-2.038, -3.748, 11.53, -55.83) * x * y +
+        Vec4f(29.34, 1.424, 28.96, 13.08) * x2 + Vec4f(-8.245, -0.7684, -7.507, 41.26) * y2 +
+        Vec4f(-26.44, 1.436, -36.11, 54.9) * x2 * y + Vec4f(19.99, 0.2913, 15.86, 300.2) * x * y2 +
+        Vec4f(-5.448, 0.6286, 33.37, -285.1) * x2 * y2;
+    const Vec2f ab = Clamp(r.Xy() / r.Zw(), 0.f, 1.f);
+    return f0 * ab.x + f90 * ab.y;
+}
+
+// https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
+// Equations 14 and 16.
+YBI_CPU_GPU Vec3f GGXEnergyCompensation(float nDotV, float alpha, const Vec3f &fss)
+{
+    const float ess = GGXDirectionalAlbedo(nDotV, alpha, Vec3f(1.f), Vec3f(1.f)).x;
+    return 1.f + fss * ((1.f - ess) / Max(ess, 1e-8f));
 }
 
 YBI_CPU_GPU Vec3f FresnelConductor(float cosTheta, Vec3f ior, Vec3f extinction)

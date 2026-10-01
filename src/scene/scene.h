@@ -210,6 +210,12 @@ struct Camera
     int height;
 };
 
+struct NamedCamera
+{
+    std::string name;
+    Camera camera;
+};
+
 struct Attributes
 {
     std::vector<bool> bools;
@@ -274,6 +280,7 @@ struct SceneImportContext
 struct DataContainer
 {
     Camera camera;
+    std::vector<NamedCamera> cameras;
     std::vector<Mesh> meshes;
     std::vector<Array<Vec3f>> meshPositions;
     std::vector<Array<Vec3f>> meshNormals;

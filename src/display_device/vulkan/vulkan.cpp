@@ -2,17 +2,22 @@
 #include "display_device/vulkan/vulkan.h"
 #include "core/math.h"
 #include <GLFW/glfw3.h>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
 namespace ybi
 {
+std::unique_ptr<DisplayDevice> DisplayDevice::CreateDevice(GLFWwindow *window)
+{
+    return std::make_unique<Vulkan>(window);
+}
+
 PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT;
 PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessengerEXT;
 #ifdef _WIN32
@@ -857,19 +862,19 @@ bool Vulkan::BeginFrame()
     return true;
 }
 
-bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
-                      DisplaySemaphore &cudaFinishedSemaphore,
+bool Vulkan::EndFrame(DisplayBuffer *framebuffer,
+                      DisplaySemaphore *cudaFinishedSemaphore,
                       int width,
                       int height)
 {
-    YBI_ASSERT(width > 0);
-    YBI_ASSERT(height > 0);
-    YBI_ASSERT(static_cast<uint32_t>(width) == swapchainExtent.width);
-    YBI_ASSERT(static_cast<uint32_t>(height) == swapchainExtent.height);
-
-    VulkanExternalBuffer &vulkanFramebuffer = static_cast<VulkanExternalBuffer &>(framebuffer);
-    VulkanSemaphore &vulkanCudaFinishedSemaphore =
-        static_cast<VulkanSemaphore &>(cudaFinishedSemaphore);
+    const bool hasImage = framebuffer != nullptr;
+    YBI_ASSERT(hasImage == (cudaFinishedSemaphore != nullptr));
+    if (hasImage)
+    {
+        YBI_ASSERT(width > 0 && height > 0);
+        YBI_ASSERT(static_cast<uint32_t>(width) == swapchainExtent.width);
+        YBI_ASSERT(static_cast<uint32_t>(height) == swapchainExtent.height);
+    }
 
     VkCommandBuffer commandBuffer = commandBuffers[currentFrame];
     VkImage swapchainImage = swapchainImages[currentSwapchainImageIndex];
@@ -900,29 +905,43 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
                          1,
                          &transferBarrier);
 
-    VkBufferImageCopy copyRegion = {};
-    copyRegion.bufferOffset = 0;
-    copyRegion.bufferRowLength = static_cast<uint32_t>(width);
-    copyRegion.bufferImageHeight = static_cast<uint32_t>(height);
-    copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    copyRegion.imageSubresource.mipLevel = 0;
-    copyRegion.imageSubresource.baseArrayLayer = 0;
-    copyRegion.imageSubresource.layerCount = 1;
-    copyRegion.imageOffset = {0, 0, 0};
-    copyRegion.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
-
-    vkCmdCopyBufferToImage(commandBuffer,
-                           vulkanFramebuffer.buffer,
-                           swapchainImage,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                           1,
-                           &copyRegion);
+    if (hasImage)
+    {
+        VulkanExternalBuffer &vulkanFramebuffer =
+            static_cast<VulkanExternalBuffer &>(*framebuffer);
+        VkBufferImageCopy copyRegion = {};
+        copyRegion.bufferRowLength = static_cast<uint32_t>(width);
+        copyRegion.bufferImageHeight = static_cast<uint32_t>(height);
+        copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copyRegion.imageSubresource.layerCount = 1;
+        copyRegion.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+        vkCmdCopyBufferToImage(commandBuffer,
+                               vulkanFramebuffer.buffer,
+                               swapchainImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               1,
+                               &copyRegion);
+    }
+    else
+    {
+        VkClearColorValue black = {};
+        VkImageSubresourceRange range = {};
+        range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        range.levelCount = 1;
+        range.layerCount = 1;
+        vkCmdClearColorImage(commandBuffer,
+                             swapchainImage,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             &black,
+                             1,
+                             &range);
+    }
 
     VkImageMemoryBarrier colorBarrier = {};
     colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     colorBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    colorBarrier.dstAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     colorBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -955,10 +974,9 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
 
     VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
-    VkSemaphore waitSemaphores[] = {
-        imageAvailableSemaphores[currentFrame],
-        vulkanCudaFinishedSemaphore.semaphore,
-    };
+    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE};
+    if (hasImage)
+        waitSemaphores[1] = static_cast<VulkanSemaphore &>(*cudaFinishedSemaphore).semaphore;
     VkPipelineStageFlags waitStages[] = {
         VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -967,7 +985,7 @@ bool Vulkan::EndFrame(DisplayBuffer &framebuffer,
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 2;
+    submitInfo.waitSemaphoreCount = hasImage ? 2 : 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;

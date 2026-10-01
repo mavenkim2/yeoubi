@@ -22,12 +22,17 @@ CameraController::CameraController(GLFWwindow *window,
     glfwSetWindowUserPointer(window, this);
     previousScrollCallback = glfwSetScrollCallback(window, ScrollCallback);
 
+    ResetCamera(renderFromCamera, inputWorldUp);
+}
+
+void CameraController::ResetCamera(const AffineTransform &renderFromCamera,
+                                   const Vec3f &inputWorldUp)
+{
     YBI_ASSERT(LengthSquared(inputWorldUp) > 0.f);
     worldUp = Normalize(inputWorldUp);
     position = renderFromCamera.GetTranslation();
 
-    const Vec3f forward =
-        Normalize(renderFromCamera.TransformVector(Vec3f(0.0f, 0.0f, -1.0f)));
+    const Vec3f forward = Normalize(renderFromCamera.TransformVector(Vec3f(0.0f, 0.0f, -1.0f)));
     const float verticalComponent = Clamp(Dot(forward, worldUp), -1.f, 1.f);
     pitch = Clamp(std::asinf(verticalComponent), -1.55f, 1.55f);
 
@@ -41,6 +46,7 @@ CameraController::CameraController(GLFWwindow *window,
     YBI_ASSERT(LengthSquared(horizontalForward) > 0.f);
     yawZeroForward = Normalize(horizontalForward);
     yaw = 0.f;
+    firstMouse = true;
 }
 
 Vec3f CameraController::GetForward() const

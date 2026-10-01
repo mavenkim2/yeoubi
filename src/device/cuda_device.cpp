@@ -217,6 +217,12 @@ CUDADevice::~CUDADevice()
     cudaContext = nullptr;
 }
 
+void CUDADevice::WaitIdle()
+{
+    ContextScope contextScope(this);
+    CUDA_ASSERT(cuCtxSynchronize());
+}
+
 DeviceBuffer CUDADevice::Alloc(size_t numBytes)
 {
     YBI_ASSERT(numBytes != 0);
@@ -295,6 +301,7 @@ DeviceExternalBuffer CUDADevice::ImportExternalBuffer(const DisplayBuffer &buffe
     DeviceExternalBuffer result;
     result.handle = reinterpret_cast<void *>(externalMemory);
     result.buffer = DeviceBuffer(uintptr_t(cudaPtr), buffer.size);
+    result.device = this;
     return result;
 }
 
@@ -337,6 +344,7 @@ DeviceExternalSemaphore CUDADevice::ImportExternalSemaphore(const DisplaySemapho
 
     DeviceExternalSemaphore result;
     result.handle = reinterpret_cast<void *>(externalSemaphore);
+    result.device = this;
     return result;
 }
 
@@ -1021,17 +1029,7 @@ void CUDADevice::InitializeOptix(bool createRendererPipeline)
 
     if (!createRendererPipeline)
         return;
-
-    const std::string ptxFilename = YBI_OPTIX_PTX_PATH;
-
-    std::ifstream input(ptxFilename, std::ios::binary);
-    YBI_ERROR(input.is_open(), "Failed to open PTX file: %s\n", ptxFilename.c_str());
-
-    ptx = std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-    YBI_ERROR(!ptx.empty(), "PTX file is empty: %s\n", ptxFilename.c_str());
-
-    const bool result = CreateOptixPipeline(ptx);
-    // YBI_ASSERT(result);
+    CreatePipeline(MaterialBackend::OpenPbr);
 }
 
 bool CUDADevice::SupportsClusterBVHs() const
@@ -1066,7 +1064,35 @@ void CUDADevice::GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions
 
 void CUDADevice::CreatePipeline()
 {
-    CreateOptixPipeline(ptx);
+    CreatePipeline(MaterialBackend::OpenPbr);
+}
+
+void CUDADevice::DestroyPipeline()
+{
+    ContextScope contextScope(this);
+    DestroyOptixPipeline();
+}
+
+bool CUDADevice::CreatePipeline(MaterialBackend backend)
+{
+    const char *ptxFilename = backend == MaterialBackend::MaterialX ? YBI_OPTIX_MATERIALX_PTX_PATH
+                                                                    : YBI_OPTIX_OPENPBR_PTX_PATH;
+    std::ifstream input(ptxFilename, std::ios::binary);
+    if (!input)
+    {
+        std::fprintf(stderr, "Failed to open PTX file: %s\n", ptxFilename);
+        DestroyPipeline();
+        return false;
+    }
+    const std::string ptx((std::istreambuf_iterator<char>(input)),
+                          std::istreambuf_iterator<char>());
+    if (ptx.empty())
+    {
+        std::fprintf(stderr, "PTX file is empty: %s\n", ptxFilename);
+        DestroyPipeline();
+        return false;
+    }
+    return CreateOptixPipeline(ptx);
 }
 
 bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
@@ -1102,6 +1128,7 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
     raygenDesc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
     raygenDesc.raygen.module = optixPipeline.module;
     raygenDesc.raygen.entryFunctionName = "__raygen__unidirectional";
+    // raygenDesc.raygen.entryFunctionName = "__raygen__wavefront";
     logSize = sizeof(log);
     if (!CheckOptixResult(optixProgramGroupCreate(optixDeviceContext,
                                                   &raygenDesc,

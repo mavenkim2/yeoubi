@@ -3,7 +3,6 @@
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
-#include "core/vec4f.h"
 #include "render/bsdf/materialx/bsdf_types.h"
 #include "render/bsdf/materialx/closure.h"
 #include "render/bsdf/materialx/ggx_helpers.h"
@@ -103,39 +102,6 @@ YBI_CPU_GPU float IorToF0(float ior)
     return Sqr((ior - 1.0) / (ior + 1.0));
 }
 
-YBI_CPU_GPU Vec3f DielectricBsdfAlbedo(float nDotV, float alpha, const Vec3f &f0, const Vec3f &f90)
-{
-    float x = nDotV;
-    float y = alpha;
-    float x2 = Sqr(x);
-    float y2 = Sqr(y);
-    Vec4f r =
-        Vec4f(0.1003, 0.9345, 1.0, 1.0) + Vec4f(-0.6303, -2.323, -1.765, 0.2281) * x +
-        Vec4f(9.748, 2.229, 8.263, 15.94) * y + Vec4f(-2.038, -3.748, 11.53, -55.83) * x * y +
-        Vec4f(29.34, 1.424, 28.96, 13.08) * x2 + Vec4f(-8.245, -0.7684, -7.507, 41.26) * y2 +
-        Vec4f(-26.44, 1.436, -36.11, 54.9) * x2 * y + Vec4f(19.99, 0.2913, 15.86, 300.2) * x * y2 +
-        Vec4f(-5.448, 0.6286, 33.37, -285.1) * x2 * y2;
-    Vec2f ab = Clamp(r.Xy() / r.Zw(), 0.f, 1.f);
-    return f0 * ab.x + f90 * ab.y;
-}
-
-// https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
-// Equations 14 and 16
-YBI_CPU_GPU Vec3f GGXEnergyCompensation(float nDotV, float alpha, const Vec3f &fss)
-{
-    Vec3f ess = DielectricBsdfAlbedo(nDotV, alpha, Vec3f(1.f), Vec3f(1.f));
-    return 1.0 + fss * (1.0 - ess) / Max(ess, 1e-8f);
-}
-
-// Compute the cosine-weighted average of the Fresnel reflectance over the hemisphere.
-// https://blog.selfshadow.com/publications/s2017-shading-course/imageworks/s2017_pbs_imageworks_slides_v2.pdf
-YBI_CPU_GPU Vec3f FresnelAverage(float ior)
-{
-    float f0 = FresnelDielectric(1.f, ior);
-    Vec3f f90(1.f);
-    return f0 + (f90 - f0) * (1.f / 21.f);
-}
-
 YBI_CPU_GPU Vec3f CalculateDielectricBsdfAlbedo(const DielectricBsdf &bsdf, float nDotV)
 {
     if (bsdf.weight <= 0.f)
@@ -146,9 +112,9 @@ YBI_CPU_GPU Vec3f CalculateDielectricBsdfAlbedo(const DielectricBsdf &bsdf, floa
     float alpha = Sqrt(safeAlpha.x * safeAlpha.y);
     float f0 = IorToF0(bsdf.ior);
 
-    Vec3f fAvg = FresnelAverage(bsdf.ior);
-    Vec3f comp = GGXEnergyCompensation(nDotV, alpha, fAvg);
-    Vec3f albedo = bsdf.weight * DielectricBsdfAlbedo(nDotV, alpha, Vec3f(f0), Vec3f(1.f)) * comp;
+    Vec3f f = Vec3f(FresnelDielectric(nDotV, bsdf.ior));
+    Vec3f comp = GGXEnergyCompensation(nDotV, alpha, f);
+    Vec3f albedo = bsdf.weight * GGXDirectionalAlbedo(nDotV, alpha, Vec3f(f0), Vec3f(1.f)) * comp;
     return Clamp(albedo, 0.f, 1.f);
 }
 

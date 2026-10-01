@@ -15,6 +15,7 @@
 #include "scene/scene.h"
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -387,7 +388,10 @@ static uint32_t AddMaterialToMap(std::unordered_map<std::string, size_t> &materi
 std::unique_ptr<SceneLoader> SceneLoader::CreateSceneLoader(const std::string &filePath)
 {
     std::string ext = std::filesystem::path(filePath).extension().string();
-    if (ext.find("usd") != std::string::npos)
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (ext == ".usd" || ext == ".usda" || ext == ".usdc" || ext == ".usdz")
     {
         std::unique_ptr<SceneLoader> loader = std::make_unique<USDSceneLoader>(filePath);
         return loader;
@@ -1521,6 +1525,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
                                  SceneImportContext *importContext)
 {
     pxr::UsdStageRefPtr stage = pxr::UsdStage::Open(filePath.c_str());
+    if (!stage)
+        return nullptr;
     pxr::UsdPrim root = stage->GetPseudoRoot();
 
     USDPrimTraversalData collectiveData;
@@ -1616,7 +1622,8 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
 
         const pxr::GfBBox3d worldBounds = bboxCache.ComputeWorldBound(boundsRoot);
         const pxr::GfRange3d range = worldBounds.ComputeAlignedRange();
-        YBI_ASSERT(!range.IsEmpty());
+        if (range.IsEmpty())
+            return nullptr;
         const pxr::GfVec3d usdCenter = range.GetMidpoint();
         const pxr::GfVec3d usdSize = range.GetSize();
 
@@ -1637,31 +1644,25 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
     }
     else
     {
-        YBI_ASSERT(!data.cameras.empty());
-
         printf("num cameras: %zu\n", data.cameras.size());
-        pxr::UsdGeomCamera camera = data.cameras[5];
-
-        printf("camera name: %s\n", camera.GetPath().GetText());
-        pxr::UsdPrim cameraPrim = camera.GetPrim();
-        pxr::GfCamera gfCam = camera.GetCamera(timeCode);
-        const float verticalFovRadians =
-            DegreesToRadians(float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
-        pxr::GfFrustum frustum = gfCam.GetFrustum();
-        pxr::GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
-        pxr::GfMatrix4d projMatrix = frustum.ComputeProjectionMatrix();
-
-        printf("fov: %f %f\n",
-               verticalFovRadians,
-               float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
-
-        container->camera.cameraFromWorld = ConvertAffineTransform(viewMatrix);
-        AffineTransform renderFromCamera;
-        bool inverseResult = container->camera.cameraFromWorld.TryInverse(&renderFromCamera);
-        YBI_ASSERT(inverseResult);
-        container->camera.position = renderFromCamera.GetTranslation();
-        container->camera.verticalFovRadians = verticalFovRadians;
-        container->camera.clipFromCamera = ConvertMatrix4x4(projMatrix);
+        for (const pxr::UsdGeomCamera &usdCamera : data.cameras)
+        {
+            const pxr::GfCamera gfCam = usdCamera.GetCamera(timeCode);
+            const pxr::GfFrustum frustum = gfCam.GetFrustum();
+            NamedCamera namedCamera;
+            namedCamera.name = usdCamera.GetPath().GetString();
+            namedCamera.camera.worldUp = worldUp;
+            namedCamera.camera.cameraFromWorld = ConvertAffineTransform(frustum.ComputeViewMatrix());
+            namedCamera.camera.clipFromCamera = ConvertMatrix4x4(frustum.ComputeProjectionMatrix());
+            namedCamera.camera.verticalFovRadians = DegreesToRadians(
+                float(gfCam.GetFieldOfView(pxr::GfCamera::FOVVertical)));
+            AffineTransform renderFromCamera;
+            if (!namedCamera.camera.cameraFromWorld.TryInverse(&renderFromCamera))
+                return nullptr;
+            namedCamera.camera.position = renderFromCamera.GetTranslation();
+            container->cameras.push_back(std::move(namedCamera));
+        }
+        container->camera = container->cameras.front().camera;
     }
 
     // TODO: cli option
@@ -1675,6 +1676,14 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
     container->camera.rasterFromCamera = rasterFromNDC * container->camera.clipFromCamera;
     container->camera.width = targetWidth;
     container->camera.height = targetHeight;
+
+    for (NamedCamera &namedCamera : container->cameras)
+    {
+        namedCamera.camera.rasterFromCamera =
+            rasterFromNDC * namedCamera.camera.clipFromCamera;
+        namedCamera.camera.width = targetWidth;
+        namedCamera.camera.height = targetHeight;
+    }
 
     std::vector<Scene> scenes;
     scenes.resize(traversalDatas.size());

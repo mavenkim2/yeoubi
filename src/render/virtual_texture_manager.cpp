@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <stdexcept>
 #include <unordered_set>
 
 namespace ybi
@@ -70,7 +71,8 @@ VirtualTextureManager::VirtualTextureManager(Arena &arena,
         uploadStreams.push_back(device->CreateDeviceStream());
     }
 
-    const uint32_t numFramesInFlight = displayDevice->GetNumFramesInFlight();
+    const uint32_t numFramesInFlight = displayDevice ? displayDevice->GetNumFramesInFlight() : 1u;
+    pageDescriptorBits.resize(numFramesInFlight);
     hostPinnedUpdateRequests.resize(numFramesInFlight);
     hostPinnedFeedbackRequests.resize(numFramesInFlight);
     deviceUpdateRequests.resize(numFramesInFlight);
@@ -282,23 +284,19 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
         descriptor.tileFilename = GetVirtualTextureFilename(filename);
 
         std::ifstream input(descriptor.tileFilename, std::ios::binary);
-        YBI_ERROR(input.is_open(),
-                  "Failed to open virtual texture file: %s\n",
-                  descriptor.tileFilename.c_str());
+        if (!input.is_open())
+            throw std::runtime_error("Failed to open virtual texture file: " +
+                                     descriptor.tileFilename);
 
         VirtualTextureFileHeader header = {};
         input.read(reinterpret_cast<char *>(&header), sizeof(header));
-        YBI_ASSERT(input.good());
-        YBI_ASSERT(header.magic == YBVT_MAGIC);
-        YBI_ASSERT(header.version == 2);
-        YBI_ASSERT(header.numPages > 0);
-        YBI_ASSERT(header.width > 0);
-        YBI_ASSERT(header.height > 0);
-        YBI_ASSERT(header.udim == udim);
-        YBI_ASSERT(header.pageSize == static_cast<uint32_t>(pageSize));
-        YBI_ASSERT(header.numMips > 0 && header.numMips <= 16);
-        YBI_ASSERT(CalculateVirtualTexturePageCount(header.width, 7) <= 256);
-        YBI_ASSERT(CalculateVirtualTexturePageCount(header.height, 7) <= 256);
+        if (!input.good() || header.magic != YBVT_MAGIC || header.version != 2 ||
+            header.numPages == 0 || header.width == 0 || header.height == 0 ||
+            header.udim != udim || header.pageSize != static_cast<uint32_t>(pageSize) ||
+            header.numMips == 0 || header.numMips > 16 ||
+            CalculateVirtualTexturePageCount(header.width, 7) > 256 ||
+            CalculateVirtualTexturePageCount(header.height, 7) > 256)
+            throw std::runtime_error("Invalid virtual texture file: " + descriptor.tileFilename);
 
         descriptor.tileFileHeader = header;
         descriptor.pageEntries.Resize(header.numPages);
@@ -306,7 +304,9 @@ VirtualTextureManager::AddTexture(const std::vector<std::pair<std::string, uint3
         input.seekg(static_cast<std::streamoff>(header.pageTableOffset), std::ios::beg);
         input.read(reinterpret_cast<char *>(descriptor.pageEntries.data()),
                    sizeof(VirtualTexturePageEntry) * header.numPages);
-        YBI_ASSERT(input.good());
+        if (!input.good())
+            throw std::runtime_error("Invalid virtual texture page table: " +
+                                     descriptor.tileFilename);
 
         const uint32_t textureIndex = static_cast<uint32_t>(textureDescriptors.size() - 1);
         filenameToDescriptorMap.emplace(filename, textureIndex);
@@ -412,9 +412,245 @@ void VirtualTextureManager::Finalize()
     }
 }
 
+void VirtualTextureManager::ProcessFeedback(Arena *arena,
+                                            View<PageUploadCompletion> completions,
+                                            View<FeedbackRequest> requests,
+                                            Array<PageAllocationInfo> &allocationInfos,
+                                            Array<PageDescriptorUpdateRequest> &updateRequests)
+{
+    std::unordered_set<uint64_t> seenRequests;
+
+    int lruUsed = -1;
+    for (uint32_t completionIndex = 0; completionIndex < completions.size(); completionIndex++)
+    {
+        const PageUploadCompletion &completion = completions[completionIndex];
+        YBI_ASSERT(completion.lruIndex < lruNodes.size());
+
+        LRUNode &node = lruNodes[completion.lruIndex];
+        if (pendingPageUploads.erase(node.pageDescriptorIndex) == 0)
+        {
+            continue;
+        }
+
+        YBI_ASSERT(node.lruPrev == -1 && node.lruNext == -1);
+
+        const uint32_t bits = (node.layer << 27u) | node.pagePoolIndex;
+        pageDescriptors[node.pageDescriptorIndex].textureObject = node.textureObject;
+        pageDescriptors[node.pageDescriptorIndex].bits = bits;
+
+        lruUsed = lruUsed == -1 ? static_cast<int>(completion.lruIndex) : lruUsed;
+        LinkLRU(completion.lruIndex);
+
+        updateRequests.EmplaceBack();
+        PageDescriptorUpdateRequest &updateRequest = updateRequests.Last();
+        updateRequest.pageDescriptorIndex = node.pageDescriptorIndex;
+        updateRequest.textureObject = node.textureObject;
+        updateRequest.bits = bits;
+    }
+
+    uint32_t numCompacted = 0;
+    // Compact duplicate feedback requests
+    for (uint32_t i = 0; i < requests.size(); i++)
+    {
+        const FeedbackRequest &request = requests[i];
+        uint32_t textureIndex = request.textureIndex;
+        uint32_t tileX = request.tileX_tileY_mip & 0xff;
+        uint32_t tileY = (request.tileX_tileY_mip >> 8u) & 0xff;
+        uint32_t mip = (request.tileX_tileY_mip >> 16u) & 0xf;
+
+        YBI_ERROR(mip != 15, "%u %u %u %u\n", textureIndex, tileX, tileY, mip);
+
+        uint64_t key = request.textureIndex | (uint64_t(request.tileX_tileY_mip) << 32u);
+
+        if (seenRequests.insert(key).second)
+        {
+            requests[numCompacted++] = request;
+        }
+    }
+
+    // Update LRU for resident pages, compact non resident requests
+    uint32_t numNonResidentFeedback = 0;
+    for (uint32_t i = 0; i < numCompacted; i++)
+    {
+        const FeedbackRequest &request = requests[i];
+        uint32_t textureIndex = request.textureIndex;
+        uint32_t tileX = request.tileX_tileY_mip & 0xff;
+        uint32_t tileY = (request.tileX_tileY_mip >> 8u) & 0xff;
+        uint32_t mip = (request.tileX_tileY_mip >> 16u) & 0xf;
+
+        int pageDescriptorIndex = CalculatePageDescriptorIndex(textureIndex, tileX, tileY, mip);
+
+        PageDescriptor &descriptor = pageDescriptors[pageDescriptorIndex];
+        if (pendingPageUploads.find(pageDescriptorIndex) != pendingPageUploads.end())
+        {
+            continue;
+        }
+        else if (descriptor.bits != ~0u)
+        {
+            uint32_t poolIndex = descriptor.bits & 0x07ffffffu;
+            uint32_t layerIndex = descriptor.bits >> 27u;
+
+            uint32_t lruIndex = pagePools[poolIndex].lruIndexStart + layerIndex;
+            LRUNode &node = lruNodes[lruIndex];
+            YBI_ASSERT(node.lruPrev != -1 && node.lruNext != -1);
+            lruUsed = lruUsed == -1 ? static_cast<int>(lruIndex) : lruUsed;
+
+            UnlinkLRU(lruIndex);
+            LinkLRU(lruIndex);
+        }
+        else
+        {
+            requests[numNonResidentFeedback++] = request;
+        }
+    }
+
+    // Find physical memory location for non resident pages
+    for (uint32_t i = 0; i < numNonResidentFeedback; i++)
+    {
+        const FeedbackRequest &request = requests[i];
+        uint32_t textureIndex = request.textureIndex;
+        uint32_t tileX = request.tileX_tileY_mip & 0xff;
+        uint32_t tileY = (request.tileX_tileY_mip >> 8u) & 0xff;
+        uint32_t mip = (request.tileX_tileY_mip >> 16u) & 0xf;
+        uint32_t pageDescriptorIndex =
+            CalculatePageDescriptorIndex(textureIndex, tileX, tileY, mip);
+
+        uint32_t layer, poolIndex;
+        bool allocated = AllocatePage(textureIndex, poolIndex, layer);
+
+        while (!allocated)
+        {
+            int entryToEvict = lruNodes[lruTail].lruPrev;
+
+            if (entryToEvict == lruHead || entryToEvict == lruUsed)
+            {
+                break;
+            }
+
+            UnlinkLRU(entryToEvict);
+
+            LRUNode &node = lruNodes[entryToEvict];
+            pagePools[node.pagePoolIndex].freeList.EmplaceBack(node.layer);
+
+            updateRequests.EmplaceBack();
+            PageDescriptorUpdateRequest &evictRequest = updateRequests.Last();
+            evictRequest.textureObject = 0ull;
+            evictRequest.bits = ~0u;
+            evictRequest.pageDescriptorIndex = node.pageDescriptorIndex;
+
+            pageDescriptors[node.pageDescriptorIndex].bits = ~0u;
+
+            allocated = AllocatePage(textureIndex, poolIndex, layer);
+        }
+
+        if (!allocated)
+            continue;
+
+        // TODO: very unlikely, but what happens when entry is evicted before it's
+        // even uploaded? then you could potentially have two writes to the same
+        // GPU page descriptor, leading to invalid memory
+
+        PagePool &pool = pagePools[poolIndex];
+        uint32_t lruIndex = pool.lruIndexStart + layer;
+        LRUNode &node = lruNodes[lruIndex];
+        YBI_ASSERT(node.lruPrev == -1 && node.lruNext == -1);
+        node.pageDescriptorIndex = pageDescriptorIndex;
+        pendingPageUploads.insert(pageDescriptorIndex);
+
+        allocationInfos.EmplaceBack();
+        PageAllocationInfo &info = allocationInfos.Last();
+        info.textureIndex = textureIndex;
+        info.tileX = tileX;
+        info.tileY = tileY;
+        info.mip = mip;
+        info.texture = pool.texture;
+        info.pool = &pool - pagePools.data();
+        info.layer = layer;
+        info.lruIndex = lruIndex;
+    }
+
+    if (updateRequests.size())
+    {
+        printf("num updates: %zu\n", updateRequests.size());
+    }
+}
+
+void VirtualTextureManager::LoadPages(std::shared_ptr<DeviceEvent> pageTableUpdatesDone)
+{
+    ScratchArena scratch;
+
+    int threadIndex = tbb::this_task_arena::current_thread_index();
+    YBI_ASSERT(threadIndex >= 0);
+    YBI_ASSERT(static_cast<size_t>(threadIndex) < uploadStreams.size());
+    DeviceStream &stream = *uploadStreams[threadIndex];
+
+    uint32_t numInfos = 1024;
+    PageAllocationInfo *infos =
+        ringBufferPageAllocationInfos.SynchronizedRead(scratch.arena, numInfos);
+
+    if (numInfos == 0)
+        return;
+
+    if (pageTableUpdatesDone)
+    {
+        device->WaitDeviceEvent(stream, *pageTableUpdatesDone);
+    }
+
+    DeviceTextureBatchCopyDesc *copyDescs =
+        scratch.arena->PushArray<DeviceTextureBatchCopyDesc>(numInfos).data();
+
+    PageUploadCompletion *completions =
+        scratch.arena->PushArray<PageUploadCompletion>(numInfos).data();
+
+    for (uint32_t infoIndex = 0; infoIndex < numInfos; infoIndex++)
+    {
+        PageAllocationInfo &info = infos[infoIndex];
+        const TextureDescriptor &descriptor = textureDescriptors[info.textureIndex];
+
+        YBI_ASSERT(descriptor.tileFileHeader.compression == 0);
+
+        const uint32_t pageDescriptorIndex =
+            CalculatePageDescriptorIndex(info.textureIndex, info.tileX, info.tileY, info.mip);
+        const uint32_t pageEntryIndex = pageDescriptorIndex - descriptor.pageDescriptorOffset;
+
+        YBI_ERROR(pageEntryIndex < descriptor.pageEntries.size(),
+                  "%u %zu , %u %u %u %u\n",
+                  pageEntryIndex,
+                  descriptor.pageEntries.size(),
+                  info.textureIndex,
+                  info.tileX,
+                  info.tileY,
+                  info.mip);
+        View<uint8_t> tileBytes =
+            LoadVirtualTextureTile(scratch.arena, descriptor, pageEntryIndex);
+
+        const uint32_t bytesPerTexel = GetTextureFormatSize(descriptor.tileFileHeader.format);
+
+        const uint32_t tileSize =
+            descriptor.tileFileHeader.pageSize + 2 * descriptor.tileFileHeader.gutterSize;
+        YBI_ASSERT(tileBytes.size() == tileSize * tileSize * static_cast<size_t>(bytesPerTexel));
+
+        DeviceTextureBatchCopyDesc &copyDesc = copyDescs[infoIndex];
+        copyDesc = {};
+        copyDesc.texture = &info.texture;
+        copyDesc.copy.src = tileBytes.data();
+        copyDesc.copy.srcRowPitch = tileSize * bytesPerTexel;
+        copyDesc.copy.widthInBytes = tileSize * bytesPerTexel;
+        copyDesc.copy.height = tileSize;
+        copyDesc.copy.dstZ = info.layer;
+
+        PageUploadCompletion &completion = completions[infoIndex];
+        completion.lruIndex = info.lruIndex;
+    }
+
+    device->CopyToDevice3DBatchAsync(stream, copyDescs, numInfos);
+    device->SyncDeviceStream(stream);
+    ringBufferPageUploadCompletions.SynchronizedWrite(completions, numInfos);
+}
+
 void VirtualTextureManager::Update(KernelParams *params)
 {
-    const uint32_t currentFrame = displayDevice->GetCurrentFrameIndex();
+    const uint32_t currentFrame = displayDevice ? displayDevice->GetCurrentFrameIndex() : 0u;
     // TODO: only if async copy is ready
 
     ScratchArena scratch;
@@ -464,188 +700,36 @@ void VirtualTextureManager::Update(KernelParams *params)
     if (feedbackJob.IsDone())
     {
         feedbackJob.Run([this]() {
-            std::unordered_set<uint64_t> seenRequests;
-
             ScratchArena scratch;
 
-            int lruUsed = -1;
             uint32_t numCompletions = 0;
             PageUploadCompletion *completions =
                 ringBufferPageUploadCompletions.SynchronizedRead(scratch.arena, numCompletions);
-            Array<PageDescriptorUpdateRequest> completedUploadRequests;
-            for (uint32_t completionIndex = 0; completionIndex < numCompletions; completionIndex++)
-            {
-                const PageUploadCompletion &completion = completions[completionIndex];
-                YBI_ASSERT(completion.lruIndex < lruNodes.size());
 
-                LRUNode &node = lruNodes[completion.lruIndex];
-                if (pendingPageUploads.erase(node.pageDescriptorIndex) == 0)
-                {
-                    continue;
-                }
-
-                YBI_ASSERT(node.lruPrev == -1 && node.lruNext == -1);
-
-                const uint32_t bits = (node.layer << 27u) | node.pagePoolIndex;
-                pageDescriptors[node.pageDescriptorIndex].textureObject = node.textureObject;
-                pageDescriptors[node.pageDescriptorIndex].bits = bits;
-
-                lruUsed = lruUsed == -1 ? static_cast<int>(completion.lruIndex) : lruUsed;
-                LinkLRU(completion.lruIndex);
-
-                completedUploadRequests.EmplaceBack();
-                PageDescriptorUpdateRequest &updateRequest = completedUploadRequests.Last();
-                updateRequest.pageDescriptorIndex = node.pageDescriptorIndex;
-                updateRequest.textureObject = node.textureObject;
-                updateRequest.bits = bits;
-            }
-
-            if (completedUploadRequests.size())
-            {
-                ringBufferUpdateRequests.SynchronizedWrite(completedUploadRequests.data(),
-                                                           completedUploadRequests.size());
-            }
+            View<PageUploadCompletion> viewCompletions = {completions, numCompletions};
 
             uint32_t numRequests = 0;
             FeedbackRequest *requests =
                 ringBufferFeedbackRequests.SynchronizedRead(scratch.arena, numRequests);
-            uint32_t numCompacted = 0;
-            // Compact duplicate feedback requests
-            for (uint32_t i = 0; i < numRequests; i++)
-            {
-                const FeedbackRequest &request = requests[i];
-                uint32_t textureIndex = request.textureIndex;
-                uint32_t tileX = request.tileX_tileY_mip & 0xff;
-                uint32_t tileY = (request.tileX_tileY_mip >> 8u) & 0xff;
-                uint32_t mip = (request.tileX_tileY_mip >> 16u) & 0xf;
 
-                YBI_ERROR(mip != 15, "%u %u %u %u\n", textureIndex, tileX, tileY, mip);
+            View<FeedbackRequest> viewRequests = {requests, numRequests};
 
-                uint64_t key = request.textureIndex | (uint64_t(request.tileX_tileY_mip) << 32u);
-
-                if (seenRequests.insert(key).second)
-                {
-                    requests[numCompacted++] = request;
-                }
-            }
-
-            // Update LRU for resident pages, compact non resident requests
-            uint32_t numNonResidentFeedback = 0;
-            for (uint32_t i = 0; i < numCompacted; i++)
-            {
-                const FeedbackRequest &request = requests[i];
-                uint32_t textureIndex = request.textureIndex;
-                uint32_t tileX = request.tileX_tileY_mip & 0xff;
-                uint32_t tileY = (request.tileX_tileY_mip >> 8u) & 0xff;
-                uint32_t mip = (request.tileX_tileY_mip >> 16u) & 0xf;
-
-                int pageDescriptorIndex =
-                    CalculatePageDescriptorIndex(textureIndex, tileX, tileY, mip);
-
-                PageDescriptor &descriptor = pageDescriptors[pageDescriptorIndex];
-                if (pendingPageUploads.find(pageDescriptorIndex) != pendingPageUploads.end())
-                {
-                    continue;
-                }
-                else if (descriptor.bits != ~0u)
-                {
-                    uint32_t poolIndex = descriptor.bits & 0x07ffffffu;
-                    uint32_t layerIndex = descriptor.bits >> 27u;
-
-                    uint32_t lruIndex = pagePools[poolIndex].lruIndexStart + layerIndex;
-                    LRUNode &node = lruNodes[lruIndex];
-                    YBI_ASSERT(node.lruPrev != -1 && node.lruNext != -1);
-                    lruUsed = lruUsed == -1 ? static_cast<int>(lruIndex) : lruUsed;
-
-                    UnlinkLRU(lruIndex);
-                    LinkLRU(lruIndex);
-                }
-                else
-                {
-                    requests[numNonResidentFeedback++] = request;
-                }
-            }
-
+            Array<PageDescriptorUpdateRequest> uploadRequests;
             Array<PageAllocationInfo> allocationInfos;
-            Array<PageDescriptorUpdateRequest> evictRequests;
+            View<PageDescriptorUpdateRequest> evictRequests;
 
-            // Find physical memory location for non resident pages
-            for (uint32_t i = 0; i < numNonResidentFeedback; i++)
+            ProcessFeedback(
+                scratch.arena, viewCompletions, viewRequests, allocationInfos, uploadRequests);
+
+            if (uploadRequests.size())
             {
-                const FeedbackRequest &request = requests[i];
-                uint32_t textureIndex = request.textureIndex;
-                uint32_t tileX = request.tileX_tileY_mip & 0xff;
-                uint32_t tileY = (request.tileX_tileY_mip >> 8u) & 0xff;
-                uint32_t mip = (request.tileX_tileY_mip >> 16u) & 0xf;
-                uint32_t pageDescriptorIndex =
-                    CalculatePageDescriptorIndex(textureIndex, tileX, tileY, mip);
-
-                uint32_t layer, poolIndex;
-                bool allocated = AllocatePage(textureIndex, poolIndex, layer);
-
-                while (!allocated)
-                {
-                    int entryToEvict = lruNodes[lruTail].lruPrev;
-
-                    if (entryToEvict == lruHead || entryToEvict == lruUsed)
-                    {
-                        break;
-                    }
-
-                    UnlinkLRU(entryToEvict);
-
-                    LRUNode &node = lruNodes[entryToEvict];
-                    pagePools[node.pagePoolIndex].freeList.EmplaceBack(node.layer);
-                    evictRequests.EmplaceBack();
-                    PageDescriptorUpdateRequest &evictRequest = evictRequests.Last();
-                    evictRequest.textureObject = 0ull;
-                    evictRequest.bits = ~0u;
-                    evictRequest.pageDescriptorIndex = node.pageDescriptorIndex;
-
-                    pageDescriptors[node.pageDescriptorIndex].bits = ~0u;
-
-                    allocated = AllocatePage(textureIndex, poolIndex, layer);
-                }
-
-                if (!allocated)
-                    continue;
-
-                // TODO: very unlikely, but what happens when entry is evicted before it's
-                // even uploaded? then you could potentially have two writes to the same
-                // GPU page descriptor, leading to invalid memory
-
-                PagePool &pool = pagePools[poolIndex];
-                uint32_t lruIndex = pool.lruIndexStart + layer;
-                LRUNode &node = lruNodes[lruIndex];
-                YBI_ASSERT(node.lruPrev == -1 && node.lruNext == -1);
-                node.pageDescriptorIndex = pageDescriptorIndex;
-                pendingPageUploads.insert(pageDescriptorIndex);
-
-                allocationInfos.EmplaceBack();
-                PageAllocationInfo &info = allocationInfos.Last();
-                info.textureIndex = textureIndex;
-                info.tileX = tileX;
-                info.tileY = tileY;
-                info.mip = mip;
-                info.texture = pool.texture;
-                info.pool = &pool - pagePools.data();
-                info.layer = layer;
-                info.lruIndex = lruIndex;
-            }
-
-            if (evictRequests.size())
-            {
-                printf("num evivctions: %zu\n", evictRequests.size());
+                ringBufferUpdateRequests.SynchronizedWrite(uploadRequests.data(),
+                                                           uploadRequests.size());
             }
             if (allocationInfos.size())
             {
                 ringBufferPageAllocationInfos2.SynchronizedWrite(allocationInfos.data(),
                                                                  allocationInfos.size());
-            }
-            if (evictRequests.size())
-            {
-                ringBufferUpdateRequests.SynchronizedWrite(evictRequests.data(),
-                                                           evictRequests.size());
             }
         });
     }
@@ -713,79 +797,128 @@ void VirtualTextureManager::Update(KernelParams *params)
     }
 
     // Load pages
-    uploadPool.Run([this, pageTableUpdatesDone]() {
-        ScratchArena scratch;
-        int threadIndex = tbb::this_task_arena::current_thread_index();
-        YBI_ASSERT(threadIndex >= 0);
-        YBI_ASSERT(static_cast<size_t>(threadIndex) < uploadStreams.size());
-        DeviceStream &stream = *uploadStreams[threadIndex];
+    uploadPool.Run([this, pageTableUpdatesDone]() { LoadPages(pageTableUpdatesDone); });
+}
 
-        uint32_t numInfos = 1024;
-        PageAllocationInfo *infos =
-            ringBufferPageAllocationInfos.SynchronizedRead(scratch.arena, numInfos);
+void VirtualTextureManager::UpdateSync(KernelParams *params)
+{
+    ScratchArena scratch;
 
-        if (numInfos == 0)
-            return;
+    const uint32_t currentFrame = displayDevice ? displayDevice->GetCurrentFrameIndex() : 0u;
+    // TODO: only if async copy is ready
 
-        if (pageTableUpdatesDone)
+    if (pagePools.size())
+    {
+        const size_t texturePoolSize = sizeof(DeviceTexture) * pagePools.size();
+        if (deviceTexturePools.SizeInBytes() < texturePoolSize)
         {
-            device->WaitDeviceEvent(stream, *pageTableUpdatesDone);
+            if (deviceTexturePools)
+            {
+                device->Free(deviceTexturePools);
+            }
+            deviceTexturePools = device->Alloc(texturePoolSize);
         }
 
-        DeviceTextureBatchCopyDesc *copyDescs =
-            scratch.arena->PushArray<DeviceTextureBatchCopyDesc>(numInfos).data();
-
-        PageUploadCompletion *completions =
-            scratch.arena->PushArray<PageUploadCompletion>(numInfos).data();
-
-        for (uint32_t infoIndex = 0; infoIndex < numInfos; infoIndex++)
+        View<DeviceTexture> hostTexturePools =
+            scratch.arena->PushArray<DeviceTexture>(pagePools.size());
+        for (size_t i = 0; i < pagePools.size(); i++)
         {
-            PageAllocationInfo &info = infos[infoIndex];
-            const TextureDescriptor &descriptor = textureDescriptors[info.textureIndex];
+            hostTexturePools[i] = pagePools[i].texture;
+        }
+        device->CopyToDevice(
+            deviceTexturePools.Data(), hostTexturePools.data(), hostTexturePools.numBytes());
+    }
 
-            YBI_ASSERT(descriptor.tileFileHeader.compression == 0);
+    YBI_ASSERT(params);
+    params->textureDescriptors = deviceTextureDescriptors.As<DeviceTextureDescriptor>().Get();
+    params->pageDescriptors = devicePageDescriptors.As<PageDescriptor>().Get();
+    // params->texturePools =
+    //     deviceTexturePools ? deviceTexturePools.As<DeviceTexture>().Get() : nullptr;
+    params->pageDescriptorBits = pageDescriptorBits[currentFrame].As<uint32_t>().Get();
+    params->feedbackRequests = feedback.As<FeedbackRequest>().Get();
 
-            const uint32_t pageDescriptorIndex =
-                CalculatePageDescriptorIndex(info.textureIndex, info.tileX, info.tileY, info.mip);
-            const uint32_t pageEntryIndex = pageDescriptorIndex - descriptor.pageDescriptorOffset;
+    device->Memzero(pageDescriptorBits[currentFrame].Data(),
+                    pageDescriptorBits[currentFrame].SizeInBytes());
 
-            YBI_ERROR(pageEntryIndex < descriptor.pageEntries.size(),
-                      "%u %zu , %u %u %u %u\n",
-                      pageEntryIndex,
-                      descriptor.pageEntries.size(),
-                      info.textureIndex,
-                      info.tileX,
-                      info.tileY,
-                      info.mip);
-            View<uint8_t> tileBytes =
-                LoadVirtualTextureTile(scratch.arena, descriptor, pageEntryIndex);
+    device->Memzero(feedback.Data(), sizeof(FeedbackRequest));
 
-            const uint32_t bytesPerTexel = GetTextureFormatSize(descriptor.tileFileHeader.format);
+    FeedbackRequest *requests =
+        reinterpret_cast<FeedbackRequest *>(hostPinnedFeedbackRequests[currentFrame].Data());
+    uint32_t numRequests = requests[0].textureIndex;
+    numRequests = std::min(numRequests, feedbackCapacity);
 
-            const uint32_t tileSize =
-                descriptor.tileFileHeader.pageSize + 2 * descriptor.tileFileHeader.gutterSize;
-            YBI_ASSERT(tileBytes.size() ==
-                       tileSize * tileSize * static_cast<size_t>(bytesPerTexel));
+    uint32_t numCompletions = 0;
+    PageUploadCompletion *completions =
+        ringBufferPageUploadCompletions.SynchronizedRead(scratch.arena, numCompletions);
 
-            DeviceTextureBatchCopyDesc &copyDesc = copyDescs[infoIndex];
-            copyDesc = {};
-            copyDesc.texture = &info.texture;
-            copyDesc.copy.src = tileBytes.data();
-            copyDesc.copy.srcRowPitch = tileSize * bytesPerTexel;
-            copyDesc.copy.widthInBytes = tileSize * bytesPerTexel;
-            copyDesc.copy.height = tileSize;
-            copyDesc.copy.dstZ = info.layer;
+    View<PageUploadCompletion> viewCompletions = {completions, numCompletions};
+    View<FeedbackRequest> viewRequests = {requests + 1, numRequests};
 
-            PageUploadCompletion &completion = completions[infoIndex];
-            completion.lruIndex = info.lruIndex;
+    Array<PageDescriptorUpdateRequest> updateRequests;
+    updateRequests.Reserve(numCompletions);
+    Array<PageAllocationInfo> allocationInfos;
 
-            // TODO: decompress if descriptor.tileFileHeader.compression != 0.
+    ProcessFeedback(scratch.arena, viewCompletions, viewRequests, allocationInfos, updateRequests);
+
+    if (allocationInfos.size())
+    {
+        ringBufferPageAllocationInfos.SynchronizedWrite(allocationInfos.data(),
+                                                        allocationInfos.size());
+    }
+
+    std::shared_ptr<DeviceEvent> pageTableUpdatesDone;
+
+    // Update device page descriptors
+    if (updateRequests.size())
+    {
+        DeviceBuffer &hostPinnedUpdateRequestBuffer = hostPinnedUpdateRequests[currentFrame];
+        DeviceBuffer &deviceUpdateRequestBuffer = deviceUpdateRequests[currentFrame];
+
+        size_t updateRequestSize = sizeof(PageDescriptorUpdateRequest) * updateRequests.size();
+        if (deviceUpdateRequestBuffer.sizeInBytes < updateRequestSize)
+        {
+            if (deviceUpdateRequestBuffer.sizeInBytes)
+            {
+                device->Free(deviceUpdateRequestBuffer);
+            }
+            deviceUpdateRequestBuffer = device->Alloc(updateRequestSize);
         }
 
-        device->CopyToDevice3DBatchAsync(stream, copyDescs, numInfos);
-        device->SyncDeviceStream(stream);
-        ringBufferPageUploadCompletions.SynchronizedWrite(completions, numInfos);
-    });
+        if (hostPinnedUpdateRequestBuffer.sizeInBytes < updateRequestSize)
+        {
+            if (hostPinnedUpdateRequestBuffer.sizeInBytes)
+            {
+                device->FreeHost(hostPinnedUpdateRequestBuffer);
+            }
+            hostPinnedUpdateRequestBuffer = device->AllocHost(updateRequestSize);
+        }
+
+        memcpy(hostPinnedUpdateRequestBuffer.Data(), updateRequests.data(), updateRequestSize);
+        device->CopyToDeviceAsync(deviceUpdateRequestBuffer.Data(),
+                                  hostPinnedUpdateRequestBuffer.Data(),
+                                  updateRequestSize);
+
+        size_t numRequests = updateRequests.size();
+        void *arguments[] = {
+            devicePageDescriptors.KernelArg(),
+            deviceUpdateRequestBuffer.KernelArg(),
+            &numRequests,
+        };
+
+        DeviceKernelLaunchDesc desc;
+        desc.gridX = (updateRequests.size() + 31) / 32;
+        desc.blockX = 32;
+        desc.arguments = arguments;
+        device->ExecuteKernel(*updatePageDescriptors, desc);
+        ++residencyRevision;
+
+        pageTableUpdatesDone = device->CreateDeviceEvent();
+        device->RecordDeviceEvent(nullptr, *pageTableUpdatesDone);
+    }
+
+    // Load pages
+    uploadPool.Run([this, pageTableUpdatesDone]() { LoadPages(pageTableUpdatesDone); });
+    uploadPool.Wait();
 }
 
 void VirtualTextureManager::UpdateParams(KernelParams *params)
@@ -794,13 +927,14 @@ void VirtualTextureManager::UpdateParams(KernelParams *params)
     params->pageDescriptors = devicePageDescriptors.As<PageDescriptor>().Get();
     // params->texturePools =
     //     deviceTexturePools ? deviceTexturePools.As<DeviceTexture>().Get() : nullptr;
-    params->pageDescriptorBits = pageDescriptorBits[0].As<uint32_t>().Get();
+    const uint32_t currentFrame = displayDevice ? displayDevice->GetCurrentFrameIndex() : 0u;
+    params->pageDescriptorBits = pageDescriptorBits[currentFrame].As<uint32_t>().Get();
     params->feedbackRequests = feedback.As<FeedbackRequest>().Get();
 }
 
 void VirtualTextureManager::CopyFeedback()
 {
-    const uint32_t currentFrame = displayDevice->GetCurrentFrameIndex();
+    const uint32_t currentFrame = displayDevice ? displayDevice->GetCurrentFrameIndex() : 0u;
     YBI_ASSERT(feedback);
     YBI_ASSERT(currentFrame < hostPinnedFeedbackRequests.size());
     DeviceBuffer &hostFeedback = hostPinnedFeedbackRequests[currentFrame];

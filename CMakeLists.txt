@@ -23,6 +23,7 @@ check_cxx_source_compiles(
 option(WITH_CUDA "Enable CUDA backend" OFF)
 option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
 option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
+option(YBI_MATERIAL_DEBUG "Print MaterialX BSDF sampling decisions" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
 set(YBI_DEPENDENCIES)
@@ -31,10 +32,30 @@ set(YBI_USE_GPU)
 if (YBI_HAS_SSE)
     list(APPEND YBI_COMPILE_DEFINITIONS YBI_HAS_SSE)
 endif()
+if (YBI_MATERIAL_DEBUG)
+    list(APPEND YBI_COMPILE_DEFINITIONS YBI_MATERIAL_DEBUG)
+endif()
 if (WIN32)
     list(APPEND YBI_COMPILE_DEFINITIONS NOMINMAX)
     list(APPEND YBI_COMPILE_DEFINITIONS WIN32_LEAN_AND_MEAN)
+    list(APPEND YBI_DEPENDENCIES comdlg32)
 endif()
+
+set (YBI_MATERIALX_STUBS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/artistic_ior_extinction_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/artistic_ior_ior_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/closure_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/conductor_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/dielectric_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/image_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/layer_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/mix_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/normalmap_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/oren_nayar_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/remap_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/sheen_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/tiledimage_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/value_impl.h)
 
 # CUDA
 if (WITH_CUDA)
@@ -197,6 +218,7 @@ target_compile_definitions(yeoubi_pmj_tables PRIVATE
 # Renderer exe
 add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/camera_json.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/shader_compilation.cpp
@@ -209,6 +231,9 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_manager.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/lut.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/application.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
                ${YBI_SOURCE}
 )
@@ -216,6 +241,41 @@ add_executable(yeoubi
 list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
 )
+
+function (compile_cuda src)
+    cmake_parse_arguments(PARSE_ARGV 1 arg
+        ""
+        "OUTPUT;DEPFILE;ARCHITECTURE"
+        "DEFINITIONS;DEPENDS;INCLUDE_DIRS;OPTIONS"
+    )
+
+    set(NVCC_OPTIONS ${arg_OPTIONS})
+    foreach(definition IN LISTS arg_DEFINITIONS)
+        list(APPEND NVCC_OPTIONS "-D${definition}")
+    endforeach()
+    foreach(include_dir IN LISTS arg_INCLUDE_DIRS)
+        list(APPEND NVCC_OPTIONS "-I${include_dir}")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT "${arg_OUTPUT}"
+        COMMAND "${CMAKE_CUDA_COMPILER}"
+        --ptx
+        "--gpu-architecture=${arg_ARCHITECTURE}"
+        "--std=c++17"
+        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
+        "--use_fast_math"
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
+        ${NVCC_OPTIONS}
+        -MD
+        -MF "${arg_DEPFILE}"
+        "-o" "${arg_OUTPUT}"
+        "${src}"
+        DEPENDS "${src}" ${arg_DEPENDS}
+        DEPFILE "${arg_DEPFILE}"
+        VERBATIM
+    )
+endfunction()
 
 
 if (YBI_HAS_CUDA AND OPTIX_FOUND)
@@ -229,58 +289,36 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
         list(GET CUDAToolkit_INCLUDE_DIRS 1 YBI_CUDA_CCCL_INCLUDE_PATH)
     endif()
 
-    set(YBI_OPTIX_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx")
-    set(YBI_OPTIX_PTX_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/kernel.ptx.d")
+    set(YBI_OPTIX_OPENPBR_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel_openpbr.ptx")
+    set(YBI_OPTIX_MATERIALX_PTX_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernel_materialx.ptx")
     set(YBI_OPTIX_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src")
     set(YBI_OPTIX_SDK_INCLUDE_PATH "${OPTIX_INCLUDE_DIR}")
-    add_custom_command(
-        OUTPUT "${YBI_OPTIX_PTX_PATH}"
-        COMMAND "${CMAKE_CUDA_COMPILER}"
-        --ptx
-        "--gpu-architecture=${YBI_CUDA_ARCHITECTURE}"
-        "--std=${YBI_CUDA_STANDARD}"
-        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
-        # "--expt-relaxed-constexpr"
-        "--use_fast_math"
-        "-DOPTIX_VERSION=${OPTIX_VERSION}"
-        "-I${YBI_OPTIX_INCLUDE_PATH}"
-        "-I${YBI_OPTIX_SDK_INCLUDE_PATH}"
-        # "-I${YBI_CUDA_INCLUDE_DIR}"
-        # "-I${OPENPBR_BSDF_INCLUDE_DIR}"
-        -MD
-        -MF "${YBI_OPTIX_PTX_DEPFILE}"
-        "-lineinfo"
-        # "-Ofc=max"
-        "-o" "${YBI_OPTIX_PTX_PATH}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
-        DEPFILE "${YBI_OPTIX_PTX_DEPFILE}"
-        VERBATIM
-    )
-    add_custom_target(yeoubi_optix_kernel DEPENDS ${YBI_OPTIX_PTX_PATH})
+    foreach(YBI_MATERIAL_BACKEND IN ITEMS OPENPBR MATERIALX)
+        string(TOLOWER "${YBI_MATERIAL_BACKEND}" YBI_MATERIAL_BACKEND_LOWER)
+        set(YBI_BACKEND_PTX_PATH
+            "${CMAKE_CURRENT_BINARY_DIR}/kernel_${YBI_MATERIAL_BACKEND_LOWER}.ptx")
+        set(YBI_BACKEND_PTX_DEPFILE "${YBI_BACKEND_PTX_PATH}.d")
+
+        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
+            OUTPUT "${YBI_BACKEND_PTX_PATH}" DEPFILE "${YBI_BACKEND_PTX_DEPFILE}"
+            ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
+            DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}" "YBI_MATERIAL_BACKEND_${YBI_MATERIAL_BACKEND}=1"
+            INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
+            # OPTIONS -lineinfo
+            DEPENDS ${YBI_MATERIALX_STUBS}
+        )
+    endforeach()
+    add_custom_target(yeoubi_optix_kernel DEPENDS
+        "${YBI_OPTIX_OPENPBR_PTX_PATH}" "${YBI_OPTIX_MATERIALX_PTX_PATH}")
     add_dependencies(yeoubi yeoubi_optix_kernel)
 
     set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx")
     set(YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE
         "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx.d")
-    add_custom_command(
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
         OUTPUT "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
-        COMMAND "${CMAKE_CUDA_COMPILER}"
-        --ptx
-        "--gpu-architecture=sm_75"
-        "--std=c++17"
-        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
-        "--use_fast_math"
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
-        -MD
-        -MF "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
-        "-o" "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
         DEPFILE "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
-        VERBATIM
+        ARCHITECTURE sm_75
     )
     add_custom_target(yeoubi_virtual_texture_kernel DEPENDS ${YBI_VIRTUAL_TEXTURE_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_virtual_texture_kernel)
@@ -289,28 +327,45 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_ACCUMULATE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx")
     set(YBI_ACCUMULATE_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx.d")
 
-    add_custom_command(
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/accumulate.cu"
         OUTPUT "${YBI_ACCUMULATE_KERNEL_PATH}"
-        COMMAND "${CMAKE_CUDA_COMPILER}"
-        --ptx
-        "--gpu-architecture=sm_75"
-        "--std=c++17"
-        "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
-        "--use_fast_math"
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
-        -MD
-        -MF "${YBI_ACCUMULATE_KERNEL_DEPFILE}"
-        "-o" "${YBI_ACCUMULATE_KERNEL_PATH}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/accumulate.cu"
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/accumulate.cu"
         DEPFILE "${YBI_ACCUMULATE_KERNEL_DEPFILE}"
-        VERBATIM
+        ARCHITECTURE sm_75
     )
     add_custom_target(yeoubi_accumulate_kernel DEPENDS ${YBI_ACCUMULATE_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_accumulate_kernel)
 
-    list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_PTX_PATH=\"${YBI_OPTIX_PTX_PATH}\")
+    # Primary ray
+    set(YBI_PRIMARY_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx")
+    set(YBI_PRIMARY_RAY_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/primary_ray.cu"
+        OUTPUT "${YBI_PRIMARY_RAY_KERNEL_PATH}"
+        DEPFILE "${YBI_PRIMARY_RAY_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
+        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
+    )
+    add_custom_target(yeoubi_primary_ray_kernel DEPENDS ${YBI_PRIMARY_RAY_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_primary_ray_kernel)
+
+    # Shade hit
+    set(YBI_SHADE_HIT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx")
+    set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/shade_hit.cu"
+        OUTPUT "${YBI_SHADE_HIT_KERNEL_PATH}"
+        DEPFILE "${YBI_SHADE_HIT_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
+        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
+    )
+    add_custom_target(yeoubi_shade_hit_kernel DEPENDS ${YBI_SHADE_HIT_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_shade_hit_kernel)
+
+    list (APPEND YBI_COMPILE_DEFINITIONS
+        YBI_OPTIX_OPENPBR_PTX_PATH=\"${YBI_OPTIX_OPENPBR_PTX_PATH}\"
+        YBI_OPTIX_MATERIALX_PTX_PATH=\"${YBI_OPTIX_MATERIALX_PTX_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_VIRTUAL_TEXTURE_KERNEL_PATH=\"${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_ACCUMULATE_KERNEL_PATH=\"${YBI_ACCUMULATE_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_INCLUDE_PATH=\"${YBI_OPTIX_INCLUDE_PATH}\")
@@ -345,36 +400,33 @@ target_compile_definitions(yeoubi PRIVATE
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
 )
 
-add_executable(material_compilation_dielectric_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/material_compilation_dielectric_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/clusters.cu
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/material_compilation.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
-)
-
-target_include_directories(material_compilation_dielectric_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${OPENUSD_INCLUDE_DIRS}
-    ${YBI_INCLUDE_DIRS}
-)
-
-target_include_directories(material_compilation_dielectric_test SYSTEM PRIVATE
-    ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES}
-)
-
-target_link_libraries(material_compilation_dielectric_test PRIVATE
-    ${YBI_DEPENDENCIES}
-)
-
-target_compile_definitions(material_compilation_dielectric_test PRIVATE
-    ${YBI_COMPILE_DEFINITIONS}
-    $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
-)
-
-if (YBI_HAS_CUDA AND OPTIX_FOUND)
-    add_dependencies(material_compilation_dielectric_test yeoubi_optix_kernel)
-endif()
+# add_executable(material_compilation_dielectric_test
+#     ${CMAKE_CURRENT_SOURCE_DIR}/tests/material_compilation_dielectric_test.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/clusters.cu
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/material_compilation.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
+# )
+#
+# target_include_directories(material_compilation_dielectric_test PRIVATE
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src
+#     ${OPENUSD_INCLUDE_DIRS}
+#     ${YBI_INCLUDE_DIRS}
+# )
+#
+# target_include_directories(material_compilation_dielectric_test SYSTEM PRIVATE
+#     ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES}
+# )
+#
+# target_link_libraries(material_compilation_dielectric_test PRIVATE
+#     ${YBI_DEPENDENCIES}
+# )
+#
+# target_compile_definitions(material_compilation_dielectric_test PRIVATE
+#     ${YBI_COMPILE_DEFINITIONS}
+#     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
+# )

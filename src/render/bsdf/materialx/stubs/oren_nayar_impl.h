@@ -53,5 +53,8 @@ YBI_GPU float YBI_MATERIAL_SELF_TRANSMITTANCE(const KernelParams &params,
                                               const ShadingInfo &info,
                                               const Vec3f &viewDirection)
 {
-    return 1.f - YBI_MATERIAL_WEIGHT(info);
+    const float weight = YBI_MATERIAL_WEIGHT(info);
+    const float transmittance = 1.f - weight;
+    YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(weight, transmittance);
+    return transmittance;
 }

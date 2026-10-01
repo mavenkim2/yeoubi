@@ -13,6 +13,7 @@
 #include "scene/shader_compilation.h"
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
 
@@ -22,7 +23,38 @@ namespace ybi
 {
 
 MaterialManager::~MaterialManager() = default;
-RenderSystem::~RenderSystem() = default;
+RenderSystem::~RenderSystem()
+{
+    // DeviceScene stores raw pointers; release every allocation owned by this scene
+    // before its device arena and the owning Device are destroyed.
+    const auto release = [this](auto *&ptr) {
+        if (ptr)
+        {
+            DeviceBuffer buffer(reinterpret_cast<void *>(ptr), 1);
+            device->Free(buffer);
+            ptr = nullptr;
+        }
+    };
+    release(deviceScene.objects);
+    release(deviceScene.materials);
+    release(deviceScene.deviceMaterial2s);
+    release(deviceScene.deviceMaterial3s);
+    release(deviceScene.materialHandles);
+    release(deviceScene.positions);
+    release(deviceScene.normals);
+    release(deviceScene.uvs);
+    release(deviceScene.uvIndices);
+    release(deviceScene.triangleIndices);
+    release(deviceScene.triangleMaterialIndices);
+    release(deviceScene.compressedClusters);
+    release(deviceScene.compressedClusterBytes);
+    release(deviceScene.deviceAttributes);
+    release(deviceScene.shaderNodes);
+    release(deviceScene.materialDescriptors);
+    release(deviceScene.deviceLights);
+    release(deviceScene.attributeIndices);
+    release(deviceScene.attributesVec2f);
+}
 
 static bool MeshClusterDataEqual(const Mesh &a, const Mesh &b)
 {
@@ -1254,14 +1286,16 @@ void MaterialManager::Update(Device *device,
         }
     }
 
-    materialCompiler = MaterialCompiler{};
-    for (MaterialGraph &material : container->materialXMaterials)
+    MaterialCompilationResult materialXCompilation;
+    if (!container->materialXMaterials.empty())
     {
-        ProcessMaterialXMaterial(material);
+        materialCompiler = MaterialCompiler{};
+        for (MaterialGraph &material : container->materialXMaterials)
+            ProcessMaterialXMaterial(material);
+        materialXCompilation = materialCompiler.Finalize(*device);
+        if (!materialXCompilation.succeeded)
+            throw std::runtime_error("Failed to compile the USD materials");
     }
-
-    MaterialCompilationResult materialXCompilation = materialCompiler.Finalize(*device);
-    YBI_ASSERT(materialXCompilation.succeeded);
     YBI_ASSERT(materialXCompilation.materials.size() == container->materialXMaterials.size());
 
     deviceScene->deviceMaterial3s = nullptr;
