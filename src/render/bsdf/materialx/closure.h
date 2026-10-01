@@ -4,7 +4,6 @@
 #include "core/vec3f.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
-#include <cstdint>
 
 namespace ybi
 {

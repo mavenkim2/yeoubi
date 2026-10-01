@@ -2,7 +2,6 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
-#include <cstdint>
 
 namespace ybi
 {

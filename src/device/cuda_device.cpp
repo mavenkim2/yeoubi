@@ -625,7 +625,6 @@ bool CUDADevice::CompileKernel(const std::string &source, DeviceModule &deviceMo
         "--use_fast_math",
         "--generate-line-info",
         "-DOPTIX_VERSION=" YBI_OPTIX_VERSION_STRING,
-        "-I" YBI_NVRTC_COMPAT_INCLUDE_PATH,
         "-I" YBI_OPTIX_INCLUDE_PATH,
         "-I" YBI_OPTIX_SDK_INCLUDE_PATH,
         "-I" YBI_CUDA_INCLUDE_PATH,

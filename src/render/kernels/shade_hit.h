@@ -34,8 +34,10 @@ YBI_GPU void GetShadingInfo(const DeviceScene &deviceScene,
 }
 
 #if 0
-void ShadeHit()
+void ShadeHit(const DeviceScene &scene)
 {
+    const Object &object = params.scene.objects[info.id];
+
     ShadingInfo shadingInfo;
     GetShadingInfo(object, info, shadingInfo);
     shadingInfo.TransformToWorld(info.objectToWorld);

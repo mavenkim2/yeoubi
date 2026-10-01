@@ -5,8 +5,6 @@
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include "device/device_texture.h"
-#include <cassert>
-#include <cstdint>
 
 namespace ybi
 {
@@ -104,9 +102,9 @@ YBI_CPU_GPU FeedbackRequest PackFeedbackRequest(uint32_t textureIndex,
                                                 uint32_t tileY,
                                                 uint32_t mip)
 {
-    assert(tileX < 256);
-    assert(tileY < 256);
-    assert(mip < 16);
+    YBI_ASSERT(tileX < 256);
+    YBI_ASSERT(tileY < 256);
+    YBI_ASSERT(mip < 16);
 
     FeedbackRequest request;
     request.textureIndex = textureIndex;

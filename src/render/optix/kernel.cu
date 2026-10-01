@@ -13,7 +13,6 @@
 #include "render/bsdf/openpbr/api.h"
 #include "render/bsdf/openpbr/init.h"
 #endif
-#include "render/camera.h"
 #include "render/device_attributes.h"
 #include "render/kernels/clustered_triangle.h"
 #include "render/kernels/shade_hit.h"

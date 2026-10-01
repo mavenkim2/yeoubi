@@ -3,11 +3,11 @@
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "device/cuda_compat.h"
 #include "render/bsdf/materialx/bsdf_types.h"
 #include "render/bsdf/materialx/closure.h"
 #include "render/bsdf/materialx/dielectric_bsdf.h"
 #include "scene/device_scene.h"
-#include <cstdint>
 
 namespace ybi
 {

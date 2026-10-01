@@ -5,7 +5,6 @@
 #include "device/kernel_params.h"
 #include "render/shaders/shading.h"
 #include "render/shaders/shading_helpers.h"
-#include <cmath>
 
 namespace ybi
 {

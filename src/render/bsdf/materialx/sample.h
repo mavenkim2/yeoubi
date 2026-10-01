@@ -3,13 +3,13 @@
 #include "core/assert.h"
 #include "core/math.h"
 #include "core/vec3f.h"
+#include "device/cuda_compat.h"
 #include "render/bsdf/materialx/conductor_bsdf.h"
 #include "render/bsdf/materialx/dielectric_bsdf.h"
 #include "render/bsdf/materialx/oren_nayar_bsdf.h"
 #include "render/bsdf/materialx/sheen.h"
 #include "render/material_opcodes.h"
 #include "scene/device_scene.h"
-#include <cstdint>
 
 namespace ybi
 {

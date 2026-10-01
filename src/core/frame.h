@@ -3,7 +3,6 @@
 #include "core/assert.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
-#include <cmath>
 
 namespace ybi
 {

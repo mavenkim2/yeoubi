@@ -3,8 +3,6 @@
 #include "core/assert.h"
 #include "core/math.h"
 #include "device/cuda_compat.h"
-#include <cmath>
-#include <cstddef>
 
 namespace ybi
 {
@@ -154,7 +152,7 @@ YBI_CPU_GPU constexpr float LengthSquared(Vec2f vector)
 
 YBI_CPU_GPU float Length(Vec2f vector)
 {
-    return std::sqrt(LengthSquared(vector));
+    return sqrt(LengthSquared(vector));
 }
 
 YBI_CPU_GPU Vec2f Normalize(Vec2f vector)

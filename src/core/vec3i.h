@@ -3,8 +3,6 @@
 #include "core/assert.h"
 #include "core/math.h"
 #include "device/cuda_compat.h"
-#include <cstddef>
-#include <cstdint>
 
 namespace ybi
 {

@@ -2,7 +2,6 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
-#include <cmath>
 
 #if defined(YBI_HAS_SSE)
 #include <xmmintrin.h>
@@ -42,7 +41,7 @@ YBI_CPU_GPU float Floor(float a)
 
 YBI_CPU_GPU float Abs(float a)
 {
-    return a < 0.f ? -a : a;
+    return fabsf(a);
 }
 
 YBI_CPU_GPU float Cos(float a)

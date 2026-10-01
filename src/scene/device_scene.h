@@ -3,10 +3,10 @@
 #include "core/affine_transform.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "device/cuda_compat.h"
 #include "render/material_opcodes.h"
 #include "scene/device_cluster.h"
 #include "scene/openpbr_parameter_list.h"
-#include <cstdint>
 
 namespace ybi
 {

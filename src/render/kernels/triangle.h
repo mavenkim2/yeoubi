@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/assert.h"
 #include "scene/device_scene.h"
 
 namespace ybi
@@ -60,7 +61,7 @@ YBI_GPU bool GetTriangleNormals(const DeviceScene &scene,
             return false;
         }
         default:
-            assert(0);
+            YBI_ASSERT(0);
             return false;
     }
 }
@@ -107,7 +108,7 @@ YBI_GPU bool GetTriangleUVs(const DeviceScene &scene,
             return false;
         }
         default:
-            assert(0);
+            YBI_ASSERT(0);
     }
 
     return true;

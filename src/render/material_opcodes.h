@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdint>
+#include "device/cuda_compat.h"
 
 namespace ybi
 {

@@ -1,11 +1,10 @@
 #pragma once
 
 #include "core/assert.h"
+#include "core/math.h"
 #include "core/vec3f.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
-#include <cmath>
-#include <cstddef>
 
 namespace ybi
 {
@@ -182,7 +181,7 @@ public:
         const float i = m[2][2];
 
         const float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-        if (std::fabs(det) <= epsilon)
+        if (Abs(det) <= epsilon)
         {
             return false;
         }

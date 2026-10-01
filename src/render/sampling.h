@@ -3,8 +3,6 @@
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "device/cuda_compat.h"
-#include <cmath>
-#include <math.h>
 
 namespace ybi
 {

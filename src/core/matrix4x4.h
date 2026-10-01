@@ -1,11 +1,10 @@
 #pragma once
 
 #include "core/assert.h"
+#include "core/math.h"
 #include "core/vec3f.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
-#include <cmath>
-#include <cstddef>
 
 namespace ybi
 {
@@ -171,10 +170,10 @@ public:
         for (size_t column = 0; column < 4; ++column)
         {
             size_t pivotRow = column;
-            float pivotMagnitude = std::fabs(augmented[pivotRow][column]);
+            float pivotMagnitude = Abs(augmented[pivotRow][column]);
             for (size_t row = column + 1; row < 4; ++row)
             {
-                const float magnitude = std::fabs(augmented[row][column]);
+                const float magnitude = Abs(augmented[row][column]);
                 if (magnitude > pivotMagnitude)
                 {
                     pivotRow = row;

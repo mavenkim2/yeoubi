@@ -2,8 +2,6 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
-#include <cstdint>
-#include <cstring>
 
 #if defined(_MSC_VER) && !defined(__CUDA_ARCH__)
 #include <intrin.h>

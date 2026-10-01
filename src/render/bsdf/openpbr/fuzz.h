@@ -8,7 +8,6 @@
 #include "render/bsdf/ltc_coefficients.h"
 #include "render/bsdf/openpbr/coat.h"
 #include "render/sampling.h"
-#include <cmath>
 
 namespace ybi
 {

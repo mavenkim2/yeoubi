@@ -3,10 +3,10 @@
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "device/cuda_compat.h"
 #include "render/bsdf/materialx/closure.h"
 #include "render/sampling.h"
 #include "scene/device_scene.h"
-#include <cstdint>
 
 namespace ybi
 {

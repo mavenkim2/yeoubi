@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/assert.h"
 #include "device/cuda_compat.h"
 #include "render/shaders/shading.h"
 #include "render/types.h"
@@ -39,7 +40,7 @@ YBI_GPU bool GetClusteredTriangleNormals(const Object &object,
             return false;
         }
         default:
-            assert(0);
+            YBI_ASSERT(0);
             return false;
     }
 }
@@ -86,7 +87,7 @@ YBI_GPU bool GetClusteredTriangleUVs(const Object &object,
             return false;
         }
         default:
-            assert(0);
+            YBI_ASSERT(0);
     }
 
     return true;

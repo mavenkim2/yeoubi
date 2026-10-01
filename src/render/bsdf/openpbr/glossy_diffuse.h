@@ -5,8 +5,8 @@
 #pragma once
 
 #include "core/math.h"
+#include "device/cuda_compat.h"
 #include "render/sampling.h"
-#include <cmath>
 namespace ybi
 {
 

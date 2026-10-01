@@ -3,7 +3,6 @@
 #include "core/assert.h"
 #include "core/bit.h"
 #include "device/cuda_compat.h"
-#include <type_traits>
 
 namespace ybi
 {

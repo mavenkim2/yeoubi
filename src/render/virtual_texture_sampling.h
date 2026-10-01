@@ -4,13 +4,12 @@
 #include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec4f.h"
+#include "device/cuda_compat.h"
 #include "device/device_texture.h"
 #include "device/kernel_params.h"
 #include "render/texture_sampling.h"
 #include "render/virtual_texture_interop.h"
 #include "render/virtual_texture_sampling.h"
-#include <cassert>
-#include <cstdint>
 #include <cuda_runtime.h>
 
 namespace ybi
@@ -99,7 +98,7 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
                uv.y,
                base,
                offset);
-        assert(pageOffset < descriptor.pageDescriptorCount);
+        YBI_ASSERT(pageOffset < descriptor.pageDescriptorCount);
     }
     const uint32_t pageIndex = descriptor.pageDescriptorOffset + pageOffset;
 
