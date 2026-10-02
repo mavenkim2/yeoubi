@@ -299,7 +299,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
             "${CMAKE_CURRENT_BINARY_DIR}/kernel_${YBI_MATERIAL_BACKEND_LOWER}.ptx")
         set(YBI_BACKEND_PTX_DEPFILE "${YBI_BACKEND_PTX_PATH}.d")
 
-        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/kernel.cu"
+        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/optix/kernel.cu"
             OUTPUT "${YBI_BACKEND_PTX_PATH}" DEPFILE "${YBI_BACKEND_PTX_DEPFILE}"
             ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
             DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}" "YBI_MATERIAL_BACKEND_${YBI_MATERIAL_BACKEND}=1"
@@ -315,7 +315,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx")
     set(YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE
         "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx.d")
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/virtual_textures.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/cuda/virtual_textures.cu"
         OUTPUT "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
         DEPFILE "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -327,7 +327,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_ACCUMULATE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx")
     set(YBI_ACCUMULATE_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/accumulate.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/cuda/accumulate.cu"
         OUTPUT "${YBI_ACCUMULATE_KERNEL_PATH}"
         DEPFILE "${YBI_ACCUMULATE_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -339,7 +339,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_PRIMARY_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx")
     set(YBI_PRIMARY_RAY_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/optix/primary_ray.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/optix/primary_ray.cu"
         OUTPUT "${YBI_PRIMARY_RAY_KERNEL_PATH}"
         DEPFILE "${YBI_PRIMARY_RAY_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -353,7 +353,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_SHADE_HIT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx")
     set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/cuda/shade_hit.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/cuda/shade_hit.cu"
         OUTPUT "${YBI_SHADE_HIT_KERNEL_PATH}"
         DEPFILE "${YBI_SHADE_HIT_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75

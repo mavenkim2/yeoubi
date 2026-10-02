@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
-#include "device/kernel_params.h"
+#include "render/shading_context.h"
 #include "render/shaders/shading.h"
 #include "render/shaders/shading_helpers.h"
 #include "scene/device_cluster.h"
@@ -10,7 +10,7 @@
 namespace ybi
 {
 
-YBI_GPU bool FindAttribute(const KernelParams &params,
+YBI_GPU bool FindAttribute(const ShadingContext &context,
                            AttributeId id,
                            uint32_t offset,
                            uint32_t count,
@@ -18,7 +18,7 @@ YBI_GPU bool FindAttribute(const KernelParams &params,
 {
     for (uint32_t index = offset; index < offset + count; index++)
     {
-        const DeviceAttribute &deviceAttribute = params.scene.deviceAttributes[index];
+        const DeviceAttribute &deviceAttribute = context.scene.deviceAttributes[index];
         if (deviceAttribute.id == id)
         {
             attributeIndex = index;
@@ -28,32 +28,32 @@ YBI_GPU bool FindAttribute(const KernelParams &params,
     return false;
 }
 
-YBI_GPU void ShaderAttributeValueVector2(const KernelParams &params,
+YBI_GPU void ShaderAttributeValueVector2(const ShadingContext &context,
                                          const ShadingInfo &info,
                                          float *registers,
                                          uint32_t &nodeOffset)
 {
     (void)registers;
 
-    AttributeId id = static_cast<AttributeId>(params.scene.shaderNodes[nodeOffset++]);
-    uint32_t outputSlot = params.scene.shaderNodes[nodeOffset++];
+    AttributeId id = static_cast<AttributeId>(context.scene.shaderNodes[nodeOffset++]);
+    uint32_t outputSlot = context.scene.shaderNodes[nodeOffset++];
 
-    const Object &object = params.scene.objects[info.objectId];
+    const Object &object = context.scene.objects[info.objectId];
 
     int attributeIndex;
     bool found =
-        FindAttribute(params, id, object.primvarOffset, object.primvarCount, attributeIndex);
+        FindAttribute(context, id, object.primvarOffset, object.primvarCount, attributeIndex);
 
     YBI_ASSERT(found && "Requested material attribute was not found");
 
-    const DeviceAttribute &attribute = params.scene.deviceAttributes[attributeIndex];
+    const DeviceAttribute &attribute = context.scene.deviceAttributes[attributeIndex];
     Vec2f values[3];
 
     if (IsClusteredTriangle(object.clusterOffset, info.clusterId))
     {
         const uint32_t clusterIndex = object.clusterOffset + info.clusterId;
-        const DeviceCluster &cluster = params.scene.compressedClusters[clusterIndex];
-        const uint8_t *clusterData = params.scene.compressedClusterBytes + cluster.byteOffset;
+        const DeviceCluster &cluster = context.scene.compressedClusters[clusterIndex];
+        const uint8_t *clusterData = context.scene.compressedClusterBytes + cluster.byteOffset;
 
         switch (attribute.attributeType)
         {

@@ -5,7 +5,7 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "render/bsdf/materialx/bsdf_types.h"
-#include "render/ray_cone.h"
+#include "render/types.h"
 
 namespace ybi
 {

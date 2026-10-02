@@ -6,7 +6,7 @@
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include "device/device_texture.h"
-#include "device/kernel_params.h"
+#include "render/shading_context.h"
 #include "render/texture_sampling.h"
 #include "render/virtual_texture_interop.h"
 #include "render/virtual_texture_sampling.h"
@@ -35,7 +35,7 @@ YBI_GPU uint32_t CalculateMaxVirtualTextureMip(DeviceTextureDescriptor descripto
     return maxMip;
 }
 
-YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
+YBI_GPU Vec4f SamplePointVirtualTexture(const ShadingContext &context,
                                         DeviceTextureDescriptor descriptor,
                                         uint32_t pageShift,
                                         Vec2f uv,
@@ -109,7 +109,7 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
         request->pageDescriptorIndex = pageIndex;
     }
 
-    const PageDescriptor pageDescriptor = params.pageDescriptors[pageIndex];
+    const PageDescriptor pageDescriptor = context.pageDescriptors[pageIndex];
 
     if (pageDescriptor.bits == ~0u)
     {
@@ -132,7 +132,8 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
     return result;
 }
 
-YBI_GPU void WriteUniqueFeedback(const KernelParams &params, UnpackedFeedbackRequest request)
+YBI_GPU void WriteUniqueFeedback(const ShadingContext &context,
+                                 UnpackedFeedbackRequest request)
 {
     const uint32_t pageDescriptorIndex = request.pageDescriptorIndex;
     if (pageDescriptorIndex == ~0u)
@@ -140,7 +141,7 @@ YBI_GPU void WriteUniqueFeedback(const KernelParams &params, UnpackedFeedbackReq
         return;
     }
 
-    uint32_t *bits = params.pageDescriptorBits;
+    uint32_t *bits = context.pageDescriptorBits;
 
     const uint32_t wordIndex = pageDescriptorIndex >> 5u;
     const uint32_t bitIndex = pageDescriptorIndex & 31u;
@@ -148,9 +149,9 @@ YBI_GPU void WriteUniqueFeedback(const KernelParams &params, UnpackedFeedbackReq
     uint32_t old = atomicOr(&bits[wordIndex], 1u << bitIndex);
     if (((old >> bitIndex) & 1u) == 0)
     {
-        uint32_t requestIndex = atomicAdd(&params.feedbackRequests[0].textureIndex, 1u);
+        uint32_t requestIndex = atomicAdd(&context.feedbackRequests[0].textureIndex, 1u);
 
-        params.feedbackRequests[requestIndex + 1] =
+        context.feedbackRequests[requestIndex + 1] =
             PackFeedbackRequest(request.textureIndex, request.tileX, request.tileY, request.mip);
     }
 }

@@ -2,7 +2,10 @@
 
 #include "render/kernels/clustered_triangle.h"
 #include "render/kernels/triangle.h"
+#include "render/ray_cone.h"
 #include "render/shaders/shading.h"
+#include "render/shading_context.h"
+#include "render/types.h"
 
 namespace ybi
 {
@@ -33,13 +36,20 @@ YBI_GPU void GetShadingInfo(const DeviceScene &deviceScene,
     shadingInfo.primIndex = info.primIndex;
 }
 
-#if 0
-void ShadeHit(const DeviceScene &scene)
+template <typename SampleState>
+void ShadeHit(const ShadingContext &context, SampleState *sampleState, uint32_t sampleIndex)
 {
-    const Object &object = params.scene.objects[info.id];
+    const DeviceScene &scene = context.scene;
+    Vec3f rayDirection = sampleState->ReadRayDirection(sampleIndex);
+    Vec3f rayOrigin = sampleState->ReadRayOrigin(sampleIndex);
+    RayCone rayCone = sampleState->ReadRayCone(sampleIndex);
+    const IntersectionInfo info = sampleState->ReadIntersection(sampleIndex);
+    uint32_t depth = sampleState->ReadDepth(sampleIndex);
+
+    const Object &object = scene.objects[info.id];
 
     ShadingInfo shadingInfo;
-    GetShadingInfo(object, info, shadingInfo);
+    GetShadingInfo(scene, object, info, shadingInfo);
     shadingInfo.TransformToWorld(info.objectToWorld);
 
     Vec3f geometricNormal = shadingInfo.geometricNormal;
@@ -55,58 +65,35 @@ void ShadeHit(const DeviceScene &scene)
     shadingInfo.rayDirection = rayDirection;
     shadingInfo.rayCone = rayCone;
 
-#if defined(YBI_MATERIAL_BACKEND_OPENPBR)
-    OpenPbrBsdf bsdf;
-#endif
-
-#if defined(YBI_MATERIAL_BACKEND_OPENPBR)
-    const OrthonormalBasis tangentFrame(shadingInfo.dpdu, shadingInfo.shadingNormal);
-#endif
     const Vec3f worldViewDirection = -rayDirection;
-#if defined(YBI_MATERIAL_BACKEND_MATERIALX)
     const DeviceMaterial3 *materialXMaterial = nullptr;
-#endif
 
     bool passedAlphaTest = true;
     bool hasBsdf = false;
 
     if (shadingInfo.hasMaterial)
     {
-        const MaterialHandle &handle = params.scene.materialHandles[shadingInfo.materialIndex];
-#if defined(YBI_MATERIAL_BACKEND_OPENPBR)
-        if (handle.type == MaterialHandleType::OpenPbr)
-        {
-            const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
+        const MaterialHandle &handle = scene.materialHandles[shadingInfo.materialIndex];
+        assert(handle.type == MaterialHandleType::MaterialX);
+        materialXMaterial = &scene.deviceMaterial3s[handle.index];
 
-            passedAlphaTest = InitializeOpenPbrBsdf(params,
-                                                    material,
-                                                    shadingInfo,
-                                                    bsdf,
-                                                    shadingInfo.shadingNormal,
-                                                    worldViewDirection,
-                                                    tangentFrame,
-                                                    throughput,
-                                                    rng.Uniform());
-            hasBsdf = true;
-        }
-#else
-        if (handle.type == MaterialHandleType::MaterialX)
-        {
-            materialXMaterial = &params.scene.deviceMaterial3s[handle.index];
-            optixDirectCall<void>(
-                materialXMaterial->initializeCallableIndex, &params, &shadingInfo);
-            hasBsdf = true;
-        }
-#endif
+        DeviceDispatch(materialXMaterial->initializeCallableIndex, &params, &shadingInfo);
+        hasBsdf = true;
     }
 
     if (!shadingInfo.hasMaterial || !hasBsdf || !passedAlphaTest)
     {
         rayOrigin = OffsetRayOrigin(shadingInfo.position, -geometricNormal);
-        ++depth;
-        continue;
+        depth++;
+        // return;
     }
+    else
+    {
+    }
+
+    sampleState->WriteRayOrigin(sampleIndex, rayOrigin);
+    sampleState->WriteRayCone(sampleIndex, rayCone);
+    sampleState->WriteDepth(sampleIndex, depth);
 }
-#endif
 
 } // namespace ybi

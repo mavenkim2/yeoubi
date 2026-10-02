@@ -9,7 +9,7 @@
 #include "device/device_texture.h"
 #include "device/kernel_params.h"
 #include "display_device/display_device.h"
-#include "render/optix/visibility_mask.h"
+#include "render/kernels/device/optix/visibility_mask.h"
 #include "scene/clusterizer.h"
 #include "scene/scene.h"
 #include <cstddef>

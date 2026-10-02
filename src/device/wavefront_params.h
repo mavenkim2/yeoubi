@@ -3,6 +3,7 @@
 #include "core/affine_transform.h"
 #include "core/matrix4x4.h"
 #include "device/device_texture.h"
+#include "render/shading_context.h"
 #include "render/types.h"
 #include "render/virtual_texture_interop.h"
 #include "scene/device_scene.h"
@@ -48,12 +49,22 @@ struct WavefrontParams
     FeedbackRequest *feedbackRequests;
 
     // Wavefront
-    SampleState *sampleStates;
-    uint32_t sampleIndex;
+    WavefrontSampleState sampleState;
+    uint32_t numSampleStates;
     uint32_t maxNumSampleState;
 
-    IntersectionSampleState *intersectionInfos;
-    uint32_t numIntersectionInfos;
+    uint32_t *sampleIndices;
+    uint32_t numSampleIndices;
 };
+
+YBI_CPU_GPU ShadingContext GetShadingContext(const WavefrontParams &params)
+{
+    return {params.scene,
+            params.textureDescriptors,
+            params.pageDescriptors,
+            params.pageDescriptorBits,
+            params.feedbackRequests,
+            params.opaqueDielectricEnergyComplementTexture};
+}
 
 } // namespace ybi

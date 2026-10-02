@@ -3,7 +3,7 @@ YBI_MATERIAL_SELF(const KernelParams &params, const ShadingInfo &info)
 {
     constexpr MaterialTextureHandle handle = YBI_MATERIAL_HANDLE;
     VirtualTextureMipSelection mipSelection;
-    const Vec4f value = VirtualTextureSampleTiledImage(params,
+    const Vec4f value = VirtualTextureSampleTiledImage(GetShadingContext(params),
                                                        handle,
                                                        info,
                                                        YBI_MATERIAL_UV_TILING,

@@ -4,7 +4,7 @@
 #include "device/device_texture.h"
 
 #ifdef __CUDA_ARCH__
-#include "render/cuda/texture_sampling.h"
+#include "render/kernels/device/cuda/texture_sampling.h"
 #else
 #endif
 

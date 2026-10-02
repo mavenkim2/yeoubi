@@ -2,10 +2,10 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
-#include "device/kernel_params.h"
-#include "render/ray_cone_utils.h"
+#include "render/ray_cone.h"
 #include "render/shaders/shading.h"
 #include "render/shaders/shading_helpers.h"
+#include "render/shading_context.h"
 #include "render/virtual_texture_interop.h"
 #include "render/virtual_texture_sampling.h"
 
@@ -45,7 +45,7 @@ struct VirtualTextureMipSelection
     uint32_t nextMip;
 };
 
-YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const ShadingContext &context,
                                             MaterialTextureHandle handle,
                                             const ShadingInfo &shadingInfo,
                                             uint32_t udimTableIndex,
@@ -53,7 +53,7 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
                                             const Vec2f (&uvs)[3],
                                             VirtualTextureMipSelection *mipSelection = nullptr)
 {
-    DeviceTextureDescriptor textureDescriptor = params.textureDescriptors[udimTableIndex];
+    DeviceTextureDescriptor textureDescriptor = context.textureDescriptors[udimTableIndex];
     const uint32_t pageShift = 7;
 
     float lod = ComputeTextureLOD(shadingInfo.positions[0],
@@ -78,7 +78,7 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
 
     // TODO: don't hardcode
     UnpackedFeedbackRequest lowR, highR;
-    Vec4f lowerValue = SamplePointVirtualTexture(params,
+    Vec4f lowerValue = SamplePointVirtualTexture(context,
                                                  textureDescriptor,
                                                  pageShift,
                                                  uv,
@@ -87,7 +87,7 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
                                                  udimTableIndex,
                                                  handle.udimBase,
                                                  handle.udimTableOffset);
-    Vec4f higherValue = SamplePointVirtualTexture(params,
+    Vec4f higherValue = SamplePointVirtualTexture(context,
                                                   textureDescriptor,
                                                   pageShift,
                                                   uv,
@@ -97,19 +97,19 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
                                                   handle.udimBase,
                                                   handle.udimTableOffset);
 
-    WriteUniqueFeedback(params, lowR);
-    WriteUniqueFeedback(params, highR);
+    WriteUniqueFeedback(context, lowR);
+    WriteUniqueFeedback(context, highR);
 
     float t = lod - float(baseMip);
     Vec4f value = Lerp(lowerValue, higherValue, t);
     return value;
 }
 
-YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const ShadingContext &context,
                                             MaterialTextureHandle handle,
                                             const ShadingInfo &shadingInfo)
 {
-    return VirtualTextureSampleImage(params,
+    return VirtualTextureSampleImage(context,
                                      handle,
                                      shadingInfo,
                                      GetUdimTableIndex(handle, shadingInfo.uv),
@@ -117,14 +117,15 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
                                      shadingInfo.uvs);
 }
 
-YBI_CPU_GPU Vec4f VirtualTextureSampleTiledImage(const KernelParams &params,
-                                                 MaterialTextureHandle handle,
-                                                 const ShadingInfo &shadingInfo,
-                                                 Vec2f uvTiling,
-                                                 Vec2f uvOffset,
-                                                 Vec2f realWorldImageSize,
-                                                 Vec2f realWorldTileSize,
-                                                 VirtualTextureMipSelection *mipSelection = nullptr)
+YBI_CPU_GPU Vec4f
+VirtualTextureSampleTiledImage(const ShadingContext &context,
+                               MaterialTextureHandle handle,
+                               const ShadingInfo &shadingInfo,
+                               Vec2f uvTiling,
+                               Vec2f uvOffset,
+                               Vec2f realWorldImageSize,
+                               Vec2f realWorldTileSize,
+                               VirtualTextureMipSelection *mipSelection = nullptr)
 {
     // The texture file is selected from the original UV tile. Tiling only changes
     // coordinates within that image; keep vertex UVs unwrapped for the LOD area.
@@ -136,54 +137,54 @@ YBI_CPU_GPU Vec4f VirtualTextureSampleTiledImage(const KernelParams &params,
                           shadingInfo.uvs[1] * scale - offset,
                           shadingInfo.uvs[2] * scale - offset};
     return VirtualTextureSampleImage(
-        params, handle, shadingInfo, udimTableIndex, uv, uvs, mipSelection);
+        context, handle, shadingInfo, udimTableIndex, uv, uvs, mipSelection);
 }
 
-YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const KernelParams &params,
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const ShadingContext &context,
                                             uint32_t &nodeOffset,
                                             const ShadingInfo &shadingInfo)
 {
-    const MaterialTextureHandle handle = LoadTextureHandle(params.scene.shaderNodes, nodeOffset);
-    return VirtualTextureSampleImage(params, handle, shadingInfo);
+    const MaterialTextureHandle handle = LoadTextureHandle(context.scene.shaderNodes, nodeOffset);
+    return VirtualTextureSampleImage(context, handle, shadingInfo);
 }
 
-YBI_CPU_GPU void ShaderImageVector3(const KernelParams &params,
+YBI_CPU_GPU void ShaderImageVector3(const ShadingContext &context,
                                     const ShadingInfo &info,
                                     float *registers,
                                     uint32_t &nodeOffset)
 {
-    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
-    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
     StoreFloat3Register(registers, result.Xyz(), dst);
 }
 
-YBI_CPU_GPU void ShaderImageVector2(const KernelParams &params,
+YBI_CPU_GPU void ShaderImageVector2(const ShadingContext &context,
                                     const ShadingInfo &info,
                                     float *registers,
                                     uint32_t &nodeOffset)
 {
-    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
-    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
     StoreFloat2Register(registers, result.Xy(), dst);
 }
 
-YBI_CPU_GPU void ShaderImageVector4(const KernelParams &params,
+YBI_CPU_GPU void ShaderImageVector4(const ShadingContext &context,
                                     const ShadingInfo &info,
                                     float *registers,
                                     uint32_t &nodeOffset)
 {
-    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
-    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
     StoreFloat4Register(registers, result, dst);
 }
 
-YBI_CPU_GPU void ShaderImageFloat(const KernelParams &params,
+YBI_CPU_GPU void ShaderImageFloat(const ShadingContext &context,
                                   const ShadingInfo &info,
                                   float *registers,
                                   uint32_t &nodeOffset)
 {
-    Vec4f result = VirtualTextureSampleImage(params, nodeOffset, info);
-    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
     StoreFloatRegister(registers, result.x, dst);
 }
 

@@ -3,6 +3,7 @@
 #include "core/affine_transform.h"
 #include "core/matrix4x4.h"
 #include "device/device_texture.h"
+#include "render/shading_context.h"
 #include "render/virtual_texture_interop.h"
 #include "scene/device_scene.h"
 
@@ -46,5 +47,15 @@ struct KernelParams
     uint32_t *pageDescriptorBits;
     FeedbackRequest *feedbackRequests;
 };
+
+YBI_CPU_GPU ShadingContext GetShadingContext(const KernelParams &params)
+{
+    return {params.scene,
+            params.textureDescriptors,
+            params.pageDescriptors,
+            params.pageDescriptorBits,
+            params.feedbackRequests,
+            params.opaqueDielectricEnergyComplementTexture};
+}
 
 } // namespace ybi
