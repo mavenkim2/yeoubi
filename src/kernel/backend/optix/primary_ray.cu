@@ -1,6 +1,7 @@
-#include "kernel/launch/wavefront_params.h"
+#include "kernel/geometry/triangle_info.h"
 #include "kernel/integrator/ray_cone.h"
-#include "kernel/integrator/rng.h"
+#include "kernel/launch/wavefront_params.h"
+#include "kernel/sampling/rng.h"
 #include "kernel/state/types.h"
 #include <optix_device.h>
 
@@ -9,7 +10,7 @@ namespace ybi
 
 extern "C"
 {
-    __constant__ KernelParams params;
+    __constant__ WavefrontParams params;
 }
 
 YBI_GPU void PrimaryRayKernel()
@@ -19,9 +20,7 @@ YBI_GPU void PrimaryRayKernel()
 
     const uint32_t rasterX = launchIndex.x + params.pixelOffsetX;
     const uint32_t rasterY = launchIndex.y + params.pixelOffsetY;
-    const int maxDepth = Max(0, params.maxDepth);
     const OptixTraversableHandle bvhHandle = static_cast<OptixTraversableHandle>(params.bvhHandle);
-    Vec3f sum(0.f);
 
     RNG rng = RNG::Init(Vec2u(rasterX, rasterY), params.sampleOffset);
     const float pixelX = float(rasterX) + rng.Uniform();
@@ -34,11 +33,6 @@ YBI_GPU void PrimaryRayKernel()
 
     RayCone rayCone{};
     rayCone.spreadAngle = atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
-    Vec3f radiance(0.f);
-    Vec3f throughput(1.f);
-    Vec3f previousSurfacePosition(0.f);
-    float previousBsdfPdf = 0.f;
-    bool hasPreviousBsdfSample = false;
 
     IntersectionInfo info{};
     const uint64_t ptr = reinterpret_cast<uint64_t>(&info);
@@ -61,13 +55,27 @@ YBI_GPU void PrimaryRayKernel()
 
     if (info.type != INTERSECTION_TYPE_NONE)
     {
-        uint32_t sampleIndex = atomicAdd(&params.numSampleStates, 1u);
+        const Object &object = params.scene.objects[info.id];
+        TriangleInfo triangleInfo;
+        GetTriangleInfo(params.scene, object, info, triangleInfo);
+        triangleInfo.TransformToWorld(info.objectToWorld);
+
+        TriangleSurfaceInfo surfaceInfo;
+        CalculateTriangleSurfaceInfo(triangleInfo, info.bary, surfaceInfo);
+        UpdatePrimaryRayCone(rayCone, rayDirection, info.t, triangleInfo, surfaceInfo);
+
+        uint32_t sampleIndex = atomicAdd(params.numSampleStates, 1u);
         params.sampleState.WritePixelX(sampleIndex, rasterX);
         params.sampleState.WritePixelY(sampleIndex, rasterY);
-        params.sampleState.WriteRNG(rng);
-        params.sampleState.WriteRayCone(rayCone);
-        params.sampleState.WriteThroughput(Vec3f(1.f));
+        params.sampleState.WriteRNG(sampleIndex, rng);
+        params.sampleState.WriteRayCone(sampleIndex, rayCone);
+        params.sampleState.WriteRadiance(sampleIndex, Vec3f(0.f));
+        params.sampleState.WriteThroughput(sampleIndex, Vec3f(1.f));
+        params.sampleState.WriteRayOrigin(sampleIndex, rayOrigin);
+        params.sampleState.WriteRayDirection(sampleIndex, rayDirection);
+        params.sampleState.WriteDepth(sampleIndex, 0u);
         params.sampleState.WriteIntersection(sampleIndex, info);
+        params.sampleState.WriteTriangleInfo(sampleIndex, surfaceInfo);
         params.sampleState.WriteKernelType(sampleIndex, KERNEL_SHADE_HIT);
     }
     else

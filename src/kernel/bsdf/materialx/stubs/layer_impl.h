@@ -1,5 +1,5 @@
 YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
-                                      const ShadingInfo &info,
+                                      const ClosureEvaluationInfo &info,
                                       const Vec3f &viewDirection,
                                       Vec3f &lightDirection,
                                       Vec3f u)
@@ -29,7 +29,7 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
 }
 
 YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
-                                         const ShadingInfo &info,
+                                         const ClosureEvaluationInfo &info,
                                          const Vec3f &viewDirection,
                                          const Vec3f &lightDirection)
 {
@@ -40,7 +40,7 @@ YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,
-                                    const ShadingInfo &info,
+                                    const ClosureEvaluationInfo &info,
                                     const Vec3f &viewDirection,
                                     const Vec3f &lightDirection)
 {
@@ -56,7 +56,7 @@ YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_TRANSMITTANCE(const KernelParams &params,
-                                              const ShadingInfo &info,
+                                              const ClosureEvaluationInfo &info,
                                               const Vec3f &viewDirection)
 {
     const float topTransmittance =
@@ -70,7 +70,7 @@ YBI_GPU float YBI_MATERIAL_SELF_TRANSMITTANCE(const KernelParams &params,
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_ALBEDO(const KernelParams &params,
-                                       const ShadingInfo &info,
+                                       const ClosureEvaluationInfo &info,
                                        const Vec3f &viewDirection)
 {
     float transmittanceTop = YBI_MATERIAL_TRANSMITTANCE_TOP(params, info, viewDirection);

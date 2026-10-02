@@ -187,7 +187,8 @@ struct BsdfNodeBase : MaterialNodeBase
                                       const std::string &materialPrefix) const
     {
         std::string source = "YBI_GPU void " + INITIALIZE_PREFIX + FullName(materialPrefix) +
-                             "(const KernelParams &params, ShadingInfo &info)\n{\n    ";
+                             "(const KernelParams &params, "
+                             "ClosureInitializationInfo &info)\n{\n    ";
 
         for (MaterialNodeBase *node : inputs)
         {
@@ -269,7 +270,7 @@ struct ConstantFloatNode final : MaterialNodeBase
                         const std::string &materialPrefix) const override
     {
         return "YBI_GPU float " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
-               "(const ShadingInfo &)\n{\n    return " + FloatLiteral(value) + ";\n}\n";
+               "(const ClosureEvaluationInfo &)\n{\n    return " + FloatLiteral(value) + ";\n}\n";
     }
 
     MaterialOpcode GetNodeType() const override
@@ -288,8 +289,8 @@ struct ConstantColor3Node final : MaterialNodeBase
                         const std::string &materialPrefix) const override
     {
         return "YBI_GPU Vec3f " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
-               "(const ShadingInfo &)\n{\n    return Vec3f(" + FloatLiteral(value.x) + ", " +
-               FloatLiteral(value.y) + ", " + FloatLiteral(value.z) + ");\n}\n";
+               "(const ClosureEvaluationInfo &)\n{\n    return Vec3f(" + FloatLiteral(value.x) +
+               ", " + FloatLiteral(value.y) + ", " + FloatLiteral(value.z) + ");\n}\n";
     }
 
     MaterialOpcode GetNodeType() const override
@@ -308,8 +309,8 @@ struct ConstantVector2Node final : MaterialNodeBase
                         const std::string &materialPrefix) const override
     {
         return "YBI_GPU Vec2f " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
-               "(const ShadingInfo &)\n{\n    return Vec2f(" + FloatLiteral(value.x) + ", " +
-               FloatLiteral(value.y) + ");\n}\n";
+               "(const ClosureEvaluationInfo &)\n{\n    return Vec2f(" + FloatLiteral(value.x) +
+               ", " + FloatLiteral(value.y) + ");\n}\n";
     }
 
     MaterialOpcode GetNodeType() const override
@@ -407,13 +408,14 @@ struct ExpressionNode final : MaterialNodeBase
                 if (inputs[0]->GetNodeType() == MaterialOpcode::NormalMapFloat &&
                     inputs[1]->GetNodeType() == MaterialOpcode::NormalMapFloat)
                 {
-                    body = "const Vec3f baseNormal = " + arg(0) +
-                           "; const Vec3f addedNormal = " + arg(1) + "; " +
-                           MaterialDebugPrintValues(FullName(materialPrefix),
-                                                    "add_vector3 normalmap in2 beforeAdd",
-                                                    "normal=(%f,%f,%f)",
-                                                    "addedNormal.x, addedNormal.y, addedNormal.z") +
-                           "; return baseNormal + addedNormal;";
+                    body =
+                        "const Vec3f baseNormal = " + arg(0) +
+                        "; const Vec3f addedNormal = " + arg(1) + "; " +
+                        MaterialDebugPrintValues(FullName(materialPrefix),
+                                                 "add_vector3 normalmap in2 beforeAdd",
+                                                 "normal=(%f,%f,%f)",
+                                                 "addedNormal.x, addedNormal.y, addedNormal.z") +
+                        "; return baseNormal + addedNormal;";
                     break;
                 }
 #endif
@@ -543,7 +545,8 @@ struct ArtisticIorIorNode final : MaterialNodeBase
              {"YBI_MATERIAL_EDGE_COLOR", ValueCall(edgeColor, materialPrefix)},
              {"YBI_MATERIAL_DEBUG_PRINT(inputReflectivity, edgeColor, output)",
               MaterialDebugPrintValues(
-                  FullName(materialPrefix), "artistic_ior ior",
+                  FullName(materialPrefix),
+                  "artistic_ior ior",
                   "reflectivity=(%f,%f,%f) edgeColor=(%f,%f,%f) output=(%f,%f,%f)",
                   "inputReflectivity.x, inputReflectivity.y, inputReflectivity.z, "
                   "edgeColor.x, edgeColor.y, edgeColor.z, output.x, output.y, output.z")}});
@@ -570,7 +573,8 @@ struct ArtisticIorExtinctionNode final : MaterialNodeBase
              {"YBI_MATERIAL_EDGE_COLOR", ValueCall(edgeColor, materialPrefix)},
              {"YBI_MATERIAL_DEBUG_PRINT(inputReflectivity, edgeColor, output)",
               MaterialDebugPrintValues(
-                  FullName(materialPrefix), "artistic_ior extinction",
+                  FullName(materialPrefix),
+                  "artistic_ior extinction",
                   "reflectivity=(%f,%f,%f) edgeColor=(%f,%f,%f) output=(%f,%f,%f)",
                   "inputReflectivity.x, inputReflectivity.y, inputReflectivity.z, "
                   "edgeColor.x, edgeColor.y, edgeColor.z, output.x, output.y, output.z")}});
@@ -629,14 +633,6 @@ struct ImageNode final : MaterialNodeBase
                            sourceNode->type == MaterialOpcode::TiledImageVector4;
         if (tiled)
         {
-            const std::string mipPrint =
-                valueType == MaterialValueType::Vec3
-                    ? MaterialDebugPrintValues(FullName(materialPrefix),
-                                               "tiledimage",
-                                               "lod=%f baseMip=%u nextMip=%u",
-                                               "mipSelection.lod, mipSelection.baseMip, "
-                                               "mipSelection.nextMip")
-                    : "";
             return CompileWithMacros(
                 "kernel/bsdf/materialx/stubs/tiledimage_impl.h",
                 {{"YBI_MATERIAL_RETURN", returnType},
@@ -648,9 +644,7 @@ struct ImageNode final : MaterialNodeBase
                  {"YBI_MATERIAL_REALWORLD_IMAGE_SIZE",
                   ValueCall(realWorldImageSize, materialPrefix)},
                  {"YBI_MATERIAL_REALWORLD_TILE_SIZE",
-                  ValueCall(realWorldTileSize, materialPrefix)},
-                 {"YBI_MATERIAL_MIP_SELECTION", mipPrint.empty() ? "nullptr" : "&mipSelection"},
-                 {"YBI_MATERIAL_DEBUG_PRINT_MIP(mipSelection)", mipPrint}});
+                  ValueCall(realWorldTileSize, materialPrefix)}});
         }
 
         return CompileWithMacros("kernel/bsdf/materialx/stubs/image_impl.h",
@@ -692,7 +686,8 @@ struct SheenBsdfNode final : BsdfNodeBase
              {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
              {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
              {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(weight, albedo, transmittance)",
-              MaterialDebugPrintValues(self, "sheen transmittance",
+              MaterialDebugPrintValues(self,
+                                       "sheen transmittance",
                                        "weight=%f albedo=%f value=%f",
                                        "weight, albedo, transmittance")},
              {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
@@ -730,7 +725,8 @@ struct DielectricBsdfNode final : BsdfNodeBase
              {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
              {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
              {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(weight, albedo, transmittance)",
-              MaterialDebugPrintValues(self, "dielectric transmittance",
+              MaterialDebugPrintValues(self,
+                                       "dielectric transmittance",
                                        "weight=%f albedo=%f value=%f",
                                        "weight, albedo, transmittance")},
              {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
@@ -769,8 +765,10 @@ struct OrenNayarBsdfNode final : BsdfNodeBase
              {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
              {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
              {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(weight, transmittance)",
-              MaterialDebugPrintValues(self, "oren_nayar transmittance",
-                                       "weight=%f value=%f", "weight, transmittance")},
+              MaterialDebugPrintValues(self,
+                                       "oren_nayar transmittance",
+                                       "weight=%f value=%f",
+                                       "weight, transmittance")},
              {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
              {"YBI_MATERIAL_COLOR", GET_CLOSURE_PREFIX + colorName},
              {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName},
@@ -834,18 +832,27 @@ struct MixBsdfNode final : BsdfNodeBase
              {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
              {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
              {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
-             {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(mix, bgTransmittance, fgTransmittance, transmittance)",
-              MaterialDebugPrintValues(
-                  self, "mix transmittance",
-                  "mix=%f bg=%f fg=%f value=%f",
-                  "mix, bgTransmittance, fgTransmittance, transmittance")},
+             {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(mix, bgTransmittance, fgTransmittance, "
+              "transmittance)",
+              MaterialDebugPrintValues(self,
+                                       "mix transmittance",
+                                       "mix=%f bg=%f fg=%f value=%f",
+                                       "mix, bgTransmittance, fgTransmittance, transmittance")},
              {"YBI_MATERIAL_MIX", GET_CLOSURE_PREFIX + mix->FullName(materialPrefix)},
-             {"YBI_MATERIAL_DEBUG_PRINT_0(selectedProbability, unselectedProbability, bgWeight, fgWeight)",
-              MaterialDebugPrint(self, "mix bg", bg->GetNodeType(),
-                                 "bgWeight=%f fgWeight=%f", "bgWeight, fgWeight")},
-             {"YBI_MATERIAL_DEBUG_PRINT_1(selectedProbability, unselectedProbability, bgWeight, fgWeight)",
-              MaterialDebugPrint(self, "mix fg", fg->GetNodeType(),
-                                 "bgWeight=%f fgWeight=%f", "bgWeight, fgWeight")},
+             {"YBI_MATERIAL_DEBUG_PRINT_0(selectedProbability, unselectedProbability, bgWeight, "
+              "fgWeight)",
+              MaterialDebugPrint(self,
+                                 "mix bg",
+                                 bg->GetNodeType(),
+                                 "bgWeight=%f fgWeight=%f",
+                                 "bgWeight, fgWeight")},
+             {"YBI_MATERIAL_DEBUG_PRINT_1(selectedProbability, unselectedProbability, bgWeight, "
+              "fgWeight)",
+              MaterialDebugPrint(self,
+                                 "mix fg",
+                                 fg->GetNodeType(),
+                                 "bgWeight=%f fgWeight=%f",
+                                 "bgWeight, fgWeight")},
              {"YBI_MATERIAL_SAMPLE_BG", SAMPLE_PREFIX + bgName},
              {"YBI_MATERIAL_EVALUATE_BG", EVALUATE_PREFIX + bgName},
              {"YBI_MATERIAL_PDF_BG", PDF_PREFIX + bgName},
@@ -884,18 +891,28 @@ struct LayerBsdfNode final : BsdfNodeBase
              {"YBI_MATERIAL_SELF_PDF", PDF_PREFIX + self},
              {"YBI_MATERIAL_SELF_ALBEDO", ALBEDO_PREFIX + self},
              {"YBI_MATERIAL_SELF_TRANSMITTANCE", TRANSMITTANCE_PREFIX + self},
-             {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(topTransmittance, bottomTransmittance, transmittance)",
-              MaterialDebugPrintValues(self, "layer transmittance",
+             {"YBI_MATERIAL_DEBUG_PRINT_TRANSMITTANCE(topTransmittance, bottomTransmittance, "
+              "transmittance)",
+              MaterialDebugPrintValues(self,
+                                       "layer transmittance",
                                        "top=%f bottom=%f value=%f",
                                        "topTransmittance, bottomTransmittance, transmittance")},
-             {"YBI_MATERIAL_DEBUG_PRINT_0(selectedProbability, unselectedProbability, topAlbedo, transmittanceTop, bottomAlbedo, weightedBottomAlbedo)",
-              MaterialDebugPrint(self, "layer top", top->GetNodeType(),
-                                 "topAlbedo=%f transmittanceTop=%f bottomAlbedo=%f weightedBottomAlbedo=%f",
-                                 "topAlbedo, transmittanceTop, bottomAlbedo, weightedBottomAlbedo")},
-             {"YBI_MATERIAL_DEBUG_PRINT_1(selectedProbability, unselectedProbability, topAlbedo, transmittanceTop, bottomAlbedo, weightedBottomAlbedo)",
-              MaterialDebugPrint(self, "layer bottom", base->GetNodeType(),
-                                 "topAlbedo=%f transmittanceTop=%f bottomAlbedo=%f weightedBottomAlbedo=%f",
-                                 "topAlbedo, transmittanceTop, bottomAlbedo, weightedBottomAlbedo")},
+             {"YBI_MATERIAL_DEBUG_PRINT_0(selectedProbability, unselectedProbability, topAlbedo, "
+              "transmittanceTop, bottomAlbedo, weightedBottomAlbedo)",
+              MaterialDebugPrint(
+                  self,
+                  "layer top",
+                  top->GetNodeType(),
+                  "topAlbedo=%f transmittanceTop=%f bottomAlbedo=%f weightedBottomAlbedo=%f",
+                  "topAlbedo, transmittanceTop, bottomAlbedo, weightedBottomAlbedo")},
+             {"YBI_MATERIAL_DEBUG_PRINT_1(selectedProbability, unselectedProbability, topAlbedo, "
+              "transmittanceTop, bottomAlbedo, weightedBottomAlbedo)",
+              MaterialDebugPrint(
+                  self,
+                  "layer bottom",
+                  base->GetNodeType(),
+                  "topAlbedo=%f transmittanceTop=%f bottomAlbedo=%f weightedBottomAlbedo=%f",
+                  "topAlbedo, transmittanceTop, bottomAlbedo, weightedBottomAlbedo")},
              {"YBI_MATERIAL_SAMPLE_TOP", SAMPLE_PREFIX + topName},
              {"YBI_MATERIAL_EVALUATE_TOP", EVALUATE_PREFIX + topName},
              {"YBI_MATERIAL_PDF_TOP", PDF_PREFIX + topName},
@@ -1592,7 +1609,7 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
 {
     MaterialCompilationResult result;
     result.source = "#include \"kernel/launch/kernel_params.h\"\n"
-                    "#include \"kernel/shading/shading.h\"\n\n";
+                    "#include \"kernel/bsdf/closure_types.h\"\n\n";
 #ifdef YBI_MATERIAL_DEBUG
     result.source += "extern \"C\" __device__ int printf(const char *, ...);\n\n";
 #endif
@@ -1622,29 +1639,26 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
         const std::string evaluateName = EVALUATE_PREFIX + materialName;
         const std::string pdfName = PDF_PREFIX + materialName;
 
-        result.source += callableSignature + " void " + directCallablePrefix + initializeName +
-                         "(const KernelParams *params, ShadingInfo *info)\n{\n    " +
-                         INITIALIZE_PREFIX + rootName + "(*params, *info);\n}\n\n";
-        result.source += callableSignature + " bool " + directCallablePrefix + sampleName +
-                         "(const KernelParams *params, const ShadingInfo *info, "
-                         "Vec3f viewDirection, Vec3f *lightDirection, Vec3f u)\n"
-                         "{\n    return " +
-                         SAMPLE_PREFIX + rootName +
-                         "(*params, *info, viewDirection, *lightDirection, u);\n}\n\n";
+        const auto compileCallable = [&](const char *stubPath,
+                                         const std::string &name,
+                                         const std::string &implementation) {
+            return CompileWithMacros(stubPath,
+                                     {{"YBI_MATERIAL_CALLABLE_SIGNATURE", callableSignature},
+                                      {"YBI_MATERIAL_CALLABLE_NAME", directCallablePrefix + name},
+                                      {"YBI_MATERIAL_CALLABLE_IMPL", implementation}});
+        };
 
-        result.source += callableSignature + " Vec3f " + directCallablePrefix + evaluateName +
-                         "(const KernelParams *params, const ShadingInfo *info, "
-                         "Vec3f viewDirection, Vec3f lightDirection)\n"
-                         "{\n    return " +
-                         EVALUATE_PREFIX + rootName +
-                         "(*params, *info, viewDirection, lightDirection);\n}\n\n";
-
-        result.source += callableSignature + " float " + directCallablePrefix + pdfName +
-                         "(const KernelParams *params, const ShadingInfo *info, "
-                         "Vec3f viewDirection, Vec3f lightDirection)\n"
-                         "{\n    return " +
-                         PDF_PREFIX + rootName +
-                         "(*params, *info, viewDirection, lightDirection);\n}\n\n";
+        result.source += compileCallable("kernel/bsdf/materialx/stubs/initialize_callable_impl.h",
+                                         initializeName,
+                                         INITIALIZE_PREFIX + rootName);
+        result.source += compileCallable("kernel/bsdf/materialx/stubs/sample_callable_impl.h",
+                                         sampleName,
+                                         SAMPLE_PREFIX + rootName);
+        result.source += compileCallable("kernel/bsdf/materialx/stubs/evaluate_callable_impl.h",
+                                         evaluateName,
+                                         EVALUATE_PREFIX + rootName);
+        result.source += compileCallable(
+            "kernel/bsdf/materialx/stubs/pdf_callable_impl.h", pdfName, PDF_PREFIX + rootName);
 
         entryNames.push_back(directCallablePrefix + initializeName);
         entryNames.push_back(directCallablePrefix + sampleName);

@@ -2,11 +2,10 @@
 
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "kernel/bsdf/closure_types.h"
 
 namespace ybi
 {
-
-#define MAX_CLOSURE_SIZE 40
 
 enum SheenParameterOffset : uint32_t
 {

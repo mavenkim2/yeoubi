@@ -4,7 +4,8 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
-#include "kernel/integrator/rng.h"
+#include "kernel/bsdf/closure_types.h"
+#include "kernel/sampling/rng.h"
 
 namespace ybi
 {
@@ -38,6 +39,18 @@ struct RayCone
     float spreadAngle;
 };
 
+struct TriangleSurfaceInfo
+{
+    Vec3f position;
+    Vec3f geometricNormal;
+    Vec3f shadingNormal;
+    Vec3f dpdu;
+    Vec2f uv;
+    float triangleArea;
+    float uvArea;
+    uint32_t materialIndex;
+};
+
 struct RNG;
 
 struct WavefrontSampleState
@@ -63,6 +76,17 @@ struct WavefrontSampleState
     uint32_t *clusterId;
     uint32_t *objectId;
     IntersectionType *type;
+
+    // Surface state
+    uint32_t *materialIndex;
+    Vec3f *position;
+    Vec3f *geometricNormal;
+    Vec3f *shadingNormal;
+    Vec3f *dpdu;
+    Vec2f *uv;
+    float *triangleArea;
+    float *uvArea;
+    float *closureData;
 
     YBI_GPU uint32_t ReadPixelX(uint32_t sampleIndex) const
     {
@@ -252,6 +276,136 @@ struct WavefrontSampleState
     YBI_GPU void WriteType(uint32_t sampleIndex, IntersectionType value) const
     {
         type[sampleIndex] = value;
+    }
+
+    YBI_GPU uint32_t ReadMaterialIndex(uint32_t sampleIndex) const
+    {
+        return materialIndex[sampleIndex];
+    }
+
+    YBI_GPU void WriteMaterialIndex(uint32_t sampleIndex, uint32_t value) const
+    {
+        materialIndex[sampleIndex] = value;
+    }
+
+    YBI_GPU Vec3f ReadPosition(uint32_t sampleIndex) const
+    {
+        return position[sampleIndex];
+    }
+
+    YBI_GPU void WritePosition(uint32_t sampleIndex, const Vec3f &value) const
+    {
+        position[sampleIndex] = value;
+    }
+
+    YBI_GPU Vec3f ReadGeometricNormal(uint32_t sampleIndex) const
+    {
+        return geometricNormal[sampleIndex];
+    }
+
+    YBI_GPU void WriteGeometricNormal(uint32_t sampleIndex, const Vec3f &value) const
+    {
+        geometricNormal[sampleIndex] = value;
+    }
+
+    YBI_GPU Vec3f ReadShadingNormal(uint32_t sampleIndex) const
+    {
+        return shadingNormal[sampleIndex];
+    }
+
+    YBI_GPU void WriteShadingNormal(uint32_t sampleIndex, const Vec3f &value) const
+    {
+        shadingNormal[sampleIndex] = value;
+    }
+
+    YBI_GPU Vec3f ReadDpdu(uint32_t sampleIndex) const
+    {
+        return dpdu[sampleIndex];
+    }
+
+    YBI_GPU void WriteDpdu(uint32_t sampleIndex, const Vec3f &value) const
+    {
+        dpdu[sampleIndex] = value;
+    }
+
+    YBI_GPU Vec2f ReadUV(uint32_t sampleIndex) const
+    {
+        return uv[sampleIndex];
+    }
+
+    YBI_GPU void WriteUV(uint32_t sampleIndex, const Vec2f &value) const
+    {
+        uv[sampleIndex] = value;
+    }
+
+    YBI_GPU float ReadTriangleArea(uint32_t sampleIndex) const
+    {
+        return triangleArea[sampleIndex];
+    }
+
+    YBI_GPU void WriteTriangleArea(uint32_t sampleIndex, float value) const
+    {
+        triangleArea[sampleIndex] = value;
+    }
+
+    YBI_GPU float ReadUVArea(uint32_t sampleIndex) const
+    {
+        return uvArea[sampleIndex];
+    }
+
+    YBI_GPU void WriteUVArea(uint32_t sampleIndex, float value) const
+    {
+        uvArea[sampleIndex] = value;
+    }
+
+    YBI_GPU ClosureInitializationInfo ReadClosureInitializationInfo(
+        uint32_t sampleIndex) const
+    {
+        ClosureInitializationInfo info;
+        info.shadingNormal = ReadShadingNormal(sampleIndex);
+        info.dpdu = ReadDpdu(sampleIndex);
+        info.uv = ReadUV(sampleIndex);
+        info.rayDirection = ReadRayDirection(sampleIndex);
+        info.rayConeWidth = ReadRayCone(sampleIndex).width;
+        info.triangleArea = ReadTriangleArea(sampleIndex);
+        info.uvArea = ReadUVArea(sampleIndex);
+        info.closureData = closureData + sampleIndex * MAX_CLOSURE_SIZE;
+        return info;
+    }
+
+    YBI_GPU ClosureEvaluationInfo ReadClosureEvaluationInfo(uint32_t sampleIndex) const
+    {
+        ClosureEvaluationInfo info;
+        info.shadingNormal = ReadShadingNormal(sampleIndex);
+        info.dpdu = ReadDpdu(sampleIndex);
+        info.closureData = closureData + sampleIndex * MAX_CLOSURE_SIZE;
+        return info;
+    }
+
+    YBI_GPU TriangleSurfaceInfo ReadTriangleInfo(uint32_t sampleIndex) const
+    {
+        TriangleSurfaceInfo info;
+        info.materialIndex = ReadMaterialIndex(sampleIndex);
+        info.position = ReadPosition(sampleIndex);
+        info.geometricNormal = ReadGeometricNormal(sampleIndex);
+        info.shadingNormal = ReadShadingNormal(sampleIndex);
+        info.dpdu = ReadDpdu(sampleIndex);
+        info.uv = ReadUV(sampleIndex);
+        info.triangleArea = ReadTriangleArea(sampleIndex);
+        info.uvArea = ReadUVArea(sampleIndex);
+        return info;
+    }
+
+    YBI_GPU void WriteTriangleInfo(uint32_t sampleIndex, const TriangleSurfaceInfo &info) const
+    {
+        WriteMaterialIndex(sampleIndex, info.materialIndex);
+        WritePosition(sampleIndex, info.position);
+        WriteGeometricNormal(sampleIndex, info.geometricNormal);
+        WriteShadingNormal(sampleIndex, info.shadingNormal);
+        WriteDpdu(sampleIndex, info.dpdu);
+        WriteUV(sampleIndex, info.uv);
+        WriteTriangleArea(sampleIndex, info.triangleArea);
+        WriteUVArea(sampleIndex, info.uvArea);
     }
 
     YBI_GPU IntersectionInfo ReadIntersection(uint32_t sampleIndex) const

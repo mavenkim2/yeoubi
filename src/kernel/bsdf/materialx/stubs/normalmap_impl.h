@@ -1,4 +1,5 @@
-YBI_GPU Vec3f YBI_MATERIAL_SELF(const KernelParams &params, const ShadingInfo &info)
+YBI_GPU Vec3f YBI_MATERIAL_SELF(const KernelParams &params,
+                                const ClosureInitializationInfo &info)
 {
     Vec3f value = YBI_MATERIAL_INPUT;
     value = value == Vec3f(0.f) ? Vec3f(0.f, 0.f, 1.f) : value * 2.f - Vec3f(1.f);

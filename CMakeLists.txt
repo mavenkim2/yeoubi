@@ -342,7 +342,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/primary_ray.cu"
         OUTPUT "${YBI_PRIMARY_RAY_KERNEL_PATH}"
         DEPFILE "${YBI_PRIMARY_RAY_KERNEL_DEPFILE}"
-        ARCHITECTURE sm_75
+        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
         DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
         INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
     )
@@ -351,17 +351,31 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
 
     # Shade hit
     set(YBI_SHADE_HIT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx")
-    set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
+    set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/shade_hit.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/shade_hit.cu"
         OUTPUT "${YBI_SHADE_HIT_KERNEL_PATH}"
         DEPFILE "${YBI_SHADE_HIT_KERNEL_DEPFILE}"
-        ARCHITECTURE sm_75
+        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
         DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
         INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
     )
     add_custom_target(yeoubi_shade_hit_kernel DEPENDS ${YBI_SHADE_HIT_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_shade_hit_kernel)
+
+    # Direct lighting
+    set(YBI_DIRECT_LIGHTING_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/direct_lighting.ptx")
+    set(YBI_DIRECT_LIGHTING_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/direct_lighting.ptx.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/direct_lighting.cu"
+        OUTPUT "${YBI_DIRECT_LIGHTING_KERNEL_PATH}"
+        DEPFILE "${YBI_DIRECT_LIGHTING_DEPFILE}"
+        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
+        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
+        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
+    )
+    add_custom_target(yeoubi_direct_lighting_kernel DEPENDS ${YBI_DIRECT_LIGHTING_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_direct_lighting_kernel)
 
     list (APPEND YBI_COMPILE_DEFINITIONS
         YBI_OPTIX_OPENPBR_PTX_PATH=\"${YBI_OPTIX_OPENPBR_PTX_PATH}\"

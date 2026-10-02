@@ -1,4 +1,5 @@
-YBI_GPU Vec3f YBI_MATERIAL_SELF(const KernelParams &params, const ShadingInfo &info)
+YBI_GPU Vec3f YBI_MATERIAL_SELF(const KernelParams &params,
+                                const ClosureInitializationInfo &info)
 {
     const Vec3f inputReflectivity = YBI_MATERIAL_REFLECTIVITY;
     const Vec3f reflectivity = Clamp(inputReflectivity, 0.f, 0.99f);

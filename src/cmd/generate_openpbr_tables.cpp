@@ -1,5 +1,5 @@
 #include "kernel/bsdf/openpbr/ggx.h"
-#include "kernel/integrator/rng.h"
+#include "kernel/sampling/rng.h"
 #include "kernel/integrator/sampling.h"
 
 #include <cmath>

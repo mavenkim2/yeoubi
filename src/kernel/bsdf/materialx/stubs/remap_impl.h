@@ -1,5 +1,5 @@
 YBI_GPU YBI_VALUE_TYPE YBI_SELF(const KernelParams &params,
-                                const ShadingInfo &info)
+                                const ClosureInitializationInfo &info)
 {
     const YBI_VALUE_TYPE value = YBI_VALUE;
     const YBI_VALUE_TYPE inLow = YBI_IN_LOW;

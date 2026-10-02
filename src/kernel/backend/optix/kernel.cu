@@ -5,6 +5,7 @@
 #include "core/matrix4x4.h"
 #include "core/octahedral.h"
 #include "core/vec3f.h"
+#include "kernel/backend/dispatch.h"
 #include "kernel/launch/kernel_params.h"
 #if defined(YBI_MATERIAL_BACKEND_OPENPBR) == defined(YBI_MATERIAL_BACKEND_MATERIALX)
 #error Exactly one material backend must be selected for the OptiX kernel.
@@ -13,17 +14,17 @@
 #include "kernel/bsdf/openpbr/api.h"
 #include "kernel/bsdf/openpbr/init.h"
 #endif
+#include "kernel/backend/optix/visibility_mask.h"
 #include "kernel/geometry/attributes.h"
 #include "kernel/geometry/clustered_triangle.h"
-#include "kernel/integrator/shade_hit.h"
 #include "kernel/geometry/triangle.h"
-#include "kernel/light/sample.h"
-#include "kernel/backend/optix/visibility_mask.h"
 #include "kernel/integrator/path_tracing.h"
+#include "kernel/integrator/shade_hit.h"
+#include "kernel/light/sample.h"
 // #include "kernel/integrator/ray_cone.h"
 #include "kernel/integrator/ray_utils.h"
-#include "kernel/integrator/rng.h"
 #include "kernel/integrator/sampling.h"
+#include "kernel/sampling/rng.h"
 #include "kernel/shading/image.h"
 #include "kernel/shading/shading.h"
 #include "kernel/state/types.h"
@@ -444,6 +445,23 @@ YBI_GPU void RenderUnidirectional()
         const Vec3f worldViewDirection = -rayDirection;
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
         const DeviceMaterial3 *materialXMaterial = nullptr;
+        float closureData[MAX_CLOSURE_SIZE];
+        ClosureInitializationInfo closureInitializationInfo;
+        closureInitializationInfo.shadingNormal = shadingInfo.shadingNormal;
+        closureInitializationInfo.dpdu = shadingInfo.dpdu;
+        closureInitializationInfo.closureData = closureData;
+        closureInitializationInfo.uv = shadingInfo.uv;
+        closureInitializationInfo.rayDirection = rayDirection;
+        closureInitializationInfo.rayConeWidth = rayCone.width;
+        closureInitializationInfo.triangleArea =
+            Length(Cross(shadingInfo.positions[1] - shadingInfo.positions[0],
+                         shadingInfo.positions[2] - shadingInfo.positions[0]));
+        closureInitializationInfo.uvArea =
+            Abs((shadingInfo.uvs[1].x - shadingInfo.uvs[0].x) *
+                    (shadingInfo.uvs[2].y - shadingInfo.uvs[0].y) -
+                (shadingInfo.uvs[1].y - shadingInfo.uvs[0].y) *
+                    (shadingInfo.uvs[2].x - shadingInfo.uvs[0].x));
+        const ClosureEvaluationInfo &closureEvaluationInfo = closureInitializationInfo;
 #endif
 
         bool passedAlphaTest = true;
@@ -472,8 +490,8 @@ YBI_GPU void RenderUnidirectional()
             if (handle.type == MaterialHandleType::MaterialX)
             {
                 materialXMaterial = &params.scene.deviceMaterial3s[handle.index];
-                optixDirectCall<void>(
-                    materialXMaterial->initializeCallableIndex, &params, &shadingInfo);
+                DeviceDispatch<void>(
+                    materialXMaterial->initializeCallableIndex, &params, &closureInitializationInfo);
                 hasBsdf = true;
             }
 #endif
@@ -507,16 +525,16 @@ YBI_GPU void RenderUnidirectional()
                 float sampledLightBsdfPdf;
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
                 sampledLightBsdfWeight =
-                    optixDirectCall<Vec3f>(materialXMaterial->evaluateCallableIndex,
-                                           &params,
-                                           &shadingInfo,
-                                           worldViewDirection,
-                                           sampledLightDirection);
-                sampledLightBsdfPdf = optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
-                                                             &params,
-                                                             &shadingInfo,
-                                                             worldViewDirection,
-                                                             sampledLightDirection);
+                    DeviceDispatch<Vec3f>(materialXMaterial->evaluateCallableIndex,
+                                          &params,
+                                          &closureEvaluationInfo,
+                                          worldViewDirection,
+                                          sampledLightDirection);
+                sampledLightBsdfPdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
+                                                            &params,
+                                                            &closureEvaluationInfo,
+                                                            worldViewDirection,
+                                                            sampledLightDirection);
 #else
                 sampledLightBsdfWeight =
                     EvaluateOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
@@ -550,27 +568,27 @@ YBI_GPU void RenderUnidirectional()
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
         if (materialXMaterial)
         {
-            success = optixDirectCall<bool>(materialXMaterial->sampleCallableIndex,
-                                            &params,
-                                            &shadingInfo,
-                                            worldViewDirection,
-                                            &worldLightDirection,
-                                            Vec3f(rng.Uniform(), rng.Uniform2D()));
+            success = DeviceDispatch<bool>(materialXMaterial->sampleCallableIndex,
+                                           &params,
+                                           &closureEvaluationInfo,
+                                           worldViewDirection,
+                                           &worldLightDirection,
+                                           Vec3f(rng.Uniform(), rng.Uniform2D()));
 
             if (success)
             {
-                const float pdf = optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
-                                                         &params,
-                                                         &shadingInfo,
-                                                         worldViewDirection,
-                                                         worldLightDirection);
+                const float pdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
+                                                        &params,
+                                                        &closureEvaluationInfo,
+                                                        worldViewDirection,
+                                                        worldLightDirection);
                 if (pdf > 0.f)
                 {
-                    weight = optixDirectCall<Vec3f>(materialXMaterial->evaluateCallableIndex,
-                                                    &params,
-                                                    &shadingInfo,
-                                                    worldViewDirection,
-                                                    worldLightDirection) /
+                    weight = DeviceDispatch<Vec3f>(materialXMaterial->evaluateCallableIndex,
+                                                   &params,
+                                                   &closureEvaluationInfo,
+                                                   worldViewDirection,
+                                                   worldLightDirection) /
                              pdf;
                 }
                 else
@@ -606,11 +624,11 @@ YBI_GPU void RenderUnidirectional()
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
         if (materialXMaterial)
         {
-            previousBsdfPdf = optixDirectCall<float>(materialXMaterial->pdfCallableIndex,
-                                                     &params,
-                                                     &shadingInfo,
-                                                     worldViewDirection,
-                                                     worldLightDirection);
+            previousBsdfPdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
+                                                    &params,
+                                                    &closureEvaluationInfo,
+                                                    worldViewDirection,
+                                                    worldLightDirection);
         }
 #else
         previousBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, worldLightDirection);

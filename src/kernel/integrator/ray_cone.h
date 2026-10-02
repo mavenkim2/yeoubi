@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device/cuda_compat.h"
+#include "kernel/geometry/triangle_info.h"
 #include "kernel/shading/shading.h"
 #include "kernel/state/types.h"
 
@@ -50,6 +51,29 @@ YBI_GPU float CalculatePrimaryHitUnifiedSurfaceSpreadAngle(
     return result;
 }
 
+YBI_GPU void UpdatePrimaryRayCone(RayCone &cone,
+                                  const Vec3f &rayDirection,
+                                  float rayT,
+                                  const TriangleInfo &triangleInfo,
+                                  const TriangleSurfaceInfo &surfaceInfo)
+{
+    const Vec3f fallbackNormal = surfaceInfo.geometricNormal;
+    const Vec3f n0 = triangleInfo.hasNormals ? triangleInfo.normals[0] : fallbackNormal;
+    const Vec3f n1 = triangleInfo.hasNormals ? triangleInfo.normals[1] : fallbackNormal;
+    const Vec3f n2 = triangleInfo.hasNormals ? triangleInfo.normals[2] : fallbackNormal;
+    const float surfaceSpreadAngle =
+        CalculatePrimaryHitUnifiedSurfaceSpreadAngle(cone,
+                                                     rayDirection,
+                                                     surfaceInfo.shadingNormal,
+                                                     triangleInfo.positions[0],
+                                                     triangleInfo.positions[1],
+                                                     triangleInfo.positions[2],
+                                                     n0,
+                                                     n1,
+                                                     n2);
+    PropagateRayCone(cone, surfaceSpreadAngle, rayT);
+}
+
 YBI_GPU float CalculateSecondaryHitSurfaceSpreadAngle(const Vec3f &d,
                                                       const Vec3f &n,
                                                       const Vec3f &p0,
@@ -64,21 +88,14 @@ YBI_GPU float CalculateSecondaryHitSurfaceSpreadAngle(const Vec3f &d,
     return result;
 }
 
-YBI_GPU float ComputeTextureLOD(Vec3f p0,
-                                Vec3f p1,
-                                Vec3f p2,
-                                Vec2f uv0,
-                                Vec2f uv1,
-                                Vec2f uv2,
+YBI_GPU float ComputeTextureLOD(float triangleArea,
+                                float textureArea,
                                 Vec3f dir,
                                 Vec3f normal,
                                 float width,
                                 int textureWidth,
                                 int textureHeight)
 {
-    const float textureArea =
-        Abs((uv1.x - uv0.x) * (uv2.y - uv0.y) - (uv2.x - uv0.x) * (uv1.y - uv0.y));
-    const float triangleArea = Length(Cross(p1 - p0, p2 - p0));
     const float safeTextureArea = Max(textureArea, 1.0e-20f);
     const float safeTriangleArea = Max(triangleArea, 1.0e-20f);
     const float safeWidth = Max(Abs(width), 1.0e-6f);

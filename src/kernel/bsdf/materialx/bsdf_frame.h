@@ -1,12 +1,12 @@
 #pragma once
 
 #include "core/frame.h"
-#include "kernel/shading/shading.h"
+#include "kernel/bsdf/closure_types.h"
 
 namespace ybi
 {
 
-YBI_GPU OrthonormalBasis MaterialXBsdfFrame(const ShadingInfo &info,
+YBI_GPU OrthonormalBasis MaterialXBsdfFrame(const ClosureEvaluationInfo &info,
                                             Vec3f normal,
                                             const Vec3f &worldViewDirection)
 {
