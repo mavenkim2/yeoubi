@@ -6,9 +6,9 @@
 #include "core/matrix4x4.h"
 #include "device/device_memory.h"
 #include "scene/bvh.h"
-#include "scene/device_scene.h"
-#include "scene/material.h"
-#include "scene/openpbr_parameters.h"
+#include "kernel/scene.h"
+#include "material/material.h"
+#include "material/openpbr_parameters.h"
 #include <array>
 #include <cstring>
 #include <functional>

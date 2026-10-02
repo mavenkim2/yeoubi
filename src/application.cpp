@@ -3,13 +3,13 @@
 #include "core/platform.h"
 #include "core/time.h"
 #include "device/device.h"
-#include "device/kernel_params.h"
+#include "kernel/launch/kernel_params.h"
 #include "display_device/display_device.h"
 #include "input/camera_controller.h"
 #include "io/usd.h"
-#include "render/virtual_texture_manager.h"
-#include "scene/lut.h"
-#include "scene/render_system.h"
+#include "render/virtual_texture/manager.h"
+#include "material/lut.h"
+#include "render/render_system.h"
 #include "scene/scene.h"
 #include <GLFW/glfw3.h>
 #include <cstdio>

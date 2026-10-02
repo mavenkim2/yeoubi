@@ -6,9 +6,9 @@
 #include "core/vec4f.h"
 #include "io/usd_helpers.h"
 #include "pxr/usd/usdShade/udimUtils.h"
-#include "render/material_opcodes.h"
-#include "scene/material.h"
-#include "scene/openpbr_parameters.h"
+#include "material/opcodes.h"
+#include "material/material.h"
+#include "material/openpbr_parameters.h"
 #include "scene/scene.h"
 #include <memory>
 #include <pxr/base/gf/matrix3d.h>

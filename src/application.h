@@ -1,6 +1,6 @@
 #include "device/device_memory.h"
 #include "device/device_texture.h"
-#include "device/kernel_params.h"
+#include "kernel/launch/kernel_params.h"
 #include "core/vec2u.h"
 #include "io/camera_json.h"
 #include "render/progressive_state.h"

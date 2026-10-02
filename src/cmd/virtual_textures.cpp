@@ -6,7 +6,7 @@
 #include "core/thread_context.h"
 #include "core/vec4f.h"
 #include "io/usd.h"
-#include "render/virtual_texture_file.h"
+#include "render/virtual_texture/file.h"
 #include "scene/scene.h"
 #include "tiff.h"
 #include <unordered_map>

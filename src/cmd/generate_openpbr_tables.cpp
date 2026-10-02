@@ -1,6 +1,6 @@
-#include "render/bsdf/openpbr/ggx.h"
-#include "render/rng.h"
-#include "render/sampling.h"
+#include "kernel/bsdf/openpbr/ggx.h"
+#include "kernel/integrator/rng.h"
+#include "kernel/integrator/sampling.h"
 
 #include <cmath>
 #include <cstdint>

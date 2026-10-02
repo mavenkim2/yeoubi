@@ -7,7 +7,7 @@
 #include "core/thread_context.h"
 #include "core/vec3f.h"
 #include "core/vec4u.h"
-#include "scene/device_cluster.h"
+#include "kernel/geometry/cluster.h"
 #include "scene/scene.h"
 #include <atomic>
 #include <cfloat>

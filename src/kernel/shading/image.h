@@ -1,0 +1,191 @@
+#pragma once
+
+#include "core/assert.h"
+#include "device/cuda_compat.h"
+#include "kernel/integrator/ray_cone.h"
+#include "kernel/shading/shading.h"
+#include "kernel/shading/shading_helpers.h"
+#include "kernel/launch/shading_context.h"
+#include "kernel/texture/types.h"
+#include "kernel/texture/virtual_sampling.h"
+
+namespace ybi
+{
+
+YBI_CPU_GPU MaterialTextureHandle LoadTextureHandle(const uint32_t *nodes, uint32_t &offset)
+{
+    MaterialTextureHandle result;
+    result.udimBase = nodes[offset++];
+    result.udimTableOffset = nodes[offset++];
+    return result;
+}
+
+YBI_CPU_GPU uint32_t GetUdimTableIndex(MaterialTextureHandle handle, const Vec2f &uv)
+{
+    Vec2f flooredUv = Floor(uv);
+
+    uint32_t udimTableIndex = 0u;
+    if (handle.udimBase != ~0u)
+    {
+        const uint32_t udim =
+            1001 + static_cast<uint32_t>(flooredUv.x) + 10 * static_cast<uint32_t>(flooredUv.y);
+        udimTableIndex = handle.udimTableOffset + udim - handle.udimBase;
+    }
+    else
+    {
+        udimTableIndex = handle.udimTableOffset;
+    }
+    return udimTableIndex;
+}
+
+struct VirtualTextureMipSelection
+{
+    float lod;
+    uint32_t baseMip;
+    uint32_t nextMip;
+};
+
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const ShadingContext &context,
+                                            MaterialTextureHandle handle,
+                                            const ShadingInfo &shadingInfo,
+                                            uint32_t udimTableIndex,
+                                            const Vec2f &uv,
+                                            const Vec2f (&uvs)[3],
+                                            VirtualTextureMipSelection *mipSelection = nullptr)
+{
+    DeviceTextureDescriptor textureDescriptor = context.textureDescriptors[udimTableIndex];
+    const uint32_t pageShift = 7;
+
+    float lod = ComputeTextureLOD(shadingInfo.positions[0],
+                                  shadingInfo.positions[1],
+                                  shadingInfo.positions[2],
+                                  uvs[0],
+                                  uvs[1],
+                                  uvs[2],
+                                  shadingInfo.rayDirection,
+                                  shadingInfo.shadingNormal,
+                                  shadingInfo.rayCone.width,
+                                  textureDescriptor.width,
+                                  textureDescriptor.height);
+
+    const uint32_t maxMip = CalculateMaxVirtualTextureMip(textureDescriptor, pageShift);
+    lod = Clamp(lod, 0.f, float(maxMip));
+
+    uint32_t baseMip = uint32_t(Floor(lod));
+    uint32_t nextMip = Min(baseMip + 1, maxMip);
+    if (mipSelection)
+        *mipSelection = {lod, baseMip, nextMip};
+
+    // TODO: don't hardcode
+    UnpackedFeedbackRequest lowR, highR;
+    Vec4f lowerValue = SamplePointVirtualTexture(context,
+                                                 textureDescriptor,
+                                                 pageShift,
+                                                 uv,
+                                                 baseMip,
+                                                 &lowR,
+                                                 udimTableIndex,
+                                                 handle.udimBase,
+                                                 handle.udimTableOffset);
+    Vec4f higherValue = SamplePointVirtualTexture(context,
+                                                  textureDescriptor,
+                                                  pageShift,
+                                                  uv,
+                                                  nextMip,
+                                                  &highR,
+                                                  udimTableIndex,
+                                                  handle.udimBase,
+                                                  handle.udimTableOffset);
+
+    WriteUniqueFeedback(context, lowR);
+    WriteUniqueFeedback(context, highR);
+
+    float t = lod - float(baseMip);
+    Vec4f value = Lerp(lowerValue, higherValue, t);
+    return value;
+}
+
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const ShadingContext &context,
+                                            MaterialTextureHandle handle,
+                                            const ShadingInfo &shadingInfo)
+{
+    return VirtualTextureSampleImage(context,
+                                     handle,
+                                     shadingInfo,
+                                     GetUdimTableIndex(handle, shadingInfo.uv),
+                                     shadingInfo.uv,
+                                     shadingInfo.uvs);
+}
+
+YBI_CPU_GPU Vec4f
+VirtualTextureSampleTiledImage(const ShadingContext &context,
+                               MaterialTextureHandle handle,
+                               const ShadingInfo &shadingInfo,
+                               Vec2f uvTiling,
+                               Vec2f uvOffset,
+                               Vec2f realWorldImageSize,
+                               Vec2f realWorldTileSize,
+                               VirtualTextureMipSelection *mipSelection = nullptr)
+{
+    // The texture file is selected from the original UV tile. Tiling only changes
+    // coordinates within that image; keep vertex UVs unwrapped for the LOD area.
+    const uint32_t udimTableIndex = GetUdimTableIndex(handle, shadingInfo.uv);
+    const Vec2f scale = uvTiling / realWorldImageSize * realWorldTileSize;
+    const Vec2f offset = uvOffset / realWorldImageSize * realWorldTileSize;
+    const Vec2f uv = shadingInfo.uv * scale - offset;
+    const Vec2f uvs[3] = {shadingInfo.uvs[0] * scale - offset,
+                          shadingInfo.uvs[1] * scale - offset,
+                          shadingInfo.uvs[2] * scale - offset};
+    return VirtualTextureSampleImage(
+        context, handle, shadingInfo, udimTableIndex, uv, uvs, mipSelection);
+}
+
+YBI_CPU_GPU Vec4f VirtualTextureSampleImage(const ShadingContext &context,
+                                            uint32_t &nodeOffset,
+                                            const ShadingInfo &shadingInfo)
+{
+    const MaterialTextureHandle handle = LoadTextureHandle(context.scene.shaderNodes, nodeOffset);
+    return VirtualTextureSampleImage(context, handle, shadingInfo);
+}
+
+YBI_CPU_GPU void ShaderImageVector3(const ShadingContext &context,
+                                    const ShadingInfo &info,
+                                    float *registers,
+                                    uint32_t &nodeOffset)
+{
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
+    StoreFloat3Register(registers, result.Xyz(), dst);
+}
+
+YBI_CPU_GPU void ShaderImageVector2(const ShadingContext &context,
+                                    const ShadingInfo &info,
+                                    float *registers,
+                                    uint32_t &nodeOffset)
+{
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
+    StoreFloat2Register(registers, result.Xy(), dst);
+}
+
+YBI_CPU_GPU void ShaderImageVector4(const ShadingContext &context,
+                                    const ShadingInfo &info,
+                                    float *registers,
+                                    uint32_t &nodeOffset)
+{
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
+    StoreFloat4Register(registers, result, dst);
+}
+
+YBI_CPU_GPU void ShaderImageFloat(const ShadingContext &context,
+                                  const ShadingInfo &info,
+                                  float *registers,
+                                  uint32_t &nodeOffset)
+{
+    Vec4f result = VirtualTextureSampleImage(context, nodeOffset, info);
+    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
+    StoreFloatRegister(registers, result.x, dst);
+}
+
+} // namespace ybi

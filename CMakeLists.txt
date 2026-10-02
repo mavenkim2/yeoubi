@@ -42,20 +42,20 @@ if (WIN32)
 endif()
 
 set (YBI_MATERIALX_STUBS
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/artistic_ior_extinction_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/artistic_ior_ior_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/closure_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/conductor_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/dielectric_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/image_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/layer_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/mix_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/normalmap_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/oren_nayar_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/remap_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/sheen_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/tiledimage_impl.h
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/render/bsdf/materialx/stubs/value_impl.h)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/artistic_ior_extinction_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/artistic_ior_ior_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/closure_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/conductor_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/dielectric_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/image_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/layer_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/mix_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/normalmap_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/oren_nayar_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/remap_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/sheen_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/tiledimage_impl.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/value_impl.h)
 
 # CUDA
 if (WITH_CUDA)
@@ -84,9 +84,9 @@ if (WITH_CUDA)
             list (APPEND YBI_COMPILE_DEFINITIONS WITH_OPTIX OPTIX_VERSION=${OPTIX_VERSION})
             list (APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES "${OPTIX_INCLUDE_DIR}")
             list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp)
-            list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/clusters.cu)
+            list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/clusters.cu)
             list (APPEND YBI_SOURCE
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/validate_device_cluster.cu)
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/validate_device_cluster.cu)
             # list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/device/bvh/optix/bvh.cpp)
             message (STATUS "OptiX Found: ${OPTIX_INCLUDE_DIR} ${OPTIX_VERSION}")
         else()
@@ -173,7 +173,7 @@ add_executable(yeoubi_virtual_textures
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/shader_compilation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/material/shader_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/virtual_textures.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/string_builder.cpp
@@ -203,7 +203,7 @@ target_compile_definitions(yeoubi_virtual_textures PRIVATE
 # Generate pmj tables exe
 add_executable(yeoubi_pmj_tables
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/generate_pmj02_tables.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/pmj02.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/sampling/pmj02.cpp
 )
 
 target_include_directories(yeoubi_pmj_tables PRIVATE
@@ -221,16 +221,16 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/camera_json.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/shader_compilation.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/material_compilation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/material/shader_compilation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/material/material_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/render_system.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture_manager.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture/manager.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/lut.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/material/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/application.cpp
@@ -299,7 +299,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
             "${CMAKE_CURRENT_BINARY_DIR}/kernel_${YBI_MATERIAL_BACKEND_LOWER}.ptx")
         set(YBI_BACKEND_PTX_DEPFILE "${YBI_BACKEND_PTX_PATH}.d")
 
-        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/optix/kernel.cu"
+        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/kernel.cu"
             OUTPUT "${YBI_BACKEND_PTX_PATH}" DEPFILE "${YBI_BACKEND_PTX_DEPFILE}"
             ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
             DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}" "YBI_MATERIAL_BACKEND_${YBI_MATERIAL_BACKEND}=1"
@@ -315,7 +315,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_VIRTUAL_TEXTURE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx")
     set(YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE
         "${CMAKE_CURRENT_BINARY_DIR}/virtual_textures.ptx.d")
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/cuda/virtual_textures.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/virtual_textures.cu"
         OUTPUT "${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}"
         DEPFILE "${YBI_VIRTUAL_TEXTURE_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -327,7 +327,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_ACCUMULATE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx")
     set(YBI_ACCUMULATE_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/accumulate.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/cuda/accumulate.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/accumulate.cu"
         OUTPUT "${YBI_ACCUMULATE_KERNEL_PATH}"
         DEPFILE "${YBI_ACCUMULATE_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -339,7 +339,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_PRIMARY_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx")
     set(YBI_PRIMARY_RAY_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/optix/primary_ray.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/primary_ray.cu"
         OUTPUT "${YBI_PRIMARY_RAY_KERNEL_PATH}"
         DEPFILE "${YBI_PRIMARY_RAY_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -353,7 +353,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_SHADE_HIT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx")
     set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/render/kernels/device/cuda/shade_hit.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/shade_hit.cu"
         OUTPUT "${YBI_SHADE_HIT_KERNEL_PATH}"
         DEPFILE "${YBI_SHADE_HIT_KERNEL_DEPFILE}"
         ARCHITECTURE sm_75
@@ -404,8 +404,8 @@ target_compile_definitions(yeoubi PRIVATE
 #     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
 #     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
 #     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda_device.cpp
-#     ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cuda/clusters.cu
-#     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/material_compilation.cpp
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/clusters.cu
+#     ${CMAKE_CURRENT_SOURCE_DIR}/src/material/material_compilation.cpp
 #     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
 #     ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
 # )

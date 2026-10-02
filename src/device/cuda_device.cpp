@@ -7,9 +7,9 @@
 #include "device/cuda_assert.h"
 #include "device/cuda_device.h"
 #include "device/device_texture.h"
-#include "device/kernel_params.h"
+#include "kernel/launch/kernel_params.h"
 #include "display_device/display_device.h"
-#include "render/kernels/device/optix/visibility_mask.h"
+#include "kernel/backend/optix/visibility_mask.h"
 #include "scene/clusterizer.h"
 #include "scene/scene.h"
 #include <cstddef>

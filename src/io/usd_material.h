@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene/openpbr_parameters.h"
+#include "material/openpbr_parameters.h"
 #include <pxr/base/tf/token.h>
 #include <pxr/pxr.h>
 #include <pxr/usd/usdShade/shader.h>

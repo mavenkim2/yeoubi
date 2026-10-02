@@ -5,7 +5,7 @@
 #include "pxr/usd/usd/resolveInfo.h"
 #include "pxr/usd/usdShade/shader.h"
 #include "pxr/usd/usdShade/udimUtils.h"
-#include "scene/material.h"
+#include "material/material.h"
 #include <limits>
 
 namespace ybi
