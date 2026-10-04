@@ -225,6 +225,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/material/material_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/render_system.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/wavefront_integrator.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
@@ -347,6 +348,42 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_generate_camera_ray_kernel DEPENDS ${YBI_GENERATE_CAMERA_RAY_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_generate_camera_ray_kernel)
 
+    # Kernel state counts
+    set(YBI_COUNT_KERNELS_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/count_kernels.ptx")
+    set(YBI_COUNT_KERNELS_KERNEL_DEPFILE "${YBI_COUNT_KERNELS_KERNEL_PATH}.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/count_kernels.cu"
+        OUTPUT "${YBI_COUNT_KERNELS_KERNEL_PATH}"
+        DEPFILE "${YBI_COUNT_KERNELS_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+    )
+    add_custom_target(yeoubi_count_kernels_kernel DEPENDS ${YBI_COUNT_KERNELS_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_count_kernels_kernel)
+
+    # Sample indices for the selected kernel
+    set(YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/select_sample_indices.ptx")
+    set(YBI_SELECT_SAMPLE_INDICES_KERNEL_DEPFILE "${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH}.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/select_sample_indices.cu"
+        OUTPUT "${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH}"
+        DEPFILE "${YBI_SELECT_SAMPLE_INDICES_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+    )
+    add_custom_target(yeoubi_select_sample_indices_kernel DEPENDS ${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_select_sample_indices_kernel)
+
+    # Stream compaction
+    set(YBI_STREAM_COMPACTION_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/stream_compaction.ptx")
+    set(YBI_STREAM_COMPACTION_KERNEL_DEPFILE "${YBI_STREAM_COMPACTION_KERNEL_PATH}.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/stream_compaction.cu"
+        OUTPUT "${YBI_STREAM_COMPACTION_KERNEL_PATH}"
+        DEPFILE "${YBI_STREAM_COMPACTION_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+    )
+    add_custom_target(yeoubi_stream_compaction_kernel DEPENDS ${YBI_STREAM_COMPACTION_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_stream_compaction_kernel)
+
     # Wavefront OptiX kernels
     set(YBI_WAVEFRONT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernels.ptx")
     set(YBI_WAVEFRONT_KERNEL_DEPFILE "${YBI_WAVEFRONT_KERNEL_PATH}.d")
@@ -362,10 +399,13 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_dependencies(yeoubi yeoubi_wavefront_kernel)
 
     list (APPEND YBI_COMPILE_DEFINITIONS
+        YBI_WAVEFRONT_KERNEL_PATH=\"${YBI_WAVEFRONT_KERNEL_PATH}\"
         YBI_OPTIX_OPENPBR_PTX_PATH=\"${YBI_OPTIX_OPENPBR_PTX_PATH}\"
         YBI_OPTIX_MATERIALX_PTX_PATH=\"${YBI_OPTIX_MATERIALX_PTX_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_VIRTUAL_TEXTURE_KERNEL_PATH=\"${YBI_VIRTUAL_TEXTURE_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_ACCUMULATE_KERNEL_PATH=\"${YBI_ACCUMULATE_KERNEL_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_COUNT_KERNELS_KERNEL_PATH=\"${YBI_COUNT_KERNELS_KERNEL_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH=\"${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_INCLUDE_PATH=\"${YBI_OPTIX_INCLUDE_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_SDK_INCLUDE_PATH=\"${YBI_OPTIX_SDK_INCLUDE_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_CUDA_INCLUDE_PATH=\"${YBI_CUDA_INCLUDE_PATH}\")

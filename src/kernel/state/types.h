@@ -17,6 +17,12 @@ enum KernelType
     KERNEL_DIRECT_LIGHTING,
     KERNEL_INDIRECT_LIGHTING,
     KERNEL_FINISHED,
+    KERNEL_TYPE_COUNT,
+};
+
+struct KernelCounts
+{
+    uint32_t counts[KERNEL_TYPE_COUNT] = {};
 };
 
 enum IntersectionType

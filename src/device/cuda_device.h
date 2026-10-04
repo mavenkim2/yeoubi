@@ -44,20 +44,34 @@ struct CUDADeviceEvent : DeviceEvent
     ~CUDADeviceEvent() override;
 };
 
+enum OptixProgramGroups
+{
+    PROGRAM_GROUP_RAYGEN_INTERSECT,
+    PROGRAM_GROUP_RAYGEN_SHADE_HIT,
+    PROGRAM_GROUP_RAYGEN_DIRECT_LIGHTING,
+    PROGRAM_GROUP_RAYGEN_INDIRECT_LIGHTING,
+    PROGRAM_GROUP_RAYGEN_END,
+
+    PROGRAM_GROUP_MISS = PROGRAM_GROUP_RAYGEN_END,
+    PROGRAM_GROUP_CLOSEST_HIT,
+    PROGRAM_GROUP_COUNT,
+};
+
+struct alignas(OPTIX_SBT_RECORD_ALIGNMENT) PipelineSbtRecord
+{
+    char header[OPTIX_SBT_RECORD_HEADER_SIZE] = {};
+};
+
 struct CUDAOptixPipeline
 {
     OptixModule module = nullptr;
-    OptixProgramGroup raygenProgramGroup = nullptr;
-    OptixProgramGroup missProgramGroup = nullptr;
-    OptixProgramGroup hitgroupProgramGroup = nullptr;
+    OptixProgramGroup programGroups[PROGRAM_GROUP_COUNT] = {};
+    PipelineSbtRecord sbtRecords[PROGRAM_GROUP_COUNT] = {};
+    CUdeviceptr sbtRecordsBuffer = 0;
     std::vector<OptixModule> callableModules;
     std::vector<OptixProgramGroup> callableProgramGroups;
     OptixPipeline pipeline = nullptr;
-    CUdeviceptr raygenRecord = 0;
-    CUdeviceptr missRecord = 0;
-    CUdeviceptr hitgroupRecord = 0;
     CUdeviceptr callableRecords = 0;
-    OptixShaderBindingTable shaderBindingTable = {};
 };
 
 struct CUDADevice : Device
@@ -109,6 +123,8 @@ struct CUDADevice : Device
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
     bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
+    bool DispatchKernel(OptixProgramGroups raygen, uint32_t numSampleIndices,
+                        DeviceBuffer kernelParams);
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
     void DestroyTexture(DeviceTexture &texture) override;
@@ -154,7 +170,6 @@ private:
                                 OptixPipelineCompileOptions &pipelineOptions);
     bool LinkOptixPipeline(const OptixPipelineCompileOptions &pipelineCompileOptions);
     void DestroyLinkedOptixPipeline();
-
 };
 
 } // namespace ybi
