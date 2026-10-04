@@ -42,7 +42,7 @@ YBI_GPU void GenerateCameraRay(const WavefrontParams &params,
     state.WriteRayOrigin(sampleIndex, rayOrigin);
     state.WriteRayDirection(sampleIndex, rayDirection);
     state.WriteDepth(sampleIndex, 0u);
-    state.WriteKernelType(sampleIndex, KERNEL_TRACE_RAY);
+    state.WriteKernelType(sampleIndex, KERNEL_INTERSECT);
 }
 
 } // namespace ybi

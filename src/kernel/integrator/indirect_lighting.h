@@ -3,6 +3,7 @@
 #include "core/math.h"
 #include "device/cuda_compat.h"
 #include "kernel/backend/dispatch.h"
+#include "kernel/integrator/terminate_path.h"
 #include "kernel/launch/kernel_params.h"
 #include "kernel/raytracing/ray_offset.h"
 #include "kernel/state/types.h"
@@ -40,7 +41,7 @@ YBI_GPU void IndirectLighting(const KernelParams &params,
     sampleState->WriteRNG(sampleIndex, rng);
     if (!success)
     {
-        sampleState->WriteKernelType(sampleIndex, KERNEL_FINISHED);
+        TerminatePath(params, sampleState, sampleIndex);
         return;
     }
 
@@ -48,7 +49,7 @@ YBI_GPU void IndirectLighting(const KernelParams &params,
         material.pdfCallableIndex, &params, &closureInfo, viewDirection, nextDirection);
     if (!(pdf > 0.f))
     {
-        sampleState->WriteKernelType(sampleIndex, KERNEL_FINISHED);
+        TerminatePath(params, sampleState, sampleIndex);
         return;
     }
 
@@ -69,7 +70,7 @@ YBI_GPU void IndirectLighting(const KernelParams &params,
         if (rouletteSample >= survivalProbability)
         {
             sampleState->WriteThroughput(sampleIndex, throughput);
-            sampleState->WriteKernelType(sampleIndex, KERNEL_FINISHED);
+            TerminatePath(params, sampleState, sampleIndex);
             return;
         }
         throughput /= survivalProbability;
@@ -86,7 +87,7 @@ YBI_GPU void IndirectLighting(const KernelParams &params,
     sampleState->WriteRayOrigin(sampleIndex, OffsetRayOrigin(position, geometricNormal));
     sampleState->WriteRayDirection(sampleIndex, nextDirection);
     sampleState->WriteDepth(sampleIndex, depth + 1);
-    sampleState->WriteKernelType(sampleIndex, KERNEL_SECONDARY_RAY);
+    sampleState->WriteKernelType(sampleIndex, KERNEL_INTERSECT);
 }
 
 } // namespace ybi

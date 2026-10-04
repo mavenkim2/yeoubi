@@ -94,14 +94,18 @@ YBI_GPU void UpdateSecondaryRayCone(RayCone &cone,
                                     const TriangleInfo &triangleInfo,
                                     const TriangleSurfaceInfo &surfaceInfo)
 {
+    const Vec3f fallbackNormal = surfaceInfo.geometricNormal;
+    const Vec3f n0 = triangleInfo.hasNormals ? triangleInfo.normals[0] : fallbackNormal;
+    const Vec3f n1 = triangleInfo.hasNormals ? triangleInfo.normals[1] : fallbackNormal;
+    const Vec3f n2 = triangleInfo.hasNormals ? triangleInfo.normals[2] : fallbackNormal;
     float surfaceSpreadAngle = CalculateSecondaryHitSurfaceSpreadAngle(rayDirection,
                                                                        surfaceInfo.shadingNormal,
                                                                        triangleInfo.positions[0],
                                                                        triangleInfo.positions[1],
                                                                        triangleInfo.positions[2],
-                                                                       triangleInfo.normals[0],
-                                                                       triangleInfo.normals[1],
-                                                                       triangleInfo.normals[2]);
+                                                                       n0,
+                                                                       n1,
+                                                                       n2);
     PropagateRayCone(cone, surfaceSpreadAngle, rayT);
 }
 

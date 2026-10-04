@@ -335,61 +335,31 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_accumulate_kernel DEPENDS ${YBI_ACCUMULATE_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_accumulate_kernel)
 
-    # Primary ray
-    set(YBI_PRIMARY_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx")
-    set(YBI_PRIMARY_RAY_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/primary_ray.ptx.d")
+    # Camera ray generation
+    set(YBI_GENERATE_CAMERA_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/generate_camera_ray.ptx")
+    set(YBI_GENERATE_CAMERA_RAY_KERNEL_DEPFILE "${YBI_GENERATE_CAMERA_RAY_KERNEL_PATH}.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/primary_ray.cu"
-        OUTPUT "${YBI_PRIMARY_RAY_KERNEL_PATH}"
-        DEPFILE "${YBI_PRIMARY_RAY_KERNEL_DEPFILE}"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/generate_camera_ray.cu"
+        OUTPUT "${YBI_GENERATE_CAMERA_RAY_KERNEL_PATH}"
+        DEPFILE "${YBI_GENERATE_CAMERA_RAY_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+    )
+    add_custom_target(yeoubi_generate_camera_ray_kernel DEPENDS ${YBI_GENERATE_CAMERA_RAY_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_generate_camera_ray_kernel)
+
+    # Wavefront OptiX kernels
+    set(YBI_WAVEFRONT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/kernels.ptx")
+    set(YBI_WAVEFRONT_KERNEL_DEPFILE "${YBI_WAVEFRONT_KERNEL_PATH}.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/kernels.cu"
+        OUTPUT "${YBI_WAVEFRONT_KERNEL_PATH}"
+        DEPFILE "${YBI_WAVEFRONT_KERNEL_DEPFILE}"
         ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
         DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
         INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
     )
-    add_custom_target(yeoubi_primary_ray_kernel DEPENDS ${YBI_PRIMARY_RAY_KERNEL_PATH})
-    add_dependencies(yeoubi yeoubi_primary_ray_kernel)
-
-    # Secondary rays
-    set(YBI_SECONDARY_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/secondary_ray.ptx")
-    set(YBI_SECONDARY_RAY_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/secondary_ray.ptx.d")
-
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/secondary_ray.cu"
-        OUTPUT "${YBI_SECONDARY_RAY_KERNEL_PATH}"
-        DEPFILE "${YBI_SECONDARY_RAY_KERNEL_DEPFILE}"
-        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
-        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
-        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
-    )
-    add_custom_target(yeoubi_secondary_ray_kernel DEPENDS ${YBI_SECONDARY_RAY_KERNEL_PATH})
-    add_dependencies(yeoubi yeoubi_secondary_ray_kernel)
-
-    # Shade hit
-    set(YBI_SHADE_HIT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx")
-    set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx.d")
-
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/shade_hit.cu"
-        OUTPUT "${YBI_SHADE_HIT_KERNEL_PATH}"
-        DEPFILE "${YBI_SHADE_HIT_KERNEL_DEPFILE}"
-        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
-        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
-        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
-    )
-    add_custom_target(yeoubi_shade_hit_kernel DEPENDS ${YBI_SHADE_HIT_KERNEL_PATH})
-    add_dependencies(yeoubi yeoubi_shade_hit_kernel)
-
-    # Direct lighting
-    set(YBI_DIRECT_LIGHTING_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/direct_lighting.ptx")
-    set(YBI_DIRECT_LIGHTING_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/direct_lighting.ptx.d")
-
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/direct_lighting.cu"
-        OUTPUT "${YBI_DIRECT_LIGHTING_KERNEL_PATH}"
-        DEPFILE "${YBI_DIRECT_LIGHTING_DEPFILE}"
-        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
-        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
-        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
-    )
-    add_custom_target(yeoubi_direct_lighting_kernel DEPENDS ${YBI_DIRECT_LIGHTING_KERNEL_PATH})
-    add_dependencies(yeoubi yeoubi_direct_lighting_kernel)
+    add_custom_target(yeoubi_wavefront_kernel DEPENDS ${YBI_WAVEFRONT_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_wavefront_kernel)
 
     list (APPEND YBI_COMPILE_DEFINITIONS
         YBI_OPTIX_OPENPBR_PTX_PATH=\"${YBI_OPTIX_OPENPBR_PTX_PATH}\"

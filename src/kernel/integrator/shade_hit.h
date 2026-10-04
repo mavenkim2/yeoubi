@@ -73,7 +73,7 @@ ShadeHit(const KernelParams &params, const SampleState *sampleState, uint32_t sa
     {
         rayOrigin = OffsetRayOrigin(position, -geometricNormal);
         depth++;
-        sampleState->WriteKernelType(sampleIndex, KERNEL_SECONDARY_RAY);
+        sampleState->WriteKernelType(sampleIndex, KERNEL_INTERSECT);
         sampleState->WriteRayOrigin(sampleIndex, rayOrigin);
         sampleState->WriteDepth(sampleIndex, depth);
         // return;
