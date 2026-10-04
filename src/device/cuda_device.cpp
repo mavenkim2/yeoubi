@@ -213,12 +213,22 @@ CUDADevice::CUDADevice(bool createRendererPipeline)
     CUDA_ASSERT(cuDevicePrimaryCtxRetain(&cudaContext, device));
 
     InitializeOptix(createRendererPipeline);
+
+    DeviceKernelDesc cameraDesc;
+    cameraDesc.filename = YBI_GENERATE_CAMERA_RAY_KERNEL_PATH;
+    cameraDesc.entryName = "GenerateCameraRays";
+    generateCameraRays = CreateDeviceKernel(cameraDesc);
 }
 
 CUDADevice::~CUDADevice()
 {
     {
         ContextScope contextScope(this);
+        generateCameraRays.reset();
+        if (kernelTimingStart)
+            CUDA_ASSERT(cuEventDestroy(kernelTimingStart));
+        if (kernelTimingEnd)
+            CUDA_ASSERT(cuEventDestroy(kernelTimingEnd));
         DestroyOptixPipeline();
         if (optixDeviceContext)
         {
@@ -576,29 +586,75 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
     CUDA_ASSERT(cuMemcpy3DBatchAsync(ops.size(), ops.data(), 0, cudaStream.stream));
 }
 
-bool CUDADevice::DispatchKernel(int width, int height, DeviceBuffer kernelParams)
+void CUDADevice::BeginKernelTiming(float *elapsedMilliseconds)
 {
-    if (width <= 0 || height <= 0)
-        return false;
-    const uint64_t count = uint64_t(width) * uint64_t(height);
-    if (count > UINT32_MAX)
-        return false;
-    return DispatchKernel(
-        PROGRAM_GROUP_RAYGEN_INTERSECT, static_cast<uint32_t>(count), kernelParams);
+    if (!elapsedMilliseconds)
+        return;
+    *elapsedMilliseconds = 0.0f;
+    if (!kernelTimingStart)
+    {
+        CUDA_ASSERT(cuEventCreate(&kernelTimingStart, CU_EVENT_DEFAULT));
+        CUDA_ASSERT(cuEventCreate(&kernelTimingEnd, CU_EVENT_DEFAULT));
+    }
+    CUDA_ASSERT(cuEventRecord(kernelTimingStart, 0));
 }
 
-bool CUDADevice::DispatchKernel(OptixProgramGroups raygen,
-                                uint32_t numSampleIndices,
-                                DeviceBuffer kernelParams)
+void CUDADevice::EndKernelTiming(float *elapsedMilliseconds)
+{
+    if (!elapsedMilliseconds)
+        return;
+    CUDA_ASSERT(cuEventRecord(kernelTimingEnd, 0));
+    CUDA_ASSERT(cuEventSynchronize(kernelTimingEnd));
+    CUDA_ASSERT(cuEventElapsedTime(elapsedMilliseconds, kernelTimingStart, kernelTimingEnd));
+}
+
+bool CUDADevice::DispatchKernel(KernelType kernelType,
+                                uint32_t numWorkItems,
+                                uint32_t blockSize,
+                                DeviceBuffer kernelParams,
+                                float *elapsedMilliseconds)
 {
     ContextScope contextScope(this);
-    if (raygen < PROGRAM_GROUP_RAYGEN_INTERSECT || raygen >= PROGRAM_GROUP_RAYGEN_END ||
-        !optixPipeline.pipeline || !kernelParams.Data() ||
-        kernelParams.SizeInBytes() < sizeof(WavefrontParams))
+    if (elapsedMilliseconds)
+        *elapsedMilliseconds = 0.0f;
+    if (!kernelParams.Data() || kernelParams.SizeInBytes() < sizeof(WavefrontParams))
         return false;
-    if (numSampleIndices == 0)
+    if (numWorkItems == 0)
         return true;
 
+    if (kernelType == KERNEL_GENERATE_CAMERA_RAYS)
+    {
+        if (blockSize == 0)
+            return false;
+
+        CUDADeviceKernel &cameraKernel = static_cast<CUDADeviceKernel &>(*generateCameraRays);
+        void *arguments[] = {kernelParams.KernelArg(), &numWorkItems};
+        BeginKernelTiming(elapsedMilliseconds);
+        CUresult result = cuLaunchKernel(cameraKernel.function,
+                                         (numWorkItems - 1) / blockSize + 1,
+                                         1,
+                                         1,
+                                         blockSize,
+                                         1,
+                                         1,
+                                         0,
+                                         0,
+                                         arguments,
+                                         nullptr);
+        if (!CheckCudaResult(result, "cuLaunchKernel(GenerateCameraRays)"))
+            return false;
+
+        EndKernelTiming(elapsedMilliseconds);
+        if (elapsedMilliseconds)
+            return true;
+        result = cuStreamSynchronize(0);
+        return CheckCudaResult(result, "cuStreamSynchronize");
+    }
+
+    if (kernelType < KERNEL_INTERSECT || kernelType > KERNEL_INDIRECT_LIGHTING ||
+        !optixPipeline.pipeline)
+        return false;
+    const uint32_t raygen = kernelType - KERNEL_INTERSECT;
     OptixShaderBindingTable sbt = {};
     sbt.raygenRecord = optixPipeline.sbtRecordsBuffer + sizeof(PipelineSbtRecord) * raygen;
     sbt.missRecordBase =
@@ -617,17 +673,21 @@ bool CUDADevice::DispatchKernel(OptixProgramGroups raygen,
             static_cast<unsigned int>(optixPipeline.callableProgramGroups.size());
     }
 
+    BeginKernelTiming(elapsedMilliseconds);
     OptixResult result = optixLaunch(optixPipeline.pipeline,
                                      0,
                                      reinterpret_cast<CUdeviceptr>(kernelParams.Data()),
                                      sizeof(WavefrontParams),
                                      &sbt,
-                                     numSampleIndices,
+                                     numWorkItems,
                                      1,
                                      1);
     if (!CheckOptixResult(result, "optixLaunch"))
         return false;
 
+    EndKernelTiming(elapsedMilliseconds);
+    if (elapsedMilliseconds)
+        return true;
     CUresult cudaResult = cuStreamSynchronize(0);
     return CheckCudaResult(cudaResult, "cuStreamSynchronize");
 }
@@ -826,7 +886,9 @@ std::string CUDADevice::GetDirectCallablePrefix() const
     return "__direct_callable__";
 }
 
-void CUDADevice::ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc)
+void CUDADevice::ExecuteKernel(DeviceKernel &kernel,
+                               const DeviceKernelLaunchDesc &desc,
+                               float *elapsedMilliseconds)
 {
     ContextScope contextScope(this);
 
@@ -840,6 +902,7 @@ void CUDADevice::ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDes
     YBI_ASSERT(desc.blockY > 0);
     YBI_ASSERT(desc.blockZ > 0);
 
+    BeginKernelTiming(elapsedMilliseconds);
     CUDA_ASSERT(cuLaunchKernel(cudaKernel.function,
                                desc.gridX,
                                desc.gridY,
@@ -851,6 +914,7 @@ void CUDADevice::ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDes
                                0,
                                desc.arguments,
                                nullptr));
+    EndKernelTiming(elapsedMilliseconds);
 }
 
 struct CUDATextureFormatInfo
@@ -1076,8 +1140,7 @@ void CUDADevice::GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions
     moduleOptions = {};
     moduleOptions.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
     moduleOptions.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
-    // moduleOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_DEFAULT;
-    moduleOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MODERATE;
+    moduleOptions.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_MINIMAL;
 
     pipelineOptions = {};
     pipelineOptions.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;

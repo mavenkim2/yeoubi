@@ -53,7 +53,9 @@ extern "C" __global__ void __raygen__intersect()
     if (threadIndex >= params.numSampleIndices)
         return;
 
-    const uint32_t sampleIndex = params.sampleIndices[threadIndex];
+    // Initial camera batches occupy contiguous state slots.
+    const uint32_t sampleIndex =
+        params.sampleIndices ? params.sampleIndices[threadIndex] : threadIndex;
     Intersect(params, &params.sampleState, sampleIndex);
 }
 

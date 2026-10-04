@@ -35,7 +35,11 @@ struct CPUDevice : Device
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
-    bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
+    bool DispatchKernel(KernelType kernelType,
+                        uint32_t numWorkItems,
+                        uint32_t blockSize,
+                        DeviceBuffer kernelParams,
+                        float *elapsedMilliseconds = nullptr) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
     void DestroyTexture(DeviceTexture &texture) override;
@@ -57,7 +61,9 @@ struct CPUDevice : Device
                                  std::vector<uint32_t> &callableIndices) override;
     std::string GetCallableFunctionSignature() const override;
     std::string GetDirectCallablePrefix() const override;
-    void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) override;
+    void ExecuteKernel(DeviceKernel &kernel,
+                       const DeviceKernelLaunchDesc &desc,
+                       float *elapsedMilliseconds = nullptr) override;
 
     void InitializeOptix(bool createRendererPipeline);
     bool CreateOptixPipeline(const std::string &ptx);

@@ -5,6 +5,7 @@
 #include "device/device_memory.h"
 #include "device/device_texture.h"
 #include "display_device/display_device.h"
+#include "kernel/state/types.h"
 #include "scene/bvh.h"
 #include <cstddef>
 #include <cstdint>
@@ -158,7 +159,11 @@ struct Device
     virtual void CopyToHost(void *dst, void *ptr, size_t size) = 0;
     virtual void CopyToHostAsync(void *dst, void *ptr, size_t size) = 0;
     virtual void Memzero(void *dst, size_t size) = 0;
-    virtual bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) = 0;
+    virtual bool DispatchKernel(KernelType kernelType,
+                                uint32_t numWorkItems,
+                                uint32_t blockSize,
+                                DeviceBuffer kernelParams,
+                                float *elapsedMilliseconds = nullptr) = 0;
     virtual DeviceTexture CreateTexture(const DeviceTextureInfo &info) = 0;
     virtual void DestroyTexture(DeviceTexture &texture) = 0;
     virtual std::unique_ptr<DeviceStream> CreateDeviceStream() = 0;
@@ -179,7 +184,10 @@ struct Device
                                          std::vector<uint32_t> &callableIndices) = 0;
     virtual std::string GetCallableFunctionSignature() const = 0;
     virtual std::string GetDirectCallablePrefix() const = 0;
-    virtual void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) = 0;
+    // Requesting elapsedMilliseconds waits for completion and returns device execution time.
+    virtual void ExecuteKernel(DeviceKernel &kernel,
+                               const DeviceKernelLaunchDesc &desc,
+                               float *elapsedMilliseconds = nullptr) = 0;
 
     virtual bool SupportsClusterBVHs() const = 0;
     virtual BVHHandle BuildClusterBVH(DeviceArena *deviceArena,

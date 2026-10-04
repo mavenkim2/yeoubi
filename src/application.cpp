@@ -9,6 +9,7 @@
 #include "kernel/launch/kernel_params.h"
 #include "material/lut.h"
 #include "render/render_system.h"
+#include "render/wavefront_integrator.h"
 #include "render/virtual_texture/manager.h"
 #include "scene/scene.h"
 #include <GLFW/glfw3.h>
@@ -143,7 +144,7 @@ InteractiveApplication::InteractiveApplication(DeviceKind kind,
     params.maxDepth = 10;
     params.imageWidth = static_cast<int>(this->windowWidth);
     params.imageHeight = static_cast<int>(this->windowHeight);
-    cudaParams = device->Alloc(sizeof(KernelParams));
+    integrator = std::make_unique<WavefrontIntegrator>(device.get());
     kernelOutput = device->Alloc(this->windowWidth * this->windowHeight * sizeof(Vec3f));
     accumulation = device->Alloc(this->windowWidth * this->windowHeight * sizeof(Vec3f));
     params.kernelOutput = reinterpret_cast<Vec3f *>(kernelOutput.Data());
@@ -174,7 +175,6 @@ InteractiveApplication::~InteractiveApplication()
     device->WaitIdle();
     device->Free(accumulation);
     device->Free(kernelOutput);
-    device->Free(cudaParams);
 }
 
 void InteractiveApplication::LoadScene(const std::string &path)
@@ -356,9 +356,8 @@ void InteractiveApplication::Run()
             params.sampleOffset = progressiveState.samples;
 
             resetPending = false;
-            device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
             device->StartProfiler();
-            device->DispatchKernel(windowWidth, windowHeight, cudaParams);
+            integrator->RenderSamples(params);
             device->StopProfiler();
 
             void *arguments[] = {&params};
@@ -584,7 +583,7 @@ void OfflineApplication::Run()
 
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->StartProfiler();
-        device->DispatchKernel(outputWidth, outputHeight, cudaParams);
+        device->DispatchKernel(KERNEL_INTERSECT, uint32_t(outputWidth) * outputHeight, 256, cudaParams);
         device->StopProfiler();
 
         void *arguments[] = {&params};

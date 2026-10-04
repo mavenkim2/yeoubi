@@ -12,6 +12,7 @@ namespace ybi
 
 enum KernelType
 {
+    KERNEL_GENERATE_CAMERA_RAYS,
     KERNEL_INTERSECT,
     KERNEL_SHADE_HIT,
     KERNEL_DIRECT_LIGHTING,

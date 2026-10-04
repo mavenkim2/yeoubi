@@ -122,9 +122,11 @@ struct CUDADevice : Device
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
-    bool DispatchKernel(int width, int height, DeviceBuffer kernelParams) override;
-    bool DispatchKernel(OptixProgramGroups raygen, uint32_t numSampleIndices,
-                        DeviceBuffer kernelParams);
+    bool DispatchKernel(KernelType kernelType,
+                        uint32_t numWorkItems,
+                        uint32_t blockSize,
+                        DeviceBuffer kernelParams,
+                        float *elapsedMilliseconds = nullptr) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
     void DestroyTexture(DeviceTexture &texture) override;
@@ -146,7 +148,9 @@ struct CUDADevice : Device
                                  std::vector<uint32_t> &callableIndices) override;
     std::string GetCallableFunctionSignature() const override;
     std::string GetDirectCallablePrefix() const override;
-    void ExecuteKernel(DeviceKernel &kernel, const DeviceKernelLaunchDesc &desc) override;
+    void ExecuteKernel(DeviceKernel &kernel,
+                       const DeviceKernelLaunchDesc &desc,
+                       float *elapsedMilliseconds = nullptr) override;
 
     void InitializeOptix(bool createRendererPipeline);
     bool CreateOptixPipeline(const std::string &ptx);
@@ -166,6 +170,13 @@ struct CUDADevice : Device
     bool CreatePipeline(MaterialBackend backend) override;
 
 private:
+    std::unique_ptr<DeviceKernel> generateCameraRays;
+    CUevent kernelTimingStart = nullptr;
+    CUevent kernelTimingEnd = nullptr;
+
+    void BeginKernelTiming(float *elapsedMilliseconds);
+    void EndKernelTiming(float *elapsedMilliseconds);
+
     void GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions,
                                 OptixPipelineCompileOptions &pipelineOptions);
     bool LinkOptixPipeline(const OptixPipelineCompileOptions &pipelineCompileOptions);

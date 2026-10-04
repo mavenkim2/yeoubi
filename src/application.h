@@ -19,6 +19,7 @@ class CameraController;
 class DeviceArena;
 class DeviceKernel;
 class VirtualTextureManager;
+class WavefrontIntegrator;
 
 enum class DeviceKind;
 
@@ -103,7 +104,7 @@ private:
     std::string loadError;
 
     ProgressiveState progressiveState;
-    DeviceBuffer cudaParams;
+    std::unique_ptr<WavefrontIntegrator> integrator;
     DeviceBuffer kernelOutput;
     DeviceBuffer accumulation;
     std::unique_ptr<DeviceKernel> accumulateKernel;

@@ -15,6 +15,9 @@ struct WavefrontParams : KernelParams
 
     uint32_t *sampleIndices;
     uint32_t numSampleIndices;
+
+    uint64_t cameraWorkOffset;
+    uint32_t cameraSampleStateOffset;
 };
 
 } // namespace ybi
