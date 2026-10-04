@@ -3,9 +3,8 @@
 #include "kernel/backend/dispatch.h"
 #include "kernel/geometry/clustered_triangle.h"
 #include "kernel/geometry/triangle.h"
-#include "kernel/integrator/ray_utils.h"
 #include "kernel/launch/kernel_params.h"
-#include "kernel/launch/shading_context.h"
+#include "kernel/raytracing/ray_offset.h"
 #include "kernel/shading/shading.h"
 #include "kernel/state/types.h"
 
@@ -39,12 +38,10 @@ YBI_GPU void GetShadingInfo(const DeviceScene &deviceScene,
 }
 
 template <typename SampleState>
-YBI_GPU void ShadeHit(const ShadingContext &context,
-                      const KernelParams *kernelParams,
-                      const SampleState *sampleState,
-                      uint32_t sampleIndex)
+YBI_GPU void
+ShadeHit(const KernelParams &params, const SampleState *sampleState, uint32_t sampleIndex)
 {
-    const DeviceScene &scene = context.scene;
+    const DeviceScene &scene = params.scene;
     const Vec3f rayDirection = sampleState->ReadRayDirection(sampleIndex);
     Vec3f rayOrigin = sampleState->ReadRayOrigin(sampleIndex);
     uint32_t depth = sampleState->ReadDepth(sampleIndex);
@@ -67,9 +64,8 @@ YBI_GPU void ShadeHit(const ShadingContext &context,
         assert(handle.type == MaterialHandleType::MaterialX);
         const DeviceMaterial3 &materialXMaterial = scene.deviceMaterial3s[handle.index];
 
-        DeviceDispatch<void>(materialXMaterial.initializeCallableIndex,
-                             kernelParams,
-                             &closureInitializationInfo);
+        DeviceDispatch<void>(
+            materialXMaterial.initializeCallableIndex, &params, &closureInitializationInfo);
         hasBsdf = true;
     }
 
@@ -77,14 +73,15 @@ YBI_GPU void ShadeHit(const ShadingContext &context,
     {
         rayOrigin = OffsetRayOrigin(position, -geometricNormal);
         depth++;
+        sampleState->WriteKernelType(sampleIndex, KERNEL_SECONDARY_RAY);
+        sampleState->WriteRayOrigin(sampleIndex, rayOrigin);
+        sampleState->WriteDepth(sampleIndex, depth);
         // return;
     }
     else
     {
+        sampleState->WriteKernelType(sampleIndex, KERNEL_DIRECT_LIGHTING);
     }
-
-    sampleState->WriteRayOrigin(sampleIndex, rayOrigin);
-    sampleState->WriteDepth(sampleIndex, depth);
 }
 
 } // namespace ybi

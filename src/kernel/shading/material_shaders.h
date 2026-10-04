@@ -4,7 +4,7 @@
 #include "device/cuda_compat.h"
 #include "material/opcodes.h"
 #include "material/runtime_types.h"
-#include "kernel/launch/shading_context.h"
+#include "kernel/launch/kernel_params.h"
 #include "kernel/shading/attribute.h"
 #include "kernel/shading/colorcorrect.h"
 #include "kernel/shading/image.h"
@@ -13,7 +13,7 @@
 namespace ybi
 {
 
-YBI_GPU void EvaluateShader(const ShadingContext &context,
+YBI_GPU void EvaluateShader(const KernelParams &params,
                             const ShadingInfo &info,
                             const DeviceMaterialExpression &shader,
                             float *registers)
@@ -22,67 +22,67 @@ YBI_GPU void EvaluateShader(const ShadingContext &context,
 
     for (;;)
     {
-        MaterialOpcode opcode = static_cast<MaterialOpcode>(context.scene.shaderNodes[offset++]);
+        MaterialOpcode opcode = static_cast<MaterialOpcode>(params.scene.shaderNodes[offset++]);
         switch (opcode)
         {
             case MaterialOpcode::ConstantBool:
             {
-                const bool value = context.scene.shaderNodes[offset++] != 0u;
-                const uint32_t dst = context.scene.shaderNodes[offset++];
+                const bool value = params.scene.shaderNodes[offset++] != 0u;
+                const uint32_t dst = params.scene.shaderNodes[offset++];
                 StoreBoolRegister(registers, value, dst);
                 break;
             }
             case MaterialOpcode::ConstantFloat:
             {
-                float value = UintAsFloat(context.scene.shaderNodes[offset++]);
-                const uint32_t dst = context.scene.shaderNodes[offset++];
+                float value = UintAsFloat(params.scene.shaderNodes[offset++]);
+                const uint32_t dst = params.scene.shaderNodes[offset++];
                 StoreFloatRegister(registers, value, dst);
                 break;
             }
             case MaterialOpcode::ConstantColor:
             {
-                const Vec3f value(UintAsFloat(context.scene.shaderNodes[offset++]),
-                                  UintAsFloat(context.scene.shaderNodes[offset++]),
-                                  UintAsFloat(context.scene.shaderNodes[offset++]));
-                const uint32_t dst = context.scene.shaderNodes[offset++];
+                const Vec3f value(UintAsFloat(params.scene.shaderNodes[offset++]),
+                                  UintAsFloat(params.scene.shaderNodes[offset++]),
+                                  UintAsFloat(params.scene.shaderNodes[offset++]));
+                const uint32_t dst = params.scene.shaderNodes[offset++];
                 StoreFloat3Register(registers, value, dst);
                 break;
             }
             case MaterialOpcode::ImageFloat:
             {
-                ShaderImageFloat(context, info, registers, offset);
+                ShaderImageFloat(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::ImageVector2:
             {
-                ShaderImageVector2(context, info, registers, offset);
+                ShaderImageVector2(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::ImageVector3:
             {
-                ShaderImageVector3(context, info, registers, offset);
+                ShaderImageVector3(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::ImageVector4:
             {
-                ShaderImageVector4(context, info, registers, offset);
+                ShaderImageVector4(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::AttributeValueVector2:
             {
-                ShaderAttributeValueVector2(context, info, registers, offset);
+                ShaderAttributeValueVector2(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::ColorCorrectColor3:
             {
-                ShaderColorCorrectColor3(context, info, registers, offset);
+                ShaderColorCorrectColor3(params, info, registers, offset);
                 break;
             }
             case MaterialOpcode::ExtractVector3:
             {
-                const uint32_t src = context.scene.shaderNodes[offset++];
-                const uint32_t index = context.scene.shaderNodes[offset++];
-                const uint32_t dst = context.scene.shaderNodes[offset++];
+                const uint32_t src = params.scene.shaderNodes[offset++];
+                const uint32_t index = params.scene.shaderNodes[offset++];
+                const uint32_t dst = params.scene.shaderNodes[offset++];
 
                 const Vec3f value = LoadFloat3Register(registers, src);
                 StoreFloatRegister(registers, value[index], dst);
@@ -98,48 +98,48 @@ YBI_GPU void EvaluateShader(const ShadingContext &context,
     }
 }
 
-YBI_GPU bool EvaluateShaderBool(const ShadingContext &context,
+YBI_GPU bool EvaluateShaderBool(const KernelParams &params,
                                 const ShadingInfo &info,
                                 const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
-    EvaluateShader(context, info, shader, registers);
+    EvaluateShader(params, info, shader, registers);
     return LoadBoolRegister(registers, shader.outputRegister);
 }
 
-YBI_GPU Vec2f EvaluateShaderVec2(const ShadingContext &context,
+YBI_GPU Vec2f EvaluateShaderVec2(const KernelParams &params,
                                  const ShadingInfo &info,
                                  const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
-    EvaluateShader(context, info, shader, registers);
+    EvaluateShader(params, info, shader, registers);
     return LoadFloat2Register(registers, shader.outputRegister);
 }
 
-YBI_GPU Vec3f EvaluateShaderVec3(const ShadingContext &context,
+YBI_GPU Vec3f EvaluateShaderVec3(const KernelParams &params,
                                  const ShadingInfo &info,
                                  const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
-    EvaluateShader(context, info, shader, registers);
+    EvaluateShader(params, info, shader, registers);
     return LoadFloat3Register(registers, shader.outputRegister);
 }
 
-YBI_GPU Vec4f EvaluateShaderVec4(const ShadingContext &context,
+YBI_GPU Vec4f EvaluateShaderVec4(const KernelParams &params,
                                  const ShadingInfo &info,
                                  const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
-    EvaluateShader(context, info, shader, registers);
+    EvaluateShader(params, info, shader, registers);
     return LoadFloat4Register(registers, shader.outputRegister);
 }
 
-YBI_GPU float EvaluateShaderFloat(const ShadingContext &context,
+YBI_GPU float EvaluateShaderFloat(const KernelParams &params,
                                   const ShadingInfo &info,
                                   const DeviceMaterialExpression &shader)
 {
     float registers[SHADER_NUM_REGISTERS];
-    EvaluateShader(context, info, shader, registers);
+    EvaluateShader(params, info, shader, registers);
     return LoadFloatRegister(registers, shader.outputRegister);
 }
 

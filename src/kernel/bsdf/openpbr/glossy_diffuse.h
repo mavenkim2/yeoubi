@@ -6,7 +6,7 @@
 
 #include "core/math.h"
 #include "device/cuda_compat.h"
-#include "kernel/integrator/sampling.h"
+#include "kernel/sampling/mapping.h"
 namespace ybi
 {
 

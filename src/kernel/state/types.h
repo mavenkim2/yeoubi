@@ -13,7 +13,12 @@ namespace ybi
 enum KernelType
 {
     KERNEL_PRIMARY_RAY,
+    KERNEL_SECONDARY_RAY,
     KERNEL_SHADE_HIT,
+    KERNEL_DIRECT_LIGHTING,
+    KERNEL_INDIRECT_LIGHTING,
+    KERNEL_FINISHED,
+    KERNEL_TRACE_RAY,
 };
 
 enum IntersectionType
@@ -55,8 +60,7 @@ struct RNG;
 
 struct WavefrontSampleState
 {
-    uint32_t *pixelX;
-    uint32_t *pixelY;
+    uint32_t *pixelIndex;
     RNG *rng;
     RayCone *rayCone;
     Vec3f *radiance;
@@ -88,24 +92,14 @@ struct WavefrontSampleState
     float *uvArea;
     float *closureData;
 
-    YBI_GPU uint32_t ReadPixelX(uint32_t sampleIndex) const
+    YBI_GPU uint32_t ReadPixelIndex(uint32_t sampleIndex) const
     {
-        return pixelX[sampleIndex];
+        return pixelIndex[sampleIndex];
     }
 
-    YBI_GPU void WritePixelX(uint32_t sampleIndex, uint32_t value) const
+    YBI_GPU void WritePixelIndex(uint32_t sampleIndex, uint32_t value) const
     {
-        pixelX[sampleIndex] = value;
-    }
-
-    YBI_GPU uint32_t ReadPixelY(uint32_t sampleIndex) const
-    {
-        return pixelY[sampleIndex];
-    }
-
-    YBI_GPU void WritePixelY(uint32_t sampleIndex, uint32_t value) const
-    {
-        pixelY[sampleIndex] = value;
+        pixelIndex[sampleIndex] = value;
     }
 
     YBI_GPU RNG ReadRNG(uint32_t sampleIndex) const
@@ -358,8 +352,7 @@ struct WavefrontSampleState
         uvArea[sampleIndex] = value;
     }
 
-    YBI_GPU ClosureInitializationInfo ReadClosureInitializationInfo(
-        uint32_t sampleIndex) const
+    YBI_GPU ClosureInitializationInfo ReadClosureInitializationInfo(uint32_t sampleIndex) const
     {
         ClosureInitializationInfo info;
         info.shadingNormal = ReadShadingNormal(sampleIndex);

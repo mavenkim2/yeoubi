@@ -2,7 +2,7 @@ YBI_GPU YBI_MATERIAL_RETURN
 YBI_MATERIAL_SELF(const KernelParams &params, const ClosureInitializationInfo &info)
 {
     constexpr MaterialTextureHandle handle = YBI_MATERIAL_HANDLE;
-    const Vec4f value = VirtualTextureSampleTiledImage(GetShadingContext(params),
+    const Vec4f value = VirtualTextureSampleTiledImage(params,
                                                        handle,
                                                        info,
                                                        YBI_MATERIAL_UV_TILING,

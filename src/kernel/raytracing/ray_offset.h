@@ -3,6 +3,7 @@
 #include "core/bit.h"
 #include "core/vec3f.h"
 #include "core/vec3i.h"
+#include "device/cuda_compat.h"
 
 namespace ybi
 {

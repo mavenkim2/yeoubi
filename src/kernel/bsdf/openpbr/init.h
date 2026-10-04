@@ -6,7 +6,7 @@
 #include "kernel/bsdf/openpbr/bsdf_types.h"
 #include "kernel/bsdf/openpbr/coat.h"
 #include "kernel/bsdf/openpbr/sample_table.h"
-#include "kernel/launch/shading_context.h"
+#include "kernel/launch/kernel_params.h"
 #include "kernel/shading/material_shaders.h"
 #include "kernel/shading/shading.h"
 #include "kernel/scene.h"
@@ -66,7 +66,7 @@ YBI_GPU float ApplyWeightToIor(float ior, float weight)
     return result;
 }
 
-YBI_GPU bool InitializeOpenPbrBsdf(const ShadingContext &context,
+YBI_GPU bool InitializeOpenPbrBsdf(const KernelParams &params,
                                    const DeviceMaterial2 &material,
                                    const ShadingInfo &info,
                                    OpenPbrBsdf &bsdf,
@@ -76,15 +76,15 @@ YBI_GPU bool InitializeOpenPbrBsdf(const ShadingContext &context,
                                    const Vec3f &throughput,
                                    float u)
 {
-    const float geometryOpacity = EvaluateShaderFloat(context, info, material.geometry_opacity);
+    const float geometryOpacity = EvaluateShaderFloat(params, info, material.geometry_opacity);
     if (u >= geometryOpacity)
     {
         return false;
     }
 
-    const float fuzzWeight = EvaluateShaderFloat(context, info, material.fuzz_weight);
-    const Vec3f fuzzColor = EvaluateShaderVec3(context, info, material.fuzz_color);
-    const float fuzzRoughness = EvaluateShaderFloat(context, info, material.fuzz_roughness);
+    const float fuzzWeight = EvaluateShaderFloat(params, info, material.fuzz_weight);
+    const Vec3f fuzzColor = EvaluateShaderVec3(params, info, material.fuzz_color);
+    const float fuzzRoughness = EvaluateShaderFloat(params, info, material.fuzz_roughness);
 
 #if 0
     const float geometryOpacity = 1.f;
@@ -132,31 +132,31 @@ YBI_GPU bool InitializeOpenPbrBsdf(const ShadingContext &context,
     // const float specularRoughness = 0.3f;
     // const Vec3f specularColor = Vec3f(1.f);
 
-    const float specularIor = EvaluateShaderFloat(context, info, material.specular_ior);
-    const float specularWeight = EvaluateShaderFloat(context, info, material.specular_weight);
+    const float specularIor = EvaluateShaderFloat(params, info, material.specular_ior);
+    const float specularWeight = EvaluateShaderFloat(params, info, material.specular_weight);
     const float specularAnisotropy =
-        EvaluateShaderFloat(context, info, material.specular_roughness_anisotropy);
-    const float specularRoughness = EvaluateShaderFloat(context, info, material.specular_roughness);
-    const Vec3f specularColor = EvaluateShaderVec3(context, info, material.specular_color);
+        EvaluateShaderFloat(params, info, material.specular_roughness_anisotropy);
+    const float specularRoughness = EvaluateShaderFloat(params, info, material.specular_roughness);
+    const Vec3f specularColor = EvaluateShaderVec3(params, info, material.specular_color);
 
     // const Vec3f baseColor = Vec3f(0.8f);
     // const float baseWeight = 1.f;
-    const Vec3f baseColor = EvaluateShaderVec3(context, info, material.base_color);
-    const float baseWeight = EvaluateShaderFloat(context, info, material.base_weight);
+    const Vec3f baseColor = EvaluateShaderVec3(params, info, material.base_color);
+    const float baseWeight = EvaluateShaderFloat(params, info, material.base_weight);
 
     // Translucent lobe
-    const Vec3f transmissionColor = EvaluateShaderVec3(context, info, material.transmission_color);
+    const Vec3f transmissionColor = EvaluateShaderVec3(params, info, material.transmission_color);
     const float transmissionWeight =
-        EvaluateShaderFloat(context, info, material.transmission_weight);
+        EvaluateShaderFloat(params, info, material.transmission_weight);
 
     // Coat
-    const Vec3f coatColor = EvaluateShaderVec3(context, info, material.coat_color);
-    const float coatWeight = EvaluateShaderFloat(context, info, material.coat_weight);
-    const float coatRoughness = EvaluateShaderFloat(context, info, material.coat_roughness);
+    const Vec3f coatColor = EvaluateShaderVec3(params, info, material.coat_color);
+    const float coatWeight = EvaluateShaderFloat(params, info, material.coat_weight);
+    const float coatRoughness = EvaluateShaderFloat(params, info, material.coat_roughness);
     const float coatRoughnessAnisotropy =
-        EvaluateShaderFloat(context, info, material.coat_roughness_anisotropy);
-    const float coatDarkening = EvaluateShaderFloat(context, info, material.coat_darkening);
-    const float coatIor = EvaluateShaderFloat(context, info, material.coat_ior);
+        EvaluateShaderFloat(params, info, material.coat_roughness_anisotropy);
+    const float coatDarkening = EvaluateShaderFloat(params, info, material.coat_darkening);
+    const float coatIor = EvaluateShaderFloat(params, info, material.coat_ior);
     // const Vec3f coatColor = Vec3f(1.f);
     // const float coatWeight = 0.f;
     // const float coatRoughness = 0.f;
@@ -165,7 +165,7 @@ YBI_GPU bool InitializeOpenPbrBsdf(const ShadingContext &context,
     // const float coatIor = 1.6f;
 
     // Thin wall
-    const bool isThinWall = EvaluateShaderBool(context, info, material.geometry_thin_walled);
+    const bool isThinWall = EvaluateShaderBool(params, info, material.geometry_thin_walled);
 
     bsdf.fuzzWeight = fuzzWeight;
     bsdf.fuzzColor = fuzzColor;
@@ -316,7 +316,7 @@ YBI_GPU bool InitializeOpenPbrBsdf(const ShadingContext &context,
         Vec3f uniformModulatedCoatDarkeningFactor = Lerp(1.f, delta, coatWeight * coatDarkening);
 
         const float coatEnergyReflected =
-            CalculateCoatEnergyReflected(context.opaqueDielectricEnergyComplementTexture,
+            CalculateCoatEnergyReflected(params.opaqueDielectricEnergyComplementTexture,
                                          relativeCoatIor,
                                          localViewDirection.z,
                                          adjustedCoatRoughness,

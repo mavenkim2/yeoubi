@@ -88,26 +88,21 @@ YBI_GPU float CalculateSecondaryHitSurfaceSpreadAngle(const Vec3f &d,
     return result;
 }
 
-YBI_GPU float ComputeTextureLOD(float triangleArea,
-                                float textureArea,
-                                Vec3f dir,
-                                Vec3f normal,
-                                float width,
-                                int textureWidth,
-                                int textureHeight)
+YBI_GPU void UpdateSecondaryRayCone(RayCone &cone,
+                                    const Vec3f &rayDirection,
+                                    float rayT,
+                                    const TriangleInfo &triangleInfo,
+                                    const TriangleSurfaceInfo &surfaceInfo)
 {
-    const float safeTextureArea = Max(textureArea, 1.0e-20f);
-    const float safeTriangleArea = Max(triangleArea, 1.0e-20f);
-    const float safeWidth = Max(Abs(width), 1.0e-6f);
-    const float safeNormalDot = Max(Abs(Dot(dir, normal)), 1.0e-4f);
-
-    float lambda = 0.f;
-    lambda += 0.5f * log2f(safeTextureArea / safeTriangleArea);
-    lambda += log2f(safeWidth);
-    lambda += 0.5f * log2f(float(textureWidth) * float(textureHeight));
-    lambda -= log2f(safeNormalDot);
-
-    return lambda;
+    float surfaceSpreadAngle = CalculateSecondaryHitSurfaceSpreadAngle(rayDirection,
+                                                                       surfaceInfo.shadingNormal,
+                                                                       triangleInfo.positions[0],
+                                                                       triangleInfo.positions[1],
+                                                                       triangleInfo.positions[2],
+                                                                       triangleInfo.normals[0],
+                                                                       triangleInfo.normals[1],
+                                                                       triangleInfo.normals[2]);
+    PropagateRayCone(cone, surfaceSpreadAngle, rayT);
 }
 
 YBI_GPU void UpdateRayCone(RayCone &cone,

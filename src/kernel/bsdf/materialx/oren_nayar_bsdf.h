@@ -4,8 +4,9 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
+#include "kernel/bsdf/materialx/bsdf_types.h"
 #include "kernel/bsdf/materialx/closure.h"
-#include "kernel/integrator/sampling.h"
+#include "kernel/sampling/mapping.h"
 #include "kernel/scene.h"
 
 namespace ybi

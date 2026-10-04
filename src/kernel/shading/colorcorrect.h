@@ -2,25 +2,25 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
-#include "kernel/launch/shading_context.h"
+#include "kernel/launch/kernel_params.h"
 #include "kernel/shading/shading.h"
 #include "kernel/shading/shading_helpers.h"
 
 namespace ybi
 {
 
-YBI_GPU void ShaderColorCorrectColor3(const ShadingContext &context,
+YBI_GPU void ShaderColorCorrectColor3(const KernelParams &params,
                                       const ShadingInfo &info,
                                       float *registers,
                                       uint32_t &nodeOffset)
 {
-    uint32_t src = context.scene.shaderNodes[nodeOffset++];
-    bool isNode = context.scene.shaderNodes[nodeOffset++];
+    uint32_t src = params.scene.shaderNodes[nodeOffset++];
+    bool isNode = params.scene.shaderNodes[nodeOffset++];
     float gamma;
 
     if (!isNode)
     {
-        gamma = UintAsFloat(context.scene.shaderNodes[nodeOffset++]);
+        gamma = UintAsFloat(params.scene.shaderNodes[nodeOffset++]);
     }
     else
     {
@@ -28,7 +28,7 @@ YBI_GPU void ShaderColorCorrectColor3(const ShadingContext &context,
         // gamma = LoadFloatRegister(...);
         YBI_ASSERT(0);
     }
-    uint32_t dst = context.scene.shaderNodes[nodeOffset++];
+    uint32_t dst = params.scene.shaderNodes[nodeOffset++];
 
     Vec3f v = LoadFloat3Register(registers, src);
 

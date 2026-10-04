@@ -6,7 +6,7 @@
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include "device/device_texture.h"
-#include "kernel/launch/shading_context.h"
+#include "kernel/launch/kernel_params.h"
 #include "kernel/texture/sampling.h"
 #include "kernel/texture/types.h"
 #include "kernel/texture/virtual_sampling.h"
@@ -35,7 +35,7 @@ YBI_GPU uint32_t CalculateMaxVirtualTextureMip(DeviceTextureDescriptor descripto
     return maxMip;
 }
 
-YBI_GPU Vec4f SamplePointVirtualTexture(const ShadingContext &context,
+YBI_GPU Vec4f SamplePointVirtualTexture(const KernelParams &params,
                                         DeviceTextureDescriptor descriptor,
                                         uint32_t pageShift,
                                         Vec2f uv,
@@ -109,7 +109,7 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const ShadingContext &context,
         request->pageDescriptorIndex = pageIndex;
     }
 
-    const PageDescriptor pageDescriptor = context.pageDescriptors[pageIndex];
+    const PageDescriptor pageDescriptor = params.pageDescriptors[pageIndex];
 
     if (pageDescriptor.bits == ~0u)
     {
@@ -117,9 +117,6 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const ShadingContext &context,
     }
 
     const uint32_t layer = pageDescriptor.bits >> 27u;
-    const uint32_t textureIndex = pageDescriptor.bits & 0x07ffffffu;
-
-    // DeviceTexture texture = params.texturePools[textureIndex];
     uint64_t textureObject = pageDescriptor.textureObject;
     if (textureObject == 0ull)
     {
@@ -132,7 +129,7 @@ YBI_GPU Vec4f SamplePointVirtualTexture(const ShadingContext &context,
     return result;
 }
 
-YBI_GPU void WriteUniqueFeedback(const ShadingContext &context,
+YBI_GPU void WriteUniqueFeedback(const KernelParams &params,
                                  UnpackedFeedbackRequest request)
 {
     const uint32_t pageDescriptorIndex = request.pageDescriptorIndex;
@@ -141,7 +138,7 @@ YBI_GPU void WriteUniqueFeedback(const ShadingContext &context,
         return;
     }
 
-    uint32_t *bits = context.pageDescriptorBits;
+    uint32_t *bits = params.pageDescriptorBits;
 
     const uint32_t wordIndex = pageDescriptorIndex >> 5u;
     const uint32_t bitIndex = pageDescriptorIndex & 31u;
@@ -149,9 +146,9 @@ YBI_GPU void WriteUniqueFeedback(const ShadingContext &context,
     uint32_t old = atomicOr(&bits[wordIndex], 1u << bitIndex);
     if (((old >> bitIndex) & 1u) == 0)
     {
-        uint32_t requestIndex = atomicAdd(&context.feedbackRequests[0].textureIndex, 1u);
+        uint32_t requestIndex = atomicAdd(&params.feedbackRequests[0].textureIndex, 1u);
 
-        context.feedbackRequests[requestIndex + 1] =
+        params.feedbackRequests[requestIndex + 1] =
             PackFeedbackRequest(request.textureIndex, request.tileX, request.tileY, request.mip);
     }
 }

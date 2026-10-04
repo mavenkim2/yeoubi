@@ -7,7 +7,7 @@
 #include "device/cuda_compat.h"
 #include "kernel/bsdf/ltc_coefficients.h"
 #include "kernel/bsdf/openpbr/coat.h"
-#include "kernel/integrator/sampling.h"
+#include "kernel/sampling/mapping.h"
 
 namespace ybi
 {

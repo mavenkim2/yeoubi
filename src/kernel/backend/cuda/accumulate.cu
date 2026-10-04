@@ -1,5 +1,5 @@
 #include "kernel/launch/kernel_params.h"
-#include "kernel/integrator/accumulate.h"
+#include "kernel/film/accumulate.h"
 
 namespace ybi
 {

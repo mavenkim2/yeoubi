@@ -349,6 +349,20 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_primary_ray_kernel DEPENDS ${YBI_PRIMARY_RAY_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_primary_ray_kernel)
 
+    # Secondary rays
+    set(YBI_SECONDARY_RAY_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/secondary_ray.ptx")
+    set(YBI_SECONDARY_RAY_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/secondary_ray.ptx.d")
+
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/optix/secondary_ray.cu"
+        OUTPUT "${YBI_SECONDARY_RAY_KERNEL_PATH}"
+        DEPFILE "${YBI_SECONDARY_RAY_KERNEL_DEPFILE}"
+        ARCHITECTURE ${YBI_CUDA_ARCHITECTURE}
+        DEFINITIONS "OPTIX_VERSION=${OPTIX_VERSION}"
+        INCLUDE_DIRS "${YBI_OPTIX_SDK_INCLUDE_PATH}"
+    )
+    add_custom_target(yeoubi_secondary_ray_kernel DEPENDS ${YBI_SECONDARY_RAY_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_secondary_ray_kernel)
+
     # Shade hit
     set(YBI_SHADE_HIT_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx")
     set(YBI_SHADE_HIT_KERNEL_DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/shade_hit.ptx.d")

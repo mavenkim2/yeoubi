@@ -14,16 +14,18 @@
 #include "kernel/bsdf/openpbr/api.h"
 #include "kernel/bsdf/openpbr/init.h"
 #endif
+#include "kernel/backend/optix/intersection_programs.h"
 #include "kernel/backend/optix/visibility_mask.h"
 #include "kernel/geometry/attributes.h"
 #include "kernel/geometry/clustered_triangle.h"
 #include "kernel/geometry/triangle.h"
-#include "kernel/integrator/path_tracing.h"
+#include "kernel/integrator/mis.h"
 #include "kernel/integrator/shade_hit.h"
 #include "kernel/light/sample.h"
-// #include "kernel/integrator/ray_cone.h"
-#include "kernel/integrator/ray_utils.h"
-#include "kernel/integrator/sampling.h"
+#include "kernel/raytracing/ray_cone.h"
+#include "kernel/raytracing/ray_offset.h"
+#include "kernel/raytracing/trace.h"
+#include "kernel/sampling/mapping.h"
 #include "kernel/sampling/rng.h"
 #include "kernel/shading/image.h"
 #include "kernel/shading/shading.h"
@@ -71,85 +73,11 @@ YBI_GPU static Vec3f GetLodDebugColor(float lod, uint32_t maxMip)
     return Lerp(Vec3f(1.f, 1.f, 0.f), Vec3f(1.f, 0.f, 0.f), (normalizedLod - 0.75f) * 4.f);
 }
 
-extern "C" __global__ void __miss__kernel()
-{
-    uint32_t low = optixGetPayload_0();
-    uint32_t high = optixGetPayload_1();
-    uint64_t ptr = low | (uint64_t(high) << 32u);
-
-    IntersectionInfo *isect = reinterpret_cast<IntersectionInfo *>(ptr);
-    isect->type = INTERSECTION_TYPE_NONE;
-}
-
-extern "C" __global__ void __closesthit__kernel()
-{
-    uint32_t low = optixGetPayload_0();
-    uint32_t high = optixGetPayload_1();
-    uint64_t ptr = low | (uint64_t(high) << 32u);
-
-    IntersectionInfo *isect = reinterpret_cast<IntersectionInfo *>(ptr);
-
-    if (optixIsTriangleHit())
-    {
-        const float2 bary = optixGetTriangleBarycentrics();
-        float objectToWorld[12];
-        // float worldToObject[12];
-        optixGetObjectToWorldTransformMatrix(objectToWorld);
-        // optixGetWorldToObjectTransformMatrix(worldToObject);
-
-        isect->t = optixGetRayTmax();
-        isect->id = optixGetInstanceId();
-        isect->primIndex = optixGetPrimitiveIndex();
-        isect->clusterId = ~0u;
-#if OPTIX_VERSION >= 90000
-        isect->clusterId = optixGetClusterId();
-#endif
-        isect->bary = Vec2f(bary.x, bary.y);
-        isect->objectToWorld = AffineTransform(objectToWorld);
-        // isect->worldToObject = AffineTransform(worldToObject);
-        isect->type = INTERSECTION_TYPE_TRIANGLE;
-    }
-    else
-    {
-    }
-}
-
-YBI_GPU static bool TraceVisibility(OptixTraversableHandle bvhHandle,
-                                    const Vec3f &rayOrigin,
-                                    const Vec3f &rayDirection,
-                                    float tMax)
-{
-    if (tMax <= 0.f)
-        return false;
-
-    IntersectionInfo shadowInfo{};
-    const uint64_t ptr = reinterpret_cast<uint64_t>(&shadowInfo);
-    uint32_t low = static_cast<uint32_t>(ptr);
-    uint32_t high = static_cast<uint32_t>(ptr >> 32u);
-
-    optixTrace(bvhHandle,
-               make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
-               make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
-               0.f,
-               tMax,
-               0.f,
-               OPTIX_VISIBILITY_SHADOW,
-               OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT,
-               0,
-               0,
-               0,
-               low,
-               high);
-
-    return shadowInfo.type == INTERSECTION_TYPE_NONE;
-}
-
 #if 0
 extern "C" __global__ void __raygen__kernel()
 {
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDimensions = optixGetLaunchDimensions();
-    const ShadingContext shadingContext = GetShadingContext(params);
     const uint32_t rasterX = launchIndex.x + params.pixelOffsetX;
     const uint32_t rasterY = launchIndex.y + params.pixelOffsetY;
 
@@ -253,7 +181,7 @@ extern "C" __global__ void __raygen__kernel()
                 shadingInfo.rayCone = rayCone;
 
                 const Vec3f baseColor =
-                    EvaluateShaderVec3(shadingContext, shadingInfo, material.base_color);
+                    EvaluateShaderVec3(params, shadingInfo, material.base_color);
 
                 color =
                     make_uchar4(static_cast<unsigned char>(Clamp(baseColor.x, 0.f, 1.f) * 255.f),
@@ -289,7 +217,7 @@ extern "C" __global__ void __raygen__kernel()
                         const MaterialTextureHandle textureHandle = {material.udimBase,
                                                                      material.udimTableOffset};
                         const Vec4f value =
-                            VirtualTextureSampleImage(shadingContext, textureHandle, shadingInfo);
+                            VirtualTextureSampleImage(params, textureHandle, shadingInfo);
                         color = make_uchar4(
                             static_cast<unsigned char>(Clamp(value.x, 0.f, 1.f) * 255.f),
                             static_cast<unsigned char>(Clamp(value.y, 0.f, 1.f) * 255.f),
@@ -322,7 +250,6 @@ YBI_GPU void RenderUnidirectional()
 {
     const uint3 launchIndex = optixGetLaunchIndex();
     const uint3 launchDimensions = optixGetLaunchDimensions();
-    const ShadingContext shadingContext = GetShadingContext(params);
     const uint32_t rasterX = launchIndex.x + params.pixelOffsetX;
     const uint32_t rasterY = launchIndex.y + params.pixelOffsetY;
     const int maxDepth = Max(0, params.maxDepth);
@@ -346,24 +273,8 @@ YBI_GPU void RenderUnidirectional()
 
     for (int depth = 0; depth <= maxDepth;)
     {
-        IntersectionInfo info{};
-        const uint64_t ptr = reinterpret_cast<uint64_t>(&info);
-        uint32_t low = static_cast<uint32_t>(ptr);
-        uint32_t high = static_cast<uint32_t>(ptr >> 32u);
-
-        optixTrace(bvhHandle,
-                   make_float3(rayOrigin.x, rayOrigin.y, rayOrigin.z),
-                   make_float3(rayDirection.x, rayDirection.y, rayDirection.z),
-                   0.f,
-                   1.0e30f,
-                   0.f,
-                   0xff,
-                   OPTIX_RAY_FLAG_NONE,
-                   0,
-                   0,
-                   0,
-                   low,
-                   high);
+        const IntersectionInfo info =
+            TraceRay(bvhHandle, rayOrigin, rayDirection, 0.f, 1.0e30f);
 
         if (info.type == INTERSECTION_TYPE_NONE)
         {
@@ -394,7 +305,7 @@ YBI_GPU void RenderUnidirectional()
                 if (hasPreviousBsdfSample)
                 {
                     const Vec3f lightHitPosition = rayOrigin + info.t * rayDirection;
-                    const float lightPdf = PDFLight(params,
+                    const float lightPdf = PDFLight(params.scene,
                                                     static_cast<uint32_t>(object.lightIndex),
                                                     previousSurfacePosition,
                                                     lightHitPosition);
@@ -456,11 +367,10 @@ YBI_GPU void RenderUnidirectional()
         closureInitializationInfo.triangleArea =
             Length(Cross(shadingInfo.positions[1] - shadingInfo.positions[0],
                          shadingInfo.positions[2] - shadingInfo.positions[0]));
-        closureInitializationInfo.uvArea =
-            Abs((shadingInfo.uvs[1].x - shadingInfo.uvs[0].x) *
-                    (shadingInfo.uvs[2].y - shadingInfo.uvs[0].y) -
-                (shadingInfo.uvs[1].y - shadingInfo.uvs[0].y) *
-                    (shadingInfo.uvs[2].x - shadingInfo.uvs[0].x));
+        closureInitializationInfo.uvArea = Abs((shadingInfo.uvs[1].x - shadingInfo.uvs[0].x) *
+                                                   (shadingInfo.uvs[2].y - shadingInfo.uvs[0].y) -
+                                               (shadingInfo.uvs[1].y - shadingInfo.uvs[0].y) *
+                                                   (shadingInfo.uvs[2].x - shadingInfo.uvs[0].x));
         const ClosureEvaluationInfo &closureEvaluationInfo = closureInitializationInfo;
 #endif
 
@@ -475,7 +385,7 @@ YBI_GPU void RenderUnidirectional()
             {
                 const DeviceMaterial2 &material = params.scene.deviceMaterial2s[handle.index];
 
-                passedAlphaTest = InitializeOpenPbrBsdf(shadingContext,
+                passedAlphaTest = InitializeOpenPbrBsdf(params,
                                                         material,
                                                         shadingInfo,
                                                         bsdf,
@@ -490,8 +400,9 @@ YBI_GPU void RenderUnidirectional()
             if (handle.type == MaterialHandleType::MaterialX)
             {
                 materialXMaterial = &params.scene.deviceMaterial3s[handle.index];
-                DeviceDispatch<void>(
-                    materialXMaterial->initializeCallableIndex, &params, &closureInitializationInfo);
+                DeviceDispatch<void>(materialXMaterial->initializeCallableIndex,
+                                     &params,
+                                     &closureInitializationInfo);
                 hasBsdf = true;
             }
 #endif
@@ -510,7 +421,7 @@ YBI_GPU void RenderUnidirectional()
             int sampledLightIndex;
             Vec3f sampledLightPosition;
             float lightPdf;
-            Vec3f sampledLightDirection = SampleLight(params,
+            Vec3f sampledLightDirection = SampleLight(params.scene,
                                                       shadingInfo.position,
                                                       Vec3f(rng.Uniform(), rng.Uniform2D()),
                                                       sampledLightIndex,

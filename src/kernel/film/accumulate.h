@@ -1,10 +1,27 @@
 #pragma once
 
+#include "kernel/film/color.h"
 #include "kernel/launch/kernel_params.h"
-#include "kernel/integrator/path_tracing.h"
 
 namespace ybi
 {
+
+YBI_CPU_GPU Vec3f AccumulateSamples(Vec3f *history,
+                                    uint32_t previousSamples,
+                                    const Vec3f &batchSum,
+                                    uint32_t batchSamples)
+{
+    const Vec3f batchMean = batchSum / float(batchSamples);
+    if (!history)
+        return batchMean;
+    // Reset frames overwrite history without reading uninitialized or stale pixels.
+    if (previousSamples == 0)
+        *history = batchMean;
+    else
+        *history +=
+            (batchMean - *history) * (float(batchSamples) / float(previousSamples + batchSamples));
+    return *history;
+}
 
 YBI_GPU void Accumulate(const KernelParams &params, uint32_t pixelIndex)
 {

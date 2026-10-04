@@ -21,10 +21,7 @@ extern "C" __global__ void __raygen__shade_hit()
     }
 
     uint32_t sampleIndex = params.sampleIndices[threadIndex];
-    ShadeHit(GetShadingContext(params),
-             static_cast<const KernelParams *>(&params),
-             &params.sampleState,
-             sampleIndex);
+    ShadeHit(params, &params.sampleState, sampleIndex);
 }
 
 } // namespace ybi
