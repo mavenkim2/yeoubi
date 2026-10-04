@@ -1,0 +1,5 @@
+YBI_GPU YBI_MATERIAL_VALUE_TYPE
+YBI_MATERIAL_SELF(const ClosureEvaluationInfo &)
+{
+    return YBI_MATERIAL_VALUE;
+}

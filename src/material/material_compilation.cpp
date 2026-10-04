@@ -269,8 +269,11 @@ struct ConstantFloatNode final : MaterialNodeBase
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
     {
-        return "YBI_GPU float " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
-               "(const ClosureEvaluationInfo &)\n{\n    return " + FloatLiteral(value) + ";\n}\n";
+        return CompileWithMacros(
+            "kernel/bsdf/materialx/stubs/constant_impl.h",
+            {{"YBI_MATERIAL_VALUE_TYPE", "float"},
+             {"YBI_MATERIAL_SELF", GET_CLOSURE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_VALUE", FloatLiteral(value)}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -288,9 +291,13 @@ struct ConstantColor3Node final : MaterialNodeBase
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
     {
-        return "YBI_GPU Vec3f " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
-               "(const ClosureEvaluationInfo &)\n{\n    return Vec3f(" + FloatLiteral(value.x) +
-               ", " + FloatLiteral(value.y) + ", " + FloatLiteral(value.z) + ");\n}\n";
+        return CompileWithMacros(
+            "kernel/bsdf/materialx/stubs/constant_impl.h",
+            {{"YBI_MATERIAL_VALUE_TYPE", "Vec3f"},
+             {"YBI_MATERIAL_SELF", GET_CLOSURE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_VALUE",
+              "Vec3f(" + FloatLiteral(value.x) + ", " + FloatLiteral(value.y) + ", " +
+                  FloatLiteral(value.z) + ")"}});
     }
 
     MaterialOpcode GetNodeType() const override
@@ -308,9 +315,12 @@ struct ConstantVector2Node final : MaterialNodeBase
     std::string Compile(const MaterialCompilationContext &,
                         const std::string &materialPrefix) const override
     {
-        return "YBI_GPU Vec2f " + GET_CLOSURE_PREFIX + FullName(materialPrefix) +
-               "(const ClosureEvaluationInfo &)\n{\n    return Vec2f(" + FloatLiteral(value.x) +
-               ", " + FloatLiteral(value.y) + ");\n}\n";
+        return CompileWithMacros(
+            "kernel/bsdf/materialx/stubs/constant_impl.h",
+            {{"YBI_MATERIAL_VALUE_TYPE", "Vec2f"},
+             {"YBI_MATERIAL_SELF", GET_CLOSURE_PREFIX + FullName(materialPrefix)},
+             {"YBI_MATERIAL_VALUE",
+              "Vec2f(" + FloatLiteral(value.x) + ", " + FloatLiteral(value.y) + ")"}});
     }
 
     MaterialOpcode GetNodeType() const override
