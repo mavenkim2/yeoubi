@@ -60,6 +60,11 @@ YBI_CPU_GPU float Exp(float e)
     return expf(e);
 }
 
+YBI_CPU_GPU float Log(float value)
+{
+    return logf(value);
+}
+
 YBI_CPU_GPU constexpr float SafeDivide(float value, float divisor, float alternative = 0.f)
 {
     return divisor == 0.f ? alternative : value / divisor;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kernel/backend/cuda/warp_reduce.h"
+#include "kernel/guiding/guiding.h"
 #include <cstdio>
 
 #if defined(__CUDACC__)
@@ -10,6 +11,12 @@ namespace ybi
 
 struct CudaVMMBackend
 {
+    using Float = float;
+    using Vector3 = ybi::Vector3<Float>;
+    using SampleData = VMMSampleData<Float>;
+    using VMMStatistics = ybi::VMMStatistics<Float>;
+    static constexpr uint32_t SampleWidth = 1;
+
     YBI_GPU uint32_t GetThreadIndex() const
     {
         return threadIdx.x;

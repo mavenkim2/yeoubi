@@ -4,6 +4,11 @@
 #include "device/cuda_compat.h"
 #include "kernel/guiding/vmf.h"
 
+#if !defined(__CUDACC__) && \
+    (defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1))
+#include "core/simd_float4.h"
+#endif
+
 namespace ybi
 {
 
@@ -12,36 +17,34 @@ namespace ybi
 // 3. for each component, sum the soft assignment weights multiplied by the sample direction
 // 4. get the length of (3) divide by the sum over samples of 2
 
-using Float = float;
-using Vector3 = Vec3f;
-
-YBI_GPU bool SoftAssignment(const VMMDistribution &distribution,
-                            const Vector3 &sampleDirection,
-                            Float *softAssignment,
-                            Float &total)
+template <typename Float>
+YBI_GPU Float SoftAssignment(const VMMDistribution &distribution,
+                             const Vector3<Float> &sampleDirection,
+                             Float *softAssignment)
 {
-    Float V = 0.f;
+    Float V(0.f);
 
     for (uint32_t componentIndex = 0; componentIndex < distribution.numComponents;
          componentIndex++)
     {
-        Float v = distribution.weights[componentIndex] *
-                  EvalVMF(sampleDirection,
-                          distribution.meanDirection[componentIndex],
-                          distribution.kappa[componentIndex]);
+        const Float v = Float(distribution.weights[componentIndex]) *
+                        EvalVMF<Float>(sampleDirection,
+                                       distribution.meanDirection[componentIndex],
+                                       distribution.kappa[componentIndex]);
 
         V += v;
 
         softAssignment[componentIndex] = v;
     }
 
-    const float divisor = V == 0.f ? 0.f : 1.f / V;
-    total = V;
+    // A zero-density lane has zero assignments and log likelihood log(1) = 0.
+    const Float pdf = Select(V == Float(0.f), Float(1.f), V);
+    const Float reciprocalPdf = Float(1.f) / pdf;
     for (uint32_t k = 0; k < distribution.numComponents; ++k)
     {
-        softAssignment[k] *= divisor;
+        softAssignment[k] = softAssignment[k] * reciprocalPdf;
     }
-    return V > 0.f;
+    return pdf;
 }
 
 struct GuidingParams
@@ -51,22 +54,28 @@ struct GuidingParams
     const float *samplePdf;
 };
 
-struct SampleData
+template <typename Float>
+struct VMMSampleData
 {
-    Vec3f sampleDirection;
-    float radianceEstimate;
-    float pdf;
+    Vector3<Float> sampleDirection;
+    Float radianceEstimate;
+    Float pdf;
 };
 
-struct SufficientStatistics
+using SampleData = VMMSampleData<float>;
+
+template <typename Float>
+struct VMMStatistics
 {
     // No default member initializers: the CUDA backend allocates this in shared memory.
-    Vec3f sumWeightedDirections[VMM_MAX_NUM_COMPONENTS];
-    float sumWeightedStats[VMM_MAX_NUM_COMPONENTS];
+    Vector3<Float> sumWeightedDirections[VMM_MAX_NUM_COMPONENTS];
+    Float sumWeightedStats[VMM_MAX_NUM_COMPONENTS];
 
     // May be fractional after decaying previous observations.
     float numSamples;
 };
+
+using SufficientStatistics = VMMStatistics<float>;
 
 struct VMMUpdateWorkspace
 {
@@ -100,21 +109,49 @@ struct VMMUpdateRange
     float overallNumSamples;
 };
 
-YBI_GPU SampleData LoadSampleData(const GuidingParams &params, uint32_t sampleIndex)
-{
-    SampleData result;
-    result.sampleDirection = params.sampleDirection[sampleIndex];
-    result.radianceEstimate = params.sampleRadianceEstimate[sampleIndex];
-    result.pdf = params.samplePdf[sampleIndex];
+template <typename Sample>
+YBI_GPU Sample LoadSampleData(const GuidingParams &params,
+                              uint32_t sampleIndex,
+                              uint32_t numValidSamples);
 
-    return result;
+template <>
+YBI_GPU SampleData LoadSampleData<SampleData>(const GuidingParams &params,
+                                              uint32_t sampleIndex,
+                                              uint32_t numValidSamples)
+{
+    YBI_ASSERT(numValidSamples == 1);
+    return {params.sampleDirection[sampleIndex],
+            params.sampleRadianceEstimate[sampleIndex],
+            params.samplePdf[sampleIndex]};
 }
 
-// Statistics must be normalized so that the assignment masses across components
-// sum to numSamples for each batch, as in OpenPGL's SufficientStatistics::normalize.
-// The caller schedules components and completes reductions before calling this.
-// The combined current and previous sample count must be positive.
-// overallNumSamples includes the current batch and previous samples before decay.
+#if !defined(__CUDACC__) && \
+    (defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1))
+template <>
+inline VMMSampleData<Float4> LoadSampleData<VMMSampleData<Float4>>(const GuidingParams &params,
+                                                                   uint32_t sampleIndex,
+                                                                   uint32_t numValidSamples)
+{
+    YBI_ASSERT(numValidSamples > 0 && numValidSamples <= Float4::Width);
+    // Each range needs storage through sampleOffset + RoundUp(numSamples, 4).
+    // Load full packets from padded arrays, including the final partial packet.
+    VMMSampleData<Float4> sample{LoadUnaligned(params.sampleDirection + sampleIndex),
+                                 LoadUnaligned(params.sampleRadianceEstimate + sampleIndex),
+                                 LoadUnaligned(params.samplePdf + sampleIndex)};
+    if (numValidSamples < Float4::Width)
+    {
+        const Mask4 valid{
+            _mm_cmplt_ps(_mm_setr_ps(0.f, 1.f, 2.f, 3.f), _mm_set1_ps(float(numValidSamples)))};
+        sample.sampleDirection.x = Select(valid, sample.sampleDirection.x, Float4(0.f));
+        sample.sampleDirection.y = Select(valid, sample.sampleDirection.y, Float4(0.f));
+        sample.sampleDirection.z = Select(valid, sample.sampleDirection.z, Float4(0.f));
+        sample.radianceEstimate = Select(valid, sample.radianceEstimate, Float4(0.f));
+        sample.pdf = Select(valid, sample.pdf, Float4(1.f));
+    }
+    return sample;
+}
+#endif
+
 YBI_CPU_GPU void VMMMapStateUpdate(VMMDistribution &distribution,
                                    uint32_t componentIndex,
                                    const SufficientStatistics &currentStats,
@@ -160,6 +197,110 @@ YBI_CPU_GPU void VMMMapStateUpdate(VMMDistribution &distribution,
     distribution.kappa[componentIndex] = MeanCosineToKappa(newMeanCosine);
 }
 
+template <typename Backend>
+YBI_GPU void BeginVMMIteration(uint32_t numSamples,
+                               uint32_t numComponents,
+                               VMMUpdateWorkspace &workspace,
+                               Backend &backend)
+{
+    backend.Sync();
+    for (uint32_t k = backend.GetThreadIndex(); k < numComponents; k += backend.GetThreadStride())
+    {
+        workspace.currentStats.sumWeightedDirections[k] = Vec3f(0.f);
+        workspace.currentStats.sumWeightedStats[k] = 0.f;
+    }
+    if (backend.GetThreadIndex() == 0)
+    {
+        workspace.currentStats.numSamples = float(numSamples);
+        workspace.logLikelihood = 0.f;
+        workspace.sumWeights = 0.f;
+        workspace.normalization = 0.f;
+    }
+    backend.Sync();
+}
+
+template <typename Backend>
+YBI_GPU void ReduceVMMStatistics(const typename Backend::VMMStatistics &localStats,
+                                 typename Backend::Float localLogLikelihood,
+                                 uint32_t numComponents,
+                                 VMMUpdateWorkspace &workspace,
+                                 Backend &backend)
+{
+    for (uint32_t k = 0; k < numComponents; ++k)
+    {
+        backend.ReduceAdd(localStats.sumWeightedDirections[k],
+                          workspace.currentStats.sumWeightedDirections[k]);
+        backend.ReduceAdd(localStats.sumWeightedStats[k],
+                          workspace.currentStats.sumWeightedStats[k]);
+    }
+    backend.ReduceAdd(localLogLikelihood, workspace.logLikelihood);
+    backend.Sync();
+}
+
+template <typename Backend>
+YBI_GPU bool
+NormalizeVMMStatistics(uint32_t numComponents, VMMUpdateWorkspace &workspace, Backend &backend)
+{
+    if (backend.GetThreadIndex() == 0)
+    {
+        float sum = 0.f;
+        for (uint32_t k = 0; k < numComponents; ++k)
+        {
+            sum += workspace.currentStats.sumWeightedStats[k];
+        }
+        workspace.sumWeights = sum;
+        workspace.normalization = SafeDivide(workspace.currentStats.numSamples, sum);
+    }
+    backend.Sync();
+    if (workspace.sumWeights == 0.f)
+    {
+        return false;
+    }
+    for (uint32_t k = backend.GetThreadIndex(); k < numComponents; k += backend.GetThreadStride())
+    {
+        workspace.currentStats.sumWeightedDirections[k] *= workspace.normalization;
+        workspace.currentStats.sumWeightedStats[k] *= workspace.normalization;
+    }
+    backend.Sync();
+    return true;
+}
+
+template <typename Backend>
+YBI_GPU void UpdateVMMComponents(VMMDistribution &distribution,
+                                 const SufficientStatistics &currentStats,
+                                 const SufficientStatistics &previousStats,
+                                 float overallNumSamples,
+                                 const VMMMapConfiguration &cfg,
+                                 Backend &backend)
+{
+    for (uint32_t componentIndex = backend.GetThreadIndex();
+         componentIndex < distribution.numComponents;
+         componentIndex += backend.GetThreadStride())
+    {
+        VMMMapStateUpdate(
+            distribution, componentIndex, currentStats, previousStats, overallNumSamples, cfg);
+    }
+    backend.Sync();
+}
+
+template <typename Backend>
+YBI_GPU void CommitVMMStatistics(SufficientStatistics &previousStats,
+                                 const SufficientStatistics &currentStats,
+                                 uint32_t numComponents,
+                                 Backend &backend)
+{
+    for (uint32_t k = backend.GetThreadIndex(); k < numComponents; k += backend.GetThreadStride())
+    {
+        previousStats.sumWeightedDirections[k] += currentStats.sumWeightedDirections[k];
+        previousStats.sumWeightedStats[k] += currentStats.sumWeightedStats[k];
+    }
+    if (backend.GetThreadIndex() == 0)
+    {
+        previousStats.numSamples += currentStats.numSamples;
+    }
+    backend.Sync();
+}
+
 // All backend participants enter this function together. The caller provides
 // shared workspace. The backend supplies worker indices, reductions, sync and reporting.
 template <typename Backend>
@@ -171,6 +312,11 @@ YBI_GPU void UpdateVMM(const GuidingParams &params,
                        VMMUpdateWorkspace &workspace,
                        Backend &backend)
 {
+    using Float = typename Backend::Float;
+    using SampleData = typename Backend::SampleData;
+    using VMMStatistics = typename Backend::VMMStatistics;
+    constexpr uint32_t laneWidth = Backend::SampleWidth;
+
     YBI_ASSERT(range.numSamples > 0);
     YBI_ASSERT(range.overallNumSamples >= float(range.numSamples));
     YBI_ASSERT(distribution.numComponents > 0 &&
@@ -181,96 +327,45 @@ YBI_GPU void UpdateVMM(const GuidingParams &params,
     float previousLogLikelihood = 0.f;
     for (uint32_t iteration = 0; iteration < cfg.maxEMIterations; ++iteration)
     {
-        // Finish reading the previous iteration before clearing shared results.
-        backend.Sync();
-        for (uint32_t k = backend.GetThreadIndex(); k < distribution.numComponents;
-             k += backend.GetThreadStride())
+        BeginVMMIteration(range.numSamples, distribution.numComponents, workspace, backend);
+        VMMStatistics localStats{};
+        Float localLogLikelihood(0.f);
+        for (uint32_t sampleIndex = backend.GetThreadIndex() * laneWidth;
+             sampleIndex < range.numSamples;
+             sampleIndex += backend.GetThreadStride() * laneWidth)
         {
-            workspace.currentStats.sumWeightedDirections[k] = Vec3f(0.f);
-            workspace.currentStats.sumWeightedStats[k] = 0.f;
-        }
-        if (backend.GetThreadIndex() == 0)
-        {
-            workspace.currentStats.numSamples = float(range.numSamples);
-            workspace.logLikelihood = 0.f;
-            workspace.sumWeights = 0.f;
-            workspace.normalization = 0.f;
-        }
-        backend.Sync();
-        SufficientStatistics localStats{};
-        float localLogLikelihood = 0.f;
-        for (uint32_t sampleIndex = backend.GetThreadIndex(); sampleIndex < range.numSamples;
-             sampleIndex += backend.GetThreadStride())
-        {
-            const SampleData sample = LoadSampleData(params, range.sampleOffset + sampleIndex);
-            YBI_ASSERT(sample.pdf > 0.f);
-            YBI_ASSERT(sample.radianceEstimate >= 0.f);
-            const float sampleWeight = sample.radianceEstimate / sample.pdf;
-            if (sampleWeight == 0.f)
-            {
-                continue;
-            }
-            float assignments[VMM_MAX_NUM_COMPONENTS];
-            float pdf;
-            if (!SoftAssignment(distribution, sample.sampleDirection, assignments, pdf))
-            {
-                continue;
-            }
-            localLogLikelihood += sampleWeight * logf(pdf);
+            const SampleData sample =
+                LoadSampleData<SampleData>(params,
+                                           range.sampleOffset + sampleIndex,
+                                           Min(laneWidth, range.numSamples - sampleIndex));
+            YBI_ASSERT(All(sample.pdf > Float(0.f)));
+            YBI_ASSERT(All(sample.radianceEstimate >= Float(0.f)));
+            const Float sampleWeight = sample.radianceEstimate / sample.pdf;
+            Float assignments[VMM_MAX_NUM_COMPONENTS];
+            const Float pdf =
+                SoftAssignment<Float>(distribution, sample.sampleDirection, assignments);
+            localLogLikelihood += sampleWeight * Log(pdf);
             for (uint32_t k = 0; k < distribution.numComponents; ++k)
             {
-                const float assignedWeight = assignments[k] * sampleWeight;
+                const Float assignedWeight = assignments[k] * sampleWeight;
                 localStats.sumWeightedDirections[k] += sample.sampleDirection * assignedWeight;
                 localStats.sumWeightedStats[k] += assignedWeight;
             }
         }
 
-        // Every worker reduces every component in the same order.
-        for (uint32_t k = 0; k < distribution.numComponents; ++k)
-        {
-            backend.ReduceAdd(localStats.sumWeightedDirections[k],
-                              workspace.currentStats.sumWeightedDirections[k]);
-            backend.ReduceAdd(localStats.sumWeightedStats[k],
-                              workspace.currentStats.sumWeightedStats[k]);
-        }
-        backend.ReduceAdd(localLogLikelihood, workspace.logLikelihood);
-        backend.Sync();
-
-        if (backend.GetThreadIndex() == 0)
-        {
-            float sum = 0.f;
-            for (uint32_t k = 0; k < distribution.numComponents; ++k)
-            {
-                sum += workspace.currentStats.sumWeightedStats[k];
-            }
-            workspace.sumWeights = sum;
-            workspace.normalization = SafeDivide(workspace.currentStats.numSamples, sum);
-        }
-        backend.Sync();
+        ReduceVMMStatistics(
+            localStats, localLogLikelihood, distribution.numComponents, workspace, backend);
         // A batch with no positive assigned weight has no information to fit.
-        if (workspace.sumWeights == 0.f)
+        if (!NormalizeVMMStatistics(distribution.numComponents, workspace, backend))
         {
             return;
         }
-        for (uint32_t k = backend.GetThreadIndex(); k < distribution.numComponents;
-             k += backend.GetThreadStride())
-        {
-            workspace.currentStats.sumWeightedDirections[k] *= workspace.normalization;
-            workspace.currentStats.sumWeightedStats[k] *= workspace.normalization;
-        }
-        backend.Sync();
-        for (uint32_t componentIndex = backend.GetThreadIndex();
-             componentIndex < distribution.numComponents;
-             componentIndex += backend.GetThreadStride())
-        {
-            VMMMapStateUpdate(distribution,
-                              componentIndex,
-                              workspace.currentStats,
-                              previousStats,
-                              range.overallNumSamples,
-                              cfg.map);
-        }
-        backend.Sync();
+        UpdateVMMComponents(distribution,
+                            workspace.currentStats,
+                            previousStats,
+                            range.overallNumSamples,
+                            cfg.map,
+                            backend);
 
         const float logLikelihood = workspace.logLikelihood;
         backend.ReportIteration(
@@ -283,17 +378,8 @@ YBI_GPU void UpdateVMM(const GuidingParams &params,
         previousLogLikelihood = logLikelihood;
     }
     // Commit only the final E-step statistics, not every EM iteration.
-    for (uint32_t k = backend.GetThreadIndex(); k < distribution.numComponents;
-         k += backend.GetThreadStride())
-    {
-        previousStats.sumWeightedDirections[k] += workspace.currentStats.sumWeightedDirections[k];
-        previousStats.sumWeightedStats[k] += workspace.currentStats.sumWeightedStats[k];
-    }
-    if (backend.GetThreadIndex() == 0)
-    {
-        previousStats.numSamples += workspace.currentStats.numSamples;
-    }
-    backend.Sync();
+    CommitVMMStatistics(
+        previousStats, workspace.currentStats, distribution.numComponents, backend);
 }
 
 } // namespace ybi

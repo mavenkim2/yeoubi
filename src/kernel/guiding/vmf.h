@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/math.h"
+#include "core/lane.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
 #include <cmath>
@@ -39,17 +40,26 @@ YBI_CPU_GPU float MeanCosineToKappa(const float &meanCosine)
 
 // TODO: maybe validation function that makes sure weights sum to 1
 
-YBI_GPU float EvalVMF(const Vec3f &w, const Vec3f &meanDirection, float kappa)
+template <typename Float>
+YBI_GPU Float EvalVMF(const Vector3<Float> &w,
+                      const Vec3f &meanDirection,
+                      float kappa)
 {
     if (kappa == 0.f)
     {
-        return 1.f / (4.f * YBI_PI);
+        return Float(1.f / (4.f * YBI_PI));
     }
 
-    float exponent = kappa * (Dot(w, meanDirection) - 1.f);
-    float divisor = 2.f * YBI_PI * (1.f - Exp(-2.f * kappa));
-    float result = kappa / divisor * Exp(exponent);
-    return result;
+    const Float cosine = w.x * Float(meanDirection.x) + w.y * Float(meanDirection.y) +
+                         w.z * Float(meanDirection.z);
+    const Float exponent = Float(kappa) * (cosine - Float(1.f));
+    const float divisor = 2.f * YBI_PI * (1.f - Exp(-2.f * kappa));
+    return Float(kappa / divisor) * Exp(exponent);
+}
+
+YBI_GPU float EvalVMF(const Vec3f &w, const Vec3f &meanDirection, float kappa)
+{
+    return EvalVMF<float>(w, meanDirection, kappa);
 }
 
 YBI_GPU float EvalVMM(const Vec3f &w, const VMMDistribution &distribution)
