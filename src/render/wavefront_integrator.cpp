@@ -1,11 +1,9 @@
 #include "render/wavefront_integrator.h"
-#include "core/time.h"
 #include "device/device.h"
+#include "kernel/guiding/guiding.h"
 #include "kernel/launch/wavefront_params.h"
-#include <cstdio>
-#include <map>
-#include <nvtx3/nvtx3.hpp>
-#include <string>
+#include "render/path_guiding/path_guiding.h"
+#include <cstring>
 #include <type_traits>
 #include <utility>
 
@@ -22,6 +20,10 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     desc.entryName = "CountKernels";
     countKernels = device->CreateDeviceKernel(desc);
     kernelCountsBuffer = device->Alloc(sizeof(KernelCounts));
+    hostKernelCountsBuffer = device->AllocHost(sizeof(KernelCounts));
+    // A refill can upload camera params, the new state count, and dispatch params
+    // before the next readback. Each upload keeps its own bytes until that sync.
+    hostUploadBuffer = device->AllocHost(3 * sizeof(WavefrontParams));
 
     DeviceKernelDesc selectDesc;
     selectDesc.filename = YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH;
@@ -35,6 +37,7 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     streamCompaction = device->CreateDeviceKernel(compactionDesc);
 
     AllocateSampleState(sampleState);
+    AllocateSampleState(compactionState);
     numSampleStatesBuffer = device->Alloc(sizeof(uint32_t));
     sampleIndicesBuffer = device->Alloc(sizeof(uint32_t) * batchSize);
     kernelParamsBuffer = device->Alloc(sizeof(WavefrontParams));
@@ -45,6 +48,10 @@ WavefrontIntegrator::~WavefrontIntegrator()
     FreeSampleState();
     if (kernelCountsBuffer)
         device->Free(kernelCountsBuffer);
+    if (hostKernelCountsBuffer)
+        device->FreeHost(hostKernelCountsBuffer);
+    if (hostUploadBuffer)
+        device->FreeHost(hostUploadBuffer);
     if (numSampleIndicesBuffer)
         device->Free(numSampleIndicesBuffer);
     if (numSampleStatesBuffer)
@@ -106,53 +113,20 @@ void WavefrontIntegrator::FreeSampleState()
 
 bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
 {
-    const nvtx3::scoped_range renderRange{"RenderSamples"};
-    std::map<std::string, double> timings;
-    const auto finish = [&timings](bool success) {
-        for (const auto &[name, milliseconds] : timings)
-            std::printf("%s: %.3f ms total\n", name.c_str(), milliseconds);
+    size_t uploadOffset = 0;
+    const auto copyToDevice = [this, &uploadOffset](void *dst, void *src, size_t size) {
+        YBI_ASSERT(uploadOffset + size <= hostUploadBuffer.SizeInBytes());
+        auto *staging = hostUploadBuffer.Data() + uploadOffset;
+        std::memcpy(staging, src, size);
+        device->CopyToDeviceAsync(dst, staging, size);
+        uploadOffset += size;
+    };
+    const auto finish = [this](bool success) {
+        // Failed dispatches can leave uploads in flight. Drain them before the
+        // next frame reuses the pinned staging buffer.
+        if (!success)
+            device->SyncDeviceStream();
         return success;
-    };
-    const auto dispatchKernel = [this, &timings](KernelType type,
-                                                     uint32_t numWorkItems,
-                                                     uint32_t blockSize) {
-        static constexpr const char *names[] = {
-            "GenerateCameraRays", "Intersect", "ShadeHit", "DirectLighting", "IndirectLighting"};
-        const nvtx3::scoped_range range{names[type]};
-        float milliseconds = 0.0f;
-        const bool success = device->DispatchKernel(
-            type, numWorkItems, blockSize, kernelParamsBuffer, &milliseconds);
-        timings[names[type]] += milliseconds;
-        return success;
-    };
-    const auto executeKernel = [this, &timings](const char *name,
-                                                    DeviceKernel &kernel,
-                                                    const DeviceKernelLaunchDesc &launch) {
-        const nvtx3::scoped_range range{name};
-        float milliseconds = 0.0f;
-        device->ExecuteKernel(kernel, launch, &milliseconds);
-        timings[name] += milliseconds;
-    };
-    const auto memzero = [this, &timings](void *dst, size_t size) {
-        const nvtx3::scoped_range range{"Memzero"};
-        const Timer timer = StartTimer();
-        device->Memzero(dst, size);
-        const double milliseconds = StopTimer(timer);
-        timings["Memzero (wall)"] += milliseconds;
-    };
-    const auto copyToHost = [this, &timings](void *dst, void *src, size_t size) {
-        const nvtx3::scoped_range range{"CopyToHost"};
-        const Timer timer = StartTimer();
-        device->CopyToHost(dst, src, size);
-        const double milliseconds = StopTimer(timer);
-        timings["CopyToHost (wall)"] += milliseconds;
-    };
-    const auto copyToDevice = [this, &timings](void *dst, void *src, size_t size) {
-        const nvtx3::scoped_range range{"CopyToDevice"};
-        const Timer timer = StartTimer();
-        device->CopyToDevice(dst, src, size);
-        const double milliseconds = StopTimer(timer);
-        timings["CopyToDevice (wall)"] += milliseconds;
     };
 
     WavefrontParams params{};
@@ -183,20 +157,24 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
     initialParams.cameraSampleStateOffset = 0;
     copyToDevice(params.numSampleStates, &numSampleStates, sizeof(numSampleStates));
     copyToDevice(kernelParamsBuffer.Data(), &initialParams, sizeof(initialParams));
-    if (!dispatchKernel(KERNEL_GENERATE_CAMERA_RAYS, numSampleStates, launch.blockX))
+    if (!device->DispatchKernel(
+            KERNEL_GENERATE_CAMERA_RAYS, numSampleStates, launch.blockX, kernelParamsBuffer))
         return finish(false);
     nextWorkIndex += numSampleStates;
 
-    if (!dispatchKernel(KERNEL_INTERSECT, numSampleStates, launch.blockX))
+    if (!device->DispatchKernel(
+            KERNEL_INTERSECT, numSampleStates, launch.blockX, kernelParamsBuffer))
         return finish(false);
 
     while (true)
     {
-        memzero(kernelCountsBuffer.Data(), sizeof(KernelCounts));
-        executeKernel("CountKernels", *countKernels, launch);
+        device->MemzeroAsync(kernelCountsBuffer.Data(), sizeof(KernelCounts));
+        device->ExecuteKernel(*countKernels, launch);
 
-        KernelCounts counts;
-        copyToHost(&counts, kernelCountsBuffer.Data(), sizeof(counts));
+        KernelCounts &counts = *hostKernelCountsBuffer.As<KernelCounts>().Get();
+        device->CopyToHostAsync(&counts, kernelCountsBuffer.Data(), sizeof(counts));
+        device->SyncDeviceStream();
+        uploadOffset = 0;
         const uint32_t numRemainingSamples = numSampleStates - counts.counts[KERNEL_FINISHED];
         if (numRemainingSamples == 0 && nextWorkIndex == numPixels)
             return finish(true);
@@ -215,17 +193,14 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
         if (nextKernel == KERNEL_INTERSECT && numRemainingSamples < batchSize / 4 &&
             nextWorkIndex < numPixels)
         {
-            if (!compactionState.kernelTypes)
-                AllocateSampleState(compactionState);
-
             void *compactionArguments[] = {&sampleState,
                                            &compactionState,
                                            &numSampleStates,
                                            numSampleStatesBuffer.KernelArg()};
             DeviceKernelLaunchDesc compactionLaunch = launch;
             compactionLaunch.arguments = compactionArguments;
-            memzero(numSampleStatesBuffer.Data(), sizeof(uint32_t));
-            executeKernel("StreamCompaction", *streamCompaction, compactionLaunch);
+            device->MemzeroAsync(numSampleStatesBuffer.Data(), sizeof(uint32_t));
+            device->ExecuteKernel(*streamCompaction, compactionLaunch);
             numSampleStates = numRemainingSamples;
 
             std::swap(sampleState, compactionState);
@@ -239,14 +214,16 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
             cameraParams.cameraSampleStateOffset = numSampleStates;
             cameraParams.numSampleIndices = numCameraSamples;
             copyToDevice(kernelParamsBuffer.Data(), &cameraParams, sizeof(cameraParams));
-            if (!dispatchKernel(KERNEL_GENERATE_CAMERA_RAYS, numCameraSamples, launch.blockX))
+            if (!device->DispatchKernel(KERNEL_GENERATE_CAMERA_RAYS,
+                                        numCameraSamples,
+                                        launch.blockX,
+                                        kernelParamsBuffer))
                 return finish(false);
 
             nextWorkIndex += numCameraSamples;
             numSampleStates += numCameraSamples;
             counts.counts[KERNEL_INTERSECT] += numCameraSamples;
-            copyToDevice(
-                params.numSampleStates, &numSampleStates, sizeof(numSampleStates));
+            copyToDevice(params.numSampleStates, &numSampleStates, sizeof(numSampleStates));
             launch.gridX = (numSampleStates - 1) / launch.blockX + 1;
         }
 
@@ -260,11 +237,12 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
         DeviceKernelLaunchDesc selectLaunch = launch;
         selectLaunch.arguments = selectArguments;
 
-        memzero(numSampleIndicesBuffer.Data(), sizeof(uint32_t));
-        executeKernel("SelectSampleIndices", *selectSampleIndices, selectLaunch);
+        device->MemzeroAsync(numSampleIndicesBuffer.Data(), sizeof(uint32_t));
+        device->ExecuteKernel(*selectSampleIndices, selectLaunch);
 
         copyToDevice(kernelParamsBuffer.Data(), &dispatchParams, sizeof(dispatchParams));
-        if (!dispatchKernel(nextKernel, dispatchParams.numSampleIndices, launch.blockX))
+        if (!device->DispatchKernel(
+                nextKernel, dispatchParams.numSampleIndices, launch.blockX, kernelParamsBuffer))
             return finish(false);
     }
 }

@@ -42,17 +42,9 @@ YBI_GPU void
 ShadeHit(const KernelParams &params, const SampleState *sampleState, uint32_t sampleIndex)
 {
     const DeviceScene &scene = params.scene;
-    const Vec3f rayDirection = sampleState->ReadRayDirection(sampleIndex);
-    Vec3f rayOrigin = sampleState->ReadRayOrigin(sampleIndex);
-    uint32_t depth = sampleState->ReadDepth(sampleIndex);
-    const Vec3f position = sampleState->ReadPosition(sampleIndex);
     const uint32_t materialIndex = sampleState->ReadMaterialIndex(sampleIndex);
-    Vec3f geometricNormal = sampleState->ReadGeometricNormal(sampleIndex);
     ClosureInitializationInfo closureInitializationInfo =
         sampleState->ReadClosureInitializationInfo(sampleIndex);
-
-    if (Dot(geometricNormal, rayDirection) > 0.f)
-        geometricNormal = -geometricNormal;
 
     bool passedAlphaTest = true;
     bool hasBsdf = false;
@@ -71,6 +63,15 @@ ShadeHit(const KernelParams &params, const SampleState *sampleState, uint32_t sa
 
     if (!hasMaterial || !hasBsdf || !passedAlphaTest)
     {
+        const Vec3f position = sampleState->ReadPosition(sampleIndex);
+        const Vec3f rayDirection = sampleState->ReadRayDirection(sampleIndex);
+        Vec3f rayOrigin = sampleState->ReadRayOrigin(sampleIndex);
+        Vec3f geometricNormal = sampleState->ReadGeometricNormal(sampleIndex);
+        uint32_t depth = sampleState->ReadDepth(sampleIndex);
+
+        if (Dot(geometricNormal, rayDirection) > 0.f)
+            geometricNormal = -geometricNormal;
+
         rayOrigin = OffsetRayOrigin(position, -geometricNormal);
         depth++;
         sampleState->WriteKernelType(sampleIndex, KERNEL_INTERSECT);

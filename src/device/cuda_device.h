@@ -21,6 +21,7 @@ struct CUDADeviceKernel : DeviceKernel
     CUcontext context;
     CUmodule module;
     CUfunction function;
+    const char *name = nullptr;
 
     CUDADeviceKernel(CUcontext context, CUmodule module, CUfunction function);
     ~CUDADeviceKernel() override;
@@ -122,17 +123,18 @@ struct CUDADevice : Device
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
+    void MemzeroAsync(void *dst, size_t size) override;
     bool DispatchKernel(KernelType kernelType,
                         uint32_t numWorkItems,
                         uint32_t blockSize,
-                        DeviceBuffer kernelParams,
-                        float *elapsedMilliseconds = nullptr) override;
+                        DeviceBuffer kernelParams) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
     void DestroyTexture(DeviceTexture &texture) override;
     std::unique_ptr<DeviceStream> CreateDeviceStream() override;
     std::shared_ptr<DeviceEvent> CreateDeviceEvent() override;
-    void SyncDeviceStream(DeviceStream &stream) override;
+    using Device::SyncDeviceStream;
+    void SyncDeviceStream(DeviceStream *stream = nullptr) override;
     void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) override;
     void WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event) override;
     void CopyToDevice3DAsync(DeviceStream &stream,
@@ -149,8 +151,7 @@ struct CUDADevice : Device
     std::string GetCallableFunctionSignature() const override;
     std::string GetDirectCallablePrefix() const override;
     void ExecuteKernel(DeviceKernel &kernel,
-                       const DeviceKernelLaunchDesc &desc,
-                       float *elapsedMilliseconds = nullptr) override;
+                       const DeviceKernelLaunchDesc &desc) override;
 
     void InitializeOptix(bool createRendererPipeline);
     bool CreateOptixPipeline(const std::string &ptx);
@@ -171,12 +172,6 @@ struct CUDADevice : Device
 
 private:
     std::unique_ptr<DeviceKernel> generateCameraRays;
-    CUevent kernelTimingStart = nullptr;
-    CUevent kernelTimingEnd = nullptr;
-
-    void BeginKernelTiming(float *elapsedMilliseconds);
-    void EndKernelTiming(float *elapsedMilliseconds);
-
     void GetOptixCompileOptions(OptixModuleCompileOptions &moduleOptions,
                                 OptixPipelineCompileOptions &pipelineOptions);
     bool LinkOptixPipeline(const OptixPipelineCompileOptions &pipelineCompileOptions);

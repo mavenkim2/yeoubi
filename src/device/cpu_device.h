@@ -35,17 +35,18 @@ struct CPUDevice : Device
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
+    void MemzeroAsync(void *dst, size_t size) override;
     bool DispatchKernel(KernelType kernelType,
                         uint32_t numWorkItems,
                         uint32_t blockSize,
-                        DeviceBuffer kernelParams,
-                        float *elapsedMilliseconds = nullptr) override;
+                        DeviceBuffer kernelParams) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
     void DestroyTexture(DeviceTexture &texture) override;
     std::unique_ptr<DeviceStream> CreateDeviceStream() override;
     std::shared_ptr<DeviceEvent> CreateDeviceEvent() override;
-    void SyncDeviceStream(DeviceStream &stream) override;
+    using Device::SyncDeviceStream;
+    void SyncDeviceStream(DeviceStream *stream = nullptr) override;
     void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) override;
     void WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event) override;
     void CopyToDevice3DAsync(DeviceStream &stream,
@@ -62,8 +63,7 @@ struct CPUDevice : Device
     std::string GetCallableFunctionSignature() const override;
     std::string GetDirectCallablePrefix() const override;
     void ExecuteKernel(DeviceKernel &kernel,
-                       const DeviceKernelLaunchDesc &desc,
-                       float *elapsedMilliseconds = nullptr) override;
+                       const DeviceKernelLaunchDesc &desc) override;
 
     void InitializeOptix(bool createRendererPipeline);
     bool CreateOptixPipeline(const std::string &ptx);

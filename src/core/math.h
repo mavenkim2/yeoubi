@@ -2,6 +2,7 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
+#include <cmath>
 
 #if defined(YBI_HAS_SSE)
 #include <xmmintrin.h>
@@ -52,6 +53,16 @@ YBI_CPU_GPU float Cos(float a)
 YBI_CPU_GPU float Sin(float a)
 {
     return sinf(a);
+}
+
+YBI_CPU_GPU float Exp(float e)
+{
+    return expf(e);
+}
+
+YBI_CPU_GPU constexpr float SafeDivide(float value, float divisor, float alternative = 0.f)
+{
+    return divisor == 0.f ? alternative : value / divisor;
 }
 
 // Returns an approximate reciprocal square root when the target provides a

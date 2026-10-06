@@ -24,6 +24,7 @@
 #include <istream>
 #include <iterator>
 #include <memory>
+#include <nvtx3/nvtx3.hpp>
 #include <nvrtc.h>
 #include <optix_function_table_definition.h>
 #include <optix_stack_size.h>
@@ -135,6 +136,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 CUDADeviceKernel::CUDADeviceKernel(CUcontext context, CUmodule module, CUfunction function)
     : context(context), module(module), function(function)
 {
+    CUDA_ASSERT(cuFuncGetName(&name, function));
 }
 
 CUDADeviceKernel::~CUDADeviceKernel()
@@ -225,10 +227,6 @@ CUDADevice::~CUDADevice()
     {
         ContextScope contextScope(this);
         generateCameraRays.reset();
-        if (kernelTimingStart)
-            CUDA_ASSERT(cuEventDestroy(kernelTimingStart));
-        if (kernelTimingEnd)
-            CUDA_ASSERT(cuEventDestroy(kernelTimingEnd));
         DestroyOptixPipeline();
         if (optixDeviceContext)
         {
@@ -423,6 +421,11 @@ void CUDADevice::Memzero(void *dst, size_t size)
     CUDA_ASSERT(cuMemsetD8(reinterpret_cast<CUdeviceptr>(dst), 0, size));
 }
 
+void CUDADevice::MemzeroAsync(void *dst, size_t size)
+{
+    CUDA_ASSERT(cuMemsetD8Async(reinterpret_cast<CUdeviceptr>(dst), 0, size, 0));
+}
+
 std::unique_ptr<DeviceStream> CUDADevice::CreateDeviceStream()
 {
     return std::make_unique<CUDADeviceStream>(cudaContext);
@@ -433,13 +436,18 @@ std::shared_ptr<DeviceEvent> CUDADevice::CreateDeviceEvent()
     return std::make_shared<CUDADeviceEvent>(cudaContext);
 }
 
-void CUDADevice::SyncDeviceStream(DeviceStream &stream)
+void CUDADevice::SyncDeviceStream(DeviceStream *stream)
 {
     ContextScope contextScope(this);
 
-    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
-    YBI_ASSERT(cudaStream.stream);
-    CUDA_ASSERT(cuStreamSynchronize(cudaStream.stream));
+    CUstream cudaStream = nullptr;
+    if (stream)
+    {
+        CUDADeviceStream &deviceStream = static_cast<CUDADeviceStream &>(*stream);
+        YBI_ASSERT(deviceStream.stream);
+        cudaStream = deviceStream.stream;
+    }
+    CUDA_ASSERT(cuStreamSynchronize(cudaStream));
 }
 
 void CUDADevice::RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event)
@@ -586,37 +594,12 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
     CUDA_ASSERT(cuMemcpy3DBatchAsync(ops.size(), ops.data(), 0, cudaStream.stream));
 }
 
-void CUDADevice::BeginKernelTiming(float *elapsedMilliseconds)
-{
-    if (!elapsedMilliseconds)
-        return;
-    *elapsedMilliseconds = 0.0f;
-    if (!kernelTimingStart)
-    {
-        CUDA_ASSERT(cuEventCreate(&kernelTimingStart, CU_EVENT_DEFAULT));
-        CUDA_ASSERT(cuEventCreate(&kernelTimingEnd, CU_EVENT_DEFAULT));
-    }
-    CUDA_ASSERT(cuEventRecord(kernelTimingStart, 0));
-}
-
-void CUDADevice::EndKernelTiming(float *elapsedMilliseconds)
-{
-    if (!elapsedMilliseconds)
-        return;
-    CUDA_ASSERT(cuEventRecord(kernelTimingEnd, 0));
-    CUDA_ASSERT(cuEventSynchronize(kernelTimingEnd));
-    CUDA_ASSERT(cuEventElapsedTime(elapsedMilliseconds, kernelTimingStart, kernelTimingEnd));
-}
-
 bool CUDADevice::DispatchKernel(KernelType kernelType,
                                 uint32_t numWorkItems,
                                 uint32_t blockSize,
-                                DeviceBuffer kernelParams,
-                                float *elapsedMilliseconds)
+                                DeviceBuffer kernelParams)
 {
     ContextScope contextScope(this);
-    if (elapsedMilliseconds)
-        *elapsedMilliseconds = 0.0f;
     if (!kernelParams.Data() || kernelParams.SizeInBytes() < sizeof(WavefrontParams))
         return false;
     if (numWorkItems == 0)
@@ -624,12 +607,12 @@ bool CUDADevice::DispatchKernel(KernelType kernelType,
 
     if (kernelType == KERNEL_GENERATE_CAMERA_RAYS)
     {
+        const nvtx3::scoped_range range{"GenerateCameraRays"};
         if (blockSize == 0)
             return false;
 
         CUDADeviceKernel &cameraKernel = static_cast<CUDADeviceKernel &>(*generateCameraRays);
         void *arguments[] = {kernelParams.KernelArg(), &numWorkItems};
-        BeginKernelTiming(elapsedMilliseconds);
         CUresult result = cuLaunchKernel(cameraKernel.function,
                                          (numWorkItems - 1) / blockSize + 1,
                                          1,
@@ -644,17 +627,16 @@ bool CUDADevice::DispatchKernel(KernelType kernelType,
         if (!CheckCudaResult(result, "cuLaunchKernel(GenerateCameraRays)"))
             return false;
 
-        EndKernelTiming(elapsedMilliseconds);
-        if (elapsedMilliseconds)
-            return true;
-        result = cuStreamSynchronize(0);
-        return CheckCudaResult(result, "cuStreamSynchronize");
+        return true;
     }
 
     if (kernelType < KERNEL_INTERSECT || kernelType > KERNEL_INDIRECT_LIGHTING ||
         !optixPipeline.pipeline)
         return false;
     const uint32_t raygen = kernelType - KERNEL_INTERSECT;
+    static constexpr const char *names[] = {
+        "Intersect", "ShadeHit", "DirectLighting", "IndirectLighting"};
+    const nvtx3::scoped_range range{names[raygen]};
     OptixShaderBindingTable sbt = {};
     sbt.raygenRecord = optixPipeline.sbtRecordsBuffer + sizeof(PipelineSbtRecord) * raygen;
     sbt.missRecordBase =
@@ -673,7 +655,6 @@ bool CUDADevice::DispatchKernel(KernelType kernelType,
             static_cast<unsigned int>(optixPipeline.callableProgramGroups.size());
     }
 
-    BeginKernelTiming(elapsedMilliseconds);
     OptixResult result = optixLaunch(optixPipeline.pipeline,
                                      0,
                                      reinterpret_cast<CUdeviceptr>(kernelParams.Data()),
@@ -685,11 +666,7 @@ bool CUDADevice::DispatchKernel(KernelType kernelType,
     if (!CheckOptixResult(result, "optixLaunch"))
         return false;
 
-    EndKernelTiming(elapsedMilliseconds);
-    if (elapsedMilliseconds)
-        return true;
-    CUresult cudaResult = cuStreamSynchronize(0);
-    return CheckCudaResult(cudaResult, "cuStreamSynchronize");
+    return true;
 }
 
 std::unique_ptr<DeviceKernel> CUDADevice::CreateDeviceKernel(const DeviceKernelDesc &desc)
@@ -887,12 +864,12 @@ std::string CUDADevice::GetDirectCallablePrefix() const
 }
 
 void CUDADevice::ExecuteKernel(DeviceKernel &kernel,
-                               const DeviceKernelLaunchDesc &desc,
-                               float *elapsedMilliseconds)
+                               const DeviceKernelLaunchDesc &desc)
 {
     ContextScope contextScope(this);
 
     CUDADeviceKernel &cudaKernel = static_cast<CUDADeviceKernel &>(kernel);
+    const nvtx3::scoped_range range{cudaKernel.name};
     YBI_ASSERT(cudaKernel.function);
     YBI_ASSERT(desc.arguments);
     YBI_ASSERT(desc.gridX > 0);
@@ -902,7 +879,6 @@ void CUDADevice::ExecuteKernel(DeviceKernel &kernel,
     YBI_ASSERT(desc.blockY > 0);
     YBI_ASSERT(desc.blockZ > 0);
 
-    BeginKernelTiming(elapsedMilliseconds);
     CUDA_ASSERT(cuLaunchKernel(cudaKernel.function,
                                desc.gridX,
                                desc.gridY,
@@ -914,7 +890,6 @@ void CUDADevice::ExecuteKernel(DeviceKernel &kernel,
                                0,
                                desc.arguments,
                                nullptr));
-    EndKernelTiming(elapsedMilliseconds);
 }
 
 struct CUDATextureFormatInfo

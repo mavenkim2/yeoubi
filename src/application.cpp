@@ -337,7 +337,6 @@ void InteractiveApplication::Run()
         if (session)
         {
             const Timer frameTimer = StartTimer();
-
             const Timer vtTimer = StartTimer();
             params.imageHandle =
                 reinterpret_cast<uint64_t>(deviceImages[frameIndex].buffer.Data());
@@ -584,6 +583,7 @@ void OfflineApplication::Run()
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->StartProfiler();
         device->DispatchKernel(KERNEL_INTERSECT, uint32_t(outputWidth) * outputHeight, 256, cudaParams);
+        device->SyncDeviceStream();
         device->StopProfiler();
 
         void *arguments[] = {&params};

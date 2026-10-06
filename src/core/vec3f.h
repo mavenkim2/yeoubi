@@ -286,4 +286,11 @@ YBI_CPU_GPU constexpr Vec3f Pow(const Vec3f &v, float power)
     return Vec3f(powf(v.x, power), powf(v.y, power), powf(v.z, power));
 }
 
+YBI_CPU_GPU constexpr Vec3f SafeDivide(const Vec3f &v, float div, Vec3f alternative = Vec3f(0.f))
+{
+    if (div == 0.f)
+        return alternative;
+    return Vec3f(SafeDivide(v.x, div), SafeDivide(v.y, div), SafeDivide(v.z, div));
+}
+
 } // namespace ybi

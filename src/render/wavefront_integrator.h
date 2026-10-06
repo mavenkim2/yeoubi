@@ -34,6 +34,8 @@ private:
     std::unique_ptr<DeviceKernel> selectSampleIndices;
     std::unique_ptr<DeviceKernel> streamCompaction;
     DeviceBuffer kernelCountsBuffer;
+    DeviceBuffer hostKernelCountsBuffer;
+    DeviceBuffer hostUploadBuffer;
     DeviceBuffer numSampleIndicesBuffer;
     DeviceBuffer numSampleStatesBuffer;
     DeviceBuffer sampleIndicesBuffer;
