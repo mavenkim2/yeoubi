@@ -1,6 +1,7 @@
 #include "render/wavefront_integrator.h"
 #include "device/device.h"
 #include "kernel/guiding/guiding.h"
+#include "kernel/guiding/kd_tree.h"
 #include "kernel/launch/wavefront_params.h"
 #include "render/path_guiding/path_guiding.h"
 #include <cstring>

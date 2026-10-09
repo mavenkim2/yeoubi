@@ -3,6 +3,7 @@
 #include "core/affine_transform.h"
 #include "core/matrix4x4.h"
 #include "device/device_texture.h"
+#include "kernel/guiding/types.h"
 #include "kernel/texture/types.h"
 #include "kernel/scene.h"
 
@@ -39,6 +40,8 @@ struct KernelParams
     // OpenPBR lookup tables
     uint64_t opaqueDielectricEnergyComplementTexture;
     uint64_t opaqueDielectricAverageEnergyComplementTexture;
+
+    GuidingParams guiding;
 
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;

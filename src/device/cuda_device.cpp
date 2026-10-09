@@ -496,11 +496,12 @@ void CUDADevice::CopyToDevice3DAsync(DeviceStream &stream,
     YBI_ASSERT(desc.depth > 0);
 
     const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
-    const uint32_t textureDepth = texture.info.depth ? texture.info.depth : texture.info.layers;
+    const uint32_t textureDepth =
+        Max(1u, texture.info.depth ? texture.info.depth : texture.info.layers);
     YBI_ASSERT(elementSize > 0);
     YBI_ASSERT(desc.widthInBytes % elementSize == 0);
     YBI_ASSERT(desc.dstX + (desc.widthInBytes / elementSize) <= texture.info.width);
-    YBI_ASSERT(desc.dstY + desc.height <= texture.info.height);
+    YBI_ASSERT(desc.dstY + desc.height <= Max(1u, texture.info.height));
     YBI_ASSERT(desc.dstZ + desc.depth <= textureDepth);
     YBI_ASSERT(desc.srcSlicePitch == 0 || desc.srcSlicePitch >= desc.srcRowPitch * desc.height);
     YBI_ASSERT(desc.srcSlicePitch == 0 || desc.srcSlicePitch % desc.srcRowPitch == 0);
@@ -557,12 +558,12 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
 
         const uint32_t elementSize = GetTextureFormatSize(texture.info.format);
         const uint32_t textureDepth =
-            texture.info.depth ? texture.info.depth : texture.info.layers;
+            Max(1u, texture.info.depth ? texture.info.depth : texture.info.layers);
         YBI_ASSERT(elementSize > 0);
         YBI_ASSERT(copyDesc.srcRowPitch % elementSize == 0);
         YBI_ASSERT(copyDesc.widthInBytes % elementSize == 0);
         YBI_ASSERT(copyDesc.dstX + (copyDesc.widthInBytes / elementSize) <= texture.info.width);
-        YBI_ASSERT(copyDesc.dstY + copyDesc.height <= texture.info.height);
+        YBI_ASSERT(copyDesc.dstY + copyDesc.height <= Max(1u, texture.info.height));
         YBI_ASSERT(copyDesc.dstZ + copyDesc.depth <= textureDepth);
         YBI_ASSERT(copyDesc.srcSlicePitch == 0 ||
                    copyDesc.srcSlicePitch >= copyDesc.srcRowPitch * copyDesc.height);
@@ -971,7 +972,7 @@ DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
     ContextScope contextScope(this);
 
     YBI_ASSERT(info.width > 0);
-    YBI_ASSERT(info.height > 0);
+    YBI_ASSERT(info.height > 0 || (info.layers == 0 && info.depth == 0));
     YBI_ASSERT(info.layers == 0 || info.depth == 0);
 
     const CUDATextureFormatInfo formatInfo = GetCUDATextureFormatInfo(info.format);

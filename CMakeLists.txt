@@ -228,6 +228,21 @@ target_compile_definitions(yeoubi_pmj_tables PRIVATE
 )
 target_compile_options(yeoubi_pmj_tables PRIVATE ${YBI_COMPILE_OPTIONS})
 
+# Generate vMF split table exe
+add_executable(generate_vmf_split_table
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cmd/generate_vmf_split_table.cpp
+)
+
+target_include_directories(generate_vmf_split_table PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_definitions(generate_vmf_split_table PRIVATE
+    ${YBI_COMPILE_DEFINITIONS}
+    $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
+)
+target_compile_options(generate_vmf_split_table PRIVATE ${YBI_COMPILE_OPTIONS})
+
 # Renderer exe
 add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
@@ -239,6 +254,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/wavefront_integrator.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
@@ -250,6 +266,16 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/application.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
                ${YBI_SOURCE}
+)
+
+# Keep the precomputed guiding LUT beside the renderer executable.
+set_property(TARGET yeoubi APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/lut/guiding/vmf_split_table.bin")
+add_custom_command(TARGET yeoubi POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/lut/guiding/vmf_split_table.bin"
+        "$<TARGET_FILE_DIR:yeoubi>/vmf_split_table.bin"
+    VERBATIM
 )
 
 list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES

@@ -7,11 +7,15 @@ namespace ybi
 
 #define VMM_MAX_NUM_COMPONENTS 16
 
+constexpr uint32_t VMFSplitTableSize = 256;
+
 struct GuidingParams
 {
     Vec3f *sampleDirection;
     float *sampleIncidentRadianceEstimate;
     float *samplePdf;
+    uint64_t vmfSplitTexture;
+    float vmfSplitMaxInvSqrtK;
 };
 
 struct VMMDistribution

@@ -41,6 +41,7 @@ struct DeviceTextureInfo
     TextureFormat format;
     FilterType filterType;
     uint32_t width = 0;
+    // Zero height, layers and depth denotes a 1D texture.
     uint32_t height = 0;
     // A texture may be either a 2D array or a 3D volume, but not both.
     uint32_t layers = 0;

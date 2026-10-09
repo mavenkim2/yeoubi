@@ -4,6 +4,7 @@
 #include "core/vec2u.h"
 #include "io/camera_json.h"
 #include "render/progressive_state.h"
+#include "render/path_guiding/lut.h"
 #include <memory>
 #include <optional>
 #include <string>
@@ -57,6 +58,7 @@ struct SceneSession
     std::string filename;
     DeviceTexture dielectricEnergy;
     DeviceTexture dielectricAverage;
+    VMFSplitTable vmfSplitTable;
     std::unique_ptr<Arena> arena = std::make_unique<Arena>();
     std::unique_ptr<DataContainer> container;
     std::unique_ptr<DeviceArena> containerDeviceArena;

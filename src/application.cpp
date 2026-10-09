@@ -45,6 +45,7 @@ SceneSession::SceneSession(Device *device, DisplayDevice *displayDevice, std::st
 
 SceneSession::~SceneSession()
 {
+    device->DestroyTexture(vmfSplitTable.texture);
     device->DestroyTexture(dielectricAverage);
     device->DestroyTexture(dielectricEnergy);
 }
@@ -89,6 +90,13 @@ bool SceneSession::Load(std::string *error, bool validateUsdCamera)
             *error = "Unable to load the OpenPBR lookup tables.";
             return false;
         }
+    }
+
+    vmfSplitTable = LoadVMFSplitTable(*device);
+    if (!vmfSplitTable.texture.textureObject)
+    {
+        *error = "Unable to load the vMF split lookup table.";
+        return false;
     }
 
     containerDeviceArena = device->CreateArena();
@@ -252,6 +260,7 @@ void InteractiveApplication::CreateCamera()
     params.opaqueDielectricEnergyComplementTexture = session->dielectricEnergy.textureObject;
     params.opaqueDielectricAverageEnergyComplementTexture =
         session->dielectricAverage.textureObject;
+    session->vmfSplitTable.Bind(params.guiding);
     params.sampleOffset = 0;
     params.accumulatedSamples = 0;
     progressiveState = ProgressiveState{};
@@ -290,6 +299,7 @@ void InteractiveApplication::SwitchCamera(size_t cameraIndex)
     params.opaqueDielectricEnergyComplementTexture = session->dielectricEnergy.textureObject;
     params.opaqueDielectricAverageEnergyComplementTexture =
         session->dielectricAverage.textureObject;
+    session->vmfSplitTable.Bind(params.guiding);
     params.sampleOffset = 0;
     params.accumulatedSamples = 0;
     progressiveState = ProgressiveState{};
@@ -533,6 +543,7 @@ OfflineApplication::OfflineApplication(DeviceKind kind,
     params.opaqueDielectricEnergyComplementTexture = session->dielectricEnergy.textureObject;
     params.opaqueDielectricAverageEnergyComplementTexture =
         session->dielectricAverage.textureObject;
+    session->vmfSplitTable.Bind(params.guiding);
     params.maxDepth = 10;
     params.samplesPerPixel = 1;
     if (pixel)

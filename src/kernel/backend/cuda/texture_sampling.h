@@ -1,10 +1,17 @@
 #pragma once
 
+#include "core/vec4f.h"
 #include "device/device_texture.h"
 #include <cuda_runtime.h>
 
 namespace ybi
 {
+
+YBI_GPU float SampleCUDATexture1D(uint64_t handle, float u)
+{
+    const cudaTextureObject_t texture = static_cast<cudaTextureObject_t>(handle);
+    return tex1D<float>(texture, u);
+}
 
 YBI_GPU Vec4f SampleCUDATexture(
     uint64_t handle,
