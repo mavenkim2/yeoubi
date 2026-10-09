@@ -1,25 +1,14 @@
 #pragma once
 
-#include "core/math.h"
 #include "core/lane.h"
+#include "core/math.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
+#include "kernel/guiding/types.h"
 #include <cmath>
 
 namespace ybi
 {
-
-#define VMM_MAX_NUM_COMPONENTS 16
-
-struct VMMDistribution
-{
-    Vec3f meanDirection[VMM_MAX_NUM_COMPONENTS];
-    // NOTE: must sum to 1
-    float weights[VMM_MAX_NUM_COMPONENTS];
-    float kappa[VMM_MAX_NUM_COMPONENTS];
-
-    uint32_t numComponents;
-};
 
 YBI_CPU_GPU float KappaToMeanCosine(float kappa)
 {
@@ -38,23 +27,25 @@ YBI_CPU_GPU float MeanCosineToKappa(const float &meanCosine)
     return (meanCosine * dim - meanCosine * meanCosine2) / (ones - meanCosine2);
 }
 
+YBI_CPU_GPU float VMFNormalization(float kappa)
+{
+    return kappa == 0.f ? 1.f / (4.f * YBI_PI) : kappa / (2.f * YBI_PI * -expm1f(-2.f * kappa));
+}
+
 // TODO: maybe validation function that makes sure weights sum to 1
 
 template <typename Float>
-YBI_GPU Float EvalVMF(const Vector3<Float> &w,
-                      const Vec3f &meanDirection,
-                      float kappa)
+YBI_GPU Float EvalVMF(const Vector3<Float> &w, const Vec3f &meanDirection, float kappa)
 {
     if (kappa == 0.f)
     {
         return Float(1.f / (4.f * YBI_PI));
     }
 
-    const Float cosine = w.x * Float(meanDirection.x) + w.y * Float(meanDirection.y) +
-                         w.z * Float(meanDirection.z);
+    const Float cosine =
+        w.x * Float(meanDirection.x) + w.y * Float(meanDirection.y) + w.z * Float(meanDirection.z);
     const Float exponent = Float(kappa) * (cosine - Float(1.f));
-    const float divisor = 2.f * YBI_PI * (1.f - Exp(-2.f * kappa));
-    return Float(kappa / divisor) * Exp(exponent);
+    return Float(VMFNormalization(kappa)) * Exp(exponent);
 }
 
 YBI_GPU float EvalVMF(const Vec3f &w, const Vec3f &meanDirection, float kappa)

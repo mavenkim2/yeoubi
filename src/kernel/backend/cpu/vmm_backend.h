@@ -2,6 +2,8 @@
 
 #include "core/simd_float4.h"
 #include "kernel/guiding/guiding.h"
+
+#if defined(SIMD_4)
 #include <cstdio>
 
 namespace ybi
@@ -15,36 +17,34 @@ struct CpuSIMDVMMBackend
     using SampleData = VMMSampleData<Float>;
     using VMMStatistics = ybi::VMMStatistics<Float>;
     static constexpr uint32_t SampleWidth = 4;
-    uint32_t mixtureIndex{0};
-
-    uint32_t GetThreadIndex() const
+    static uint32_t GetThreadIndex()
     {
         return 0;
     }
 
-    uint32_t GetThreadStride() const
+    static uint32_t GetThreadStride()
     {
         return 1;
     }
 
-    void Sync() const {}
+    static void Sync() {}
 
-    void ReduceAdd(Float value, float &destination) const
+    static void ReduceAdd(Float value, float &destination)
     {
         destination += ReduceSum(value);
     }
 
-    void ReduceAdd(const Vector3 &value, Vec3f &destination) const
+    static void ReduceAdd(const Vector3 &value, Vec3f &destination)
     {
         ReduceAdd(value.x, destination.x);
         ReduceAdd(value.y, destination.y);
         ReduceAdd(value.z, destination.z);
     }
 
-    void ReportIteration(uint32_t iteration,
-                         float logLikelihood,
-                         float previousLogLikelihood,
-                         bool enabled) const
+    static void ReportIteration(uint32_t iteration,
+                                float logLikelihood,
+                                float previousLogLikelihood,
+                                bool enabled)
     {
         if (!enabled)
         {
@@ -52,16 +52,20 @@ struct CpuSIMDVMMBackend
         }
         if (iteration == 0)
         {
-            std::printf("VMM %u | iteration %03u | log likelihood % .6f | delta: --\n",
-                        mixtureIndex, iteration + 1, logLikelihood);
+            std::printf("iteration %03u | log likelihood % .6f | delta: --\n",
+                        iteration + 1,
+                        logLikelihood);
         }
         else
         {
-            std::printf("VMM %u | iteration %03u | log likelihood % .6f | delta %+.6f\n",
-                        mixtureIndex, iteration + 1, logLikelihood,
+            std::printf("iteration %03u | log likelihood % .6f | delta %+.6f\n",
+                        iteration + 1,
+                        logLikelihood,
                         logLikelihood - previousLogLikelihood);
         }
     }
 };
 
 } // namespace ybi
+
+#endif

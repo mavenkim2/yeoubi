@@ -1,14 +1,42 @@
 #pragma once
 
+#include "core/assert.h"
+#if defined(SIMD_4)
+
 #include "core/lane.h"
-#include <xmmintrin.h>
+#include <smmintrin.h>
 
 namespace ybi
 {
 
+static const __m128 _mm_lookupmask_ps[16] = {
+    _mm_castsi128_ps(_mm_set_epi32(0, 0, 0, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(0, 0, 0, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(0, 0, -1, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(0, 0, -1, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(0, -1, 0, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(0, -1, 0, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, 0, 0, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, 0, 0, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, 0, -1, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, 0, -1, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, -1, 0, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, -1, 0, -1)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, -1, -1, 0)),
+    _mm_castsi128_ps(_mm_set_epi32(-1, -1, -1, -1)),
+};
+
 struct Mask4
 {
     __m128 value;
+
+    static Mask4 Create(int i)
+    {
+        YBI_ASSERT(i >= 0 && i < 16);
+        return {_mm_lookupmask_ps[i]};
+    }
 };
 
 struct Float4
@@ -105,8 +133,7 @@ inline Mask4 operator>=(Float4 a, Float4 b)
 
 inline Float4 Select(Mask4 mask, Float4 ifTrue, Float4 ifFalse)
 {
-    return Float4(
-        _mm_or_ps(_mm_and_ps(mask.value, ifTrue.value), _mm_andnot_ps(mask.value, ifFalse.value)));
+    return Float4(_mm_blendv_ps(ifFalse.value, ifTrue.value, mask.value));
 }
 
 inline bool All(Mask4 mask)
@@ -145,3 +172,5 @@ inline Float4 Log(Float4 value)
 }
 
 } // namespace ybi
+
+#endif

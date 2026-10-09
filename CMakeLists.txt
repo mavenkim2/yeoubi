@@ -10,14 +10,21 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/cmake")
 
 # SIMD feature detection
 include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
+cmake_push_check_state(RESET)
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+    set(CMAKE_REQUIRED_FLAGS "-msse4.1")
+endif()
 check_cxx_source_compiles(
-    "#include <xmmintrin.h>
+    "#include <smmintrin.h>
      int main()
      {
-         const __m128 result = _mm_rsqrt_ss(_mm_set_ss(1.0f));
+         const __m128 result = _mm_blendv_ps(_mm_setzero_ps(), _mm_set1_ps(1.0f),
+                                           _mm_castsi128_ps(_mm_set1_epi32(-1)));
          return _mm_cvtss_f32(result) == 0.0f;
      }"
-    YBI_HAS_SSE)
+    YBI_HAS_SSE41)
+cmake_pop_check_state()
 
 # Compile Options
 option(WITH_CUDA "Enable CUDA backend" OFF)
@@ -26,11 +33,15 @@ option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
 option(YBI_MATERIAL_DEBUG "Print MaterialX BSDF sampling decisions" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
+set(YBI_COMPILE_OPTIONS)
 set(YBI_DEPENDENCIES)
 set(YBI_SOURCE)
 set(YBI_USE_GPU)
-if (YBI_HAS_SSE)
-    list(APPEND YBI_COMPILE_DEFINITIONS YBI_HAS_SSE)
+if (YBI_HAS_SSE41)
+    list(APPEND YBI_COMPILE_DEFINITIONS $<$<COMPILE_LANGUAGE:CXX>:SIMD_4>)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+        list(APPEND YBI_COMPILE_OPTIONS $<$<COMPILE_LANGUAGE:CXX>:-msse4.1>)
+    endif()
 endif()
 if (YBI_MATERIAL_DEBUG)
     list(APPEND YBI_COMPILE_DEFINITIONS YBI_MATERIAL_DEBUG)
@@ -199,6 +210,7 @@ target_compile_definitions(yeoubi_virtual_textures PRIVATE
     ${YBI_COMPILE_DEFINITIONS}
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
 )
+target_compile_options(yeoubi_virtual_textures PRIVATE ${YBI_COMPILE_OPTIONS})
 
 # Generate pmj tables exe
 add_executable(yeoubi_pmj_tables
@@ -214,6 +226,7 @@ target_compile_definitions(yeoubi_pmj_tables PRIVATE
     ${YBI_COMPILE_DEFINITIONS}
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
 )
+target_compile_options(yeoubi_pmj_tables PRIVATE ${YBI_COMPILE_OPTIONS})
 
 # Renderer exe
 add_executable(yeoubi
@@ -450,6 +463,7 @@ target_compile_definitions(yeoubi PRIVATE
     ${YBI_COMPILE_DEFINITIONS}
     $<$<CONFIG:Debug,RelWithDebInfo>:YBI_DEBUG>
 )
+target_compile_options(yeoubi PRIVATE ${YBI_COMPILE_OPTIONS})
 
 # add_executable(material_compilation_dielectric_test
 #     ${CMAKE_CURRENT_SOURCE_DIR}/tests/material_compilation_dielectric_test.cpp

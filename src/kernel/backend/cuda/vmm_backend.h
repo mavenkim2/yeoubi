@@ -17,24 +17,24 @@ struct CudaVMMBackend
     using VMMStatistics = ybi::VMMStatistics<Float>;
     static constexpr uint32_t SampleWidth = 1;
 
-    YBI_GPU uint32_t GetThreadIndex() const
+    YBI_GPU static uint32_t GetThreadIndex()
     {
         return threadIdx.x;
     }
 
-    YBI_GPU uint32_t GetThreadStride() const
+    YBI_GPU static uint32_t GetThreadStride()
     {
         return blockDim.x;
     }
 
-    YBI_GPU void Sync() const
+    YBI_GPU static void Sync()
     {
         __syncthreads();
     }
 
     // All threads call this in the same order. Clear destinations before use,
     // then call Sync() after the reductions and before reading the results.
-    YBI_GPU void ReduceAdd(float value, float &destination) const
+    YBI_GPU static void ReduceAdd(float value, float &destination)
     {
         const float sum = WarpReduceSum(value);
         if ((threadIdx.x & 31u) == 0)
@@ -43,17 +43,17 @@ struct CudaVMMBackend
         }
     }
 
-    YBI_GPU void ReduceAdd(const Vec3f &value, Vec3f &destination) const
+    YBI_GPU static void ReduceAdd(const Vec3f &value, Vec3f &destination)
     {
         ReduceAdd(value.x, destination.x);
         ReduceAdd(value.y, destination.y);
         ReduceAdd(value.z, destination.z);
     }
 
-    YBI_GPU void ReportIteration(uint32_t iteration,
-                                 float logLikelihood,
-                                 float previousLogLikelihood,
-                                 bool enabled) const
+    YBI_GPU static void ReportIteration(uint32_t iteration,
+                                        float logLikelihood,
+                                        float previousLogLikelihood,
+                                        bool enabled)
     {
         if (enabled && GetThreadIndex() == 0)
         {

@@ -4,7 +4,7 @@
 #include "device/cuda_compat.h"
 #include <cmath>
 
-#if defined(YBI_HAS_SSE)
+#if defined(SIMD_4)
 #include <xmmintrin.h>
 #endif
 
@@ -50,9 +50,19 @@ YBI_CPU_GPU float Cos(float a)
     return cosf(a);
 }
 
+YBI_CPU_GPU double Cos(double a)
+{
+    return cos(a);
+}
+
 YBI_CPU_GPU float Sin(float a)
 {
     return sinf(a);
+}
+
+YBI_CPU_GPU double Sin(double a)
+{
+    return sin(a);
 }
 
 YBI_CPU_GPU float Exp(float e)
@@ -76,7 +86,7 @@ YBI_CPU_GPU float RcpSqrt(float a)
 {
 #if defined(__CUDA_ARCH__)
     return rsqrtf(a);
-#elif defined(YBI_HAS_SSE)
+#elif defined(SIMD_4)
     return _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(a)));
 #else
     return 1.0f / sqrtf(a);
