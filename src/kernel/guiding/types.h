@@ -6,8 +6,15 @@ namespace ybi
 {
 
 #define VMM_MAX_NUM_COMPONENTS 16
+#define VMM_BLOCK_SIZE 256
 
 constexpr uint32_t VMFSplitTableSize = 256;
+
+struct ExclusiveScanResult
+{
+    uint32_t prefix;
+    uint32_t total;
+};
 
 struct GuidingParams
 {
@@ -32,6 +39,7 @@ template <typename Float>
 struct VMMSampleData
 {
     Vector3<Float> direction;
+    Vector3<Float> position;
     Float incidentRadianceEstimate;
     Float pdf;
 };
@@ -116,6 +124,71 @@ struct VMMMergeCandidate
     Vec3f meanDirection;
     float weight;
     float kappa;
+};
+
+// Kd tree
+struct PathGuidingKdTreeNode
+{
+    float splitLocation;
+    int splitAxis;
+
+    Vec3f boundsMin;
+    Vec3f boundsMax;
+
+    int64_t meanX;
+    int64_t meanY;
+    int64_t meanZ;
+
+    int64_t varianceX;
+    int64_t varianceY;
+    int64_t varianceZ;
+    uint32_t numSamples;
+
+    int guidingCellIndex;
+
+    bool IsGuidingCell() const
+    {
+        return guidingCellIndex != -1;
+    }
+};
+
+struct PathGuidingKdTreeWorkItem
+{
+    uint32_t nodeIndex;
+    uint32_t sampleOffset;
+    uint32_t sampleCount;
+
+    // NOTE: stores count after PartitionCount, then the exclusive scan offset
+    uint32_t leftOffset;
+};
+
+struct PathGuidingKdTreeNodeItem
+{
+    uint32_t nodeIndex;
+
+    uint32_t sampleOffset;
+    uint32_t sampleCount;
+    uint32_t numLeft;
+
+    uint32_t workItemOffset;
+    uint32_t workItemCount;
+
+    uint32_t treeDepth;
+    uint32_t lookaheadDepth;
+};
+
+struct PathGuidingKdTreeParams
+{
+    PathGuidingKdTreeNode *nodes;
+
+    PathGuidingKdTreeNodeItem *nodeItems;
+    PathGuidingKdTreeWorkItem *workItems;
+
+    uint32_t numNodeItems;
+    uint32_t numWorkItems;
+
+    SampleData *sampleData;
+    uint32_t *sampleIndices;
 };
 
 } // namespace ybi

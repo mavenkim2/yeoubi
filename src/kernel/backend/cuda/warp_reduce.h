@@ -8,12 +8,27 @@
 namespace ybi
 {
 
-// All 32 lanes must participate. The sum is valid in lane 0 only.
 YBI_GPU float WarpReduceSum(float value)
 {
 #pragma unroll
     for (uint32_t offset = 16; offset > 0; offset >>= 1)
         value += __shfl_down_sync(0xffffffffu, value, offset);
+    return value;
+}
+
+YBI_GPU float WarpReduceMin(float value)
+{
+#pragma unroll
+    for (uint32_t offset = 16; offset > 0; offset >>= 1)
+        value = fminf(value, __shfl_down_sync(0xffffffffu, value, offset));
+    return value;
+}
+
+YBI_GPU float WarpReduceMax(float value)
+{
+#pragma unroll
+    for (uint32_t offset = 16; offset > 0; offset >>= 1)
+        value = fmaxf(value, __shfl_down_sync(0xffffffffu, value, offset));
     return value;
 }
 
@@ -47,6 +62,14 @@ YBI_GPU Vec3f WarpReduceSum(Vec3f value, uint32_t mask)
     value.x = WarpReduceSum(value.x, mask);
     value.y = WarpReduceSum(value.y, mask);
     value.z = WarpReduceSum(value.z, mask);
+    return value;
+}
+
+YBI_GPU int64_t WarpReduceSum(int64_t value)
+{
+#pragma unroll
+    for (uint32_t offset = 16; offset > 0; offset >>= 1)
+        value += __shfl_down_sync(0xffffffffu, value, offset);
     return value;
 }
 

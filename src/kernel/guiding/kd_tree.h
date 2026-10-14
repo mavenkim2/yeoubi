@@ -2,212 +2,196 @@
 
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
-#include "kernel/guiding/sample.h"
 #include "kernel/guiding/types.h"
-#include "kernel/guiding/vmf.h"
-#include "kernel/texture/sampling.h"
 
 namespace ybi
 {
 
-#define VMM_KD_TREE_CRITICAL_Z_SCORE 3.7190164855f
-#define VMM_KD_TREE_MIN_NUM_SAMPLES 1000u
+#define VMM_KD_TREE_POSITION_STATISTICS_SCALE float(1 << 18)
+#define VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT 256
 
-struct LookaheadCell
+YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams params)
 {
-    float radianceFirstMoment;
-    float radianceSecondMoment;
-    uint32_t numSamples;
-    Vec3f radianceWeightedDirectionSum;
-
-    YBI_GPU Vec3f CalculateMeanDirection() const
+    if (params.numNodeItems == 0)
     {
-        return Normalize(radianceWeightedDirectionSum);
+        return;
     }
 
-    YBI_GPU float CalculateMeanDirectionInvKappa() const
+    // for ()
     {
-        const Vec3f r = radianceWeightedDirectionSum / radianceFirstMoment;
-        const float meanCosine = Min(Length(r), 1.f);
-        if (meanCosine == 1.f)
-            return 0.f; // Infinite concentration.
-
-        const float kappa = MeanCosineToKappa(meanCosine);
-        const float kappaCothMinusOne = kappa * meanCosine;
-        const float yMinusOne =
-            (radianceFirstMoment / radianceSecondMoment) * radianceFirstMoment *
-            kappaCothMinusOne;
-        const float invY = 1.f / (1.f + yMinusOne);
-        // Eq. (4), evaluated in 1/y to avoid polynomial overflow.
-        const float numerator =
-            1.f + invY * (1.69934861f + invY * (5.38753272f + invY * 9.85021305f));
-        const float denominator = 1.f + invY * (0.67453491f + invY * 4.31180006f);
-        return Sqrt((invY / yMinusOne) * (denominator / numerator));
     }
 
-    YBI_GPU float CalculateSampleMean() const
-    {
-        return radianceFirstMoment / numSamples;
-    }
+    // params.nodeItems
+}
 
-    YBI_GPU float CalculateSampleVariance() const
-    {
-        // Variance of the estimated mean, not of an individual sample.
-        const double n = numSamples;
-        const double b1 = radianceFirstMoment;
-        const double numerator = n * radianceSecondMoment - b1 * b1;
-        // Accumulated float moments can produce a small negative value through rounding.
-        return static_cast<float>(Max(0.0, numerator) / (n * n * n));
-    }
-
-    YBI_GPU LookaheadCell CalculateDelta(const LookaheadCell &rhs) const
-    {
-        YBI_ASSERT(rhs.numSamples <= numSamples);
-        LookaheadCell result = {radianceFirstMoment - rhs.radianceFirstMoment,
-                                radianceSecondMoment - rhs.radianceSecondMoment,
-                                numSamples - rhs.numSamples,
-                                radianceWeightedDirectionSum - rhs.radianceWeightedDirectionSum};
-
-        return result;
-    }
-};
-
-struct GuidingCell
+YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams params)
 {
-};
+    uint32_t totalWorkItemCount = 0;
+    for (uint32_t nodeItemIndex = 0; nodeItemIndex < params.numNodeItems; nodeItemIndex++)
+    {
+        PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+        const uint32_t sampleCount = nodeItem.sampleCount;
+        const uint32_t workItemCount = (sampleCount + VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT - 1) /
+                                       VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
 
-struct VMMKDTreeWorkspace
-{
-    float firstMoment;
-    float secondMoment;
-    Vec3f radianceWeightedDirectionSum;
-};
+        nodeItem.workItemOffset = totalWorkItemCount;
+        nodeItem.workItemCount = workItemCount;
+        totalWorkItemCount += workItemCount;
 
-// Clear workspace and synchronize before the first batch; all block threads participate.
+        uint32_t sampleOffset = 0;
+        for (uint32_t workItemIndex = nodeItem.workItemOffset;
+             workItemIndex < nodeItem.workItemOffset + nodeItem.workItemCount;
+             workItemIndex++)
+        {
+            PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+            workItem.nodeIndex = nodeItem.nodeIndex;
+            workItem.sampleOffset = nodeItem.sampleOffset + sampleOffset;
+            workItem.sampleCount =
+                Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT, nodeItem.sampleCount - sampleOffset);
+
+            sampleOffset += VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
+        }
+    }
+}
+
 template <typename Backend>
-YBI_GPU void UpdateLookaheadCell(const GuidingParams &params,
-                                 const VMMUpdateRange &range,
-                                 VMMKDTreeWorkspace &workspace)
+YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workItemIndex)
 {
-    using Float = typename Backend::Float;
-    constexpr uint32_t laneWidth = Backend::SampleWidth;
-
-    Float firstMoment(0.f);
-    Float secondMoment(0.f);
-    Vector3<Float> directionSum{Float(0.f)};
-
-    // TODO: divide by 2 at 8 million samples
-    // TODO: samples have to be sorted such that sub ranges are separate lookahead cells
-    // TODO: how does openpgl choose split positions again?
-    // answer: choose dimension with maximum positional variance... this seems like a pita
-
-    for (uint32_t sampleIndex = Backend::GetThreadIndex() * laneWidth;
-         sampleIndex < range.numSamples;
-         sampleIndex += Backend::GetThreadStride() * laneWidth)
+    const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
+    Vec3f boundsMin(INFINITY);
+    Vec3f boundsMax(-INFINITY);
+    for (uint32_t sampleOffset = Backend::GetThreadIndex();
+         sampleOffset < workItem.sampleCount;
+         sampleOffset += Backend::GetThreadStride())
     {
-        const uint32_t numValidSamples = Min(laneWidth, range.numSamples - sampleIndex);
-        const Float Li = LoadRadianceContribution<Float>(
-            params, range.sampleOffset + sampleIndex, numValidSamples);
-        const Vector3<Float> direction = LoadSampleDirection<Float>(
-            params, range.sampleOffset + sampleIndex, numValidSamples);
-        firstMoment += Li;
-        secondMoment += Sqr(Li);
-        directionSum += direction * Li;
+        const uint32_t sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
+        const Vec3f &position = params.sampleData[sampleIndex].position;
+        boundsMin = Min(boundsMin, position);
+        boundsMax = Max(boundsMax, position);
     }
+    Backend::ReduceMin(boundsMin, node.boundsMin);
+    Backend::ReduceMax(boundsMax, node.boundsMax);
+}
 
-    Backend::ReduceAdd(firstMoment, workspace.firstMoment);
-    Backend::ReduceAdd(secondMoment, workspace.secondMoment);
-    Backend::ReduceAdd(directionSum.x, workspace.radianceWeightedDirectionSum.x);
-    Backend::ReduceAdd(directionSum.y, workspace.radianceWeightedDirectionSum.y);
-    Backend::ReduceAdd(directionSum.z, workspace.radianceWeightedDirectionSum.z);
+template <typename Backend>
+YBI_GPU void CalculateNodePositionStatistics(PathGuidingKdTreeParams params, uint32_t workItemIndex)
+{
+    const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
+
+    const Vec3f boundsHalfExtent = (node.boundsMax - node.boundsMin) * 0.5f;
+    const Vec3f boundsCenter = node.boundsMin + boundsHalfExtent;
+    YBI_ASSERT(boundsHalfExtent.MinComponent() >= 0.f);
+    const Vec3f invHalfExtent(boundsHalfExtent.x > 0.f ? 1.f / boundsHalfExtent.x : 0.f,
+                              boundsHalfExtent.y > 0.f ? 1.f / boundsHalfExtent.y : 0.f,
+                              boundsHalfExtent.z > 0.f ? 1.f / boundsHalfExtent.z : 0.f);
+    int64_t meanX = 0, meanY = 0, meanZ = 0;
+    int64_t varianceX = 0, varianceY = 0, varianceZ = 0;
+    uint32_t numSamples = 0;
+
+    for (uint32_t sampleIndex = Backend::GetThreadIndex(); sampleIndex < workItem.sampleCount;
+         sampleIndex += Backend::GetThreadStride())
+    {
+        const SampleData &sample =
+            params.sampleData[params.sampleIndices[workItem.sampleOffset + sampleIndex]];
+        const Vec3f normalized = (sample.position - boundsCenter) * invHalfExtent;
+        const Vec3f p(Clamp(normalized.x, -1.f, 1.f),
+                      Clamp(normalized.y, -1.f, 1.f),
+                      Clamp(normalized.z, -1.f, 1.f));
+        meanX += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.x);
+        meanY += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.y);
+        meanZ += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.z);
+        varianceX += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.x * p.x);
+        varianceY += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.y * p.y);
+        varianceZ += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.z * p.z);
+        ++numSamples;
+    }
+    Backend::ReduceAdd(meanX, node.meanX);
+    Backend::ReduceAdd(meanY, node.meanY);
+    Backend::ReduceAdd(meanZ, node.meanZ);
+    Backend::ReduceAdd(varianceX, node.varianceX);
+    Backend::ReduceAdd(varianceY, node.varianceY);
+    Backend::ReduceAdd(varianceZ, node.varianceZ);
+    Backend::ReduceAdd(numSamples, node.numSamples);
+}
+
+template <typename Backend>
+YBI_GPU void PartitionCount(PathGuidingKdTreeParams params, uint32_t workItemIndex)
+{
+    PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
+
+    uint32_t numLefts = 0;
+    for (uint32_t sampleIndex = Backend::GetThreadIndex(); sampleIndex < workItem.sampleCount;
+         sampleIndex += Backend::GetThreadStride())
+    {
+        const SampleData &sample =
+            params.sampleData[params.sampleIndices[workItem.sampleOffset + sampleIndex]];
+        const bool predicate = sample.position[node.splitAxis] < node.splitLocation;
+        numLefts += predicate;
+    }
+    if (Backend::GetThreadIndex() == 0)
+        workItem.leftOffset = 0;
     Backend::Sync();
+    Backend::ReduceAdd(numLefts, workItem.leftOffset);
 }
 
-YBI_GPU float CalculateSplitScore(float meanDelta,
-                                  float meanLookahead,
-                                  float varianceDelta,
-                                  float varianceLookahead)
+YBI_GPU void PartitionExclusiveScan(PathGuidingKdTreeParams params, uint32_t nodeItemIndex)
 {
-    return (meanDelta - meanLookahead) / Sqrt(varianceDelta + varianceLookahead);
+    PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+
+    uint32_t offset = 0;
+    for (uint32_t workItemIndex = nodeItem.workItemOffset;
+         workItemIndex < nodeItem.workItemOffset + nodeItem.workItemCount;
+         workItemIndex++)
+    {
+        PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+        const uint32_t count = workItem.leftOffset;
+        workItem.leftOffset = offset;
+        offset += count;
+    }
+    nodeItem.numLeft = offset;
 }
 
-YBI_GPU bool SplitGuidingCell(const GuidingParams &params,
-                              const LookaheadCell &parent,
-                              const LookaheadCell *lookaheadCells,
-                              uint32_t numLookaheadCells,
-                              float meanRadianceSplitThreshold)
+template <typename Backend>
+YBI_GPU void PartitionSamples(PathGuidingKdTreeParams params,
+                              uint32_t workItemIndex,
+                              uint32_t *newSampleIndices)
 {
-    YBI_ASSERT(meanRadianceSplitThreshold >= 0.f);
-    if (parent.numSamples < VMM_KD_TREE_MIN_NUM_SAMPLES)
+    const uint32_t threadIndex = Backend::GetThreadIndex();
+    const uint32_t threadStride = Backend::GetThreadStride();
+    const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[workItem.nodeIndex];
+    const uint32_t precedingSamples = workItem.sampleOffset - nodeItem.sampleOffset;
+    uint32_t previousLeft = 0;
+
+    for (uint32_t tileOffset = 0; tileOffset < workItem.sampleCount;
+         tileOffset += threadStride)
     {
-        return false;
-    }
-
-    const Vec3f parentDirection = parent.CalculateMeanDirection();
-    const float parentInvKappa = parent.CalculateMeanDirectionInvKappa();
-
-    for (uint32_t lookaheadCellIndex = 0; lookaheadCellIndex < numLookaheadCells;
-         lookaheadCellIndex++)
-    {
-        const LookaheadCell &cell = lookaheadCells[lookaheadCellIndex];
-        // Section 4.1 requires at least 1000 samples in parent and lookahead.
-        // The complement must also be nonempty to define its mean and variance.
-        if (cell.numSamples < VMM_KD_TREE_MIN_NUM_SAMPLES || cell.numSamples >= parent.numSamples)
+        const uint32_t sampleOffset = tileOffset + threadIndex;
+        const bool valid = sampleOffset < workItem.sampleCount;
+        uint32_t sampleIndex = 0;
+        bool goesLeft = false;
+        if (valid)
         {
-            continue;
-        }
-        const LookaheadCell delta = parent.CalculateDelta(cell);
-
-        const float oneMinusMeanRadianceSplitThreshold = 1.f - meanRadianceSplitThreshold;
-        const float onePlusMeanRadianceSplitThreshold = 1.f + meanRadianceSplitThreshold;
-
-        const float cDeltaPlus = oneMinusMeanRadianceSplitThreshold * delta.numSamples;
-        const float cLookaheadPlus =
-            parent.numSamples - oneMinusMeanRadianceSplitThreshold * cell.numSamples;
-
-        const float cDeltaMinus = -onePlusMeanRadianceSplitThreshold * delta.numSamples;
-        const float cLookaheadMinus =
-            onePlusMeanRadianceSplitThreshold * cell.numSamples - parent.numSamples;
-
-        const float meanDelta = delta.CalculateSampleMean();
-        const float varianceDelta = delta.CalculateSampleVariance();
-
-        const float meanLookahead = cell.CalculateSampleMean();
-        const float varianceLookahead = cell.CalculateSampleVariance();
-
-        const float splitScorePlus = CalculateSplitScore(cDeltaPlus * meanDelta,
-                                                         cLookaheadPlus * meanLookahead,
-                                                         Sqr(cDeltaPlus) * varianceDelta,
-                                                         Sqr(cLookaheadPlus) * varianceLookahead);
-
-        const float splitScoreMinus =
-            CalculateSplitScore(cDeltaMinus * meanDelta,
-                                cLookaheadMinus * meanLookahead,
-                                Sqr(cDeltaMinus) * varianceDelta,
-                                Sqr(cLookaheadMinus) * varianceLookahead);
-
-        if (splitScorePlus > VMM_KD_TREE_CRITICAL_Z_SCORE ||
-            splitScoreMinus > VMM_KD_TREE_CRITICAL_Z_SCORE)
-        {
-            return true;
+            sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
+            goesLeft = params.sampleData[sampleIndex].position[node.splitAxis] < node.splitLocation;
         }
 
-        const Vec3f lookaheadDirection = cell.CalculateMeanDirection();
-
-        const float invSqrtK = Sqrt(parentInvKappa + cell.CalculateMeanDirectionInvKappa());
-        if (invSqrtK >= params.vmfSplitMaxInvSqrtK)
-            continue;
-
-        const float position =
-            (invSqrtK / params.vmfSplitMaxInvSqrtK) * (VMFSplitTableSize - 1);
-        const float u = (position + 0.5f) / VMFSplitTableSize;
-        const float cosBeta = SampleDeviceTexture1D(
-            params.vmfSplitTexture, VMFSplitTableSize, u);
-        const float cosine = Clamp(Dot(parentDirection, lookaheadDirection), -1.f, 1.f);
-        if (cosine < cosBeta)
-            return true;
+        const auto scan = Backend::ExclusiveScanAdd(uint32_t(goesLeft));
+        const uint32_t localLeft = previousLeft + scan.prefix;
+        if (valid)
+        {
+            const uint32_t outputOffset =
+                goesLeft ? workItem.leftOffset + localLeft
+                         : nodeItem.numLeft + (precedingSamples - workItem.leftOffset) +
+                               (sampleOffset - localLeft);
+            newSampleIndices[nodeItem.sampleOffset + outputOffset] = sampleIndex;
+        }
+        previousLeft += scan.total;
     }
-    return false;
 }
 
 } // namespace ybi

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/simd_float4.h"
-#include "kernel/guiding/guiding.h"
+#include "kernel/guiding/types.h"
 
 #if defined(SIMD_4)
 #include <cstdio>
@@ -28,6 +28,28 @@ struct CpuSIMDVMMBackend
     }
 
     static void Sync() {}
+
+    static ExclusiveScanResult ExclusiveScanAdd(uint32_t value) { return {0, value}; }
+
+    static void ReduceAdd(int64_t value, int64_t &destination) { destination += value; }
+    static void ReduceAdd(uint32_t value, uint32_t &destination) { destination += value; }
+
+    static void ReduceMin(float value, float &destination) { destination = fminf(value, destination); }
+    static void ReduceMax(float value, float &destination) { destination = fmaxf(value, destination); }
+
+    static void ReduceMin(const Vec3f &value, Vec3f &destination)
+    {
+        ReduceMin(value.x, destination.x);
+        ReduceMin(value.y, destination.y);
+        ReduceMin(value.z, destination.z);
+    }
+
+    static void ReduceMax(const Vec3f &value, Vec3f &destination)
+    {
+        ReduceMax(value.x, destination.x);
+        ReduceMax(value.y, destination.y);
+        ReduceMax(value.z, destination.z);
+    }
 
     static void ReduceAdd(Float value, float &destination)
     {
