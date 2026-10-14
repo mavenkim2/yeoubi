@@ -31,7 +31,7 @@ struct VMMDistribution
 template <typename Float>
 struct VMMSampleData
 {
-    Vector3<Float> sampleDirection;
+    Vector3<Float> direction;
     Float incidentRadianceEstimate;
     Float pdf;
 };

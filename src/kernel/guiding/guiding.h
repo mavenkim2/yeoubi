@@ -321,12 +321,12 @@ YBI_GPU void UpdateVMM(const GuidingParams &params,
             const Float sampleWeight = sample.incidentRadianceEstimate / sample.pdf;
             Float assignments[VMM_MAX_NUM_COMPONENTS];
             const Float pdf =
-                SoftAssignment<Float>(distribution, sample.sampleDirection, assignments);
+                SoftAssignment<Float>(distribution, sample.direction, assignments);
             localLogLikelihood += sampleWeight * Log(pdf);
             for (uint32_t k = 0; k < distribution.numComponents; ++k)
             {
                 const Float assignedWeight = assignments[k] * sampleWeight;
-                localStats.sumWeightedDirections[k] += sample.sampleDirection * assignedWeight;
+                localStats.sumWeightedDirections[k] += sample.direction * assignedWeight;
                 localStats.sumWeightedStats[k] += assignedWeight;
             }
         }
@@ -412,10 +412,10 @@ YBI_GPU void CalculateVMMSplitStatistics(const GuidingParams &params,
         const Float Li = sample.incidentRadianceEstimate;
         const Float sampleWeight = Li / sample.pdf;
         Float assignments[VMM_MAX_NUM_COMPONENTS];
-        const Float V = SoftAssignment<Float>(distribution, sample.sampleDirection, assignments);
-        const Float directionLengthSquared = Sqr(sample.sampleDirection.x) +
-                                             Sqr(sample.sampleDirection.y) +
-                                             Sqr(sample.sampleDirection.z);
+        const Float V = SoftAssignment<Float>(distribution, sample.direction, assignments);
+        const Float directionLengthSquared = Sqr(sample.direction.x) +
+                                             Sqr(sample.direction.y) +
+                                             Sqr(sample.direction.z);
         for (uint32_t k = 0; k < numComponents; ++k)
         {
             const Float assignment = assignments[k];
@@ -427,12 +427,12 @@ YBI_GPU void CalculateVMMSplitStatistics(const GuidingParams &params,
             localStats.chiSquareEstimates[k] +=
                 Select(directionLengthSquared > Float(0.f), chiSquareEstimate, Float(0.f));
 
-            const Float x = sample.sampleDirection.x * Float(workspace.tangents[k].x) +
-                            sample.sampleDirection.y * Float(workspace.tangents[k].y) +
-                            sample.sampleDirection.z * Float(workspace.tangents[k].z);
-            const Float y = sample.sampleDirection.x * Float(workspace.bitangents[k].x) +
-                            sample.sampleDirection.y * Float(workspace.bitangents[k].y) +
-                            sample.sampleDirection.z * Float(workspace.bitangents[k].z);
+            const Float x = sample.direction.x * Float(workspace.tangents[k].x) +
+                            sample.direction.y * Float(workspace.tangents[k].y) +
+                            sample.direction.z * Float(workspace.tangents[k].z);
+            const Float y = sample.direction.x * Float(workspace.bitangents[k].x) +
+                            sample.direction.y * Float(workspace.bitangents[k].y) +
+                            sample.direction.z * Float(workspace.bitangents[k].z);
             const Float assignedWeight = assignment * sampleWeight;
             localStats.sumWeights[k] += assignedWeight;
             localStats.sumWeightedCovariances[k] +=

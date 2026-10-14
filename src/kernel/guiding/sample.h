@@ -138,9 +138,9 @@ inline VMMSampleData<Float4> LoadSampleData<VMMSampleData<Float4>>(const Guiding
     if (numValidSamples < Float4::Width)
     {
         const Mask4 valid = Mask4::Create((1u << numValidSamples) - 1u);
-        sample.sampleDirection.x = Select(valid, sample.sampleDirection.x, Float4(0.f));
-        sample.sampleDirection.y = Select(valid, sample.sampleDirection.y, Float4(0.f));
-        sample.sampleDirection.z = Select(valid, sample.sampleDirection.z, Float4(0.f));
+        sample.direction.x = Select(valid, sample.direction.x, Float4(0.f));
+        sample.direction.y = Select(valid, sample.direction.y, Float4(0.f));
+        sample.direction.z = Select(valid, sample.direction.z, Float4(0.f));
         sample.incidentRadianceEstimate =
             Select(valid, sample.incidentRadianceEstimate, Float4(0.f));
         sample.pdf = Select(valid, sample.pdf, Float4(1.f));
