@@ -259,6 +259,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture/manager.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/path_guiding.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/material/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
