@@ -208,6 +208,7 @@ struct Device
         CreatePipeline();
         return true;
     }
+    virtual void CopyDeviceToDeviceAsync(void *dst, void *ptr, size_t size) = 0;
 };
 
 } // namespace ybi

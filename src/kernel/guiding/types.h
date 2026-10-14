@@ -151,6 +151,7 @@ struct PathGuidingKdTreeNode
     int64_t varianceY;
     int64_t varianceZ;
     uint32_t numSamples;
+    uint32_t partitionGeneration = 0;
 
     int guidingCellIndex;
     int guidingNodeIndex = -1;
@@ -158,6 +159,11 @@ struct PathGuidingKdTreeNode
     YBI_CPU_GPU bool NeedsSplit() const
     {
         return splitAxis == -1;
+    }
+
+    YBI_CPU_GPU bool NeedsPartition(uint32_t generation) const
+    {
+        return !NeedsSplit() && partitionGeneration != generation;
     }
 
     YBI_CPU_GPU bool IsGuidingCell() const
@@ -170,12 +176,12 @@ struct PathGuidingKdTreeNode
         return !IsGuidingCell() && guidingNodeIndex >= 0;
     }
 
-    YBI_CPU_GPU bool MatchesStage(PathGuidingKdTreeStage stage) const
+    YBI_CPU_GPU bool MatchesStage(PathGuidingKdTreeStage stage, uint32_t generation) const
     {
         switch (stage)
         {
         case PathGuidingKdTreeStage::PositionStatistics: return NeedsSplit();
-        case PathGuidingKdTreeStage::Partition: return !NeedsSplit();
+        case PathGuidingKdTreeStage::Partition: return NeedsPartition(generation);
         case PathGuidingKdTreeStage::Signature: return IsGuidingCell() || IsLookahead();
         case PathGuidingKdTreeStage::Promotion: return IsLookahead();
         }
@@ -186,6 +192,7 @@ struct PathGuidingKdTreeNode
 struct PathGuidingKdTreeWorkItem
 {
     uint32_t nodeIndex;
+    uint32_t nodeItemIndex;
     uint32_t sampleOffset;
     uint32_t sampleCount;
 
@@ -217,9 +224,14 @@ struct PathGuidingKdTreeParams
 
     uint32_t numNodeItems;
     uint32_t numWorkItems;
+    uint32_t *activeNodeItems;
+    uint32_t numActiveNodeItems;
+    uint32_t generation;
 
     SampleData *sampleData;
     uint32_t *sampleIndices;
+    uint32_t *newSampleIndices;
+    uint32_t numSampleIndices;
 };
 
 } // namespace ybi

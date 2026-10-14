@@ -304,12 +304,15 @@ list(APPEND YBI_THIRD_PARTY_INCLUDE_DIRECTORIES
 
 function (compile_cuda src)
     cmake_parse_arguments(PARSE_ARGV 1 arg
-        ""
+        "NO_FAST_MATH"
         "OUTPUT;DEPFILE;ARCHITECTURE"
         "DEFINITIONS;DEPENDS;INCLUDE_DIRS;OPTIONS"
     )
 
     set(NVCC_OPTIONS ${arg_OPTIONS})
+    if (NOT arg_NO_FAST_MATH)
+        list(APPEND NVCC_OPTIONS --use_fast_math)
+    endif()
     foreach(definition IN LISTS arg_DEFINITIONS)
         list(APPEND NVCC_OPTIONS "-D${definition}")
     endforeach()
@@ -324,7 +327,6 @@ function (compile_cuda src)
         "--gpu-architecture=${arg_ARCHITECTURE}"
         "--std=c++17"
         "--compiler-bindir=${YBI_CUDA_HOST_COMPILER_DIR}"
-        "--use_fast_math"
         "-I${CMAKE_CURRENT_SOURCE_DIR}/src"
         ${NVCC_OPTIONS}
         -MD
@@ -446,9 +448,11 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     if (YBI_USE_PATH_GUIDING)
         set(YBI_KD_TREE_KERNEL_DEPFILE "${YBI_KD_TREE_KERNEL_PATH}.d")
         compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/kd_tree.cu"
+            NO_FAST_MATH
             OUTPUT "${YBI_KD_TREE_KERNEL_PATH}"
             DEPFILE "${YBI_KD_TREE_KERNEL_DEPFILE}"
             ARCHITECTURE sm_75
+            OPTIONS --fmad=false
         )
         add_custom_target(yeoubi_kd_tree_kernel DEPENDS ${YBI_KD_TREE_KERNEL_PATH})
         add_dependencies(yeoubi yeoubi_kd_tree_kernel)

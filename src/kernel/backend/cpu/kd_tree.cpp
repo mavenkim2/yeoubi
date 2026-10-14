@@ -19,14 +19,15 @@ void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams &params, PathGuidingKdTree
 
 void InitializeNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
 {
-    tbb::parallel_for(0u, params.numNodeItems, [&](uint32_t nodeItemIndex) {
-        InitializeNodePositionStatistics(params, nodeItemIndex);
+    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
+        InitializeNodePositionStatistics(params, params.activeNodeItems[activeNodeItemIndex]);
     });
 }
 
 void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params)
 {
-    tbb::parallel_for(0u, params.numNodeItems, [&](uint32_t nodeItemIndex) {
+    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
+        const uint32_t nodeItemIndex = params.activeNodeItems[activeNodeItemIndex];
         const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
         for (uint32_t workItemIndex = nodeItem.workItemOffset;
              workItemIndex < nodeItem.workItemOffset + nodeItem.workItemCount;
@@ -39,7 +40,8 @@ void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params)
 
 void CalculateNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
 {
-    tbb::parallel_for(0u, params.numNodeItems, [&](uint32_t nodeItemIndex) {
+    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
+        const uint32_t nodeItemIndex = params.activeNodeItems[activeNodeItemIndex];
         const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
         for (uint32_t workItemIndex = nodeItem.workItemOffset;
              workItemIndex < nodeItem.workItemOffset + nodeItem.workItemCount;
@@ -47,6 +49,13 @@ void CalculateNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
         {
             CalculateNodePositionStatistics<CpuSIMDVMMBackend>(params, workItemIndex);
         }
+    });
+}
+
+void SelectNodeSplitsCPU(PathGuidingKdTreeParams params)
+{
+    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
+        SelectNodeSplits(params, params.activeNodeItems[activeNodeItemIndex]);
     });
 }
 
@@ -59,8 +68,8 @@ void PartitionCountCPU(PathGuidingKdTreeParams params)
 
 void PartitionExclusiveScanCPU(PathGuidingKdTreeParams params)
 {
-    tbb::parallel_for(0u, params.numNodeItems, [&](uint32_t nodeItemIndex) {
-        PartitionExclusiveScan(params, nodeItemIndex);
+    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
+        PartitionExclusiveScan(params, params.activeNodeItems[activeNodeItemIndex]);
     });
 }
 
@@ -106,6 +115,11 @@ void CalculateNodeBoundsKernelCPU(void **arguments)
 void CalculateNodePositionStatisticsKernelCPU(void **arguments)
 {
     CalculateNodePositionStatisticsCPU(GetKdTreeParams(arguments));
+}
+
+void SelectNodeSplitsKernelCPU(void **arguments)
+{
+    SelectNodeSplitsCPU(GetKdTreeParams(arguments));
 }
 
 void PartitionCountKernelCPU(void **arguments)

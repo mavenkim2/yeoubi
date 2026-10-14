@@ -32,6 +32,7 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
         {"InitializeNodePositionStatisticsKernel", InitializeNodePositionStatisticsKernelCPU},
         {"CalculateNodeBoundsKernel", CalculateNodeBoundsKernelCPU},
         {"CalculateNodePositionStatisticsKernel", CalculateNodePositionStatisticsKernelCPU},
+        {"SelectNodeSplitsKernel", SelectNodeSplitsKernelCPU},
         {"PartitionCountKernel", PartitionCountKernelCPU},
         {"PartitionExclusiveScanKernel", PartitionExclusiveScanKernelCPU},
         {"PartitionSamplesKernel", PartitionSamplesKernelCPU},
@@ -161,6 +162,14 @@ void CPUDevice::CopyToDevice(void *dst, void *ptr, size_t size)
 void CPUDevice::CopyToDeviceAsync(void *, void *, size_t)
 {
     YBI_ASSERT(false && "CPUDevice::CopyToDeviceAsync is not implemented yet");
+}
+
+void CPUDevice::CopyDeviceToDeviceAsync(void *dst, void *ptr, size_t size)
+{
+    if (size == 0)
+        return;
+    YBI_ASSERT(dst && ptr);
+    std::memcpy(dst, ptr, size);
 }
 
 void CPUDevice::Memzero(void *, size_t)

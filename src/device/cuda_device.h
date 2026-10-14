@@ -122,6 +122,7 @@ struct CUDADevice : Device
     void CopyToHostAsync(void *dst, void *ptr, size_t size) override;
     void CopyToDevice(void *dst, void *ptr, size_t size) override;
     void CopyToDeviceAsync(void *dst, void *ptr, size_t size) override;
+    void CopyDeviceToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
     void MemzeroAsync(void *dst, size_t size) override;
     bool DispatchKernel(KernelType kernelType,

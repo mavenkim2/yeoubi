@@ -32,10 +32,10 @@ extern "C" __global__ void InitializeNodePositionStatisticsKernel(
     const PathGuidingKdTreeParams &params = *kernelParams;
     const uint32_t threadIndex = blockIdx.x * blockDim.x + threadIdx.x;
     const uint32_t threadStride = blockDim.x * gridDim.x;
-    for (uint32_t nodeItemIndex = threadIndex; nodeItemIndex < params.numNodeItems;
-         nodeItemIndex += threadStride)
+    for (uint32_t activeNodeItemIndex = threadIndex; activeNodeItemIndex < params.numActiveNodeItems;
+         activeNodeItemIndex += threadStride)
     {
-        InitializeNodePositionStatistics(params, nodeItemIndex);
+        InitializeNodePositionStatistics(params, params.activeNodeItems[activeNodeItemIndex]);
     }
 }
 
@@ -62,6 +62,20 @@ extern "C" __global__ void CalculateNodePositionStatisticsKernel(
     }
 }
 
+extern "C" __global__ void SelectNodeSplitsKernel(const PathGuidingKdTreeParams *kernelParams)
+{
+    YBI_ASSERT(blockDim.y == 1 && blockDim.z == 1);
+    YBI_ASSERT(gridDim.y == 1 && gridDim.z == 1);
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    const uint32_t threadIndex = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t threadStride = blockDim.x * gridDim.x;
+    for (uint32_t activeNodeItemIndex = threadIndex; activeNodeItemIndex < params.numActiveNodeItems;
+         activeNodeItemIndex += threadStride)
+    {
+        SelectNodeSplits(params, params.activeNodeItems[activeNodeItemIndex]);
+    }
+}
+
 extern "C" __global__ void PartitionCountKernel(const PathGuidingKdTreeParams *kernelParams)
 {
     ValidateKdTreeBlockLaunch();
@@ -80,10 +94,10 @@ extern "C" __global__ void PartitionExclusiveScanKernel(const PathGuidingKdTreeP
     const PathGuidingKdTreeParams &params = *kernelParams;
     const uint32_t threadIndex = blockIdx.x * blockDim.x + threadIdx.x;
     const uint32_t threadStride = blockDim.x * gridDim.x;
-    for (uint32_t nodeItemIndex = threadIndex; nodeItemIndex < params.numNodeItems;
-         nodeItemIndex += threadStride)
+    for (uint32_t activeNodeItemIndex = threadIndex; activeNodeItemIndex < params.numActiveNodeItems;
+         activeNodeItemIndex += threadStride)
     {
-        PartitionExclusiveScan(params, nodeItemIndex);
+        PartitionExclusiveScan(params, params.activeNodeItems[activeNodeItemIndex]);
     }
 }
 

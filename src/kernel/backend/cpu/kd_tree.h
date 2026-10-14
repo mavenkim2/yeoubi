@@ -10,6 +10,7 @@ void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams &params, PathGuidingKdTree
 void InitializeNodePositionStatisticsCPU(PathGuidingKdTreeParams params);
 void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params);
 void CalculateNodePositionStatisticsCPU(PathGuidingKdTreeParams params);
+void SelectNodeSplitsCPU(PathGuidingKdTreeParams params);
 void PartitionCountCPU(PathGuidingKdTreeParams params);
 void PartitionExclusiveScanCPU(PathGuidingKdTreeParams params);
 void PartitionSamplesCPU(PathGuidingKdTreeParams params, uint32_t *newSampleIndices);
@@ -19,6 +20,7 @@ void CreateKdTreeWorkItemsKernelCPU(void **arguments);
 void InitializeNodePositionStatisticsKernelCPU(void **arguments);
 void CalculateNodeBoundsKernelCPU(void **arguments);
 void CalculateNodePositionStatisticsKernelCPU(void **arguments);
+void SelectNodeSplitsKernelCPU(void **arguments);
 void PartitionCountKernelCPU(void **arguments);
 void PartitionExclusiveScanKernelCPU(void **arguments);
 void PartitionSamplesKernelCPU(void **arguments);

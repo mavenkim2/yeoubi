@@ -416,6 +416,13 @@ void CUDADevice::CopyToDeviceAsync(void *dst, void *ptr, size_t size)
     CUDA_ASSERT(cuMemcpyHtoDAsync(reinterpret_cast<CUdeviceptr>(dst), ptr, size, 0));
 }
 
+void CUDADevice::CopyDeviceToDeviceAsync(void *dst, void *ptr, size_t size)
+{
+    ContextScope scope(this);
+    CUDA_ASSERT(cuMemcpyDtoDAsync(reinterpret_cast<CUdeviceptr>(dst),
+                                reinterpret_cast<CUdeviceptr>(ptr), size, 0));
+}
+
 void CUDADevice::Memzero(void *dst, size_t size)
 {
     CUDA_ASSERT(cuMemsetD8(reinterpret_cast<CUdeviceptr>(dst), 0, size));
