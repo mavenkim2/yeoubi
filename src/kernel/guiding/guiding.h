@@ -1,3 +1,7 @@
+// Implementation adapted from https://github.com/OpenPathGuidingLibrary/openpgl.
+// Copyright 2020 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+// Full license: licenses/OpenPGL.txt (relative to the repository root).
 #pragma once
 
 #include "core/frame.h"
@@ -10,6 +14,10 @@
 
 namespace ybi
 {
+
+// Lukas Ruppert, Sebastian Herholz, and Hendrik P. A. Lensch.
+// "Robust Fitting of Parallax-Aware Mixtures for Path Guiding", ACM TOG, 2020.
+// https://doi.org/10.1145/3386569.3392421
 
 template <typename Float>
 YBI_GPU Float SoftAssignment(const VMMDistribution &distribution,
