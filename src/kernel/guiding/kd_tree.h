@@ -24,17 +24,22 @@ YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams params)
     // params.nodeItems
 }
 
-YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams params)
+YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage)
 {
     uint32_t totalWorkItemCount = 0;
     for (uint32_t nodeItemIndex = 0; nodeItemIndex < params.numNodeItems; nodeItemIndex++)
     {
         PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-        const uint32_t sampleCount = nodeItem.sampleCount;
-        const uint32_t workItemCount = (sampleCount + VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT - 1) /
-                                       VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
-
+        const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
         nodeItem.workItemOffset = totalWorkItemCount;
+        nodeItem.workItemCount = 0;
+        if (!node.MatchesStage(stage))
+            continue;
+
+        const uint32_t sampleCount = nodeItem.sampleCount;
+        const uint32_t workItemCount = sampleCount / VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT +
+                                       (sampleCount % VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT != 0);
+
         nodeItem.workItemCount = workItemCount;
         totalWorkItemCount += workItemCount;
 
@@ -46,12 +51,26 @@ YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams params)
             PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
             workItem.nodeIndex = nodeItem.nodeIndex;
             workItem.sampleOffset = nodeItem.sampleOffset + sampleOffset;
-            workItem.sampleCount =
-                Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT, nodeItem.sampleCount - sampleOffset);
+            workItem.sampleCount = Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT,
+                                                 nodeItem.sampleCount - sampleOffset);
 
             sampleOffset += VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
         }
     }
+    params.numWorkItems = totalWorkItemCount;
+}
+
+YBI_GPU void InitializeNodePositionStatistics(PathGuidingKdTreeParams params, uint32_t nodeItemIndex)
+{
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    if (nodeItem.workItemCount == 0)
+        return;
+    PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+    node.boundsMin = Vec3f(INFINITY);
+    node.boundsMax = Vec3f(-INFINITY);
+    node.meanX = node.meanY = node.meanZ = 0;
+    node.varianceX = node.varianceY = node.varianceZ = 0;
+    node.numSamples = 0;
 }
 
 template <typename Backend>
@@ -61,8 +80,7 @@ YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workIt
     PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
     Vec3f boundsMin(INFINITY);
     Vec3f boundsMax(-INFINITY);
-    for (uint32_t sampleOffset = Backend::GetThreadIndex();
-         sampleOffset < workItem.sampleCount;
+    for (uint32_t sampleOffset = Backend::GetThreadIndex(); sampleOffset < workItem.sampleCount;
          sampleOffset += Backend::GetThreadStride())
     {
         const uint32_t sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
@@ -75,7 +93,8 @@ YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workIt
 }
 
 template <typename Backend>
-YBI_GPU void CalculateNodePositionStatistics(PathGuidingKdTreeParams params, uint32_t workItemIndex)
+YBI_GPU void CalculateNodePositionStatistics(PathGuidingKdTreeParams params,
+                                             uint32_t workItemIndex)
 {
     const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
     PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
@@ -167,8 +186,7 @@ YBI_GPU void PartitionSamples(PathGuidingKdTreeParams params,
     const uint32_t precedingSamples = workItem.sampleOffset - nodeItem.sampleOffset;
     uint32_t previousLeft = 0;
 
-    for (uint32_t tileOffset = 0; tileOffset < workItem.sampleCount;
-         tileOffset += threadStride)
+    for (uint32_t tileOffset = 0; tileOffset < workItem.sampleCount; tileOffset += threadStride)
     {
         const uint32_t sampleOffset = tileOffset + threadIndex;
         const bool valid = sampleOffset < workItem.sampleCount;
@@ -177,17 +195,18 @@ YBI_GPU void PartitionSamples(PathGuidingKdTreeParams params,
         if (valid)
         {
             sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
-            goesLeft = params.sampleData[sampleIndex].position[node.splitAxis] < node.splitLocation;
+            goesLeft =
+                params.sampleData[sampleIndex].position[node.splitAxis] < node.splitLocation;
         }
 
         const auto scan = Backend::ExclusiveScanAdd(uint32_t(goesLeft));
         const uint32_t localLeft = previousLeft + scan.prefix;
         if (valid)
         {
-            const uint32_t outputOffset =
-                goesLeft ? workItem.leftOffset + localLeft
-                         : nodeItem.numLeft + (precedingSamples - workItem.leftOffset) +
-                               (sampleOffset - localLeft);
+            const uint32_t outputOffset = goesLeft ? workItem.leftOffset + localLeft
+                                                   : nodeItem.numLeft +
+                                                         (precedingSamples - workItem.leftOffset) +
+                                                         (sampleOffset - localLeft);
             newSampleIndices[nodeItem.sampleOffset + outputOffset] = sampleIndex;
         }
         previousLeft += scan.total;

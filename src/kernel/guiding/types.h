@@ -127,6 +127,14 @@ struct VMMMergeCandidate
 };
 
 // Kd tree
+enum class PathGuidingKdTreeStage
+{
+    PositionStatistics,
+    Partition,
+    Signature,
+    Promotion,
+};
+
 struct PathGuidingKdTreeNode
 {
     float splitLocation;
@@ -145,10 +153,33 @@ struct PathGuidingKdTreeNode
     uint32_t numSamples;
 
     int guidingCellIndex;
+    int guidingNodeIndex = -1;
 
-    bool IsGuidingCell() const
+    YBI_CPU_GPU bool NeedsSplit() const
     {
-        return guidingCellIndex != -1;
+        return splitAxis == -1;
+    }
+
+    YBI_CPU_GPU bool IsGuidingCell() const
+    {
+        return guidingCellIndex >= 0;
+    }
+
+    YBI_CPU_GPU bool IsLookahead() const
+    {
+        return !IsGuidingCell() && guidingNodeIndex >= 0;
+    }
+
+    YBI_CPU_GPU bool MatchesStage(PathGuidingKdTreeStage stage) const
+    {
+        switch (stage)
+        {
+        case PathGuidingKdTreeStage::PositionStatistics: return NeedsSplit();
+        case PathGuidingKdTreeStage::Partition: return !NeedsSplit();
+        case PathGuidingKdTreeStage::Signature: return IsGuidingCell() || IsLookahead();
+        case PathGuidingKdTreeStage::Promotion: return IsLookahead();
+        }
+        return false;
     }
 };
 

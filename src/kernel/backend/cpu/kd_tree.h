@@ -6,7 +6,8 @@ namespace ybi
 {
 
 void CreateKdTreeNodeItemsCPU(PathGuidingKdTreeParams params);
-void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams params);
+void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage);
+void InitializeNodePositionStatisticsCPU(PathGuidingKdTreeParams params);
 void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params);
 void CalculateNodePositionStatisticsCPU(PathGuidingKdTreeParams params);
 void PartitionCountCPU(PathGuidingKdTreeParams params);

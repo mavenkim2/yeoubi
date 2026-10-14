@@ -11,9 +11,16 @@ void CreateKdTreeNodeItemsCPU(PathGuidingKdTreeParams params)
     CreateKdTreeNodeItems(params);
 }
 
-void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams params)
+void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage)
 {
-    CreateKdTreeWorkItems(params);
+    CreateKdTreeWorkItems(params, stage);
+}
+
+void InitializeNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
+{
+    tbb::parallel_for(0u, params.numNodeItems, [&](uint32_t nodeItemIndex) {
+        InitializeNodePositionStatistics(params, nodeItemIndex);
+    });
 }
 
 void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params)

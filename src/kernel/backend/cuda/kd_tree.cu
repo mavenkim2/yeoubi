@@ -17,10 +17,26 @@ extern "C" __global__ void CreateKdTreeNodeItemsKernel(const PathGuidingKdTreePa
         CreateKdTreeNodeItems(*kernelParams);
 }
 
-extern "C" __global__ void CreateKdTreeWorkItemsKernel(const PathGuidingKdTreeParams *kernelParams)
+extern "C" __global__ void CreateKdTreeWorkItemsKernel(PathGuidingKdTreeParams *kernelParams,
+                                                      PathGuidingKdTreeStage stage)
 {
     if (blockIdx.x == 0 && threadIdx.x == 0)
-        CreateKdTreeWorkItems(*kernelParams);
+        CreateKdTreeWorkItems(*kernelParams, stage);
+}
+
+extern "C" __global__ void InitializeNodePositionStatisticsKernel(
+    const PathGuidingKdTreeParams *kernelParams)
+{
+    YBI_ASSERT(blockDim.y == 1 && blockDim.z == 1);
+    YBI_ASSERT(gridDim.y == 1 && gridDim.z == 1);
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    const uint32_t threadIndex = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t threadStride = blockDim.x * gridDim.x;
+    for (uint32_t nodeItemIndex = threadIndex; nodeItemIndex < params.numNodeItems;
+         nodeItemIndex += threadStride)
+    {
+        InitializeNodePositionStatistics(params, nodeItemIndex);
+    }
 }
 
 extern "C" __global__ void CalculateNodeBoundsKernel(const PathGuidingKdTreeParams *kernelParams)

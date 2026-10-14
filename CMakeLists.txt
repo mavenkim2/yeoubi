@@ -269,6 +269,11 @@ add_executable(yeoubi
                ${YBI_SOURCE}
 )
 
+if (YBI_HAS_SSE41)
+    target_sources(yeoubi PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/kd_tree.cpp)
+endif()
+
 # Keep the precomputed guiding LUT beside the renderer executable.
 set_property(TARGET yeoubi APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/lut/guiding/vmf_split_table.bin")
@@ -424,6 +429,16 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_update_vmm_kernel DEPENDS ${YBI_UPDATE_VMM_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_update_vmm_kernel)
 
+    set(YBI_KD_TREE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/kd_tree.ptx")
+    set(YBI_KD_TREE_KERNEL_DEPFILE "${YBI_KD_TREE_KERNEL_PATH}.d")
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/kd_tree.cu"
+        OUTPUT "${YBI_KD_TREE_KERNEL_PATH}"
+        DEPFILE "${YBI_KD_TREE_KERNEL_DEPFILE}"
+        ARCHITECTURE sm_75
+    )
+    add_custom_target(yeoubi_kd_tree_kernel DEPENDS ${YBI_KD_TREE_KERNEL_PATH})
+    add_dependencies(yeoubi yeoubi_kd_tree_kernel)
+
     # Stream compaction
     set(YBI_STREAM_COMPACTION_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/stream_compaction.ptx")
     set(YBI_STREAM_COMPACTION_KERNEL_DEPFILE "${YBI_STREAM_COMPACTION_KERNEL_PATH}.d")
@@ -460,6 +475,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_COUNT_KERNELS_KERNEL_PATH=\"${YBI_COUNT_KERNELS_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH=\"${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_UPDATE_VMM_KERNEL_PATH=\"${YBI_UPDATE_VMM_KERNEL_PATH}\")
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_KD_TREE_KERNEL_PATH=\"${YBI_KD_TREE_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_STREAM_COMPACTION_KERNEL_PATH=\"${YBI_STREAM_COMPACTION_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_INCLUDE_PATH=\"${YBI_OPTIX_INCLUDE_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_SDK_INCLUDE_PATH=\"${YBI_OPTIX_SDK_INCLUDE_PATH}\")
