@@ -1,30 +1,31 @@
+#if defined(YBI_USE_PATH_GUIDING)
+
+#if !defined(YBI_KD_TREE_KERNEL_PATH)
+#error "YBI_USE_PATH_GUIDING requires YBI_KD_TREE_KERNEL_PATH"
+#endif
+
 #include "render/path_guiding/path_guiding.h"
-#include "kernel/backend/cpu/kd_tree.h"
-#include <stdexcept>
 
 namespace ybi
 {
 
-PathGuidingSystem::PathGuidingSystem(Device *device, DeviceKind deviceKind)
-    : device(device), deviceKind(deviceKind)
+PathGuidingSystem::PathGuidingSystem(Device *device, DeviceKind) : device(device)
 {
     YBI_ASSERT(device);
-    if (deviceKind == DeviceKind::CPU)
-        return;
-
-#if defined(YBI_KD_TREE_KERNEL_PATH)
-    generateWorkItems =
-        device->CreateDeviceKernel({YBI_KD_TREE_KERNEL_PATH, "CreateKdTreeWorkItemsKernel"});
-    initializeNodePositionStatistics = device->CreateDeviceKernel(
-        {YBI_KD_TREE_KERNEL_PATH, "InitializeNodePositionStatisticsKernel"});
-    calculateNodeBounds =
-        device->CreateDeviceKernel({YBI_KD_TREE_KERNEL_PATH, "CalculateNodeBoundsKernel"});
-    calculateNodePositionStatistics = device->CreateDeviceKernel(
-        {YBI_KD_TREE_KERNEL_PATH, "CalculateNodePositionStatisticsKernel"});
+    DeviceKernelDesc desc;
+    desc.filename = YBI_KD_TREE_KERNEL_PATH;
+    desc.entryName = "CreateKdTreeWorkItemsKernel";
+    generateWorkItems = device->CreateDeviceKernel(desc);
+    desc.entryName = "InitializeNodePositionStatisticsKernel";
+    initializeNodePositionStatistics = device->CreateDeviceKernel(desc);
+    desc.entryName = "CalculateNodeBoundsKernel";
+    calculateNodeBounds = device->CreateDeviceKernel(desc);
+    desc.entryName = "CalculateNodePositionStatisticsKernel";
+    calculateNodePositionStatistics = device->CreateDeviceKernel(desc);
+    YBI_ASSERT(generateWorkItems && initializeNodePositionStatistics && calculateNodeBounds &&
+               calculateNodePositionStatistics);
     kernelParams = device->Alloc(sizeof(PathGuidingKdTreeParams));
-#else
-    throw std::runtime_error("CUDA kd-tree kernels are unavailable");
-#endif
+    YBI_ASSERT(kernelParams);
 }
 
 PathGuidingSystem::~PathGuidingSystem()
@@ -42,21 +43,6 @@ void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
     YBI_ASSERT(params.nodes && params.nodeItems && params.workItems);
     YBI_ASSERT(params.sampleData && params.sampleIndices);
     PathGuidingKdTreeStage stage = PathGuidingKdTreeStage::PositionStatistics;
-
-    if (deviceKind == DeviceKind::CPU)
-    {
-#if defined(SIMD_4)
-        CreateKdTreeWorkItemsCPU(params, stage);
-        if (params.numWorkItems == 0)
-            return;
-        InitializeNodePositionStatisticsCPU(params);
-        CalculateNodeBoundsCPU(params);
-        CalculateNodePositionStatisticsCPU(params);
-        return;
-#else
-        throw std::runtime_error("CPU kd-tree helpers require SIMD_4");
-#endif
-    }
 
     device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
     void *workItemArguments[] = {kernelParams.KernelArg(), &stage};
@@ -81,3 +67,5 @@ void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
 }
 
 } // namespace ybi
+
+#endif

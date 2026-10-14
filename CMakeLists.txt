@@ -30,6 +30,7 @@ cmake_pop_check_state()
 option(WITH_CUDA "Enable CUDA backend" OFF)
 option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
 option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
+option(YBI_USE_PATH_GUIDING "Enable Yeoubi path guiding" OFF)
 option(YBI_MATERIAL_DEBUG "Print MaterialX BSDF sampling decisions" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
@@ -104,6 +105,19 @@ if (WITH_CUDA)
             message(FATAL_ERROR "OptiX ${YBI_MIN_OPTIX_VERSION}+ is required if using CUDA.")
         endif()
     endif()
+endif()
+
+if (YBI_USE_PATH_GUIDING)
+    if (NOT YBI_HAS_SSE41)
+        message(FATAL_ERROR "YBI_USE_PATH_GUIDING requires SSE4.1 for the CPU kd-tree backend")
+    endif()
+    set(YBI_KD_TREE_KERNEL_PATH "")
+    if (YBI_HAS_CUDA AND OPTIX_FOUND)
+        set(YBI_KD_TREE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/kd_tree.ptx")
+    endif()
+    list(APPEND YBI_COMPILE_DEFINITIONS
+        YBI_USE_PATH_GUIDING
+        YBI_KD_TREE_KERNEL_PATH=\"${YBI_KD_TREE_KERNEL_PATH}\")
 endif()
 
 # Vulkan
@@ -259,7 +273,6 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/display_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/input/camera_controller.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/virtual_texture/manager.cpp
-               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/path_guiding.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/clusterizer.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/material/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/subdivision.cpp
@@ -269,9 +282,10 @@ add_executable(yeoubi
                ${YBI_SOURCE}
 )
 
-if (YBI_HAS_SSE41)
+if (YBI_USE_PATH_GUIDING)
     target_sources(yeoubi PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/kd_tree.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/kd_tree.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/path_guiding.cpp)
 endif()
 
 # Keep the precomputed guiding LUT beside the renderer executable.
@@ -429,15 +443,16 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_update_vmm_kernel DEPENDS ${YBI_UPDATE_VMM_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_update_vmm_kernel)
 
-    set(YBI_KD_TREE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/kd_tree.ptx")
-    set(YBI_KD_TREE_KERNEL_DEPFILE "${YBI_KD_TREE_KERNEL_PATH}.d")
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/kd_tree.cu"
-        OUTPUT "${YBI_KD_TREE_KERNEL_PATH}"
-        DEPFILE "${YBI_KD_TREE_KERNEL_DEPFILE}"
-        ARCHITECTURE sm_75
-    )
-    add_custom_target(yeoubi_kd_tree_kernel DEPENDS ${YBI_KD_TREE_KERNEL_PATH})
-    add_dependencies(yeoubi yeoubi_kd_tree_kernel)
+    if (YBI_USE_PATH_GUIDING)
+        set(YBI_KD_TREE_KERNEL_DEPFILE "${YBI_KD_TREE_KERNEL_PATH}.d")
+        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/kd_tree.cu"
+            OUTPUT "${YBI_KD_TREE_KERNEL_PATH}"
+            DEPFILE "${YBI_KD_TREE_KERNEL_DEPFILE}"
+            ARCHITECTURE sm_75
+        )
+        add_custom_target(yeoubi_kd_tree_kernel DEPENDS ${YBI_KD_TREE_KERNEL_PATH})
+        add_dependencies(yeoubi yeoubi_kd_tree_kernel)
+    endif()
 
     # Stream compaction
     set(YBI_STREAM_COMPACTION_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/stream_compaction.ptx")
@@ -475,7 +490,6 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_COUNT_KERNELS_KERNEL_PATH=\"${YBI_COUNT_KERNELS_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH=\"${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_UPDATE_VMM_KERNEL_PATH=\"${YBI_UPDATE_VMM_KERNEL_PATH}\")
-    list (APPEND YBI_COMPILE_DEFINITIONS YBI_KD_TREE_KERNEL_PATH=\"${YBI_KD_TREE_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_STREAM_COMPACTION_KERNEL_PATH=\"${YBI_STREAM_COMPACTION_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_INCLUDE_PATH=\"${YBI_OPTIX_INCLUDE_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_SDK_INCLUDE_PATH=\"${YBI_OPTIX_SDK_INCLUDE_PATH}\")

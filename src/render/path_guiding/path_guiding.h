@@ -9,7 +9,6 @@ namespace ybi
 class PathGuidingSystem
 {
     Device *device;
-    DeviceKind deviceKind;
     DeviceBuffer kernelParams;
 
     std::unique_ptr<DeviceKernel> generateWorkItems;

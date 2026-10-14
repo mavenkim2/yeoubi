@@ -5,6 +5,13 @@
 namespace ybi 
 {
 
+struct CPUDeviceKernel : DeviceKernel
+{
+    void (*function)(void **arguments) = nullptr;
+
+    explicit CPUDeviceKernel(void (*function)(void **arguments)) : function(function) {}
+};
+
 struct CPUDevice : Device
 {
     size_t totalAllocated;

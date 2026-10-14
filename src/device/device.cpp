@@ -1,5 +1,8 @@
 #include "device/device.h" 
+#include "device/cpu_device.h"
+#if defined(WITH_CUDA) && defined(WITH_OPTIX)
 #include "device/cuda_device.h"
+#endif
 
 namespace ybi 
 {
@@ -8,12 +11,7 @@ std::unique_ptr<Device> Device::CreateDevice(DeviceKind kind, bool createRendere
 {
     if (kind == DeviceKind::CPU)
     {
-#if defined(WITH_EMBREE)
-        return std::make_unique<CPUDevice>();
-#else
-        fprintf(stderr, "CPU backend requires WITH_EMBREE.\n");
-        return nullptr;
-#endif
+        return std::make_unique<CPUDevice>(createRendererPipeline);
     }
 
     if (kind == DeviceKind::GPU)
