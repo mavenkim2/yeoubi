@@ -7,7 +7,7 @@
 namespace ybi
 {
 
-void CreateKdTreeNodeItemsCPU(PathGuidingKdTreeParams params)
+void CreateKdTreeNodeItemsCPU(PathGuidingKdTreeParams &params)
 {
     CreateKdTreeNodeItems(params);
 }
@@ -69,7 +69,7 @@ void PartitionCountCPU(PathGuidingKdTreeParams params)
 void PartitionExclusiveScanCPU(PathGuidingKdTreeParams params)
 {
     tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
-        PartitionExclusiveScan(params, params.activeNodeItems[activeNodeItemIndex]);
+        PartitionExclusiveScan<CpuSIMDVMMBackend>(params, params.activeNodeItems[activeNodeItemIndex]);
     });
 }
 

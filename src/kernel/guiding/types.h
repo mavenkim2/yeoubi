@@ -138,7 +138,8 @@ enum class PathGuidingKdTreeStage
 struct PathGuidingKdTreeNode
 {
     float splitLocation;
-    int splitAxis;
+    int splitAxis = -1;
+    int childOffset = -1;
 
     Vec3f boundsMin;
     Vec3f boundsMax;
@@ -153,7 +154,7 @@ struct PathGuidingKdTreeNode
     uint32_t numSamples;
     uint32_t partitionGeneration = 0;
 
-    int guidingCellIndex;
+    int guidingCellIndex = -1;
     int guidingNodeIndex = -1;
 
     YBI_CPU_GPU bool NeedsSplit() const
@@ -218,8 +219,11 @@ struct PathGuidingKdTreeNodeItem
 struct PathGuidingKdTreeParams
 {
     PathGuidingKdTreeNode *nodes;
+    uint32_t numNodes = 0;
 
     PathGuidingKdTreeNodeItem *nodeItems;
+    PathGuidingKdTreeNodeItem *nextNodeItems;
+    uint32_t numNextNodeItems;
     PathGuidingKdTreeWorkItem *workItems;
 
     uint32_t numNodeItems;

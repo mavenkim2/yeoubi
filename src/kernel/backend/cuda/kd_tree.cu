@@ -11,7 +11,7 @@ YBI_GPU void ValidateKdTreeBlockLaunch()
     YBI_ASSERT(gridDim.y == 1 && gridDim.z == 1);
 }
 
-extern "C" __global__ void CreateKdTreeNodeItemsKernel(const PathGuidingKdTreeParams *kernelParams)
+extern "C" __global__ void CreateKdTreeNodeItemsKernel(PathGuidingKdTreeParams *kernelParams)
 {
     if (blockIdx.x == 0 && threadIdx.x == 0)
         CreateKdTreeNodeItems(*kernelParams);
@@ -89,15 +89,12 @@ extern "C" __global__ void PartitionCountKernel(const PathGuidingKdTreeParams *k
 
 extern "C" __global__ void PartitionExclusiveScanKernel(const PathGuidingKdTreeParams *kernelParams)
 {
-    YBI_ASSERT(blockDim.y == 1 && blockDim.z == 1);
-    YBI_ASSERT(gridDim.y == 1 && gridDim.z == 1);
+    ValidateKdTreeBlockLaunch();
     const PathGuidingKdTreeParams &params = *kernelParams;
-    const uint32_t threadIndex = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint32_t threadStride = blockDim.x * gridDim.x;
-    for (uint32_t activeNodeItemIndex = threadIndex; activeNodeItemIndex < params.numActiveNodeItems;
-         activeNodeItemIndex += threadStride)
+    for (uint32_t activeNodeItemIndex = blockIdx.x; activeNodeItemIndex < params.numActiveNodeItems;
+         activeNodeItemIndex += gridDim.x)
     {
-        PartitionExclusiveScan(params, params.activeNodeItems[activeNodeItemIndex]);
+        PartitionExclusiveScan<CudaVMMBackend>(params, params.activeNodeItems[activeNodeItemIndex]);
     }
 }
 
