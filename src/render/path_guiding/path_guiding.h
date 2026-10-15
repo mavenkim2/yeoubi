@@ -14,7 +14,7 @@ class PathGuidingSystem
     DeviceBuffer nodes;
     DeviceBuffer nodeItems;
     DeviceBuffer nextNodeItems;
-    DeviceBuffer workItems;
+    DeviceBuffer workItemLeftOffsets;
     uint32_t generation = 0;
 
     std::unique_ptr<DeviceKernel> generateNodeItems;

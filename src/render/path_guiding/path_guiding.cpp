@@ -54,8 +54,8 @@ PathGuidingSystem::~PathGuidingSystem()
         device->Free(nodeItems);
     if (nextNodeItems)
         device->Free(nextNodeItems);
-    if (workItems)
-        device->Free(workItems);
+    if (workItemLeftOffsets)
+        device->Free(workItemLeftOffsets);
 }
 
 void PathGuidingSystem::ReserveBuffer(DeviceBuffer &buffer, size_t size, size_t preserveSize)
@@ -141,9 +141,9 @@ void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
         const size_t workItemCapacity =
             CeilDiv(params.numSampleIndices, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT) +
             size_t(params.numNodeItems);
-        ReserveBuffer(workItems, workItemCapacity * sizeof(PathGuidingKdTreeWorkItem));
+        ReserveBuffer(workItemLeftOffsets, workItemCapacity * sizeof(uint32_t));
         params.activeNodeItems = activeNodeItems.As<uint32_t>().Get();
-        params.workItems = workItems.As<PathGuidingKdTreeWorkItem>().Get();
+        params.workItemLeftOffsets = workItemLeftOffsets.As<uint32_t>().Get();
         stage = PathGuidingKdTreeStage::PositionStatistics;
 
         device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));

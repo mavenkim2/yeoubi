@@ -196,9 +196,6 @@ struct PathGuidingKdTreeWorkItem
     uint32_t nodeItemIndex;
     uint32_t sampleOffset;
     uint32_t sampleCount;
-
-    // NOTE: stores count after PartitionCount, then the exclusive scan offset
-    uint32_t leftOffset;
 };
 
 struct PathGuidingKdTreeNodeItem
@@ -224,7 +221,7 @@ struct PathGuidingKdTreeParams
     PathGuidingKdTreeNodeItem *nodeItems;
     PathGuidingKdTreeNodeItem *nextNodeItems;
     uint32_t numNextNodeItems;
-    PathGuidingKdTreeWorkItem *workItems;
+    uint32_t *workItemLeftOffsets;
 
     uint32_t numNodeItems;
     uint32_t numWorkItems;

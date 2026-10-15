@@ -87,24 +87,36 @@ YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams &params, PathGuidingK
 
         nodeItem.workItemCount = workItemCount;
         totalWorkItemCount += workItemCount;
-
-        uint32_t sampleOffset = 0;
-        for (uint32_t workItemIndex = nodeItem.workItemOffset;
-             workItemIndex < nodeItem.workItemOffset + nodeItem.workItemCount;
-             workItemIndex++)
-        {
-            PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
-            workItem.nodeIndex = nodeItem.nodeIndex;
-            workItem.nodeItemIndex = nodeItemIndex;
-            workItem.sampleOffset = nodeItem.sampleOffset + sampleOffset;
-            workItem.sampleCount = Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT,
-                                                 nodeItem.sampleCount - sampleOffset);
-            workItem.leftOffset = 0;
-
-            sampleOffset += VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
-        }
     }
     params.numWorkItems = totalWorkItemCount;
+}
+
+YBI_GPU PathGuidingKdTreeWorkItem GetKdTreeWorkItem(PathGuidingKdTreeParams params,
+                                                  uint32_t workItemIndex)
+{
+    uint32_t begin = 0;
+    uint32_t end = params.numActiveNodeItems;
+    while (begin + 1 < end)
+    {
+        const uint32_t middle = begin + (end - begin) / 2;
+        const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[params.activeNodeItems[middle]];
+        if (workItemIndex < nodeItem.workItemOffset)
+            end = middle;
+        else
+            begin = middle;
+    }
+
+    const uint32_t nodeItemIndex = params.activeNodeItems[begin];
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    const uint32_t sampleOffset =
+        (workItemIndex - nodeItem.workItemOffset) * VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
+    PathGuidingKdTreeWorkItem workItem{};
+    workItem.nodeIndex = nodeItem.nodeIndex;
+    workItem.nodeItemIndex = nodeItemIndex;
+    workItem.sampleOffset = nodeItem.sampleOffset + sampleOffset;
+    workItem.sampleCount = Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT,
+                                        nodeItem.sampleCount - sampleOffset);
+    return workItem;
 }
 
 YBI_GPU void InitializeNodePositionStatistics(PathGuidingKdTreeParams params,
@@ -122,7 +134,7 @@ YBI_GPU void InitializeNodePositionStatistics(PathGuidingKdTreeParams params,
 template <typename Backend>
 YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workItemIndex)
 {
-    const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
     PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
     Vec3f boundsMin(INFINITY);
     Vec3f boundsMax(-INFINITY);
@@ -142,7 +154,7 @@ template <typename Backend>
 YBI_GPU void CalculateNodePositionStatistics(PathGuidingKdTreeParams params,
                                              uint32_t workItemIndex)
 {
-    const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
     PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
 
     const Vec3f boundsHalfExtent = (node.boundsMax - node.boundsMin) * 0.5f;
@@ -231,7 +243,7 @@ YBI_GPU void SelectNodeSplits(PathGuidingKdTreeParams params, uint32_t nodeItemI
 template <typename Backend>
 YBI_GPU void PartitionCount(PathGuidingKdTreeParams params, uint32_t workItemIndex)
 {
-    PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
     const PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
 
     uint32_t numLefts = 0;
@@ -243,7 +255,9 @@ YBI_GPU void PartitionCount(PathGuidingKdTreeParams params, uint32_t workItemInd
         const bool predicate = sample.position[node.splitAxis] < node.splitLocation;
         numLefts += predicate;
     }
-    Backend::ReduceAdd(numLefts, workItem.leftOffset);
+    const auto scan = Backend::ExclusiveScanAdd(numLefts);
+    if (Backend::GetThreadIndex() == 0)
+        params.workItemLeftOffsets[workItemIndex] = scan.total;
 }
 
 template <typename Backend>
@@ -261,14 +275,13 @@ YBI_GPU void PartitionExclusiveScan(PathGuidingKdTreeParams params, uint32_t nod
         uint32_t count = 0;
         if (valid)
         {
-            count = params.workItems[nodeItem.workItemOffset + workItemOffset].leftOffset;
+            count = params.workItemLeftOffsets[nodeItem.workItemOffset + workItemOffset];
         }
 
         const auto scan = Backend::ExclusiveScanAdd(count);
         if (valid)
         {
-            params.workItems[nodeItem.workItemOffset + workItemOffset].leftOffset =
-                offset + scan.prefix;
+            params.workItemLeftOffsets[nodeItem.workItemOffset + workItemOffset] = offset + scan.prefix;
         }
         offset += scan.total;
     }
@@ -283,7 +296,8 @@ YBI_GPU void PartitionSamples(PathGuidingKdTreeParams params,
 {
     const uint32_t threadIndex = Backend::GetThreadIndex();
     const uint32_t threadStride = Backend::GetThreadStride();
-    const PathGuidingKdTreeWorkItem &workItem = params.workItems[workItemIndex];
+    const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
+    const uint32_t leftOffset = params.workItemLeftOffsets[workItemIndex];
     PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[workItem.nodeItemIndex];
     const uint32_t precedingSamples = workItem.sampleOffset - nodeItem.sampleOffset;
@@ -306,9 +320,9 @@ YBI_GPU void PartitionSamples(PathGuidingKdTreeParams params,
         const uint32_t localLeft = previousLeft + scan.prefix;
         if (valid)
         {
-            const uint32_t outputOffset = goesLeft ? workItem.leftOffset + localLeft
+            const uint32_t outputOffset = goesLeft ? leftOffset + localLeft
                                                    : nodeItem.numLeft +
-                                                         (precedingSamples - workItem.leftOffset) +
+                                                         (precedingSamples - leftOffset) +
                                                          (sampleOffset - localLeft);
             newSampleIndices[nodeItem.sampleOffset + outputOffset] = sampleIndex;
         }
