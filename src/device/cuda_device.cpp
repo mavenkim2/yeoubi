@@ -2,6 +2,7 @@
 #include "core/arena.h"
 #include "core/assert.h"
 #include "core/bit.h"
+#include "core/math.h"
 #include "core/thread_context.h"
 #include "device/cuda_arena.h"
 #include "device/cuda_assert.h"
@@ -622,7 +623,7 @@ bool CUDADevice::DispatchKernel(KernelType kernelType,
         CUDADeviceKernel &cameraKernel = static_cast<CUDADeviceKernel &>(*generateCameraRays);
         void *arguments[] = {kernelParams.KernelArg(), &numWorkItems};
         CUresult result = cuLaunchKernel(cameraKernel.function,
-                                         (numWorkItems - 1) / blockSize + 1,
+                                         CeilDiv(numWorkItems, blockSize),
                                          1,
                                          1,
                                          blockSize,

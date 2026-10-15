@@ -2,6 +2,7 @@
 
 #include "core/assert.h"
 #include "core/bit.h"
+#include "core/math.h"
 #include "core/vec4f.h"
 #include "device/cuda_compat.h"
 #include "device/device_texture.h"
@@ -66,8 +67,7 @@ YBI_CPU_GPU uint32_t CalculateVirtualTexturePageCount(uint32_t dimension, uint32
         return 0u;
     }
 
-    // Ceiling division by the power-of-two page size without overflowing dimension.
-    return (dimension + (1u << pageShift) - 1u) >> pageShift;
+    return CeilDiv(dimension, 1u << pageShift);
 }
 
 YBI_CPU_GPU uint32_t CalculatePageDescriptorOffset(uint32_t width,

@@ -1,5 +1,6 @@
 #include "core/assert.h"
 #include "core/bit.h"
+#include "core/math.h"
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "core/vec3u.h"
@@ -133,7 +134,7 @@ static void ValidateClusteredPrimvarCUDA(const uint8_t *deviceCompressedBytes,
         cudaMalloc(reinterpret_cast<void **>(&deviceAttributes), attributeCount * sizeof(T)));
 
     constexpr uint32_t blockSize = 128u;
-    const uint32_t blockCount = (attributeCount + blockSize - 1u) / blockSize;
+    const uint32_t blockCount = CeilDiv(attributeCount, blockSize);
     DecodeCompressedClusterAttribute<T><<<blockCount, blockSize>>>(
         deviceCompressedBytes, deviceCluster, deviceAttributes, attributeIndex, attributeCount);
     CheckCudaRuntime(cudaGetLastError());
@@ -415,12 +416,12 @@ void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
     }
 
     constexpr uint32_t blockSize = 128u;
-    const uint32_t vertexBlockCount = (vertexCount + blockSize - 1u) / blockSize;
+    const uint32_t vertexBlockCount = CeilDiv(vertexCount, blockSize);
     DecodeCompressedClusterPositions<<<vertexBlockCount, blockSize>>>(
         deviceCompressedBytes, deviceCluster, devicePositions, vertexCount);
     CheckCudaRuntime(cudaGetLastError());
 
-    const uint32_t triangleBlockCount = (triangleCount + blockSize - 1u) / blockSize;
+    const uint32_t triangleBlockCount = CeilDiv(triangleCount, blockSize);
     DecodeCompressedClusterTriangles<<<triangleBlockCount, blockSize>>>(
         deviceCompressedBytes, deviceCluster, deviceTriangles, triangleCount);
     CheckCudaRuntime(cudaGetLastError());
@@ -430,14 +431,14 @@ void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
 
     if (normalCount)
     {
-        const uint32_t normalBlockCount = (normalCount + blockSize - 1u) / blockSize;
+        const uint32_t normalBlockCount = CeilDiv(normalCount, blockSize);
         DecodeCompressedClusterNormals<<<normalBlockCount, blockSize>>>(
             deviceCompressedBytes, deviceCluster, deviceNormals, normalCount);
         CheckCudaRuntime(cudaGetLastError());
     }
     if (uvCount)
     {
-        const uint32_t uvBlockCount = (uvCount + blockSize - 1u) / blockSize;
+        const uint32_t uvBlockCount = CeilDiv(uvCount, blockSize);
         DecodeCompressedClusterUVs<<<uvBlockCount, blockSize>>>(
             deviceCompressedBytes, deviceCluster, deviceUVs, uvCount);
         CheckCudaRuntime(cudaGetLastError());

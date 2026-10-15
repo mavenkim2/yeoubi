@@ -1,6 +1,7 @@
 #include "render/virtual_texture/manager.h"
 #include "core/assert.h"
 #include "core/bit.h"
+#include "core/math.h"
 #include "core/ring_buffer.h"
 #include "core/thread_context.h"
 #include "device/device.h"
@@ -391,7 +392,7 @@ void VirtualTextureManager::Finalize()
                              pageDescriptors.data(),
                              devicePageDescriptors.SizeInBytes());
 
-        const size_t numBitWords = (pageDescriptors.size() + 31) / 32;
+        const size_t numBitWords = CeilDiv(pageDescriptors.size(), 32);
         for (DeviceBuffer &buffer : pageDescriptorBits)
         {
             buffer = device->Alloc(sizeof(uint32_t) * numBitWords);
@@ -786,7 +787,7 @@ void VirtualTextureManager::Update(KernelParams *params)
         };
 
         DeviceKernelLaunchDesc desc;
-        desc.gridX = (numUpdateRequests + 31) / 32;
+        desc.gridX = CeilDiv(numUpdateRequests, 32);
         desc.blockX = 32;
         desc.arguments = arguments;
         device->ExecuteKernel(*updatePageDescriptors, desc);
@@ -906,7 +907,7 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
         };
 
         DeviceKernelLaunchDesc desc;
-        desc.gridX = (updateRequests.size() + 31) / 32;
+        desc.gridX = CeilDiv(updateRequests.size(), 32);
         desc.blockX = 32;
         desc.arguments = arguments;
         device->ExecuteKernel(*updatePageDescriptors, desc);

@@ -2,7 +2,6 @@
 
 #include "core/assert.h"
 #include "device/cuda_compat.h"
-#include <cmath>
 
 #if defined(SIMD_4)
 #include <xmmintrin.h>
@@ -16,6 +15,12 @@
 
 namespace ybi
 {
+
+template <typename T, typename U>
+YBI_CPU_GPU auto CeilDiv(T value, U divisor)
+{
+    return (value + divisor - 1) / divisor;
+}
 
 template <typename T>
 YBI_CPU_GPU constexpr T Clamp(T value, T minValue, T maxValue)

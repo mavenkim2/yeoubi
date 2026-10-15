@@ -1,5 +1,6 @@
 #include "application.h"
 #include "core/assert.h"
+#include "core/math.h"
 #include "core/platform.h"
 #include "core/time.h"
 #include "device/device.h"
@@ -371,8 +372,8 @@ void InteractiveApplication::Run()
 
             void *arguments[] = {&params};
             DeviceKernelLaunchDesc launch;
-            launch.gridX = (windowWidth + 7) / 8;
-            launch.gridY = (windowHeight + 7) / 8;
+            launch.gridX = CeilDiv(windowWidth, 8);
+            launch.gridY = CeilDiv(windowHeight, 8);
             launch.blockX = 8;
             launch.blockY = 8;
             launch.arguments = arguments;
@@ -599,8 +600,8 @@ void OfflineApplication::Run()
 
         void *arguments[] = {&params};
         DeviceKernelLaunchDesc launch;
-        launch.gridX = (outputWidth + 7) / 8;
-        launch.gridY = (outputHeight + 7) / 8;
+        launch.gridX = CeilDiv(outputWidth, 8);
+        launch.gridY = CeilDiv(outputHeight, 8);
         launch.blockX = singlePixel ? 1 : 8;
         launch.blockY = singlePixel ? 1 : 8;
         launch.arguments = arguments;

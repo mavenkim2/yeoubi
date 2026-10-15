@@ -2,6 +2,7 @@
 
 #include "core/arena.h"
 #include "core/bit.h"
+#include "core/math.h"
 
 namespace ybi
 {
@@ -20,7 +21,7 @@ struct BitVector
 
 inline BitVector::BitVector(Arena *arena, uint32_t maxNumBits) : maxNumBits(maxNumBits)
 {
-    bits = arena->PushArrayZero<uint32_t>((maxNumBits + 31) >> 5);
+    bits = arena->PushArrayZero<uint32_t>(CeilDiv(maxNumBits, 32));
 }
 
 inline void BitVector::SetBit(uint32_t bit)

@@ -1,4 +1,5 @@
 #include "render/wavefront_integrator.h"
+#include "core/math.h"
 #include "device/device.h"
 #include "kernel/guiding/guiding.h"
 #include "kernel/guiding/kd_tree.h"
@@ -146,7 +147,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
 
     DeviceKernelLaunchDesc launch;
     launch.blockX = 256;
-    launch.gridX = (numSampleStates - 1) / launch.blockX + 1;
+    launch.gridX = CeilDiv(numSampleStates, launch.blockX);
     launch.arguments = arguments;
 
     WavefrontParams initialParams = params;
@@ -225,7 +226,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
             numSampleStates += numCameraSamples;
             counts.counts[KERNEL_INTERSECT] += numCameraSamples;
             copyToDevice(params.numSampleStates, &numSampleStates, sizeof(numSampleStates));
-            launch.gridX = (numSampleStates - 1) / launch.blockX + 1;
+            launch.gridX = CeilDiv(numSampleStates, launch.blockX);
         }
 
         WavefrontParams dispatchParams = params;

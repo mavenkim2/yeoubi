@@ -402,8 +402,8 @@ static void WriteTextureMipPages(FileBuilder &fileBuilder,
     const int pageNumBytes = Sqr(paddedPageSize) * numBytesPerTexel;
     const int rowStride = mipWidth * numBytesPerTexel;
     const int pageStride = paddedPageSize * numBytesPerTexel;
-    const int xSteps = (mipWidth + pageSize - 1) / pageSize;
-    const int ySteps = (mipHeight + pageSize - 1) / pageSize;
+    const int xSteps = CeilDiv(mipWidth, pageSize);
+    const int ySteps = CeilDiv(mipHeight, pageSize);
     const uint8_t *mipBytes = reinterpret_cast<const uint8_t *>(mipData);
     YBI_ASSERT(gutterSize <= Min(mipWidth, mipHeight));
 
@@ -963,8 +963,8 @@ static void ProcessTexture(Arena &arena,
          mipWidth >= pageSize && mipHeight >= pageSize;
          mipWidth = std::max(1, mipWidth / 2), mipHeight = std::max(1, mipHeight / 2))
     {
-        const int xSteps = (mipWidth + pageSize - 1) / pageSize;
-        const int ySteps = (mipHeight + pageSize - 1) / pageSize;
+        const int xSteps = CeilDiv(mipWidth, pageSize);
+        const int ySteps = CeilDiv(mipHeight, pageSize);
         numPages += static_cast<uint32_t>(xSteps * ySteps);
         numMips++;
     }
@@ -1010,8 +1010,8 @@ static void ProcessTexture(Arena &arena,
 
     for (uint32_t mip = 0; mip < numMips; mip++)
     {
-        const int xSteps = (mipWidth + pageSize - 1) / pageSize;
-        const int ySteps = (mipHeight + pageSize - 1) / pageSize;
+        const int xSteps = CeilDiv(mipWidth, pageSize);
+        const int ySteps = CeilDiv(mipHeight, pageSize);
 
         WriteTextureMipPages(fileBuilder,
                              pageTableOffset,

@@ -607,7 +607,7 @@ AppendPackedDeltas(Array<uint8_t> &outputBytes, const Range &items, GetValue get
 
     const uint32_t bitWidth = CalculateBitWidth(maxValue - minValue);
     const size_t totalBits = size_t(bitWidth) * items.size();
-    const size_t byteCount = (totalBits + 7) / 8;
+    const size_t byteCount = CeilDiv(totalBits, 8);
 
     const size_t byteOffset = AppendOutputBytes(outputBytes, byteCount);
     YBI_ASSERT(byteOffset <= UINT32_MAX / 8u);
@@ -726,7 +726,7 @@ static uint32_t WriteMaterialIDs(const DataContainer *container,
 
     const size_t materialTableNumBits = commonMSBs + lsbBitCount * uniqueMaterialIDs.size() +
                                         size_t(entryBitLength) * materialIndices.size();
-    const size_t materialTableSize = (materialTableNumBits + 7u) >> 3u;
+    const size_t materialTableSize = CeilDiv(materialTableNumBits, 8u);
     const size_t materialTableOffset = AppendOutputBytes(outputBytes, materialTableSize);
     YBI_ASSERT(materialTableOffset < (1ull << 22u));
     YBI_ASSERT(materialTableOffset <= UINT32_MAX / 8u);
@@ -887,16 +887,16 @@ static DeviceClusterAttribute WriteClusteredPrimvars(const DataContainer *contai
         WriteBits(outputBytes.data(), primvarBaseBitOffset, minPrimvar[component], 32u);
     }
 
-    const size_t flatPrimvarByteCount = (logicalPrimvars.size() * bitsPerPrimvar + 7u) >> 3u;
-    const size_t indexedPrimvarByteCount = (uniquePrimvars.size() * bitsPerPrimvar + 7u) >> 3u;
+    const size_t flatPrimvarByteCount = CeilDiv(logicalPrimvars.size() * bitsPerPrimvar, 8u);
+    const size_t indexedPrimvarByteCount = CeilDiv(uniquePrimvars.size() * bitsPerPrimvar, 8u);
     const size_t primvarIndexByteCount =
-        (localPrimvarIndices.size() * size_t(primvarIndexBitWidth) + 7u) >> 3u;
+        CeilDiv(localPrimvarIndices.size() * size_t(primvarIndexBitWidth), 8u);
     const bool useIndexedPrimvars =
         indexedPrimvarByteCount + primvarIndexByteCount < flatPrimvarByteCount;
 
     const Array<PackedType> &storedPrimvars =
         useIndexedPrimvars ? uniquePrimvars : logicalPrimvars;
-    const size_t primvarByteCount = (storedPrimvars.size() * bitsPerPrimvar + 7u) >> 3u;
+    const size_t primvarByteCount = CeilDiv(storedPrimvars.size() * bitsPerPrimvar, 8u);
     const size_t primvarByteOffset = AppendOutputBytes(outputBytes, primvarByteCount);
     YBI_ASSERT(primvarByteOffset <= UINT32_MAX / 8u);
     uint32_t primvarBitOffset = static_cast<uint32_t>(primvarByteOffset * 8u);
@@ -1112,7 +1112,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
         positionAnchor = Vec3u(minX, minY, minZ);
 
         const uint32_t verticesNumBytes =
-            (vertexIndices.size() * (bitWidthX + bitWidthY + bitWidthZ + 3u) + 7u) >> 3u;
+            CeilDiv(vertexIndices.size() * (bitWidthX + bitWidthY + bitWidthZ + 3u), 8u);
 
         size_t positionByteOffset = AppendOutputBytes(outputBytes, verticesNumBytes);
         // TODO IMPORTANT: WriteBits is limited to only 512 MB...
@@ -1149,7 +1149,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
         }
 
         const uint32_t numVertexBits = CalculateBitWidth(maxVertexIndex - minVertexIndex);
-        const uint32_t vertexIndicesNumBytes = ((numVertexBits * vertexIndices.size()) + 7u) >> 3u;
+        const uint32_t vertexIndicesNumBytes = CeilDiv(numVertexBits * vertexIndices.size(), 8u);
 
         const size_t byteOffset = AppendOutputBytes(outputBytes, vertexIndicesNumBytes);
         YBI_ASSERT(byteOffset <= UINT32_MAX / 8u);
@@ -1240,7 +1240,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
         normalBase = Vec2u(minOctahedralX, minOctahedralY);
 
         const size_t normalBitCount = size_t(numOctBitsX + numOctBitsY) * octahedralNormals.size();
-        const size_t normalByteCount = (normalBitCount + 7u) >> 3u;
+        const size_t normalByteCount = CeilDiv(normalBitCount, 8u);
 
         const size_t normalByteOffset = AppendOutputBytes(outputBytes, normalByteCount);
         YBI_ASSERT(normalByteOffset <= UINT32_MAX / 8u);
@@ -1337,14 +1337,14 @@ static void CreateCompressedGeometry(const DataContainer *container,
         const uint32_t uvIndexBitWidth =
             CalculateBitWidth(static_cast<uint32_t>(uniqueUVs.size() - 1u));
 
-        const size_t flatUVByteCount = (logicalUVs.size() * bitsPerUV + 7u) >> 3u;
-        const size_t indexedUVByteCount = (uniqueUVs.size() * bitsPerUV + 7u) >> 3u;
+        const size_t flatUVByteCount = CeilDiv(logicalUVs.size() * bitsPerUV, 8u);
+        const size_t indexedUVByteCount = CeilDiv(uniqueUVs.size() * bitsPerUV, 8u);
         const size_t uvIndexByteCount =
-            (localUVIndices.size() * size_t(uvIndexBitWidth) + 7u) >> 3u;
+            CeilDiv(localUVIndices.size() * size_t(uvIndexBitWidth), 8u);
         const bool useIndexedUVs = indexedUVByteCount + uvIndexByteCount < flatUVByteCount;
 
         const Array<Vec2u> &storedUVs = useIndexedUVs ? uniqueUVs : logicalUVs;
-        const size_t uvByteCount = (storedUVs.size() * bitsPerUV + 7u) >> 3u;
+        const size_t uvByteCount = CeilDiv(storedUVs.size() * bitsPerUV, 8u);
         const size_t uvByteOffset = AppendOutputBytes(outputBytes, uvByteCount);
         YBI_ASSERT(uvByteOffset <= UINT32_MAX / 8u);
         uvBitOffset = static_cast<uint32_t>(uvByteOffset * 8u);
@@ -1513,10 +1513,10 @@ static void CreateCompressedGeometry(const DataContainer *container,
     uint32_t reuseBitOffset = 0;
     uint32_t firstUseBitOffset = 0;
     {
-        const uint32_t ctrlBitSize = ((meshlet.triangleCount + 31) >> 5u) * 12u;
+        const uint32_t ctrlBitSize = CeilDiv(meshlet.triangleCount, 32) * 12u;
 
         uint32_t bitStreamSize =
-            ((numIndexBits * reuseBuffer.size() + currentFirstUseBit + 7) >> 3) + ctrlBitSize;
+            CeilDiv(numIndexBits * reuseBuffer.size() + currentFirstUseBit, 8) + ctrlBitSize;
 
         const size_t initialOffset = AppendOutputBytes(outputBytes, bitStreamSize);
         YBI_ASSERT(initialOffset <= UINT32_MAX / 8u);
@@ -1590,7 +1590,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
         cluster.edge2HighBitPerDword[i] = edge2HighBitPerDword[i];
     }
 
-    const uint32_t firstUseDwordCount = (currentFirstUseBit + 31u) >> 5u;
+    const uint32_t firstUseDwordCount = CeilDiv(currentFirstUseBit, 32u);
     YBI_ASSERT(firstUseDwordCount <= DEVICE_CLUSTER_FIRST_USE_DWORD_COUNT);
     uint32_t firstUseCount = 0;
     for (uint32_t i = 0; i < firstUseDwordCount; i++)
