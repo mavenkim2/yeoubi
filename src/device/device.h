@@ -136,10 +136,39 @@ struct Device
 
     virtual void WaitIdle() = 0;
 
-    virtual DeviceBuffer Alloc(size_t bytes) = 0;
-    virtual void Free(DeviceBuffer &buffer) = 0;
-    virtual DeviceBuffer AllocHost(size_t bytes) = 0;
-    virtual void FreeHost(DeviceBuffer &buffer) = 0;
+    virtual DeviceBuffer<std::byte> AllocBytes(size_t bytes) = 0;
+    virtual void FreeBytes(DeviceBuffer<std::byte> &buffer) = 0;
+    virtual DeviceBuffer<std::byte> AllocHostBytes(size_t bytes) = 0;
+    virtual void FreeHostBytes(DeviceBuffer<std::byte> &buffer) = 0;
+
+    template <typename T = std::byte>
+    DeviceBuffer<T> Alloc(size_t count)
+    {
+        return AllocBytes(count * sizeof(T)).template As<T>();
+    }
+
+    template <typename T>
+    void Free(DeviceBuffer<T> &buffer)
+    {
+        auto bytes = buffer.template As<std::byte>();
+        FreeBytes(bytes);
+        buffer = {};
+    }
+
+    template <typename T = std::byte>
+    DeviceBuffer<T> AllocHost(size_t count)
+    {
+        return AllocHostBytes(count * sizeof(T)).template As<T>();
+    }
+
+    template <typename T>
+    void FreeHost(DeviceBuffer<T> &buffer)
+    {
+        auto bytes = buffer.template As<std::byte>();
+        FreeHostBytes(bytes);
+        buffer = {};
+    }
+
     virtual DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) = 0;
     virtual void FreeExternalBuffer(DeviceExternalBuffer &buffer) = 0;
     virtual DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) = 0;
@@ -164,7 +193,18 @@ struct Device
     virtual bool DispatchKernel(KernelType kernelType,
                                 uint32_t numWorkItems,
                                 uint32_t blockSize,
-                                DeviceBuffer kernelParams) = 0;
+                                DeviceBuffer<std::byte> kernelParams) = 0;
+
+    template <typename T>
+    bool DispatchKernel(KernelType kernelType,
+                        uint32_t numWorkItems,
+                        uint32_t blockSize,
+                        DeviceBuffer<T> kernelParams)
+    {
+        return DispatchKernel(
+            kernelType, numWorkItems, blockSize, kernelParams.template As<std::byte>());
+    }
+
     virtual DeviceTexture CreateTexture(const DeviceTextureInfo &info) = 0;
     virtual void DestroyTexture(DeviceTexture &texture) = 0;
     virtual std::unique_ptr<DeviceStream> CreateDeviceStream() = 0;

@@ -33,6 +33,16 @@ __global__ void ComputeCLASDestAddresses(const uint32_t *sizes,
                                          uint64_t baseAddr,
                                          uint64_t *destAddresses);
 
+template <typename T = std::byte>
+static DeviceBuffer<T> AllocTemporary(CUDADevice *device,
+                                     std::vector<DeviceBuffer<std::byte>> &buffers,
+                                     size_t count)
+{
+    DeviceBuffer<T> buffer = device->Alloc<T>(count);
+    buffers.push_back(buffer.template As<std::byte>());
+    return buffer;
+}
+
 void BuildMeshCLAS(CUDADevice *cudaDevice,
                    DataContainer *container,
                    const Mesh &mesh,
@@ -64,26 +74,26 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
         totalIndexBound += clusterResult.meshlets[i].triangleCount * 3u;
     }
 
-    std::vector<DeviceBuffer> temporaryBuffers;
-    auto allocTemporary = [&](size_t bytes) {
-        DeviceBuffer buffer = cudaDevice->Alloc(bytes);
-        temporaryBuffers.push_back(buffer);
-        return buffer;
-    };
+    std::vector<DeviceBuffer<std::byte>> temporaryBuffers;
 
-    DeviceBuffer devicePositions = allocTemporary(vertexCount * sizeof(Vec3f));
+    DeviceBuffer<Vec3f> devicePositions =
+        AllocTemporary<Vec3f>(cudaDevice, temporaryBuffers, vertexCount);
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(devicePositions.Data()), positions.data(), vertexCount * sizeof(Vec3f)));
 
     const size_t meshletVerticesSize = clusterResult.meshletVertices.size();
     const size_t meshletTrianglesSize = clusterResult.meshletTriangles.size();
 
-    DeviceBuffer deviceMeshlets = allocTemporary(meshletCount * sizeof(Meshlet));
-    DeviceBuffer deviceMeshletVertices =
-        allocTemporary(meshletVerticesSize * sizeof(unsigned int));
-    DeviceBuffer deviceMeshletTriangles = allocTemporary(meshletTrianglesSize * sizeof(uint8_t));
-    DeviceBuffer nextVertexOffset = allocTemporary(sizeof(unsigned int));
-    DeviceBuffer nextIndexOffset = allocTemporary(sizeof(unsigned int));
+    DeviceBuffer<Meshlet> deviceMeshlets =
+        AllocTemporary<Meshlet>(cudaDevice, temporaryBuffers, meshletCount);
+    DeviceBuffer<unsigned int> deviceMeshletVertices =
+        AllocTemporary<unsigned int>(cudaDevice, temporaryBuffers, meshletVerticesSize);
+    DeviceBuffer<uint8_t> deviceMeshletTriangles =
+        AllocTemporary<uint8_t>(cudaDevice, temporaryBuffers, meshletTrianglesSize);
+    DeviceBuffer<unsigned int> nextVertexOffset =
+        AllocTemporary<unsigned int>(cudaDevice, temporaryBuffers, 1);
+    DeviceBuffer<unsigned int> nextIndexOffset =
+        AllocTemporary<unsigned int>(cudaDevice, temporaryBuffers, 1);
 
     CUDA_ASSERT(cuMemcpyHtoD(CUdeviceptr(deviceMeshlets.Data()),
                              clusterResult.meshlets.data(),
@@ -98,22 +108,25 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     CUDA_ASSERT(cuMemsetD32(CUdeviceptr(nextVertexOffset.Data()), 0, 1));
     CUDA_ASSERT(cuMemsetD32(CUdeviceptr(nextIndexOffset.Data()), 0, 1));
 
-    DeviceBuffer outputVertices = allocTemporary(totalVertexBound * sizeof(Vec3f));
-    DeviceBuffer outputIndices = allocTemporary(totalIndexBound * sizeof(uint8_t));
-    DeviceBuffer buildArgs =
-        allocTemporary(meshletCount * sizeof(OptixClusterAccelBuildInputTrianglesArgs));
+    DeviceBuffer<Vec3f> outputVertices =
+        AllocTemporary<Vec3f>(cudaDevice, temporaryBuffers, totalVertexBound);
+    DeviceBuffer<uint8_t> outputIndices =
+        AllocTemporary<uint8_t>(cudaDevice, temporaryBuffers, totalIndexBound);
+    DeviceBuffer<OptixClusterAccelBuildInputTrianglesArgs> buildArgs =
+        AllocTemporary<OptixClusterAccelBuildInputTrianglesArgs>(
+            cudaDevice, temporaryBuffers, meshletCount);
 
     WriteTriangleClusterDescriptors<<<static_cast<unsigned int>(meshletCount), 256>>>(
-        deviceMeshlets.As<Meshlet>().Get(),
-        deviceMeshletVertices.As<unsigned int>().Get(),
-        deviceMeshletTriangles.As<uint8_t>().Get(),
-        devicePositions.As<Vec3f>().Get(),
+        deviceMeshlets.Data(),
+        deviceMeshletVertices.Data(),
+        deviceMeshletTriangles.Data(),
+        devicePositions.Data(),
         static_cast<unsigned int>(meshletCount),
-        nextVertexOffset.As<unsigned int>().Get(),
-        nextIndexOffset.As<unsigned int>().Get(),
-        outputVertices.As<Vec3f>().Get(),
-        outputIndices.As<uint8_t>().Get(),
-        buildArgs.As<OptixClusterAccelBuildInputTrianglesArgs>().Get());
+        nextVertexOffset.Data(),
+        nextIndexOffset.Data(),
+        outputVertices.Data(),
+        outputIndices.Data(),
+        buildArgs.Data());
 
     OptixClusterAccelBuildInput buildInput = {};
     buildInput.type = OPTIX_CLUSTER_ACCEL_BUILD_TYPE_CLUSTERS_FROM_TRIANGLES;
@@ -140,10 +153,12 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 
     const size_t tempSizeInBytes =
         std::max(getSizeBufferSizes.tempSizeInBytes, explicitBufferSizes.tempSizeInBytes);
-    DeviceBuffer temp = allocTemporary(tempSizeInBytes);
-    DeviceBuffer deviceOutputSizes = allocTemporary(meshletCount * sizeof(uint32_t));
+    DeviceBuffer<std::byte> temp = AllocTemporary(cudaDevice, temporaryBuffers, tempSizeInBytes);
+    DeviceBuffer<uint32_t> deviceOutputSizes =
+        AllocTemporary<uint32_t>(cudaDevice, temporaryBuffers, meshletCount);
 
-    DeviceBuffer deviceArgsCount = allocTemporary(sizeof(uint32_t));
+    DeviceBuffer<uint32_t> deviceArgsCount =
+        AllocTemporary<uint32_t>(cudaDevice, temporaryBuffers, 1);
     const uint32_t argsCountVal = static_cast<unsigned int>(meshletCount);
     CUDA_ASSERT(
         cuMemcpyHtoD(CUdeviceptr(deviceArgsCount.Data()), &argsCountVal, sizeof(uint32_t)));
@@ -163,10 +178,11 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                                         CUdeviceptr(deviceArgsCount.Data()),
                                         sizeof(OptixClusterAccelBuildInputTrianglesArgs)));
 
-    DeviceBuffer totalCLASSize = allocTemporary(sizeof(uint32_t));
-    ComputeCLASTotalSize<<<1, 1>>>(deviceOutputSizes.As<uint32_t>().Get(),
+    DeviceBuffer<uint32_t> totalCLASSize =
+        AllocTemporary<uint32_t>(cudaDevice, temporaryBuffers, 1);
+    ComputeCLASTotalSize<<<1, 1>>>(deviceOutputSizes.Data(),
                                    static_cast<uint32_t>(meshletCount),
-                                   totalCLASSize.As<uint32_t>().Get());
+                                   totalCLASSize.Data());
 
     uint32_t totalSize = 0;
     CUDA_ASSERT(cuMemcpyDtoH(&totalSize, CUdeviceptr(totalCLASSize.Data()), sizeof(uint32_t)));
@@ -174,14 +190,15 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 
     YBI_ASSERT(totalSize);
 
-    DeviceBuffer outputBuffer = cudaDevice->Alloc(totalSize);
+    DeviceBuffer<std::byte> outputBuffer = cudaDevice->Alloc(totalSize);
     const CUdeviceptr baseAddr = CUdeviceptr(outputBuffer.Data());
 
-    DeviceBuffer deviceDestAddresses = allocTemporary(meshletCount * sizeof(uint64_t));
-    ComputeCLASDestAddresses<<<1, 1>>>(deviceOutputSizes.As<uint32_t>().Get(),
+    DeviceBuffer<uint64_t> deviceDestAddresses =
+        AllocTemporary<uint64_t>(cudaDevice, temporaryBuffers, meshletCount);
+    ComputeCLASDestAddresses<<<1, 1>>>(deviceOutputSizes.Data(),
                                        static_cast<uint32_t>(meshletCount),
                                        baseAddr,
-                                       deviceDestAddresses.As<uint64_t>().Get());
+                                       deviceDestAddresses.Data());
 
     OptixClusterAccelBuildModeDesc explicitDesc = {};
     explicitDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS;
@@ -224,11 +241,13 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 
     const size_t gasTempSizeInBytes =
         std::max(gasGetSizeBufferSizes.tempSizeInBytes, gasExplicitBufferSizes.tempSizeInBytes);
-    DeviceBuffer gasTemp = allocTemporary(gasTempSizeInBytes);
-    DeviceBuffer deviceGASOutputSizes = allocTemporary(sizeof(uint32_t));
+    DeviceBuffer<std::byte> gasTemp = AllocTemporary(cudaDevice, temporaryBuffers, gasTempSizeInBytes);
+    DeviceBuffer<uint32_t> deviceGASOutputSizes =
+        AllocTemporary<uint32_t>(cudaDevice, temporaryBuffers, 1);
 
-    DeviceBuffer deviceClusterArgs =
-        allocTemporary(sizeof(OptixClusterAccelBuildInputClustersArgs));
+    DeviceBuffer<OptixClusterAccelBuildInputClustersArgs> deviceClusterArgs =
+        AllocTemporary<OptixClusterAccelBuildInputClustersArgs>(
+            cudaDevice, temporaryBuffers, 1);
     OptixClusterAccelBuildInputClustersArgs hostClusterArgs = {};
     hostClusterArgs.clusterHandlesBuffer = CUdeviceptr(deviceDestAddresses.Data());
     hostClusterArgs.clusterHandlesCount = static_cast<unsigned int>(meshletCount);
@@ -237,7 +256,8 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                              &hostClusterArgs,
                              sizeof(OptixClusterAccelBuildInputClustersArgs)));
 
-    DeviceBuffer deviceGASArgsCount = allocTemporary(sizeof(uint32_t));
+    DeviceBuffer<uint32_t> deviceGASArgsCount =
+        AllocTemporary<uint32_t>(cudaDevice, temporaryBuffers, 1);
     const uint32_t gasArgsCountVal = 1u;
     CUDA_ASSERT(
         cuMemcpyHtoD(CUdeviceptr(deviceGASArgsCount.Data()), &gasArgsCountVal, sizeof(uint32_t)));
@@ -263,12 +283,14 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
 
     YBI_ASSERT(gasSize);
 
-    DeviceBuffer gasOutputBuffer = cudaDevice->Alloc(gasSize);
+    DeviceBuffer<std::byte> gasOutputBuffer = cudaDevice->Alloc(gasSize);
     const uint64_t gasBaseAddr = reinterpret_cast<uint64_t>(gasOutputBuffer.Data());
-    DeviceBuffer deviceGASDestAddresses = allocTemporary(sizeof(uint64_t));
+    DeviceBuffer<uint64_t> deviceGASDestAddresses =
+        AllocTemporary<uint64_t>(cudaDevice, temporaryBuffers, 1);
     CUDA_ASSERT(
         cuMemcpyHtoD(CUdeviceptr(deviceGASDestAddresses.Data()), &gasBaseAddr, sizeof(uint64_t)));
-    DeviceBuffer deviceGASOutputHandles = allocTemporary(sizeof(OptixTraversableHandle));
+    DeviceBuffer<OptixTraversableHandle> deviceGASOutputHandles =
+        AllocTemporary<OptixTraversableHandle>(cudaDevice, temporaryBuffers, 1);
 
     OptixClusterAccelBuildModeDesc gasExplicitDesc = {};
     gasExplicitDesc.mode = OPTIX_CLUSTER_ACCEL_BUILD_MODE_EXPLICIT_DESTINATIONS;
@@ -295,7 +317,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
     cudaDevice->bvhTotalAllocated += gasSize;
     cudaDevice->bvhTotalAllocated += totalSize;
 
-    for (DeviceBuffer &buffer : temporaryBuffers)
+    for (DeviceBuffer<std::byte> &buffer : temporaryBuffers)
     {
         cudaDevice->Free(buffer);
     }

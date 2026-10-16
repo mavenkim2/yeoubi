@@ -5,8 +5,29 @@
 
 #if defined(__CUDACC__)
 
+#include <type_traits>
+
 namespace ybi
 {
+
+template <typename T>
+YBI_GPU T WarpReduceSum(T value)
+{
+    static_assert(std::is_trivially_copyable<T>::value, "Warp reduction requires a trivially copyable type");
+#pragma unroll
+    for (uint32_t offset = 16; offset > 0; offset >>= 1)
+    {
+        uint32_t words[(sizeof(T) + sizeof(uint32_t) - 1) / sizeof(uint32_t)] = {};
+        memcpy(words, &value, sizeof(T));
+#pragma unroll
+        for (uint32_t word = 0; word < sizeof(words) / sizeof(words[0]); ++word)
+            words[word] = __shfl_down_sync(0xffffffffu, words[word], offset);
+        T other = value;
+        memcpy(&other, words, sizeof(T));
+        value = value + other;
+    }
+    return value;
+}
 
 YBI_GPU float WarpReduceSum(float value)
 {

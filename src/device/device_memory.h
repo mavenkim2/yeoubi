@@ -40,29 +40,30 @@ struct DevicePtr
     }
 };
 
+template <typename T>
 struct DeviceBuffer
 {
-    DevicePtr<std::byte> ptr;
-    size_t sizeInBytes = 0;
+    static_assert(!std::is_void_v<T>, "Use std::byte for raw device storage");
+
+    DevicePtr<T> ptr;
+    size_t count = 0;
 
     constexpr DeviceBuffer() = default;
-    constexpr DeviceBuffer(std::nullptr_t) : ptr(nullptr), sizeInBytes(0) {}
-    DeviceBuffer(void *ptr, size_t sizeInBytes)
-        : ptr(DevicePtr<std::byte>(static_cast<std::byte *>(ptr))), sizeInBytes(sizeInBytes)
+    constexpr DeviceBuffer(std::nullptr_t) : ptr(nullptr), count(0) {}
+    DeviceBuffer(T *ptr, size_t count) : ptr(DevicePtr<T>(ptr)), count(count)
     {
     }
 
-    DeviceBuffer(uintptr_t address, size_t sizeInBytes)
-        : ptr(DevicePtr<std::byte>(address)), sizeInBytes(sizeInBytes)
+    DeviceBuffer(uintptr_t address, size_t count) : ptr(DevicePtr<T>(address)), count(count)
     {
     }
 
-    std::byte *Data()
+    T *Data()
     {
         return ptr.Get();
     }
 
-    std::byte *Data() const
+    T *Data() const
     {
         return ptr.Get();
     }
@@ -79,12 +80,12 @@ struct DeviceBuffer
 
     size_t SizeInBytes() const
     {
-        return sizeInBytes;
+        return count * sizeof(T);
     }
 
     bool Empty() const
     {
-        return !ptr || sizeInBytes == 0;
+        return !ptr || count == 0;
     }
 
     explicit operator bool() const
@@ -92,21 +93,18 @@ struct DeviceBuffer
         return !Empty();
     }
 
-    template <typename T>
-    DevicePtr<T> As() const
+    template <typename U>
+    DeviceBuffer<U> As() const
     {
-        static_assert(!std::is_void_v<T>, "Use Address() for untyped device addresses");
-        YBI_ASSERT(Address() % alignof(T) == 0);
-        YBI_ASSERT(sizeInBytes % sizeof(T) == 0);
-        return ptr.As<T>();
+        static_assert(!std::is_void_v<U>, "Use std::byte for raw device storage");
+        YBI_ASSERT(Address() % alignof(U) == 0);
+        YBI_ASSERT(SizeInBytes() % sizeof(U) == 0);
+        return DeviceBuffer<U>(ptr.template As<U>().Get(), SizeInBytes() / sizeof(U));
     }
 
-    template <typename T>
     size_t Count() const
     {
-        static_assert(!std::is_void_v<T>, "void has no element count");
-        YBI_ASSERT(sizeInBytes % sizeof(T) == 0);
-        return sizeInBytes / sizeof(T);
+        return count;
     }
 };
 

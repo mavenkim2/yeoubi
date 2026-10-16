@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kernel/backend/cuda/atomic.h"
+#include "core/atomic.h"
 #include "kernel/backend/cuda/warp_reduce.h"
 #include "kernel/guiding/types.h"
 #include <cstdio>

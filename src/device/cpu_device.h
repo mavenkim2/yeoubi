@@ -21,10 +21,10 @@ struct CPUDevice : Device
     explicit CPUDevice(bool createRendererPipeline = true);
     ~CPUDevice() override;
     void WaitIdle() override;
-    DeviceBuffer Alloc(size_t bytes) override;
-    void Free(DeviceBuffer &buffer) override;
-    DeviceBuffer AllocHost(size_t bytes) override;
-    void FreeHost(DeviceBuffer &buffer) override;
+    DeviceBuffer<std::byte> AllocBytes(size_t bytes) override;
+    void FreeBytes(DeviceBuffer<std::byte> &buffer) override;
+    DeviceBuffer<std::byte> AllocHostBytes(size_t bytes) override;
+    void FreeHostBytes(DeviceBuffer<std::byte> &buffer) override;
     DeviceExternalBuffer ImportExternalBuffer(const DisplayBuffer &buffer) override;
     void FreeExternalBuffer(DeviceExternalBuffer &buffer) override;
     DeviceExternalSemaphore ImportExternalSemaphore(const DisplaySemaphore &semaphore) override;
@@ -44,10 +44,11 @@ struct CPUDevice : Device
     void CopyDeviceToDeviceAsync(void *dst, void *ptr, size_t size) override;
     void Memzero(void *dst, size_t size) override;
     void MemzeroAsync(void *dst, size_t size) override;
+    using Device::DispatchKernel;
     bool DispatchKernel(KernelType kernelType,
                         uint32_t numWorkItems,
                         uint32_t blockSize,
-                        DeviceBuffer kernelParams) override;
+                        DeviceBuffer<std::byte> kernelParams) override;
 
     DeviceTexture CreateTexture(const DeviceTextureInfo &info) override;
     void DestroyTexture(DeviceTexture &texture) override;

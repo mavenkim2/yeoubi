@@ -115,22 +115,22 @@ VirtualTextureManager::~VirtualTextureManager()
         device->Free(deviceTexturePools);
     if (devicePageDescriptors)
         device->Free(devicePageDescriptors);
-    for (DeviceBuffer &buffer : pageDescriptorBits)
+    for (DeviceBuffer<uint32_t> &buffer : pageDescriptorBits)
     {
         if (buffer)
             device->Free(buffer);
     }
-    for (DeviceBuffer &buffer : deviceUpdateRequests)
+    for (DeviceBuffer<PageDescriptorUpdateRequest> &buffer : deviceUpdateRequests)
     {
         if (buffer)
             device->Free(buffer);
     }
-    for (DeviceBuffer &buffer : hostPinnedFeedbackRequests)
+    for (DeviceBuffer<FeedbackRequest> &buffer : hostPinnedFeedbackRequests)
     {
         if (buffer)
             device->FreeHost(buffer);
     }
-    for (DeviceBuffer &buffer : hostPinnedUpdateRequests)
+    for (DeviceBuffer<PageDescriptorUpdateRequest> &buffer : hostPinnedUpdateRequests)
     {
         if (buffer)
             device->FreeHost(buffer);
@@ -379,7 +379,7 @@ void VirtualTextureManager::Finalize()
     if (hostTextureDescriptors.size())
     {
         deviceTextureDescriptors =
-            device->Alloc(sizeof(DeviceTextureDescriptor) * hostTextureDescriptors.size());
+            device->Alloc<DeviceTextureDescriptor>(hostTextureDescriptors.size());
         device->CopyToDevice(deviceTextureDescriptors.Data(),
                              hostTextureDescriptors.data(),
                              deviceTextureDescriptors.SizeInBytes());
@@ -387,15 +387,15 @@ void VirtualTextureManager::Finalize()
 
     if (pageDescriptors.size())
     {
-        devicePageDescriptors = device->Alloc(sizeof(PageDescriptor) * pageDescriptors.size());
+        devicePageDescriptors = device->Alloc<PageDescriptor>(pageDescriptors.size());
         device->CopyToDevice(devicePageDescriptors.Data(),
                              pageDescriptors.data(),
                              devicePageDescriptors.SizeInBytes());
 
         const size_t numBitWords = CeilDiv(pageDescriptors.size(), 32);
-        for (DeviceBuffer &buffer : pageDescriptorBits)
+        for (DeviceBuffer<uint32_t> &buffer : pageDescriptorBits)
         {
-            buffer = device->Alloc(sizeof(uint32_t) * numBitWords);
+            buffer = device->Alloc<uint32_t>(numBitWords);
             device->Memzero(buffer.Data(), buffer.SizeInBytes());
         }
     }
@@ -403,12 +403,12 @@ void VirtualTextureManager::Finalize()
     feedbackCapacity = (1u << 20u) - 1u;
     const size_t feedbackSize =
         sizeof(FeedbackRequest) * (static_cast<size_t>(feedbackCapacity) + 1);
-    feedback = device->Alloc(feedbackSize);
+    feedback = device->Alloc<FeedbackRequest>(static_cast<size_t>(feedbackCapacity) + 1);
     device->Memzero(feedback.Data(), sizeof(FeedbackRequest));
 
-    for (DeviceBuffer &hostFeedback : hostPinnedFeedbackRequests)
+    for (DeviceBuffer<FeedbackRequest> &hostFeedback : hostPinnedFeedbackRequests)
     {
-        hostFeedback = device->AllocHost(feedbackSize);
+        hostFeedback = device->AllocHost<FeedbackRequest>(static_cast<size_t>(feedbackCapacity) + 1);
         memset(hostFeedback.Data(), 0, feedbackSize);
     }
 }
@@ -658,14 +658,13 @@ void VirtualTextureManager::Update(KernelParams *params)
 
     if (feedbackJob.IsDone() && pagePools.size())
     {
-        const size_t texturePoolSize = sizeof(DeviceTexture) * pagePools.size();
-        if (deviceTexturePools.SizeInBytes() < texturePoolSize)
+        if (deviceTexturePools.Count() < pagePools.size())
         {
             if (deviceTexturePools)
             {
                 device->Free(deviceTexturePools);
             }
-            deviceTexturePools = device->Alloc(texturePoolSize);
+            deviceTexturePools = device->Alloc<DeviceTexture>(pagePools.size());
         }
 
         View<DeviceTexture> hostTexturePools =
@@ -679,12 +678,12 @@ void VirtualTextureManager::Update(KernelParams *params)
     }
 
     YBI_ASSERT(params);
-    params->textureDescriptors = deviceTextureDescriptors.As<DeviceTextureDescriptor>().Get();
-    params->pageDescriptors = devicePageDescriptors.As<PageDescriptor>().Get();
+    params->textureDescriptors = deviceTextureDescriptors.Data();
+    params->pageDescriptors = devicePageDescriptors.Data();
     // params->texturePools =
-    //     deviceTexturePools ? deviceTexturePools.As<DeviceTexture>().Get() : nullptr;
-    params->pageDescriptorBits = pageDescriptorBits[currentFrame].As<uint32_t>().Get();
-    params->feedbackRequests = feedback.As<FeedbackRequest>().Get();
+    //     deviceTexturePools ? deviceTexturePools.Data() : nullptr;
+    params->pageDescriptorBits = pageDescriptorBits[currentFrame].Data();
+    params->feedbackRequests = feedback.Data();
 
     device->Memzero(pageDescriptorBits[currentFrame].Data(),
                     pageDescriptorBits[currentFrame].SizeInBytes());
@@ -692,7 +691,7 @@ void VirtualTextureManager::Update(KernelParams *params)
     device->Memzero(feedback.Data(), sizeof(FeedbackRequest));
 
     FeedbackRequest *requests =
-        reinterpret_cast<FeedbackRequest *>(hostPinnedFeedbackRequests[currentFrame].Data());
+        hostPinnedFeedbackRequests[currentFrame].Data();
     uint32_t numRequests = requests[0].textureIndex;
     numRequests = std::min(numRequests, feedbackCapacity);
 
@@ -753,26 +752,29 @@ void VirtualTextureManager::Update(KernelParams *params)
     // Update device page descriptors
     if (numUpdateRequests)
     {
-        DeviceBuffer &hostPinnedUpdateRequestBuffer = hostPinnedUpdateRequests[currentFrame];
-        DeviceBuffer &deviceUpdateRequestBuffer = deviceUpdateRequests[currentFrame];
+        DeviceBuffer<PageDescriptorUpdateRequest> &hostPinnedUpdateRequestBuffer =
+            hostPinnedUpdateRequests[currentFrame];
+        DeviceBuffer<PageDescriptorUpdateRequest> &deviceUpdateRequestBuffer =
+            deviceUpdateRequests[currentFrame];
 
         size_t updateRequestSize = sizeof(PageDescriptorUpdateRequest) * numUpdateRequests;
-        if (deviceUpdateRequestBuffer.sizeInBytes < updateRequestSize)
+        if (deviceUpdateRequestBuffer.Count() < numUpdateRequests)
         {
-            if (deviceUpdateRequestBuffer.sizeInBytes)
+            if (deviceUpdateRequestBuffer)
             {
                 device->Free(deviceUpdateRequestBuffer);
             }
-            deviceUpdateRequestBuffer = device->Alloc(updateRequestSize);
+            deviceUpdateRequestBuffer = device->Alloc<PageDescriptorUpdateRequest>(numUpdateRequests);
         }
 
-        if (hostPinnedUpdateRequestBuffer.sizeInBytes < updateRequestSize)
+        if (hostPinnedUpdateRequestBuffer.Count() < numUpdateRequests)
         {
-            if (hostPinnedUpdateRequestBuffer.sizeInBytes)
+            if (hostPinnedUpdateRequestBuffer)
             {
                 device->FreeHost(hostPinnedUpdateRequestBuffer);
             }
-            hostPinnedUpdateRequestBuffer = device->AllocHost(updateRequestSize);
+            hostPinnedUpdateRequestBuffer =
+                device->AllocHost<PageDescriptorUpdateRequest>(numUpdateRequests);
         }
 
         memcpy(hostPinnedUpdateRequestBuffer.Data(), updateRequests, updateRequestSize);
@@ -810,14 +812,13 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
 
     if (pagePools.size())
     {
-        const size_t texturePoolSize = sizeof(DeviceTexture) * pagePools.size();
-        if (deviceTexturePools.SizeInBytes() < texturePoolSize)
+        if (deviceTexturePools.Count() < pagePools.size())
         {
             if (deviceTexturePools)
             {
                 device->Free(deviceTexturePools);
             }
-            deviceTexturePools = device->Alloc(texturePoolSize);
+            deviceTexturePools = device->Alloc<DeviceTexture>(pagePools.size());
         }
 
         View<DeviceTexture> hostTexturePools =
@@ -831,12 +832,12 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
     }
 
     YBI_ASSERT(params);
-    params->textureDescriptors = deviceTextureDescriptors.As<DeviceTextureDescriptor>().Get();
-    params->pageDescriptors = devicePageDescriptors.As<PageDescriptor>().Get();
+    params->textureDescriptors = deviceTextureDescriptors.Data();
+    params->pageDescriptors = devicePageDescriptors.Data();
     // params->texturePools =
-    //     deviceTexturePools ? deviceTexturePools.As<DeviceTexture>().Get() : nullptr;
-    params->pageDescriptorBits = pageDescriptorBits[currentFrame].As<uint32_t>().Get();
-    params->feedbackRequests = feedback.As<FeedbackRequest>().Get();
+    //     deviceTexturePools ? deviceTexturePools.Data() : nullptr;
+    params->pageDescriptorBits = pageDescriptorBits[currentFrame].Data();
+    params->feedbackRequests = feedback.Data();
 
     device->Memzero(pageDescriptorBits[currentFrame].Data(),
                     pageDescriptorBits[currentFrame].SizeInBytes());
@@ -844,7 +845,7 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
     device->Memzero(feedback.Data(), sizeof(FeedbackRequest));
 
     FeedbackRequest *requests =
-        reinterpret_cast<FeedbackRequest *>(hostPinnedFeedbackRequests[currentFrame].Data());
+        hostPinnedFeedbackRequests[currentFrame].Data();
     uint32_t numRequests = requests[0].textureIndex;
     numRequests = std::min(numRequests, feedbackCapacity);
 
@@ -872,26 +873,30 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
     // Update device page descriptors
     if (updateRequests.size())
     {
-        DeviceBuffer &hostPinnedUpdateRequestBuffer = hostPinnedUpdateRequests[currentFrame];
-        DeviceBuffer &deviceUpdateRequestBuffer = deviceUpdateRequests[currentFrame];
+        DeviceBuffer<PageDescriptorUpdateRequest> &hostPinnedUpdateRequestBuffer =
+            hostPinnedUpdateRequests[currentFrame];
+        DeviceBuffer<PageDescriptorUpdateRequest> &deviceUpdateRequestBuffer =
+            deviceUpdateRequests[currentFrame];
 
         size_t updateRequestSize = sizeof(PageDescriptorUpdateRequest) * updateRequests.size();
-        if (deviceUpdateRequestBuffer.sizeInBytes < updateRequestSize)
+        if (deviceUpdateRequestBuffer.Count() < updateRequests.size())
         {
-            if (deviceUpdateRequestBuffer.sizeInBytes)
+            if (deviceUpdateRequestBuffer)
             {
                 device->Free(deviceUpdateRequestBuffer);
             }
-            deviceUpdateRequestBuffer = device->Alloc(updateRequestSize);
+            deviceUpdateRequestBuffer =
+                device->Alloc<PageDescriptorUpdateRequest>(updateRequests.size());
         }
 
-        if (hostPinnedUpdateRequestBuffer.sizeInBytes < updateRequestSize)
+        if (hostPinnedUpdateRequestBuffer.Count() < updateRequests.size())
         {
-            if (hostPinnedUpdateRequestBuffer.sizeInBytes)
+            if (hostPinnedUpdateRequestBuffer)
             {
                 device->FreeHost(hostPinnedUpdateRequestBuffer);
             }
-            hostPinnedUpdateRequestBuffer = device->AllocHost(updateRequestSize);
+            hostPinnedUpdateRequestBuffer =
+                device->AllocHost<PageDescriptorUpdateRequest>(updateRequests.size());
         }
 
         memcpy(hostPinnedUpdateRequestBuffer.Data(), updateRequests.data(), updateRequestSize);
@@ -924,13 +929,13 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
 
 void VirtualTextureManager::UpdateParams(KernelParams *params)
 {
-    params->textureDescriptors = deviceTextureDescriptors.As<DeviceTextureDescriptor>().Get();
-    params->pageDescriptors = devicePageDescriptors.As<PageDescriptor>().Get();
+    params->textureDescriptors = deviceTextureDescriptors.Data();
+    params->pageDescriptors = devicePageDescriptors.Data();
     // params->texturePools =
-    //     deviceTexturePools ? deviceTexturePools.As<DeviceTexture>().Get() : nullptr;
+    //     deviceTexturePools ? deviceTexturePools.Data() : nullptr;
     const uint32_t currentFrame = displayDevice ? displayDevice->GetCurrentFrameIndex() : 0u;
-    params->pageDescriptorBits = pageDescriptorBits[currentFrame].As<uint32_t>().Get();
-    params->feedbackRequests = feedback.As<FeedbackRequest>().Get();
+    params->pageDescriptorBits = pageDescriptorBits[currentFrame].Data();
+    params->feedbackRequests = feedback.Data();
 }
 
 void VirtualTextureManager::CopyFeedback()
@@ -938,7 +943,7 @@ void VirtualTextureManager::CopyFeedback()
     const uint32_t currentFrame = displayDevice ? displayDevice->GetCurrentFrameIndex() : 0u;
     YBI_ASSERT(feedback);
     YBI_ASSERT(currentFrame < hostPinnedFeedbackRequests.size());
-    DeviceBuffer &hostFeedback = hostPinnedFeedbackRequests[currentFrame];
+    DeviceBuffer<FeedbackRequest> &hostFeedback = hostPinnedFeedbackRequests[currentFrame];
     YBI_ASSERT(hostFeedback);
     device->CopyToHostAsync(hostFeedback.Data(), feedback.Data(), feedback.SizeInBytes());
 }

@@ -4,10 +4,10 @@
 // Full license: licenses/OpenPGL.txt (relative to the repository root).
 #pragma once
 
+#include "core/atomic.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
 #include "kernel/guiding/kd_tree.h"
-#include "kernel/guiding/sample.h"
 #include "kernel/guiding/types.h"
 #include "kernel/guiding/vmf.h"
 #include "kernel/texture/sampling.h"
@@ -22,63 +22,54 @@ namespace ybi
 #define VMM_KD_TREE_CRITICAL_Z_SCORE 3.7190164855f
 #define VMM_KD_TREE_MIN_NUM_SAMPLES 1000u
 
-struct LookaheadCell
+YBI_GPU Vec3f LookaheadCell::CalculateMeanDirection() const
 {
-    float radianceFirstMoment;
-    float radianceSecondMoment;
-    uint32_t numSamples;
-    Vec3f radianceWeightedDirectionSum;
+    return Normalize(radianceWeightedDirectionSum);
+}
 
-    YBI_GPU Vec3f CalculateMeanDirection() const
-    {
-        return Normalize(radianceWeightedDirectionSum);
-    }
+YBI_GPU float LookaheadCell::CalculateMeanDirectionInvKappa() const
+{
+    const Vec3f r = radianceWeightedDirectionSum / radianceFirstMoment;
+    const float meanCosine = Min(Length(r), 1.f);
+    if (meanCosine == 1.f)
+        return 0.f; // Infinite concentration.
 
-    YBI_GPU float CalculateMeanDirectionInvKappa() const
-    {
-        const Vec3f r = radianceWeightedDirectionSum / radianceFirstMoment;
-        const float meanCosine = Min(Length(r), 1.f);
-        if (meanCosine == 1.f)
-            return 0.f; // Infinite concentration.
+    const float kappa = MeanCosineToKappa(meanCosine);
+    const float kappaCothMinusOne = kappa * meanCosine;
+    const float yMinusOne =
+        (radianceFirstMoment / radianceSecondMoment) * radianceFirstMoment * kappaCothMinusOne;
+    const float invY = 1.f / (1.f + yMinusOne);
+    // Eq. (4), evaluated in 1/y to avoid polynomial overflow.
+    const float numerator = 1.f + invY * (1.69934861f + invY * (5.38753272f + invY * 9.85021305f));
+    const float denominator = 1.f + invY * (0.67453491f + invY * 4.31180006f);
+    return Sqrt((invY / yMinusOne) * (denominator / numerator));
+}
 
-        const float kappa = MeanCosineToKappa(meanCosine);
-        const float kappaCothMinusOne = kappa * meanCosine;
-        const float yMinusOne =
-            (radianceFirstMoment / radianceSecondMoment) * radianceFirstMoment * kappaCothMinusOne;
-        const float invY = 1.f / (1.f + yMinusOne);
-        // Eq. (4), evaluated in 1/y to avoid polynomial overflow.
-        const float numerator =
-            1.f + invY * (1.69934861f + invY * (5.38753272f + invY * 9.85021305f));
-        const float denominator = 1.f + invY * (0.67453491f + invY * 4.31180006f);
-        return Sqrt((invY / yMinusOne) * (denominator / numerator));
-    }
+YBI_GPU float LookaheadCell::CalculateSampleMean() const
+{
+    return radianceFirstMoment / numSamples;
+}
 
-    YBI_GPU float CalculateSampleMean() const
-    {
-        return radianceFirstMoment / numSamples;
-    }
+YBI_GPU float LookaheadCell::CalculateSampleVariance() const
+{
+    // Variance of the estimated mean, not of an individual sample.
+    const double n = numSamples;
+    const double b1 = radianceFirstMoment;
+    const double numerator = n * radianceSecondMoment - b1 * b1;
+    // Accumulated float moments can produce a small negative value through rounding.
+    return static_cast<float>(Max(0.0, numerator) / (n * n * n));
+}
 
-    YBI_GPU float CalculateSampleVariance() const
-    {
-        // Variance of the estimated mean, not of an individual sample.
-        const double n = numSamples;
-        const double b1 = radianceFirstMoment;
-        const double numerator = n * radianceSecondMoment - b1 * b1;
-        // Accumulated float moments can produce a small negative value through rounding.
-        return static_cast<float>(Max(0.0, numerator) / (n * n * n));
-    }
+YBI_GPU LookaheadCell LookaheadCell::CalculateDelta(const LookaheadCell &rhs) const
+{
+    YBI_ASSERT(rhs.numSamples <= numSamples);
+    LookaheadCell result = {radianceFirstMoment - rhs.radianceFirstMoment,
+                            radianceSecondMoment - rhs.radianceSecondMoment,
+                            numSamples - rhs.numSamples,
+                            radianceWeightedDirectionSum - rhs.radianceWeightedDirectionSum};
 
-    YBI_GPU LookaheadCell CalculateDelta(const LookaheadCell &rhs) const
-    {
-        YBI_ASSERT(rhs.numSamples <= numSamples);
-        LookaheadCell result = {radianceFirstMoment - rhs.radianceFirstMoment,
-                                radianceSecondMoment - rhs.radianceSecondMoment,
-                                numSamples - rhs.numSamples,
-                                radianceWeightedDirectionSum - rhs.radianceWeightedDirectionSum};
-
-        return result;
-    }
-};
+    return result;
+}
 
 struct GuidingCell
 {
@@ -91,44 +82,35 @@ struct VMMKDTreeWorkspace
     Vec3f radianceWeightedDirectionSum;
 };
 
-// Clear workspace and synchronize before the first batch; all block threads participate.
-template <typename Backend>
-YBI_GPU void UpdateLookaheadCell(const GuidingParams &params,
-                                 const VMMUpdateRange &range,
-                                 VMMKDTreeWorkspace &workspace)
+YBI_GPU PathGuidingKdTreeLookaheadStatistics UpdateLookaheadCell(
+    const PathGuidingKdTreeParams &params, const PathGuidingKdTreeWorkItem &workItem,
+    uint32_t threadIndex)
 {
-    using Float = typename Backend::Float;
-    constexpr uint32_t laneWidth = Backend::SampleWidth;
-
-    Float firstMoment(0.f);
-    Float secondMoment(0.f);
-    Vector3<Float> directionSum{Float(0.f)};
-
-    // TODO: divide by 2 at 8 million samples
-    // TODO: samples have to be sorted such that sub ranges are separate lookahead cells
-    // TODO: how does openpgl choose split positions again?
-    // answer: choose dimension with maximum positional variance... this seems like a pita
-
-    for (uint32_t sampleIndex = Backend::GetThreadIndex() * laneWidth;
-         sampleIndex < range.numSamples;
-         sampleIndex += Backend::GetThreadStride() * laneWidth)
+    PathGuidingKdTreeLookaheadStatistics result = {};
+    for (uint32_t sampleOffset = threadIndex; sampleOffset < workItem.sampleCount;
+         sampleOffset += VMM_BLOCK_SIZE)
     {
-        const uint32_t numValidSamples = Min(laneWidth, range.numSamples - sampleIndex);
-        const Float Li = LoadRadianceContribution<Float>(
-            params, range.sampleOffset + sampleIndex, numValidSamples);
-        const Vector3<Float> direction =
-            LoadSampleDirection<Float>(params, range.sampleOffset + sampleIndex, numValidSamples);
-        firstMoment += Li;
-        secondMoment += Sqr(Li);
-        directionSum += direction * Li;
+        const uint32_t sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
+        const SampleData &sample = params.sampleData[sampleIndex];
+        YBI_ASSERT(sample.pdf > 0.f);
+        const float Li = sample.incidentRadianceEstimate / sample.pdf;
+        const PathGuidingKdTreeLookaheadStatistics value{Li, Sqr(Li), sample.direction * Li, 1};
+        result = result + value;
     }
+    return result;
+}
 
-    Backend::ReduceAdd(firstMoment, workspace.firstMoment);
-    Backend::ReduceAdd(secondMoment, workspace.secondMoment);
-    Backend::ReduceAdd(directionSum.x, workspace.radianceWeightedDirectionSum.x);
-    Backend::ReduceAdd(directionSum.y, workspace.radianceWeightedDirectionSum.y);
-    Backend::ReduceAdd(directionSum.z, workspace.radianceWeightedDirectionSum.z);
-    Backend::Sync();
+YBI_GPU void AccumulateLookaheadCell(const PathGuidingKdTreeParams &params, uint32_t nodeItemIndex,
+                                     const PathGuidingKdTreeLookaheadStatistics *input)
+{
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    const PathGuidingKdTreeLookaheadStatistics &statistics = input[nodeItem.workItemOffset];
+    LookaheadCell &cell = params.nodes[nodeItem.nodeIndex].lookaheadCell;
+    const float count = float(statistics.numSamples);
+    cell.radianceFirstMoment += statistics.meanRadiance * count;
+    cell.radianceSecondMoment += statistics.meanSquaredRadiance * count;
+    cell.radianceWeightedDirectionSum += statistics.meanRadianceWeightedDirection * count;
+    cell.numSamples += statistics.numSamples;
 }
 
 YBI_GPU float CalculateSplitScore(float meanDelta,
@@ -139,20 +121,17 @@ YBI_GPU float CalculateSplitScore(float meanDelta,
     return (meanDelta - meanLookahead) / Sqrt(varianceDelta + varianceLookahead);
 }
 
-YBI_GPU bool SplitGuidingCell(const GuidingParams &params,
-                              const LookaheadCell &parent,
-                              const LookaheadCell *lookaheadCells,
-                              uint32_t numLookaheadCells,
-                              float meanRadianceSplitThreshold)
+YBI_GPU bool ShouldSplitGuidingCell(const PathGuidingKdTreeParams &params,
+                                    const LookaheadCell &parent,
+                                    const LookaheadCell *lookaheadCells,
+                                    uint32_t numLookaheadCells,
+                                    float meanRadianceSplitThreshold)
 {
     YBI_ASSERT(meanRadianceSplitThreshold >= 0.f);
     if (parent.numSamples < VMM_KD_TREE_MIN_NUM_SAMPLES)
     {
         return false;
     }
-
-    const Vec3f parentDirection = parent.CalculateMeanDirection();
-    const float parentInvKappa = parent.CalculateMeanDirectionInvKappa();
 
     for (uint32_t lookaheadCellIndex = 0; lookaheadCellIndex < numLookaheadCells;
          lookaheadCellIndex++)
@@ -200,6 +179,12 @@ YBI_GPU bool SplitGuidingCell(const GuidingParams &params,
             return true;
         }
 
+        if (Dot(parent.radianceWeightedDirectionSum, parent.radianceWeightedDirectionSum) == 0.f ||
+            Dot(cell.radianceWeightedDirectionSum, cell.radianceWeightedDirectionSum) == 0.f)
+            continue;
+
+        const Vec3f parentDirection = parent.CalculateMeanDirection();
+        const float parentInvKappa = parent.CalculateMeanDirectionInvKappa();
         const Vec3f lookaheadDirection = cell.CalculateMeanDirection();
 
         const float invSqrtK = Sqrt(parentInvKappa + cell.CalculateMeanDirectionInvKappa());
@@ -216,11 +201,82 @@ YBI_GPU bool SplitGuidingCell(const GuidingParams &params,
     return false;
 }
 
+YBI_GPU void ShouldSplitGuidingCell(PathGuidingKdTreeParams &params, uint32_t nodeItemIndex)
+{
+    const PathGuidingKdTreeNode &node = params.nodes[params.nodeItems[nodeItemIndex].nodeIndex];
+    if (!node.IsLookahead())
+        return;
+
+    const uint32_t ancestorIndex = uint32_t(node.ancestorGuidingCellIndex);
+    const LookaheadCell &parent = params.nodes[ancestorIndex].lookaheadCell;
+    if (ShouldSplitGuidingCell(
+            params, parent, &node.lookaheadCell, 1, params.meanRadianceSplitThreshold))
+    {
+        const uint32_t bit = 1u << (ancestorIndex & 31u);
+        const uint32_t previousMask =
+            AtomicOr(&params.guidingCellSplitMask[ancestorIndex >> 5], bit);
+        if ((previousMask & bit) == 0)
+            AtomicAdd(&params.numGuidingCellSplits, 1u);
+    }
+}
+
+YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
+{
+    for (uint32_t nodeIndex = 0; nodeIndex < params.numNodes; ++nodeIndex)
+    {
+        PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+        if (node.IsLookahead())
+        {
+            const uint32_t ancestorIndex = uint32_t(node.ancestorGuidingCellIndex);
+            if (params.guidingCellSplitMask[ancestorIndex >> 5] & (1u << (ancestorIndex & 31u)))
+                node.lookaheadCell = {};
+        }
+    }
+
+    for (uint32_t nodeIndex = 0; nodeIndex < params.numNodes; ++nodeIndex)
+    {
+        PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+        if (params.guidingCellSplitMask[nodeIndex >> 5] & (1u << (nodeIndex & 31u)))
+        {
+            YBI_ASSERT(node.IsGuidingCell() && node.HasChildren());
+            PathGuidingKdTreeNode &left = params.nodes[node.childOffset];
+            PathGuidingKdTreeNode &right = params.nodes[node.childOffset + 1];
+            left.guidingCellIndex = node.guidingCellIndex;
+            right.guidingCellIndex = int(params.numVMMs++);
+            params.vmmDistributions[right.guidingCellIndex] =
+                params.vmmDistributions[left.guidingCellIndex];
+            left.ancestorGuidingCellIndex = -1;
+            right.ancestorGuidingCellIndex = -1;
+            node.guidingCellIndex = -1;
+            node.ancestorGuidingCellIndex = -1;
+            for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
+            {
+                const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
+                if (params.nodeItems[childNodeIndex].sampleCount != 0)
+                    params.nextNodeItemIndices[params.numNextNodeItemIndices++] = childNodeIndex;
+            }
+        }
+
+        if (node.HasChildren())
+        {
+            YBI_ASSERT(uint32_t(node.childOffset) > nodeIndex);
+            const int ancestorIndex =
+                node.IsGuidingCell() ? int(nodeIndex) : node.ancestorGuidingCellIndex;
+            for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
+            {
+                PathGuidingKdTreeNode &child = params.nodes[node.childOffset + childIndex];
+                if (!child.IsGuidingCell())
+                    child.ancestorGuidingCellIndex = ancestorIndex;
+            }
+        }
+    }
+}
+
 #if 0
 template <typename Backend>
 YBI_GPU void Something(PathGuidingKdTreeParams params)
 {
-    for (uint32_t nodeItemIndex = 0; params.numNodeItems
+    for (uint32_t nodeItemIndex = 0; params.numNodeItemIndices
 }
 
 template <typename Backend>
@@ -229,7 +285,7 @@ YBI_GPU void Something2(PathGuidingKdTreeParams params)
     const uint32_t blockIndex = Backend::GetBlockIndex();
     const uint32_t blockStride = Backend::GetBlockStride();
 
-    for (uint32_t nodeItemIndex = blockIndex; nodeItemIndex < params.numNodeItems;
+    for (uint32_t nodeItemIndex = blockIndex; nodeItemIndex < params.numNodeItemIndices;
          nodeItemIndex += blockStride)
     {
         const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];

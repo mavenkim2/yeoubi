@@ -7,21 +7,22 @@ namespace ybi
 {
 
 template <typename Float>
-YBI_GPU Float LoadRadiance(const GuidingParams &params, uint32_t sampleIndex, uint32_t numSamples);
+YBI_GPU Float LoadRadiance(const PathGuidingKdTreeParams &params,
+                           uint32_t sampleIndex,
+                           uint32_t numSamples);
 
 // numValidSamples is a lane count, independent of the absolute sampleIndex.
 template <typename Float>
-YBI_GPU Float LoadRadianceContribution(const GuidingParams &params,
+YBI_GPU Float LoadRadianceContribution(const PathGuidingKdTreeParams &params,
                                        uint32_t sampleIndex,
                                        uint32_t numValidSamples);
 
 template <typename Float>
-YBI_GPU Vector3<Float> LoadSampleDirection(const GuidingParams &params,
-                                           uint32_t sampleIndex,
-                                           uint32_t numValidSamples);
+YBI_GPU Vector3<Float>
+LoadSampleDirection(const PathGuidingKdTreeParams &params, uint32_t sampleIndex, uint32_t numValidSamples);
 
 template <>
-YBI_GPU Vec3f LoadSampleDirection<float>(const GuidingParams &params,
+YBI_GPU Vec3f LoadSampleDirection<float>(const PathGuidingKdTreeParams &params,
                                          uint32_t sampleIndex,
                                          uint32_t numValidSamples)
 {
@@ -30,9 +31,9 @@ YBI_GPU Vec3f LoadSampleDirection<float>(const GuidingParams &params,
 }
 
 template <>
-YBI_GPU float LoadRadianceContribution<float>(const GuidingParams &params,
-                                               uint32_t sampleIndex,
-                                               uint32_t numValidSamples)
+YBI_GPU float LoadRadianceContribution<float>(const PathGuidingKdTreeParams &params,
+                                              uint32_t sampleIndex,
+                                              uint32_t numValidSamples)
 {
     YBI_ASSERT(numValidSamples == 1);
     YBI_ASSERT(params.samplePdf[sampleIndex] > 0.f);
@@ -40,31 +41,36 @@ YBI_GPU float LoadRadianceContribution<float>(const GuidingParams &params,
 }
 
 template <typename Sample>
-YBI_GPU Sample LoadSampleData(const GuidingParams &params,
+YBI_GPU Sample LoadSampleData(const PathGuidingKdTreeParams &params,
                               uint32_t sampleIndex,
                               uint32_t numSamples);
 
 template <>
-YBI_GPU float LoadRadiance(const GuidingParams &params, uint32_t sampleIndex, uint32_t numSamples)
+YBI_GPU float LoadRadiance(const PathGuidingKdTreeParams &params,
+                           uint32_t sampleIndex,
+                           uint32_t numSamples)
 {
+    YBI_ASSERT(numSamples == 1);
     return params.sampleIncidentRadianceEstimate[sampleIndex];
 }
 
 template <>
-YBI_GPU SampleData LoadSampleData<SampleData>(const GuidingParams &params,
+YBI_GPU SampleData LoadSampleData<SampleData>(const PathGuidingKdTreeParams &params,
                                               uint32_t sampleIndex,
                                               uint32_t numSamples)
 {
     YBI_ASSERT(numSamples == 1);
-    return {params.sampleDirection[sampleIndex],
-            params.sampleIncidentRadianceEstimate[sampleIndex],
-            params.samplePdf[sampleIndex]};
+    SampleData sampleData{};
+    sampleData.direction = params.sampleDirection[sampleIndex];
+    sampleData.incidentRadianceEstimate = params.sampleIncidentRadianceEstimate[sampleIndex];
+    sampleData.pdf = params.samplePdf[sampleIndex];
+    return sampleData;
 }
 
 #if defined(SIMD_4)
 
 template <>
-inline Vector3<Float4> LoadSampleDirection<Float4>(const GuidingParams &params,
+inline Vector3<Float4> LoadSampleDirection<Float4>(const PathGuidingKdTreeParams &params,
                                                    uint32_t sampleIndex,
                                                    uint32_t numValidSamples)
 {
@@ -79,7 +85,7 @@ inline Vector3<Float4> LoadSampleDirection<Float4>(const GuidingParams &params,
 }
 
 template <>
-inline Float4 LoadRadianceContribution<Float4>(const GuidingParams &params,
+inline Float4 LoadRadianceContribution<Float4>(const PathGuidingKdTreeParams &params,
                                                uint32_t sampleIndex,
                                                uint32_t numValidSamples)
 {
@@ -109,41 +115,39 @@ inline Float4 LoadRadianceContribution<Float4>(const GuidingParams &params,
 }
 
 template <>
-YBI_GPU Float4 LoadRadiance(const GuidingParams &params, uint32_t sampleIndex, uint32_t numSamples)
+YBI_GPU Float4 LoadRadiance(const PathGuidingKdTreeParams &params,
+                            uint32_t sampleIndex,
+                            uint32_t numSamples)
 {
-    YBI_ASSERT(sampleIndex < numSamples);
-    Float4 result = LoadUnaligned(params.sampleIncidentRadianceEstimate + sampleIndex);
+    YBI_ASSERT(numSamples > 0 && numSamples <= Float4::Width);
+    if (numSamples == Float4::Width)
+        return LoadUnaligned(params.sampleIncidentRadianceEstimate + sampleIndex);
 
-    uint32_t numValidSamples = numSamples - sampleIndex;
-    if (numValidSamples < Float4::Width)
-    {
-        const Mask4 valid = Mask4::Create((1u << numValidSamples) - 1u);
-        result = Select(valid, result, Float4(0.f));
-    }
-    return result;
+    float radiance[Float4::Width] = {};
+    for (uint32_t lane = 0; lane < numSamples; ++lane)
+        radiance[lane] = params.sampleIncidentRadianceEstimate[sampleIndex + lane];
+    return LoadUnaligned(radiance);
 }
 
 template <>
-inline VMMSampleData<Float4> LoadSampleData<VMMSampleData<Float4>>(const GuidingParams &params,
+inline VMMSampleData<Float4> LoadSampleData<VMMSampleData<Float4>>(const PathGuidingKdTreeParams &params,
                                                                    uint32_t sampleIndex,
                                                                    uint32_t numSamples)
 {
-    YBI_ASSERT(sampleIndex < numSamples);
-    VMMSampleData<Float4> sample{
-        LoadUnaligned(params.sampleDirection + sampleIndex),
-        LoadUnaligned(params.sampleIncidentRadianceEstimate + sampleIndex),
-        LoadUnaligned(params.samplePdf + sampleIndex)};
-
-    uint32_t numValidSamples = numSamples - sampleIndex;
-    if (numValidSamples < Float4::Width)
+    YBI_ASSERT(numSamples > 0 && numSamples <= Float4::Width);
+    VMMSampleData<Float4> sample{};
+    sample.direction = LoadSampleDirection<Float4>(params, sampleIndex, numSamples);
+    sample.incidentRadianceEstimate = LoadRadiance<Float4>(params, sampleIndex, numSamples);
+    if (numSamples == Float4::Width)
     {
-        const Mask4 valid = Mask4::Create((1u << numValidSamples) - 1u);
-        sample.direction.x = Select(valid, sample.direction.x, Float4(0.f));
-        sample.direction.y = Select(valid, sample.direction.y, Float4(0.f));
-        sample.direction.z = Select(valid, sample.direction.z, Float4(0.f));
-        sample.incidentRadianceEstimate =
-            Select(valid, sample.incidentRadianceEstimate, Float4(0.f));
-        sample.pdf = Select(valid, sample.pdf, Float4(1.f));
+        sample.pdf = LoadUnaligned(params.samplePdf + sampleIndex);
+    }
+    else
+    {
+        float pdf[Float4::Width] = {1.f, 1.f, 1.f, 1.f};
+        for (uint32_t lane = 0; lane < numSamples; ++lane)
+            pdf[lane] = params.samplePdf[sampleIndex + lane];
+        sample.pdf = LoadUnaligned(pdf);
     }
     return sample;
 }

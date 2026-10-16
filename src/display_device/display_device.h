@@ -48,7 +48,7 @@ struct DeviceExternalBuffer
 
     void *handle = nullptr;
     Device *device = nullptr;
-    DeviceBuffer buffer;
+    DeviceBuffer<std::byte> buffer;
 };
 
 struct DisplaySemaphore

@@ -284,7 +284,7 @@ YBI_GPU void CommitVMMStatistics(SufficientStatistics &previousStats,
 // All backend participants enter this function together. The caller provides
 // shared workspace. The backend supplies worker indices, reductions, sync and reporting.
 template <typename Backend, bool Partial = false>
-YBI_GPU void UpdateVMM(const GuidingParams &params,
+YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
                        VMMDistribution &distribution,
                        SufficientStatistics &previousStats,
                        const VMMUpdateRange &range,
@@ -314,8 +314,10 @@ YBI_GPU void UpdateVMM(const GuidingParams &params,
              sampleIndex < range.numSamples;
              sampleIndex += Backend::GetThreadStride() * laneWidth)
         {
-            const SampleData sample = LoadSampleData<SampleData>(
-                params, range.sampleOffset + sampleIndex, range.numSamples);
+            const SampleData sample =
+                LoadSampleData<SampleData>(params,
+                                           range.sampleOffset + sampleIndex,
+                                           Min(laneWidth, range.numSamples - sampleIndex));
             YBI_ASSERT(All(sample.pdf > Float(0.f)));
             YBI_ASSERT(All(sample.incidentRadianceEstimate >= Float(0.f)));
             const Float sampleWeight = sample.incidentRadianceEstimate / sample.pdf;
@@ -360,7 +362,7 @@ YBI_GPU void UpdateVMM(const GuidingParams &params,
 }
 
 template <typename Backend>
-YBI_GPU void CalculateVMMSplitStatistics(const GuidingParams &params,
+YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
                                          const VMMDistribution &distribution,
                                          const VMMUpdateRange &range,
                                          float fluxEstimate,
@@ -529,7 +531,7 @@ YBI_CPU_GPU bool SplitVMMComponent(VMMDistribution &distribution,
 }
 
 template <typename Backend>
-YBI_GPU uint32_t SplitVMM(const GuidingParams &params,
+YBI_GPU uint32_t SplitVMM(const PathGuidingKdTreeParams &params,
                           VMMDistribution &distribution,
                           SufficientStatistics &previousStats,
                           const VMMUpdateRange &range,

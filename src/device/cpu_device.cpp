@@ -5,6 +5,7 @@
 #error "YBI_USE_PATH_GUIDING requires SIMD_4 for the CPU kd-tree backend"
 #endif
 #include "kernel/backend/cpu/kd_tree.h"
+#include "kernel/backend/cpu/lookahead.h"
 #endif
 #include <cstring>
 
@@ -27,15 +28,22 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
         void (*function)(void **arguments);
     };
     static const KernelEntry entries[] = {
+        {"CreateKdTreeNodesKernel", CreateKdTreeNodesKernelCPU},
         {"CreateKdTreeNodeItemsKernel", CreateKdTreeNodeItemsKernelCPU},
         {"CreateKdTreeWorkItemsKernel", CreateKdTreeWorkItemsKernelCPU},
-        {"InitializeNodePositionStatisticsKernel", InitializeNodePositionStatisticsKernelCPU},
         {"CalculateNodeBoundsKernel", CalculateNodeBoundsKernelCPU},
         {"CalculateNodePositionStatisticsKernel", CalculateNodePositionStatisticsKernelCPU},
+        {"CreateKdTreeReductionWorkItemsKernel", CreateKdTreeReductionWorkItemsKernelCPU},
+        {"ReduceNodePositionStatisticsKernel", ReduceNodePositionStatisticsKernelCPU},
         {"SelectNodeSplitsKernel", SelectNodeSplitsKernelCPU},
         {"PartitionCountKernel", PartitionCountKernelCPU},
         {"PartitionExclusiveScanKernel", PartitionExclusiveScanKernelCPU},
         {"PartitionSamplesKernel", PartitionSamplesKernelCPU},
+        {"UpdateLookaheadCellKernel", UpdateLookaheadCellKernelCPU},
+        {"ReduceLookaheadStatisticsKernel", ReduceLookaheadStatisticsKernelCPU},
+        {"AccumulateLookaheadCellsKernel", AccumulateLookaheadCellsKernelCPU},
+        {"ShouldSplitGuidingCellKernel", ShouldSplitGuidingCellKernelCPU},
+        {"PromoteGuidingCellsKernel", PromoteGuidingCellsKernelCPU},
     };
     for (const KernelEntry &entry : entries)
     {
@@ -59,7 +67,7 @@ void CPUDevice::WaitIdle()
     YBI_ASSERT(false && "CPUDevice::WaitIdle is not implemented yet");
 }
 
-DeviceBuffer CPUDevice::Alloc(size_t bytes)
+DeviceBuffer<std::byte> CPUDevice::AllocBytes(size_t bytes)
 {
     if (bytes == 0)
         return {};
@@ -68,10 +76,10 @@ DeviceBuffer CPUDevice::Alloc(size_t bytes)
     if (!ptr)
         return {};
     totalAllocated += bytes;
-    return DeviceBuffer(ptr, bytes);
+    return DeviceBuffer<std::byte>(static_cast<std::byte *>(ptr), bytes);
 }
 
-void CPUDevice::Free(DeviceBuffer &buffer)
+void CPUDevice::FreeBytes(DeviceBuffer<std::byte> &buffer)
 {
     if (!buffer)
         return;
@@ -81,13 +89,13 @@ void CPUDevice::Free(DeviceBuffer &buffer)
     buffer = {};
 }
 
-DeviceBuffer CPUDevice::AllocHost(size_t)
+DeviceBuffer<std::byte> CPUDevice::AllocHostBytes(size_t)
 {
     YBI_ASSERT(false && "CPUDevice::AllocHost is not implemented yet");
     return {};
 }
 
-void CPUDevice::FreeHost(DeviceBuffer &)
+void CPUDevice::FreeHostBytes(DeviceBuffer<std::byte> &)
 {
     YBI_ASSERT(false && "CPUDevice::FreeHost is not implemented yet");
 }
@@ -172,9 +180,12 @@ void CPUDevice::CopyDeviceToDeviceAsync(void *dst, void *ptr, size_t size)
     std::memcpy(dst, ptr, size);
 }
 
-void CPUDevice::Memzero(void *, size_t)
+void CPUDevice::Memzero(void *dst, size_t size)
 {
-    YBI_ASSERT(false && "CPUDevice::Memzero is not implemented yet");
+    if (size == 0)
+        return;
+    YBI_ASSERT(dst);
+    std::memset(dst, 0, size);
 }
 
 void CPUDevice::MemzeroAsync(void *, size_t)
@@ -182,7 +193,7 @@ void CPUDevice::MemzeroAsync(void *, size_t)
     YBI_ASSERT(false && "CPUDevice::MemzeroAsync is not implemented yet");
 }
 
-bool CPUDevice::DispatchKernel(KernelType, uint32_t, uint32_t, DeviceBuffer)
+bool CPUDevice::DispatchKernel(KernelType, uint32_t, uint32_t, DeviceBuffer<std::byte>)
 {
     YBI_ASSERT(false && "CPUDevice::DispatchKernel is not implemented yet");
     return false;

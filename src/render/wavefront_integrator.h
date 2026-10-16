@@ -11,6 +11,7 @@ namespace ybi
 struct Device;
 struct DeviceKernel;
 struct KernelParams;
+struct WavefrontParams;
 
 class WavefrontIntegrator
 {
@@ -29,17 +30,17 @@ private:
     Device *device;
     WavefrontSampleState sampleState{};
     WavefrontSampleState compactionState{};
-    std::vector<DeviceBuffer> sampleStateBuffers;
+    std::vector<DeviceBuffer<std::byte>> sampleStateBuffers;
     std::unique_ptr<DeviceKernel> countKernels;
     std::unique_ptr<DeviceKernel> selectSampleIndices;
     std::unique_ptr<DeviceKernel> streamCompaction;
-    DeviceBuffer kernelCountsBuffer;
-    DeviceBuffer hostKernelCountsBuffer;
-    DeviceBuffer hostUploadBuffer;
-    DeviceBuffer numSampleIndicesBuffer;
-    DeviceBuffer numSampleStatesBuffer;
-    DeviceBuffer sampleIndicesBuffer;
-    DeviceBuffer kernelParamsBuffer;
+    DeviceBuffer<KernelCounts> kernelCountsBuffer;
+    DeviceBuffer<KernelCounts> hostKernelCountsBuffer;
+    DeviceBuffer<std::byte> hostUploadBuffer;
+    DeviceBuffer<uint32_t> numSampleIndicesBuffer;
+    DeviceBuffer<uint32_t> numSampleStatesBuffer;
+    DeviceBuffer<uint32_t> sampleIndicesBuffer;
+    DeviceBuffer<WavefrontParams> kernelParamsBuffer;
 };
 
 } // namespace ybi

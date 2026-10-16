@@ -7,7 +7,7 @@ namespace ybi
 
 struct VMMUpdateParams
 {
-    GuidingParams samples;
+    PathGuidingKdTreeParams samples;
     VMMDistribution *distributions;
     // Initialized, normalized previous statistics; updated once per batch.
     SufficientStatistics *statistics;

@@ -154,10 +154,10 @@ InteractiveApplication::InteractiveApplication(DeviceKind kind,
     params.imageWidth = static_cast<int>(this->windowWidth);
     params.imageHeight = static_cast<int>(this->windowHeight);
     integrator = std::make_unique<WavefrontIntegrator>(device.get());
-    kernelOutput = device->Alloc(this->windowWidth * this->windowHeight * sizeof(Vec3f));
-    accumulation = device->Alloc(this->windowWidth * this->windowHeight * sizeof(Vec3f));
-    params.kernelOutput = reinterpret_cast<Vec3f *>(kernelOutput.Data());
-    params.accumulation = reinterpret_cast<Vec3f *>(accumulation.Data());
+    kernelOutput = device->Alloc<Vec3f>(this->windowWidth * this->windowHeight);
+    accumulation = device->Alloc<Vec3f>(this->windowWidth * this->windowHeight);
+    params.kernelOutput = kernelOutput.Data();
+    params.accumulation = accumulation.Data();
     DeviceKernelDesc kernelDesc;
     kernelDesc.filename = YBI_ACCUMULATE_KERNEL_PATH;
     kernelDesc.entryName = "AccumulateSamples";
@@ -555,12 +555,12 @@ OfflineApplication::OfflineApplication(DeviceKind kind,
 
     const size_t pixelCount =
         singlePixel ? 1u : static_cast<size_t>(params.imageWidth) * params.imageHeight;
-    cudaParams = device->Alloc(sizeof(KernelParams));
-    kernelOutput = device->Alloc(pixelCount * sizeof(Vec3f));
-    accumulation = device->Alloc(pixelCount * sizeof(Vec3f));
-    outputImage = device->Alloc(pixelCount * 4);
-    params.kernelOutput = reinterpret_cast<Vec3f *>(kernelOutput.Data());
-    params.accumulation = reinterpret_cast<Vec3f *>(accumulation.Data());
+    cudaParams = device->Alloc<KernelParams>(1);
+    kernelOutput = device->Alloc<Vec3f>(pixelCount);
+    accumulation = device->Alloc<Vec3f>(pixelCount);
+    outputImage = device->Alloc<uint8_t>(pixelCount * 4);
+    params.kernelOutput = kernelOutput.Data();
+    params.accumulation = accumulation.Data();
     params.imageHandle = outputImage.Address();
 
     DeviceKernelDesc kernelDesc;

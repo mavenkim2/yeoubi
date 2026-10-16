@@ -21,8 +21,8 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     desc.filename = YBI_COUNT_KERNELS_KERNEL_PATH;
     desc.entryName = "CountKernels";
     countKernels = device->CreateDeviceKernel(desc);
-    kernelCountsBuffer = device->Alloc(sizeof(KernelCounts));
-    hostKernelCountsBuffer = device->AllocHost(sizeof(KernelCounts));
+    kernelCountsBuffer = device->Alloc<KernelCounts>(1);
+    hostKernelCountsBuffer = device->AllocHost<KernelCounts>(1);
     // A refill can upload camera params, the new state count, and dispatch params
     // before the next readback. Each upload keeps its own bytes until that sync.
     hostUploadBuffer = device->AllocHost(3 * sizeof(WavefrontParams));
@@ -31,7 +31,7 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     selectDesc.filename = YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH;
     selectDesc.entryName = "SelectSampleIndices";
     selectSampleIndices = device->CreateDeviceKernel(selectDesc);
-    numSampleIndicesBuffer = device->Alloc(sizeof(uint32_t));
+    numSampleIndicesBuffer = device->Alloc<uint32_t>(1);
 
     DeviceKernelDesc compactionDesc;
     compactionDesc.filename = YBI_STREAM_COMPACTION_KERNEL_PATH;
@@ -40,9 +40,9 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
 
     AllocateSampleState(sampleState);
     AllocateSampleState(compactionState);
-    numSampleStatesBuffer = device->Alloc(sizeof(uint32_t));
-    sampleIndicesBuffer = device->Alloc(sizeof(uint32_t) * batchSize);
-    kernelParamsBuffer = device->Alloc(sizeof(WavefrontParams));
+    numSampleStatesBuffer = device->Alloc<uint32_t>(1);
+    sampleIndicesBuffer = device->Alloc<uint32_t>(batchSize);
+    kernelParamsBuffer = device->Alloc<WavefrontParams>(1);
 }
 
 WavefrontIntegrator::~WavefrontIntegrator()
@@ -68,9 +68,9 @@ void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
 {
     const auto allocate = [this](auto *&ptr, size_t elementsPerSample = 1) {
         using T = std::remove_pointer_t<std::remove_reference_t<decltype(ptr)>>;
-        DeviceBuffer buffer = device->Alloc(sizeof(T) * batchSize * elementsPerSample);
-        sampleStateBuffers.push_back(buffer);
-        ptr = buffer.As<T>().Get();
+        DeviceBuffer<T> buffer = device->Alloc<T>(batchSize * elementsPerSample);
+        sampleStateBuffers.push_back(buffer.template As<std::byte>());
+        ptr = buffer.Data();
     };
 
     allocate(state.pixelIndex);
@@ -106,7 +106,7 @@ void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
 
 void WavefrontIntegrator::FreeSampleState()
 {
-    for (DeviceBuffer &buffer : sampleStateBuffers)
+    for (DeviceBuffer<std::byte> &buffer : sampleStateBuffers)
         device->Free(buffer);
     sampleStateBuffers.clear();
     sampleState = {};
@@ -134,15 +134,15 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
     WavefrontParams params{};
     static_cast<KernelParams &>(params) = kernelParams;
     params.sampleState = sampleState;
-    params.numSampleStates = numSampleStatesBuffer.As<uint32_t>().Get();
+    params.numSampleStates = numSampleStatesBuffer.Data();
     params.maxNumSampleState = batchSize;
-    params.sampleIndices = sampleIndicesBuffer.As<uint32_t>().Get();
+    params.sampleIndices = sampleIndicesBuffer.Data();
 
     const uint64_t numPixels = uint64_t(params.imageWidth) * params.imageHeight;
     uint32_t numSampleStates = static_cast<uint32_t>(Min<uint64_t>(batchSize, numPixels));
 
     const KernelType *kernelTypes = params.sampleState.kernelTypes;
-    KernelCounts *deviceCounts = kernelCountsBuffer.As<KernelCounts>().Get();
+    KernelCounts *deviceCounts = kernelCountsBuffer.Data();
     void *arguments[] = {&kernelTypes, &numSampleStates, &deviceCounts};
 
     DeviceKernelLaunchDesc launch;
@@ -173,7 +173,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
         device->MemzeroAsync(kernelCountsBuffer.Data(), sizeof(KernelCounts));
         device->ExecuteKernel(*countKernels, launch);
 
-        KernelCounts &counts = *hostKernelCountsBuffer.As<KernelCounts>().Get();
+        KernelCounts &counts = *hostKernelCountsBuffer.Data();
         device->CopyToHostAsync(&counts, kernelCountsBuffer.Data(), sizeof(counts));
         device->SyncDeviceStream();
         uploadOffset = 0;

@@ -12,26 +12,81 @@
 namespace ybi
 {
 
-#define VMM_KD_TREE_POSITION_STATISTICS_SCALE float(1 << 18)
 #define VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT 256
 #define VMM_KD_TREE_SPLIT_SAMPLE_COUNT (32u * 1024u)
+#define VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT 1000u
 
-YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams &params)
+YBI_GPU uint32_t GetLookaheadDepth(const PathGuidingKdTreeParams &params,
+                                   const PathGuidingKdTreeNode &node)
 {
-    params.numNextNodeItems = 0;
-    for (uint32_t activeNodeItemIndex = 0; activeNodeItemIndex < params.numActiveNodeItems;
-         ++activeNodeItemIndex)
+    if (node.IsGuidingCell())
+        return 0;
+    YBI_ASSERT(node.IsLookahead());
+    return node.treeDepth - params.nodes[node.ancestorGuidingCellIndex].treeDepth;
+}
+
+YBI_GPU bool SampleCountContinuationCriteria(const PathGuidingKdTreeParams &params,
+                                             uint32_t nodeItemIndex)
+{
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+    return nodeItem.sampleCount != 0 &&
+           (nodeItem.sampleCount > VMM_KD_TREE_SPLIT_SAMPLE_COUNT || !node.NeedsSplit());
+}
+
+YBI_GPU bool LookaheadContinuationCriteria(const PathGuidingKdTreeParams &params,
+                                           uint32_t nodeItemIndex)
+{
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+    if (nodeItem.sampleCount == 0)
+        return false;
+    if (!node.IsGuidingCell() && !node.IsLookahead())
+        return node.HasChildren();
+
+    const uint32_t ancestorIndex =
+        node.IsGuidingCell() ? nodeItem.nodeIndex : uint32_t(node.ancestorGuidingCellIndex);
+    // If the ancestor needs to be split, then its children will be considered in the
+    // next pass instead of the current node's children.
+    if (!params.nodes[ancestorIndex].IsGuidingCell() ||
+        (params.guidingCellSplitMask[ancestorIndex >> 5] & (1u << (ancestorIndex & 31u))))
+        return false;
+
+    return GetLookaheadDepth(params, node) <= params.maxLookaheadDepth &&
+           (node.IsGuidingCell() ||
+            nodeItem.sampleCount >= VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT ||
+            !node.NeedsSplit());
+}
+
+YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
+                               PathGuidingSplitDecision splitDecision)
+{
+    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
     {
         const PathGuidingKdTreeNodeItem &nodeItem =
-            params.nodeItems[params.activeNodeItems[activeNodeItemIndex]];
+            params.nodeItems[params.nodeItemIndices[frontierIndex]];
         PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-        if (node.childOffset == -1)
+        if (nodeItem.sampleCount == 0 || node.NeedsSplit())
+            continue;
+        if (splitDecision == PathGuidingSplitDecision::Lookahead &&
+            (node.IsGuidingCell() || node.IsLookahead()) &&
+            GetLookaheadDepth(params, node) >= params.maxLookaheadDepth)
+            continue;
+
+        if (!node.HasChildren())
         {
             node.childOffset = int(params.numNodes);
             params.numNodes += 2;
             for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
             {
                 PathGuidingKdTreeNode child{};
+                child.treeDepth = node.treeDepth + 1;
+                if (splitDecision == PathGuidingSplitDecision::Lookahead)
+                {
+                    child.ancestorGuidingCellIndex = node.IsGuidingCell()
+                                                         ? int(nodeItem.nodeIndex)
+                                                         : node.ancestorGuidingCellIndex;
+                }
                 child.boundsMin = node.boundsMin;
                 child.boundsMax = node.boundsMax;
                 if (childIndex == 0)
@@ -39,24 +94,50 @@ YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams &params)
                 else
                     child.boundsMin[node.splitAxis] = node.splitLocation;
                 params.nodes[node.childOffset + childIndex] = child;
+                params.nodeItems[node.childOffset + childIndex] = {};
             }
         }
 
         for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
         {
-            PathGuidingKdTreeNodeItem childItem{};
-            childItem.nodeIndex = uint32_t(node.childOffset) + childIndex;
+            const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
+            PathGuidingKdTreeNodeItem &childItem = params.nodeItems[childNodeIndex];
+            childItem.nodeIndex = childNodeIndex;
             childItem.sampleOffset =
                 nodeItem.sampleOffset + (childIndex == 0 ? 0 : nodeItem.numLeft);
             childItem.sampleCount =
                 childIndex == 0 ? nodeItem.numLeft : nodeItem.sampleCount - nodeItem.numLeft;
-            childItem.treeDepth = nodeItem.treeDepth + 1;
             PathGuidingKdTreeNode &child = params.nodes[childItem.nodeIndex];
             child.numSamples = childItem.sampleCount;
-            if (childItem.sampleCount != 0 &&
-                (childItem.sampleCount > VMM_KD_TREE_SPLIT_SAMPLE_COUNT || !child.NeedsSplit()))
+        }
+    }
+}
+
+YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams &params,
+                                   PathGuidingSplitDecision splitDecision)
+{
+    params.numNextNodeItemIndices = 0;
+    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
+    {
+        const PathGuidingKdTreeNodeItem &nodeItem =
+            params.nodeItems[params.nodeItemIndices[frontierIndex]];
+        const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+        if (!node.HasChildren() || nodeItem.sampleCount == 0)
+            continue;
+        if (splitDecision == PathGuidingSplitDecision::Lookahead &&
+            (node.IsGuidingCell() || node.IsLookahead()) &&
+            GetLookaheadDepth(params, node) >= params.maxLookaheadDepth)
+            continue;
+        for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
+        {
+            const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
+            const bool shouldContinue =
+                splitDecision == PathGuidingSplitDecision::SampleCount
+                    ? SampleCountContinuationCriteria(params, childNodeIndex)
+                    : LookaheadContinuationCriteria(params, childNodeIndex);
+            if (shouldContinue)
             {
-                params.nextNodeItems[params.numNextNodeItems++] = childItem;
+                params.nextNodeItemIndices[params.numNextNodeItemIndices++] = childNodeIndex;
             }
         }
     }
@@ -66,47 +147,65 @@ YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams &params, PathGuidingK
 {
     uint32_t totalWorkItemCount = 0;
     params.numActiveNodeItems = 0;
-    for (uint32_t nodeItemIndex = 0; nodeItemIndex < params.numNodeItems; nodeItemIndex++)
+    params.maxWorkItemCount = 0;
+    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
     {
+        const uint32_t nodeItemIndex = params.nodeItemIndices[frontierIndex];
         PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
         PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
         nodeItem.workItemOffset = totalWorkItemCount;
         nodeItem.workItemCount = 0;
         bool matchesStage = node.MatchesStage(stage, params.generation);
         if (stage == PathGuidingKdTreeStage::PositionStatistics)
-        {
             node.numSamples = nodeItem.sampleCount;
-            matchesStage = matchesStage && nodeItem.sampleCount > VMM_KD_TREE_SPLIT_SAMPLE_COUNT;
+        if (params.splitDecision == PathGuidingSplitDecision::Lookahead &&
+            stage == PathGuidingKdTreeStage::Partition &&
+            (node.IsGuidingCell() || node.IsLookahead()))
+        {
+            matchesStage =
+                matchesStage && GetLookaheadDepth(params, node) < params.maxLookaheadDepth;
         }
         if (!matchesStage || nodeItem.sampleCount == 0)
             continue;
 
+        if (stage == PathGuidingKdTreeStage::PositionStatistics)
+        {
+            node.boundsMin = Vec3f(INFINITY);
+            node.boundsMax = Vec3f(-INFINITY);
+        }
         params.activeNodeItems[params.numActiveNodeItems++] = nodeItemIndex;
         const uint32_t sampleCount = nodeItem.sampleCount;
         const uint32_t workItemCount = CeilDiv(sampleCount, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT);
 
         nodeItem.workItemCount = workItemCount;
+        params.maxWorkItemCount = Max(params.maxWorkItemCount, workItemCount);
         totalWorkItemCount += workItemCount;
     }
     params.numWorkItems = totalWorkItemCount;
 }
 
-YBI_GPU PathGuidingKdTreeWorkItem GetKdTreeWorkItem(PathGuidingKdTreeParams params,
-                                                  uint32_t workItemIndex)
+YBI_GPU uint32_t FindKdTreeNodeItemIndex(PathGuidingKdTreeParams params, uint32_t workItemIndex)
 {
     uint32_t begin = 0;
     uint32_t end = params.numActiveNodeItems;
     while (begin + 1 < end)
     {
         const uint32_t middle = begin + (end - begin) / 2;
-        const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[params.activeNodeItems[middle]];
+        const PathGuidingKdTreeNodeItem &nodeItem =
+            params.nodeItems[params.activeNodeItems[middle]];
         if (workItemIndex < nodeItem.workItemOffset)
             end = middle;
         else
             begin = middle;
     }
 
-    const uint32_t nodeItemIndex = params.activeNodeItems[begin];
+    return params.activeNodeItems[begin];
+}
+
+YBI_GPU PathGuidingKdTreeWorkItem GetKdTreeWorkItem(PathGuidingKdTreeParams params,
+                                                    uint32_t workItemIndex)
+{
+    const uint32_t nodeItemIndex = FindKdTreeNodeItemIndex(params, workItemIndex);
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
     const uint32_t sampleOffset =
         (workItemIndex - nodeItem.workItemOffset) * VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT;
@@ -114,21 +213,9 @@ YBI_GPU PathGuidingKdTreeWorkItem GetKdTreeWorkItem(PathGuidingKdTreeParams para
     workItem.nodeIndex = nodeItem.nodeIndex;
     workItem.nodeItemIndex = nodeItemIndex;
     workItem.sampleOffset = nodeItem.sampleOffset + sampleOffset;
-    workItem.sampleCount = Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT,
-                                        nodeItem.sampleCount - sampleOffset);
+    workItem.sampleCount =
+        Min<uint32_t>(VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT, nodeItem.sampleCount - sampleOffset);
     return workItem;
-}
-
-YBI_GPU void InitializeNodePositionStatistics(PathGuidingKdTreeParams params,
-                                              uint32_t nodeItemIndex)
-{
-    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-    PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-    node.boundsMin = Vec3f(INFINITY);
-    node.boundsMax = Vec3f(-INFINITY);
-    node.meanX = node.meanY = node.meanZ = 0;
-    node.varianceX = node.varianceY = node.varianceZ = 0;
-    node.numSamples = 0;
 }
 
 template <typename Backend>
@@ -150,77 +237,92 @@ YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workIt
     Backend::ReduceMax(boundsMax, node.boundsMax);
 }
 
-template <typename Backend>
-YBI_GPU void CalculateNodePositionStatistics(PathGuidingKdTreeParams params,
-                                             uint32_t workItemIndex)
+YBI_GPU PathGuidingKdTreePositionStatistics
+CalculateNodePositionStatistics(PathGuidingKdTreeParams params,
+                                const PathGuidingKdTreeWorkItem &workItem,
+                                uint32_t threadIndex)
 {
-    const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
-    PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
-
-    const Vec3f boundsHalfExtent = (node.boundsMax - node.boundsMin) * 0.5f;
-    const Vec3f boundsCenter = node.boundsMin + boundsHalfExtent;
-    YBI_ASSERT(boundsHalfExtent.MinComponent() >= 0.f);
-    const Vec3f invHalfExtent(boundsHalfExtent.x > 0.f ? 1.f / boundsHalfExtent.x : 0.f,
-                              boundsHalfExtent.y > 0.f ? 1.f / boundsHalfExtent.y : 0.f,
-                              boundsHalfExtent.z > 0.f ? 1.f / boundsHalfExtent.z : 0.f);
-    int64_t meanX = 0, meanY = 0, meanZ = 0;
-    int64_t varianceX = 0, varianceY = 0, varianceZ = 0;
-    uint32_t numSamples = 0;
-
-    for (uint32_t sampleIndex = Backend::GetThreadIndex(); sampleIndex < workItem.sampleCount;
-         sampleIndex += Backend::GetThreadStride())
+    PathGuidingKdTreePositionStatistics result = {};
+    for (uint32_t sampleOffset = threadIndex; sampleOffset < workItem.sampleCount;
+         sampleOffset += VMM_BLOCK_SIZE)
     {
         const SampleData &sample =
-            params.sampleData[params.sampleIndices[workItem.sampleOffset + sampleIndex]];
-        const Vec3f normalized = (sample.position - boundsCenter) * invHalfExtent;
-        const Vec3f p(Clamp(normalized.x, -1.f, 1.f),
-                      Clamp(normalized.y, -1.f, 1.f),
-                      Clamp(normalized.z, -1.f, 1.f));
-        meanX += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.x);
-        meanY += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.y);
-        meanZ += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.z);
-        varianceX += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.x * p.x);
-        varianceY += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.y * p.y);
-        varianceZ += static_cast<int64_t>(VMM_KD_TREE_POSITION_STATISTICS_SCALE * p.z * p.z);
-        ++numSamples;
+            params.sampleData[params.sampleIndices[workItem.sampleOffset + sampleOffset]];
+        const PathGuidingKdTreePositionStatistics value{sample.position, Vec3f(0.f), 1};
+        result = result + value;
     }
-    Backend::ReduceAdd(meanX, node.meanX);
-    Backend::ReduceAdd(meanY, node.meanY);
-    Backend::ReduceAdd(meanZ, node.meanZ);
-    Backend::ReduceAdd(varianceX, node.varianceX);
-    Backend::ReduceAdd(varianceY, node.varianceY);
-    Backend::ReduceAdd(varianceZ, node.varianceZ);
-    Backend::ReduceAdd(numSamples, node.numSamples);
+    return result;
+}
+
+YBI_GPU void CreateKdTreeReductionWorkItems(PathGuidingKdTreeParams &params)
+{
+    uint32_t totalWorkItemCount = 0;
+    for (uint32_t activeIndex = 0; activeIndex < params.numActiveNodeItems; ++activeIndex)
+    {
+        PathGuidingKdTreeNodeItem &nodeItem =
+            params.nodeItems[params.activeNodeItems[activeIndex]];
+        nodeItem.reductionInputOffset = nodeItem.workItemOffset;
+        nodeItem.reductionInputCount = nodeItem.workItemCount;
+        nodeItem.workItemOffset = totalWorkItemCount;
+        nodeItem.workItemCount = CeilDiv(nodeItem.reductionInputCount, VMM_BLOCK_SIZE);
+        totalWorkItemCount += nodeItem.workItemCount;
+    }
+    params.numWorkItems = totalWorkItemCount;
+}
+
+template <typename T>
+YBI_GPU T LoadKdTreeReductionValue(const PathGuidingKdTreeNodeItem &nodeItem,
+                                   uint32_t workItemIndex,
+                                   uint32_t threadIndex,
+                                   const T *input)
+{
+    const uint32_t offset =
+        (workItemIndex - nodeItem.workItemOffset) * VMM_BLOCK_SIZE + threadIndex;
+    if (offset >= nodeItem.reductionInputCount)
+        return {};
+    return input[nodeItem.reductionInputOffset + offset];
+}
+
+YBI_GPU void StoreNodePositionStatistics(PathGuidingKdTreeParams params,
+                                         uint32_t nodeItemIndex,
+                                         uint32_t workItemIndex,
+                                         const PathGuidingKdTreePositionStatistics &statistics,
+                                         PathGuidingKdTreePositionStatistics *output)
+{
+    output[workItemIndex] = statistics;
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    if (nodeItem.workItemCount == 1)
+    {
+        PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+        node.meanX = statistics.mean.x;
+        node.meanY = statistics.mean.y;
+        node.meanZ = statistics.mean.z;
+        node.varianceX = statistics.variance.x;
+        node.varianceY = statistics.variance.y;
+        node.varianceZ = statistics.variance.z;
+        node.numSamples = statistics.numSamples;
+    }
 }
 
 YBI_GPU void SelectNodeSplits(PathGuidingKdTreeParams params, uint32_t nodeItemIndex)
 {
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
     PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+    if (params.splitDecision == PathGuidingSplitDecision::SampleCount)
+    {
+        if (node.numSamples <= VMM_KD_TREE_SPLIT_SAMPLE_COUNT)
+            return;
+    }
+    else if (node.numSamples < VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT ||
+             GetLookaheadDepth(params, node) >= params.maxLookaheadDepth)
+    {
+        return;
+    }
     const Vec3f boundsExtent = node.boundsMax - node.boundsMin;
     if (boundsExtent.MaxComponent() == 0.f)
         return;
-    const Vec3f halfExtent = boundsExtent * 0.5f;
-    const Vec3f center = node.boundsMin + halfExtent;
-    const float invNumSamples = 1.f / float(node.numSamples);
-    const Vec3f normalizedMean = Vec3f(float(node.meanX), float(node.meanY), float(node.meanZ)) *
-                                 invNumSamples / VMM_KD_TREE_POSITION_STATISTICS_SCALE;
-    Vec3f mean = normalizedMean * halfExtent + center;
-    const Vec3f halfBinSize = halfExtent * (0.5f / VMM_KD_TREE_POSITION_STATISTICS_SCALE);
-    for (uint32_t axis = 0; axis < 3; ++axis)
-    {
-        const float inset = halfBinSize[axis];
-        if (mean[axis] <= node.boundsMin[axis])
-            mean[axis] = node.boundsMin[axis] + inset;
-        if (mean[axis] >= node.boundsMax[axis])
-            mean[axis] = node.boundsMax[axis] - inset;
-    }
-
-    Vec3f variance = Vec3f(float(node.varianceX), float(node.varianceY), float(node.varianceZ)) /
-                     VMM_KD_TREE_POSITION_STATISTICS_SCALE * invNumSamples;
-    variance -= normalizedMean * normalizedMean;
-    variance = Max(variance, Vec3f(0.f)) * (halfExtent * halfExtent);
-    variance = Min(variance, boundsExtent * boundsExtent);
+    Vec3f mean(node.meanX, node.meanY, node.meanZ);
+    const Vec3f variance(node.varianceX, node.varianceY, node.varianceZ);
 
     const bool equalVariance = variance.x == variance.y && variance.y == variance.z;
     uint32_t splitAxis;
@@ -234,6 +336,7 @@ YBI_GPU void SelectNodeSplits(PathGuidingKdTreeParams params, uint32_t nodeItemI
         const uint32_t xyAxis = axisValues.y > axisValues.x ? 1 : 0;
         splitAxis = axisValues[xyAxis] > axisValues.z ? xyAxis : 2;
     }
+    mean[splitAxis] = Min(mean[splitAxis], node.boundsMax[splitAxis]);
     if (mean[splitAxis] <= node.boundsMin[splitAxis])
         mean[splitAxis] = nextafterf(node.boundsMin[splitAxis], node.boundsMax[splitAxis]);
     node.splitAxis = int(splitAxis);
@@ -281,7 +384,8 @@ YBI_GPU void PartitionExclusiveScan(PathGuidingKdTreeParams params, uint32_t nod
         const auto scan = Backend::ExclusiveScanAdd(count);
         if (valid)
         {
-            params.workItemLeftOffsets[nodeItem.workItemOffset + workItemOffset] = offset + scan.prefix;
+            params.workItemLeftOffsets[nodeItem.workItemOffset + workItemOffset] =
+                offset + scan.prefix;
         }
         offset += scan.total;
     }

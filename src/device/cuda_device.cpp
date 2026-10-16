@@ -245,7 +245,7 @@ void CUDADevice::WaitIdle()
     CUDA_ASSERT(cuCtxSynchronize());
 }
 
-DeviceBuffer CUDADevice::Alloc(size_t numBytes)
+DeviceBuffer<std::byte> CUDADevice::AllocBytes(size_t numBytes)
 {
     YBI_ASSERT(numBytes != 0);
     size_t size = numBytes;
@@ -253,10 +253,10 @@ DeviceBuffer CUDADevice::Alloc(size_t numBytes)
     CUdeviceptr ptr;
     CUDA_ASSERT(cuMemAlloc(&ptr, size));
 
-    return DeviceBuffer(uintptr_t(ptr), numBytes);
+    return DeviceBuffer<std::byte>(uintptr_t(ptr), numBytes);
 }
 
-void CUDADevice::Free(DeviceBuffer &buffer)
+void CUDADevice::FreeBytes(DeviceBuffer<std::byte> &buffer)
 {
     if (buffer.Data() == nullptr || buffer.SizeInBytes() == 0)
         return;
@@ -264,25 +264,25 @@ void CUDADevice::Free(DeviceBuffer &buffer)
     // totalAllocated -= view.numBytes();
     CUDA_ASSERT(cuMemFree(CUdeviceptr(buffer.Data())));
 
-    buffer = DeviceBuffer(std::nullptr_t());
+    buffer = DeviceBuffer<std::byte>(std::nullptr_t());
 }
 
-DeviceBuffer CUDADevice::AllocHost(size_t numBytes)
+DeviceBuffer<std::byte> CUDADevice::AllocHostBytes(size_t numBytes)
 {
     YBI_ASSERT(numBytes != 0);
 
     void *ptr = nullptr;
     CUDA_ASSERT(cuMemAllocHost(&ptr, numBytes));
-    return DeviceBuffer(ptr, numBytes);
+    return DeviceBuffer<std::byte>(static_cast<std::byte *>(ptr), numBytes);
 }
 
-void CUDADevice::FreeHost(DeviceBuffer &buffer)
+void CUDADevice::FreeHostBytes(DeviceBuffer<std::byte> &buffer)
 {
     if (buffer.Data() == nullptr || buffer.SizeInBytes() == 0)
         return;
 
     CUDA_ASSERT(cuMemFreeHost(buffer.Data()));
-    buffer = DeviceBuffer(std::nullptr_t());
+    buffer = DeviceBuffer<std::byte>(std::nullptr_t());
 }
 
 DeviceExternalBuffer CUDADevice::ImportExternalBuffer(const DisplayBuffer &buffer)
@@ -322,7 +322,7 @@ DeviceExternalBuffer CUDADevice::ImportExternalBuffer(const DisplayBuffer &buffe
     // importedExternalBuffers.push_back({cudaPtr, buffer.size, externalMemory});
     DeviceExternalBuffer result;
     result.handle = reinterpret_cast<void *>(externalMemory);
-    result.buffer = DeviceBuffer(uintptr_t(cudaPtr), buffer.size);
+    result.buffer = DeviceBuffer<std::byte>(uintptr_t(cudaPtr), buffer.size);
     result.device = this;
     return result;
 }
@@ -332,7 +332,7 @@ void CUDADevice::FreeExternalBuffer(DeviceExternalBuffer &buffer)
     if (buffer.buffer)
     {
         CUDA_ASSERT(cuMemFree(reinterpret_cast<CUdeviceptr>(buffer.buffer.Data())));
-        buffer.buffer = DeviceBuffer(std::nullptr_t());
+        buffer.buffer = DeviceBuffer<std::byte>(std::nullptr_t());
     }
 
     if (buffer.handle)
@@ -606,7 +606,7 @@ void CUDADevice::CopyToDevice3DBatchAsync(DeviceStream &stream,
 bool CUDADevice::DispatchKernel(KernelType kernelType,
                                 uint32_t numWorkItems,
                                 uint32_t blockSize,
-                                DeviceBuffer kernelParams)
+                                DeviceBuffer<std::byte> kernelParams)
 {
     ContextScope contextScope(this);
     if (!kernelParams.Data() || kernelParams.SizeInBytes() < sizeof(WavefrontParams))
@@ -1473,12 +1473,12 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
     cudaDevice->bvhTotalAllocated += sizes.outputSizeInBytes;
 
     const bool useCompaction = (buildOptions.buildFlags & OPTIX_BUILD_FLAG_ALLOW_COMPACTION) != 0;
-    DeviceBuffer tempBuffer = deviceArena->PushArray<uint8_t>(
+    DeviceBuffer<std::byte> tempBuffer = deviceArena->PushArray<std::byte>(
         AlignUp(sizes.tempSizeInBytes + sizeof(uint64_t), sizeof(uint64_t)),
         OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT);
 
-    DeviceBuffer outputBuffer =
-        useCompaction ? deviceArena->PushArray<uint8_t>(sizes.outputSizeInBytes,
+    DeviceBuffer<std::byte> outputBuffer =
+        useCompaction ? deviceArena->PushArray<std::byte>(sizes.outputSizeInBytes,
                                                         OPTIX_ACCEL_BUFFER_BYTE_ALIGNMENT)
                       : cudaDevice->Alloc(sizes.outputSizeInBytes);
 
@@ -1510,7 +1510,7 @@ static OptixTraversableHandle BuildOptixBVH(CUDADevice *cudaDevice,
         CUDA_ASSERT(
             cuMemcpyDtoH(&compactedSize, CUdeviceptr(compactedSizeAddress), sizeof(uint64_t)));
 
-        DeviceBuffer compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
+        DeviceBuffer<std::byte> compactedOutputBuffer = cudaDevice->Alloc(compactedSize);
 
         OptixTraversableHandle tempOutputHandle = {};
         OPTIX_ASSERT(optixAccelCompact(cudaDevice->optixDeviceContext,
@@ -1551,12 +1551,12 @@ static OptixBuildInput GetOptiXTriangleBuildInput(Arena *hostArena,
     View<CUdeviceptr> vertexBuffers = hostArena->PushArray<CUdeviceptr>(numMotionKeys);
     View<Vec3f> hostVertices = hostArena->PushArray<Vec3f>(numVertices * numMotionKeys);
 
-    DeviceBuffer deviceVertices = deviceArena->PushArray<Vec3f>(numVertices * numMotionKeys);
-    DeviceBuffer deviceIndices = deviceArena->PushArray<int>(numIndices);
+    DeviceBuffer<Vec3f> deviceVertices = deviceArena->PushArray<Vec3f>(numVertices * numMotionKeys);
+    DeviceBuffer<int> deviceIndices = deviceArena->PushArray<int>(numIndices);
 
     for (uint32_t step = 0; step < numMotionKeys; step++)
     {
-        CUdeviceptr dst = CUdeviceptr(deviceVertices.As<Vec3f>().Get() + step * numVertices);
+        CUdeviceptr dst = CUdeviceptr(deviceVertices.Data() + step * numVertices);
         vertexBuffers[step] = dst;
 
         memcpy(hostVertices.data() + step * numVertices,
@@ -1680,7 +1680,7 @@ static OptixBuildInput GetOptiXInstanceBuildInput(CUDAArena *deviceArena,
 {
     YBI_ASSERT(hostInstances.size() > 0);
 
-    DeviceBuffer deviceInstances = deviceArena->PushArray<OptixInstance>(hostInstances.size());
+    DeviceBuffer<OptixInstance> deviceInstances = deviceArena->PushArray<OptixInstance>(hostInstances.size());
     CUDA_ASSERT(cuMemcpyHtoD(
         CUdeviceptr(deviceInstances.Data()), hostInstances.data(), deviceInstances.SizeInBytes()));
 

@@ -1,4 +1,5 @@
 #include "kernel/backend/cpu/kd_tree.h"
+#include "kernel/backend/cpu/reduction.h"
 #include "kernel/backend/cpu/vmm_backend.h"
 #include "kernel/guiding/kd_tree.h"
 #include <cstring>
@@ -7,21 +8,19 @@
 namespace ybi
 {
 
-void CreateKdTreeNodeItemsCPU(PathGuidingKdTreeParams &params)
+void CreateKdTreeNodesCPU(PathGuidingKdTreeParams &params, PathGuidingSplitDecision splitDecision)
 {
-    CreateKdTreeNodeItems(params);
+    CreateKdTreeNodes(params, splitDecision);
+}
+
+void CreateKdTreeNodeItemsCPU(PathGuidingKdTreeParams &params, PathGuidingSplitDecision splitDecision)
+{
+    CreateKdTreeNodeItems(params, splitDecision);
 }
 
 void CreateKdTreeWorkItemsCPU(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage)
 {
     CreateKdTreeWorkItems(params, stage);
-}
-
-void InitializeNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
-{
-    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
-        InitializeNodePositionStatistics(params, params.activeNodeItems[activeNodeItemIndex]);
-    });
 }
 
 void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params)
@@ -40,15 +39,34 @@ void CalculateNodeBoundsCPU(PathGuidingKdTreeParams params)
 
 void CalculateNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
 {
-    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeNodeItemIndex) {
-        const uint32_t nodeItemIndex = params.activeNodeItems[activeNodeItemIndex];
+    tbb::parallel_for(0u, params.numWorkItems, [&](uint32_t workItemIndex) {
+        const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
+        PathGuidingKdTreePositionStatistics values[VMM_BLOCK_SIZE] = {};
+        for (uint32_t thread = 0; thread < VMM_BLOCK_SIZE; ++thread)
+            values[thread] = CalculateNodePositionStatistics(params, workItem, thread);
+        const auto statistics = BlockReduceSum<PathGuidingKdTreePositionStatistics, VMM_BLOCK_SIZE>(values);
+        StoreNodePositionStatistics(params, workItem.nodeItemIndex, workItemIndex,
+                                    statistics, params.positionStatistics);
+    });
+}
+
+void CreateKdTreeReductionWorkItemsCPU(PathGuidingKdTreeParams &params)
+{
+    CreateKdTreeReductionWorkItems(params);
+}
+
+void ReduceNodePositionStatisticsCPU(PathGuidingKdTreeParams params,
+                                     const PathGuidingKdTreePositionStatistics *input,
+                                     PathGuidingKdTreePositionStatistics *output)
+{
+    tbb::parallel_for(0u, params.numWorkItems, [&](uint32_t workItemIndex) {
+        const uint32_t nodeItemIndex = FindKdTreeNodeItemIndex(params, workItemIndex);
         const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-        for (uint32_t workItemIndex = nodeItem.workItemOffset;
-             workItemIndex < nodeItem.workItemOffset + nodeItem.workItemCount;
-             ++workItemIndex)
-        {
-            CalculateNodePositionStatistics<CpuSIMDVMMBackend>(params, workItemIndex);
-        }
+        PathGuidingKdTreePositionStatistics values[VMM_BLOCK_SIZE] = {};
+        for (uint32_t thread = 0; thread < VMM_BLOCK_SIZE; ++thread)
+            values[thread] = LoadKdTreeReductionValue(nodeItem, workItemIndex, thread, input);
+        const auto statistics = BlockReduceSum<PathGuidingKdTreePositionStatistics, VMM_BLOCK_SIZE>(values);
+        StoreNodePositionStatistics(params, nodeItemIndex, workItemIndex, statistics, output);
     });
 }
 
@@ -89,9 +107,18 @@ static PathGuidingKdTreeParams &GetKdTreeParams(void **arguments)
     return *params;
 }
 
+void CreateKdTreeNodesKernelCPU(void **arguments)
+{
+    YBI_ASSERT(arguments && arguments[1]);
+    const auto splitDecision = *static_cast<PathGuidingSplitDecision *>(arguments[1]);
+    CreateKdTreeNodesCPU(GetKdTreeParams(arguments), splitDecision);
+}
+
 void CreateKdTreeNodeItemsKernelCPU(void **arguments)
 {
-    CreateKdTreeNodeItemsCPU(GetKdTreeParams(arguments));
+    YBI_ASSERT(arguments && arguments[1]);
+    const auto splitDecision = *static_cast<PathGuidingSplitDecision *>(arguments[1]);
+    CreateKdTreeNodeItemsCPU(GetKdTreeParams(arguments), splitDecision);
 }
 
 void CreateKdTreeWorkItemsKernelCPU(void **arguments)
@@ -102,11 +129,6 @@ void CreateKdTreeWorkItemsKernelCPU(void **arguments)
     CreateKdTreeWorkItemsCPU(params, stage);
 }
 
-void InitializeNodePositionStatisticsKernelCPU(void **arguments)
-{
-    InitializeNodePositionStatisticsCPU(GetKdTreeParams(arguments));
-}
-
 void CalculateNodeBoundsKernelCPU(void **arguments)
 {
     CalculateNodeBoundsCPU(GetKdTreeParams(arguments));
@@ -115,6 +137,20 @@ void CalculateNodeBoundsKernelCPU(void **arguments)
 void CalculateNodePositionStatisticsKernelCPU(void **arguments)
 {
     CalculateNodePositionStatisticsCPU(GetKdTreeParams(arguments));
+}
+
+void CreateKdTreeReductionWorkItemsKernelCPU(void **arguments)
+{
+    CreateKdTreeReductionWorkItemsCPU(GetKdTreeParams(arguments));
+}
+
+void ReduceNodePositionStatisticsKernelCPU(void **arguments)
+{
+    const PathGuidingKdTreePositionStatistics *input = nullptr;
+    PathGuidingKdTreePositionStatistics *output = nullptr;
+    std::memcpy(&input, arguments[1], sizeof(input));
+    std::memcpy(&output, arguments[2], sizeof(output));
+    ReduceNodePositionStatisticsCPU(GetKdTreeParams(arguments), input, output);
 }
 
 void SelectNodeSplitsKernelCPU(void **arguments)

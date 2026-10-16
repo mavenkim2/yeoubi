@@ -16,15 +16,6 @@ struct ExclusiveScanResult
     uint32_t total;
 };
 
-struct GuidingParams
-{
-    Vec3f *sampleDirection;
-    float *sampleIncidentRadianceEstimate;
-    float *samplePdf;
-    uint64_t vmfSplitTexture;
-    float vmfSplitMaxInvSqrtK;
-};
-
 struct VMMDistribution
 {
     Vec3f meanDirection[VMM_MAX_NUM_COMPONENTS];
@@ -127,12 +118,83 @@ struct VMMMergeCandidate
 };
 
 // Kd tree
+enum class PathGuidingSplitDecision
+{
+    SampleCount,
+    Lookahead,
+};
+
 enum class PathGuidingKdTreeStage
 {
     PositionStatistics,
     Partition,
-    Signature,
+    Lookahead,
     Promotion,
+};
+
+struct LookaheadCell
+{
+    float radianceFirstMoment;
+    float radianceSecondMoment;
+    uint32_t numSamples;
+    Vec3f radianceWeightedDirectionSum;
+
+    YBI_GPU Vec3f CalculateMeanDirection() const;
+    YBI_GPU float CalculateMeanDirectionInvKappa() const;
+    YBI_GPU float CalculateSampleMean() const;
+    YBI_GPU float CalculateSampleVariance() const;
+    YBI_GPU LookaheadCell CalculateDelta(const LookaheadCell &rhs) const;
+};
+
+struct PathGuidingKdTreePositionStatistics
+{
+    Vec3f mean;
+    Vec3f variance;
+    uint32_t numSamples;
+
+    YBI_CPU_GPU PathGuidingKdTreePositionStatistics operator+(
+        const PathGuidingKdTreePositionStatistics &other) const
+    {
+        if (numSamples == 0)
+            return other;
+        if (other.numSamples == 0)
+            return *this;
+        PathGuidingKdTreePositionStatistics result = {};
+        result.numSamples = numSamples + other.numSamples;
+        const float weightB = float(other.numSamples) / float(result.numSamples);
+        const float weightA = float(numSamples) / float(result.numSamples);
+        const Vec3f delta = other.mean - mean;
+        result.mean = mean + delta * weightB;
+        result.variance = variance * weightA + other.variance * weightB +
+                          delta * delta * (weightA * weightB);
+        return result;
+    }
+};
+
+struct PathGuidingKdTreeLookaheadStatistics
+{
+    float meanRadiance;
+    float meanSquaredRadiance;
+    Vec3f meanRadianceWeightedDirection;
+    uint32_t numSamples;
+
+    YBI_CPU_GPU PathGuidingKdTreeLookaheadStatistics operator+(
+        const PathGuidingKdTreeLookaheadStatistics &other) const
+    {
+        if (numSamples == 0)
+            return other;
+        if (other.numSamples == 0)
+            return *this;
+        PathGuidingKdTreeLookaheadStatistics result = {};
+        result.numSamples = numSamples + other.numSamples;
+        const float weight = float(other.numSamples) / float(result.numSamples);
+        result.meanRadiance = meanRadiance + (other.meanRadiance - meanRadiance) * weight;
+        result.meanSquaredRadiance =
+            meanSquaredRadiance + (other.meanSquaredRadiance - meanSquaredRadiance) * weight;
+        result.meanRadianceWeightedDirection = meanRadianceWeightedDirection +
+            (other.meanRadianceWeightedDirection - meanRadianceWeightedDirection) * weight;
+        return result;
+    }
 };
 
 struct PathGuidingKdTreeNode
@@ -140,22 +202,29 @@ struct PathGuidingKdTreeNode
     float splitLocation;
     int splitAxis = -1;
     int childOffset = -1;
+    uint32_t treeDepth = 0;
 
-    Vec3f boundsMin;
-    Vec3f boundsMax;
+    Vec3f boundsMin = Vec3f(INFINITY);
+    Vec3f boundsMax = Vec3f(-INFINITY);
 
-    int64_t meanX;
-    int64_t meanY;
-    int64_t meanZ;
+    float meanX = 0.f;
+    float meanY = 0.f;
+    float meanZ = 0.f;
 
-    int64_t varianceX;
-    int64_t varianceY;
-    int64_t varianceZ;
-    uint32_t numSamples;
+    float varianceX = 0.f;
+    float varianceY = 0.f;
+    float varianceZ = 0.f;
+    uint32_t numSamples = 0;
     uint32_t partitionGeneration = 0;
 
     int guidingCellIndex = -1;
-    int guidingNodeIndex = -1;
+    int ancestorGuidingCellIndex = -1;
+    LookaheadCell lookaheadCell = {};
+
+    YBI_CPU_GPU bool HasChildren() const
+    {
+        return childOffset >= 0;
+    }
 
     YBI_CPU_GPU bool NeedsSplit() const
     {
@@ -174,17 +243,21 @@ struct PathGuidingKdTreeNode
 
     YBI_CPU_GPU bool IsLookahead() const
     {
-        return !IsGuidingCell() && guidingNodeIndex >= 0;
+        return !IsGuidingCell() && ancestorGuidingCellIndex >= 0;
     }
 
     YBI_CPU_GPU bool MatchesStage(PathGuidingKdTreeStage stage, uint32_t generation) const
     {
         switch (stage)
         {
-        case PathGuidingKdTreeStage::PositionStatistics: return NeedsSplit();
-        case PathGuidingKdTreeStage::Partition: return NeedsPartition(generation);
-        case PathGuidingKdTreeStage::Signature: return IsGuidingCell() || IsLookahead();
-        case PathGuidingKdTreeStage::Promotion: return IsLookahead();
+            case PathGuidingKdTreeStage::PositionStatistics:
+                return NeedsSplit();
+            case PathGuidingKdTreeStage::Partition:
+                return NeedsPartition(generation);
+            case PathGuidingKdTreeStage::Lookahead:
+                return IsGuidingCell() || IsLookahead();
+            case PathGuidingKdTreeStage::Promotion:
+                return IsLookahead();
         }
         return false;
     }
@@ -208,31 +281,47 @@ struct PathGuidingKdTreeNodeItem
 
     uint32_t workItemOffset;
     uint32_t workItemCount;
-
-    uint32_t treeDepth;
-    uint32_t lookaheadDepth;
+    uint32_t reductionInputOffset;
+    uint32_t reductionInputCount;
 };
 
 struct PathGuidingKdTreeParams
 {
+    PathGuidingSplitDecision splitDecision = PathGuidingSplitDecision::SampleCount;
+    uint32_t maxLookaheadDepth = 0;
     PathGuidingKdTreeNode *nodes;
     uint32_t numNodes = 0;
 
     PathGuidingKdTreeNodeItem *nodeItems;
-    PathGuidingKdTreeNodeItem *nextNodeItems;
-    uint32_t numNextNodeItems;
+    uint32_t *nodeItemIndices;
+    uint32_t numNodeItemIndices;
+    uint32_t *nextNodeItemIndices;
+    uint32_t numNextNodeItemIndices;
     uint32_t *workItemLeftOffsets;
 
-    uint32_t numNodeItems;
     uint32_t numWorkItems;
+    uint32_t maxWorkItemCount = 0;
     uint32_t *activeNodeItems;
     uint32_t numActiveNodeItems;
     uint32_t generation;
+    PathGuidingKdTreePositionStatistics *positionStatistics;
+    PathGuidingKdTreeLookaheadStatistics *lookaheadStatistics;
 
     SampleData *sampleData;
     uint32_t *sampleIndices;
     uint32_t *newSampleIndices;
     uint32_t numSampleIndices;
+    uint32_t *guidingCellSplitMask;
+    uint32_t numGuidingCellSplits = 0;
+    VMMDistribution *vmmDistributions;
+    uint32_t numVMMs = 0;
+    float meanRadianceSplitThreshold = 0.1f;
+
+    Vec3f *sampleDirection;
+    float *sampleIncidentRadianceEstimate;
+    float *samplePdf;
+    uint64_t vmfSplitTexture;
+    float vmfSplitMaxInvSqrtK;
 };
 
 } // namespace ybi

@@ -41,7 +41,7 @@ struct KernelParams
     uint64_t opaqueDielectricEnergyComplementTexture;
     uint64_t opaqueDielectricAverageEnergyComplementTexture;
 
-    GuidingParams guiding;
+    PathGuidingKdTreeParams guiding;
 
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;

@@ -14,6 +14,7 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <tbb/parallel_for.h>
 #include <unordered_set>
 
@@ -30,7 +31,8 @@ RenderSystem::~RenderSystem()
     const auto release = [this](auto *&ptr) {
         if (ptr)
         {
-            DeviceBuffer buffer(reinterpret_cast<void *>(ptr), 1);
+            using T = std::remove_pointer_t<std::remove_reference_t<decltype(ptr)>>;
+            DeviceBuffer<T> buffer(ptr, 1);
             device->Free(buffer);
             ptr = nullptr;
         }
@@ -260,7 +262,7 @@ static void UploadDeviceBuffers(Device *device,
         memcpy(flattenedBuffers.data() + offsets[index], buffer.data(), sizeof(T) * buffer.size());
     });
 
-    devicePtr = reinterpret_cast<T *>(device->Alloc(sizeof(T) * totalSize).Data());
+    devicePtr = device->Alloc<T>(totalSize).Data();
     device->CopyToDevice(devicePtr, flattenedBuffers.data(), sizeof(T) * flattenedBuffers.size());
 }
 
@@ -299,7 +301,7 @@ static void UploadEncodedNormalBuffers(Device *device,
         }
     });
 
-    devicePtr = reinterpret_cast<uint32_t *>(device->Alloc(sizeof(uint32_t) * totalSize).Data());
+    devicePtr = device->Alloc<uint32_t>(totalSize).Data();
     device->CopyToDevice(devicePtr, encodedNormals.data(), sizeof(uint32_t) * totalSize);
 }
 
@@ -1040,8 +1042,7 @@ void GeometryManager::Update(Device *device,
             }
         }
 
-        deviceScene->deviceAttributes = reinterpret_cast<DeviceAttribute *>(
-            device->Alloc(sizeof(DeviceAttribute) * primvarOffset).Data());
+        deviceScene->deviceAttributes = device->Alloc<DeviceAttribute>(primvarOffset).Data();
         device->CopyToDevice(deviceScene->deviceAttributes,
                              attributes.data(),
                              sizeof(DeviceAttribute) * primvarOffset);
@@ -1054,15 +1055,13 @@ void GeometryManager::Update(Device *device,
     deviceScene->materials = nullptr;
     if (hostMaterials.size())
     {
-        deviceScene->materials = reinterpret_cast<DeviceMaterial *>(
-            device->Alloc(sizeof(DeviceMaterial) * hostMaterials.size()).Data());
+        deviceScene->materials = device->Alloc<DeviceMaterial>(hostMaterials.size()).Data();
         device->CopyToDevice(
             deviceScene->materials, hostMaterials.data(), hostMaterials.numBytes());
     }
     if (hostMaterialHandles.size())
     {
-        deviceScene->materialHandles = reinterpret_cast<MaterialHandle *>(
-            device->Alloc(sizeof(MaterialHandle) * hostMaterialHandles.size()).Data());
+        deviceScene->materialHandles = device->Alloc<MaterialHandle>(hostMaterialHandles.size()).Data();
         device->CopyToDevice(deviceScene->materialHandles,
                              hostMaterialHandles.data(),
                              hostMaterialHandles.numBytes());
@@ -1089,8 +1088,7 @@ void GeometryManager::Update(Device *device,
             deviceLight.radiance = rectLight.radiance;
         }
 
-        deviceScene->deviceLights = reinterpret_cast<DeviceLight *>(
-            device->Alloc(sizeof(DeviceLight) * hostLights.size()).Data());
+        deviceScene->deviceLights = device->Alloc<DeviceLight>(hostLights.size()).Data();
         device->CopyToDevice(deviceScene->deviceLights, hostLights.data(), hostLights.numBytes());
     }
 
@@ -1098,7 +1096,7 @@ void GeometryManager::Update(Device *device,
     }
 
     size_t objectBytes = sizeof(Object) * objects.size();
-    deviceScene->objects = reinterpret_cast<Object *>(device->Alloc(objectBytes).Data());
+    deviceScene->objects = device->Alloc<Object>(objects.size()).Data();
     device->CopyToDevice(deviceScene->objects, objects.data(), objectBytes);
 
     printf("bvh total allocated: %zu\n", device->GetBVHAllocationSize());
@@ -1303,8 +1301,7 @@ void MaterialManager::Update(Device *device,
     {
         const size_t materialBytes =
             sizeof(DeviceMaterial3) * materialXCompilation.materials.size();
-        deviceScene->deviceMaterial3s = reinterpret_cast<DeviceMaterial3 *>(
-            device->Alloc(materialBytes).Data());
+        deviceScene->deviceMaterial3s = device->Alloc<DeviceMaterial3>(materialXCompilation.materials.size()).Data();
         device->CopyToDevice(deviceScene->deviceMaterial3s,
                              materialXCompilation.materials.data(),
                              materialBytes);
@@ -1377,8 +1374,7 @@ void MaterialManager::Update(Device *device,
 
     if (hostMaterials.size())
     {
-        deviceScene->deviceMaterial2s = reinterpret_cast<DeviceMaterial2 *>(
-            device->Alloc(sizeof(DeviceMaterial2) * hostMaterials.size()).Data());
+        deviceScene->deviceMaterial2s = device->Alloc<DeviceMaterial2>(hostMaterials.size()).Data();
         device->CopyToDevice(
             deviceScene->deviceMaterial2s, hostMaterials.data(), hostMaterials.numBytes());
     }
@@ -1386,8 +1382,7 @@ void MaterialManager::Update(Device *device,
     deviceScene->shaderNodes = nullptr;
     if (!shaderNodes.empty())
     {
-        deviceScene->shaderNodes = reinterpret_cast<uint32_t *>(
-            device->Alloc(sizeof(uint32_t) * shaderNodes.size()).Data());
+        deviceScene->shaderNodes = device->Alloc<uint32_t>(shaderNodes.size()).Data();
         device->CopyToDevice(
             deviceScene->shaderNodes, shaderNodes.data(), sizeof(uint32_t) * shaderNodes.size());
     }

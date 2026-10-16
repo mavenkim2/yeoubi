@@ -90,13 +90,13 @@ public:
     CUDAArena &operator=(CUDAArena &&) = delete;
 
     template <typename T>
-    DeviceBuffer Push()
+    DeviceBuffer<T> Push()
     {
-        return PushArray(1);
+        return PushArray<T>(1);
     }
 
     template <typename T>
-    DeviceBuffer PushArray(size_t count, size_t alignment = 0)
+    DeviceBuffer<T> PushArray(size_t count, size_t alignment = 0)
     {
         alignment = alignment == 0 ? current->alignment : alignment;
         size_t bytesNeeded = count * sizeof(T);
@@ -136,7 +136,7 @@ public:
         T *dest = (T *)(current->base + alignedUsed);
 
         current->used = newUsed;
-        return DeviceBuffer(dest, sizeof(T) * count);
+        return DeviceBuffer<T>(dest, count);
     }
     void Clear()
     {

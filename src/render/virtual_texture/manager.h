@@ -78,7 +78,7 @@ class VirtualTextureManager
     Device *device;
     DisplayDevice *displayDevice;
 
-    DeviceBuffer feedback;
+    DeviceBuffer<FeedbackRequest> feedback;
 
     std::unordered_map<std::string, uint32_t> filenameToDescriptorMap;
 
@@ -100,13 +100,13 @@ class VirtualTextureManager
 
     // Device
     std::unique_ptr<DeviceKernel> updatePageDescriptors;
-    DeviceBuffer deviceTextureDescriptors;
-    DeviceBuffer deviceTexturePools;
-    DeviceBuffer devicePageDescriptors;
-    std::vector<DeviceBuffer> pageDescriptorBits;
-    std::vector<DeviceBuffer> hostPinnedFeedbackRequests;
-    std::vector<DeviceBuffer> hostPinnedUpdateRequests;
-    std::vector<DeviceBuffer> deviceUpdateRequests;
+    DeviceBuffer<DeviceTextureDescriptor> deviceTextureDescriptors;
+    DeviceBuffer<DeviceTexture> deviceTexturePools;
+    DeviceBuffer<PageDescriptor> devicePageDescriptors;
+    std::vector<DeviceBuffer<uint32_t>> pageDescriptorBits;
+    std::vector<DeviceBuffer<FeedbackRequest>> hostPinnedFeedbackRequests;
+    std::vector<DeviceBuffer<PageDescriptorUpdateRequest>> hostPinnedUpdateRequests;
+    std::vector<DeviceBuffer<PageDescriptorUpdateRequest>> deviceUpdateRequests;
 
     // Synchronization
     AsyncJob feedbackJob;

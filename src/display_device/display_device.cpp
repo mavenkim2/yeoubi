@@ -7,7 +7,7 @@ namespace ybi
 
 DeviceExternalBuffer::DeviceExternalBuffer(DeviceExternalBuffer &&other) noexcept
     : handle(std::exchange(other.handle, nullptr)), device(std::exchange(other.device, nullptr)),
-      buffer(std::exchange(other.buffer, DeviceBuffer{}))
+      buffer(std::exchange(other.buffer, DeviceBuffer<std::byte>{}))
 {
 }
 
@@ -19,7 +19,7 @@ DeviceExternalBuffer &DeviceExternalBuffer::operator=(DeviceExternalBuffer &&oth
             device->FreeExternalBuffer(*this);
         handle = std::exchange(other.handle, nullptr);
         device = std::exchange(other.device, nullptr);
-        buffer = std::exchange(other.buffer, DeviceBuffer{});
+        buffer = std::exchange(other.buffer, DeviceBuffer<std::byte>{});
     }
     return *this;
 }

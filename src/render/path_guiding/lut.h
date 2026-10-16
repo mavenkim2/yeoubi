@@ -16,7 +16,7 @@ struct VMFSplitTable
     DeviceTexture texture{};
     float maxInvSqrtK = 0.f;
 
-    void Bind(GuidingParams &params) const
+    void Bind(PathGuidingKdTreeParams &params) const
     {
         params.vmfSplitTexture = texture.textureObject;
         params.vmfSplitMaxInvSqrtK = maxInvSqrtK;

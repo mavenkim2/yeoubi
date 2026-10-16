@@ -33,6 +33,7 @@ struct CpuSIMDVMMBackend
 
     static void ReduceAdd(int64_t value, int64_t &destination) { destination += value; }
     static void ReduceAdd(uint32_t value, uint32_t &destination) { destination += value; }
+    static void ReduceAdd(float value, float &destination) { destination += value; }
 
     static void ReduceMin(float value, float &destination) { destination = fminf(value, destination); }
     static void ReduceMax(float value, float &destination) { destination = fmaxf(value, destination); }

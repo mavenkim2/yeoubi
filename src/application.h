@@ -107,8 +107,8 @@ private:
 
     ProgressiveState progressiveState;
     std::unique_ptr<WavefrontIntegrator> integrator;
-    DeviceBuffer kernelOutput;
-    DeviceBuffer accumulation;
+    DeviceBuffer<Vec3f> kernelOutput;
+    DeviceBuffer<Vec3f> accumulation;
     std::unique_ptr<DeviceKernel> accumulateKernel;
     bool hasRenderedFrame = false;
 
@@ -134,10 +134,10 @@ private:
     bool singlePixel = false;
     std::unique_ptr<SceneSession> session;
     KernelParams params{};
-    DeviceBuffer cudaParams;
-    DeviceBuffer kernelOutput;
-    DeviceBuffer accumulation;
-    DeviceBuffer outputImage;
+    DeviceBuffer<KernelParams> cudaParams;
+    DeviceBuffer<Vec3f> kernelOutput;
+    DeviceBuffer<Vec3f> accumulation;
+    DeviceBuffer<uint8_t> outputImage;
     std::unique_ptr<DeviceKernel> accumulateKernel;
 
 public:
