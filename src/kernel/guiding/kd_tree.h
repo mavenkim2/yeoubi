@@ -25,13 +25,9 @@ YBI_GPU uint32_t GetLookaheadDepth(const PathGuidingKdTreeParams &params,
     return node.treeDepth - params.nodes[node.ancestorGuidingCellIndex].treeDepth;
 }
 
-YBI_GPU bool SampleCountContinuationCriteria(const PathGuidingKdTreeParams &params,
-                                             uint32_t nodeItemIndex)
+YBI_GPU bool IsGuidingCellMarkedForSplit(const PathGuidingKdTreeParams &params, uint32_t nodeIndex)
 {
-    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-    const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-    return nodeItem.sampleCount != 0 &&
-           (nodeItem.sampleCount > VMM_KD_TREE_SPLIT_SAMPLE_COUNT || !node.NeedsSplit());
+    return (params.guidingCellSplitMask[nodeIndex >> 5] & (1u << (nodeIndex & 31u))) != 0;
 }
 
 YBI_GPU bool LookaheadContinuationCriteria(const PathGuidingKdTreeParams &params,
@@ -39,23 +35,15 @@ YBI_GPU bool LookaheadContinuationCriteria(const PathGuidingKdTreeParams &params
 {
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
     const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-    if (nodeItem.sampleCount == 0)
-        return false;
     if (!node.IsGuidingCell() && !node.IsLookahead())
-        return node.HasChildren();
+        return true;
 
     const uint32_t ancestorIndex =
         node.IsGuidingCell() ? nodeItem.nodeIndex : uint32_t(node.ancestorGuidingCellIndex);
     // If the ancestor needs to be split, then its children will be considered in the
     // next pass instead of the current node's children.
-    if (!params.nodes[ancestorIndex].IsGuidingCell() ||
-        (params.guidingCellSplitMask[ancestorIndex >> 5] & (1u << (ancestorIndex & 31u))))
-        return false;
-
-    return GetLookaheadDepth(params, node) <= params.maxLookaheadDepth &&
-           (node.IsGuidingCell() ||
-            nodeItem.sampleCount >= VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT ||
-            !node.NeedsSplit());
+    return params.nodes[ancestorIndex].IsGuidingCell() &&
+           !IsGuidingCellMarkedForSplit(params, ancestorIndex);
 }
 
 YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
@@ -68,11 +56,6 @@ YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
         PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
         if (nodeItem.sampleCount == 0 || node.NeedsSplit())
             continue;
-        if (splitDecision == PathGuidingSplitDecision::Lookahead &&
-            (node.IsGuidingCell() || node.IsLookahead()) &&
-            GetLookaheadDepth(params, node) >= params.maxLookaheadDepth)
-            continue;
-
         if (!node.HasChildren())
         {
             node.childOffset = int(params.numNodes);
@@ -119,23 +102,18 @@ YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams &params,
     params.numNextNodeItemIndices = 0;
     for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
     {
-        const PathGuidingKdTreeNodeItem &nodeItem =
-            params.nodeItems[params.nodeItemIndices[frontierIndex]];
+        const uint32_t nodeItemIndex = params.nodeItemIndices[frontierIndex];
+        const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
         const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-        if (!node.HasChildren() || nodeItem.sampleCount == 0)
+        if (nodeItem.sampleCount == 0 || !node.HasChildren())
             continue;
         if (splitDecision == PathGuidingSplitDecision::Lookahead &&
-            (node.IsGuidingCell() || node.IsLookahead()) &&
-            GetLookaheadDepth(params, node) >= params.maxLookaheadDepth)
+            !LookaheadContinuationCriteria(params, nodeItemIndex))
             continue;
         for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
         {
             const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
-            const bool shouldContinue =
-                splitDecision == PathGuidingSplitDecision::SampleCount
-                    ? SampleCountContinuationCriteria(params, childNodeIndex)
-                    : LookaheadContinuationCriteria(params, childNodeIndex);
-            if (shouldContinue)
+            if (params.nodeItems[childNodeIndex].sampleCount != 0)
             {
                 params.nextNodeItemIndices[params.numNextNodeItemIndices++] = childNodeIndex;
             }
@@ -155,16 +133,9 @@ YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams &params, PathGuidingK
         PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
         nodeItem.workItemOffset = totalWorkItemCount;
         nodeItem.workItemCount = 0;
-        bool matchesStage = node.MatchesStage(stage, params.generation);
+        const bool matchesStage = node.MatchesStage(stage, params.generation);
         if (stage == PathGuidingKdTreeStage::PositionStatistics)
             node.numSamples = nodeItem.sampleCount;
-        if (params.splitDecision == PathGuidingSplitDecision::Lookahead &&
-            stage == PathGuidingKdTreeStage::Partition &&
-            (node.IsGuidingCell() || node.IsLookahead()))
-        {
-            matchesStage =
-                matchesStage && GetLookaheadDepth(params, node) < params.maxLookaheadDepth;
-        }
         if (!matchesStage || nodeItem.sampleCount == 0)
             continue;
 

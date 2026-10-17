@@ -47,13 +47,32 @@ class PathGuidingSystem
 
     template <typename T>
     void ReserveBuffer(DeviceBuffer<T> &buffer, size_t count, size_t preserveCount = 0);
+    void UploadParams(PathGuidingKdTreeParams &params);
+    void ReadBackParams(PathGuidingKdTreeParams &params);
+    template <typename... Args>
+    void Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX, Args... args);
+    void GenerateWorkItems(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage);
+    void ReserveFrontierBuffers(PathGuidingKdTreeParams &params);
+    void ReservePositionStatisticsBuffers(PathGuidingKdTreeParams &params);
+    void ReserveNodeItemBuffers(PathGuidingKdTreeParams &params);
+    void ReserveLookaheadStatisticsBuffers(PathGuidingKdTreeParams &params);
+    void ReserveVMMDistributions(PathGuidingKdTreeParams &params);
     template <typename T>
     T *ReduceNodeStatistics(const PathGuidingKdTreeParams &params, DeviceKernel &kernel,
                              const DeviceBuffer<T> &input, const DeviceBuffer<T> &output);
+    void CalculatePositionStatistics(PathGuidingKdTreeParams &params);
+    void SelectNodeSplits(const PathGuidingKdTreeParams &params);
     void PartitionSamples(PathGuidingKdTreeParams &params);
     void CreateNodeItems(PathGuidingKdTreeParams &params);
+    void ResetGuidingCellSplits(PathGuidingKdTreeParams &params);
+    void UpdateLookaheadCells(PathGuidingKdTreeParams &params);
+    void SelectGuidingCellSplits(PathGuidingKdTreeParams &params);
+    void PromoteGuidingCells(PathGuidingKdTreeParams &params);
     void UpdateSampleCountSplits(PathGuidingKdTreeParams &params);
     void UpdateLookaheadSplits(PathGuidingKdTreeParams &params);
+    void BeginUpdate(PathGuidingKdTreeParams &params);
+    void AdvanceFrontier(PathGuidingKdTreeParams &params);
+    void FinishUpdate(PathGuidingKdTreeParams &params);
 
 public:
     PathGuidingSystem(Device *device,

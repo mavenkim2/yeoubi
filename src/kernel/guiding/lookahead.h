@@ -228,7 +228,7 @@ YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
         if (node.IsLookahead())
         {
             const uint32_t ancestorIndex = uint32_t(node.ancestorGuidingCellIndex);
-            if (params.guidingCellSplitMask[ancestorIndex >> 5] & (1u << (ancestorIndex & 31u)))
+            if (IsGuidingCellMarkedForSplit(params, ancestorIndex))
                 node.lookaheadCell = {};
         }
     }
@@ -236,7 +236,7 @@ YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
     for (uint32_t nodeIndex = 0; nodeIndex < params.numNodes; ++nodeIndex)
     {
         PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
-        if (params.guidingCellSplitMask[nodeIndex >> 5] & (1u << (nodeIndex & 31u)))
+        if (IsGuidingCellMarkedForSplit(params, nodeIndex))
         {
             YBI_ASSERT(node.IsGuidingCell() && node.HasChildren());
             PathGuidingKdTreeNode &left = params.nodes[node.childOffset];

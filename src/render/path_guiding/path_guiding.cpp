@@ -47,10 +47,10 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     generateNodes = device->CreateDeviceKernel(desc);
     desc.entryName = "CreateKdTreeNodeItemsKernel";
     generateNodeItems = device->CreateDeviceKernel(desc);
-    YBI_ASSERT(generateWorkItems && calculateNodeBounds &&
-               calculateNodePositionStatistics && generateReductionWorkItems &&
-               reduceNodePositionStatistics && selectNodeSplits && partitionCount &&
-               partitionExclusiveScan && partitionSamples && generateNodes && generateNodeItems);
+    YBI_ASSERT(generateWorkItems && calculateNodeBounds && calculateNodePositionStatistics &&
+               generateReductionWorkItems && reduceNodePositionStatistics && selectNodeSplits &&
+               partitionCount && partitionExclusiveScan && partitionSamples && generateNodes &&
+               generateNodeItems);
 
     switch (splitDecision)
     {
@@ -68,8 +68,8 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
             shouldSplitGuidingCell = device->CreateDeviceKernel(desc);
             desc.entryName = "PromoteGuidingCellsKernel";
             promoteGuidingCells = device->CreateDeviceKernel(desc);
-            YBI_ASSERT(updateLookaheadCell && reduceLookaheadStatistics && accumulateLookaheadCells &&
-                       shouldSplitGuidingCell && promoteGuidingCells);
+            YBI_ASSERT(updateLookaheadCell && reduceLookaheadStatistics &&
+                       accumulateLookaheadCells && shouldSplitGuidingCell && promoteGuidingCells);
             break;
     }
     kernelParams = device->Alloc<PathGuidingKdTreeParams>(1);
@@ -144,67 +144,56 @@ void PathGuidingSystem::ReserveBuffer(DeviceBuffer<T> &buffer, size_t count, siz
     buffer = replacement;
 }
 
-template <typename T>
-T *PathGuidingSystem::ReduceNodeStatistics(const PathGuidingKdTreeParams &params, DeviceKernel &kernel,
-                                           const DeviceBuffer<T> &input, const DeviceBuffer<T> &output)
+void PathGuidingSystem::UploadParams(PathGuidingKdTreeParams &params)
 {
-    T *reductionInput = input.Data();
-    T *reductionOutput = output.Data();
-    void *arguments[] = {kernelParams.KernelArg()};
-    void *reductionArguments[] = {kernelParams.KernelArg(), &reductionInput, &reductionOutput};
-    uint32_t workItemBound = params.numWorkItems;
-    DeviceKernelLaunchDesc desc;
-    for (uint32_t count = params.maxWorkItemCount; count > 1; count = CeilDiv(count, VMM_BLOCK_SIZE))
-    {
-        desc.arguments = arguments;
-        desc.gridX = 1;
-        desc.blockX = 1;
-        device->ExecuteKernel(*generateReductionWorkItems, desc);
-        workItemBound = CeilDiv(workItemBound, VMM_BLOCK_SIZE) + params.numActiveNodeItems;
-        desc.arguments = reductionArguments;
-        desc.gridX = workItemBound;
-        desc.blockX = VMM_BLOCK_SIZE;
-        device->ExecuteKernel(kernel, desc);
-        std::swap(reductionInput, reductionOutput);
-    }
-    return reductionInput;
+    device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
 }
 
-void PathGuidingSystem::PartitionSamples(PathGuidingKdTreeParams &params)
+void PathGuidingSystem::ReadBackParams(PathGuidingKdTreeParams &params)
 {
-    PathGuidingKdTreeStage stage = PathGuidingKdTreeStage::Partition;
-    void *workItemArguments[] = {kernelParams.KernelArg(), &stage};
-    DeviceKernelLaunchDesc desc;
-    desc.arguments = workItemArguments;
-    device->ExecuteKernel(*generateWorkItems, desc);
     device->SyncDeviceStream();
     device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
-    if (params.numWorkItems == 0)
-        return;
-
-    YBI_ASSERT(params.newSampleIndices && params.newSampleIndices != params.sampleIndices);
-    void *arguments[] = {kernelParams.KernelArg()};
-    desc.arguments = arguments;
-    desc.blockX = VMM_BLOCK_SIZE;
-    desc.gridX = params.numWorkItems;
-    device->ExecuteKernel(*partitionCount, desc);
-
-    desc.gridX = params.numActiveNodeItems;
-    device->ExecuteKernel(*partitionExclusiveScan, desc);
-
-    device->CopyDeviceToDeviceAsync(params.newSampleIndices,
-                                    params.sampleIndices,
-                                    size_t(params.numSampleIndices) * sizeof(uint32_t));
-    void *partitionArguments[] = {kernelParams.KernelArg(), &params.newSampleIndices};
-    desc.arguments = partitionArguments;
-    desc.gridX = params.numWorkItems;
-    device->ExecuteKernel(*partitionSamples, desc);
-    std::swap(params.sampleIndices, params.newSampleIndices);
 }
 
-void PathGuidingSystem::CreateNodeItems(PathGuidingKdTreeParams &params)
+template <typename... Args>
+void PathGuidingSystem::Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX, Args... args)
 {
-    void *arguments[] = {kernelParams.KernelArg(), &splitDecision};
+    void *arguments[] = {kernelParams.KernelArg(), &args...};
+    DeviceKernelLaunchDesc desc;
+    desc.arguments = arguments;
+    desc.gridX = gridX;
+    desc.blockX = blockX;
+    device->ExecuteKernel(kernel, desc);
+}
+
+void PathGuidingSystem::GenerateWorkItems(PathGuidingKdTreeParams &params,
+                                          PathGuidingKdTreeStage stage)
+{
+    UploadParams(params);
+    Launch(*generateWorkItems, 1, 1, stage);
+    ReadBackParams(params);
+}
+
+void PathGuidingSystem::ReserveFrontierBuffers(PathGuidingKdTreeParams &params)
+{
+    ReserveBuffer(activeNodeItems, params.numNodeItemIndices);
+    const size_t workItemCapacity =
+        CeilDiv(params.numSampleIndices, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT) +
+        size_t(params.numNodeItemIndices);
+    ReserveBuffer(workItemLeftOffsets, workItemCapacity);
+    params.activeNodeItems = activeNodeItems.Data();
+    params.workItemLeftOffsets = workItemLeftOffsets.Data();
+}
+
+void PathGuidingSystem::ReservePositionStatisticsBuffers(PathGuidingKdTreeParams &params)
+{
+    ReserveBuffer(positionStatistics, params.numWorkItems);
+    ReserveBuffer(newPositionStatistics, params.numWorkItems);
+    params.positionStatistics = positionStatistics.Data();
+}
+
+void PathGuidingSystem::ReserveNodeItemBuffers(PathGuidingKdTreeParams &params)
+{
     const size_t nodeCapacity = size_t(params.numNodes) + size_t(2) * params.numNodeItemIndices;
     ReserveBuffer(nodes, nodeCapacity, params.numNodes);
     ReserveBuffer(nodeItems, nodeCapacity, params.numNodes);
@@ -213,14 +202,91 @@ void PathGuidingSystem::CreateNodeItems(PathGuidingKdTreeParams &params)
     params.nodes = nodes.Data();
     params.nodeItems = nodeItems.Data();
     params.nextNodeItemIndices = nextNodeItemIndices.Data();
-    device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
-    DeviceKernelLaunchDesc nodeItemDesc;
-    nodeItemDesc.arguments = arguments;
-    device->ExecuteKernel(*generateNodes, nodeItemDesc);
-    device->ExecuteKernel(*generateNodeItems, nodeItemDesc);
+}
 
-    device->SyncDeviceStream();
-    device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
+void PathGuidingSystem::ReserveLookaheadStatisticsBuffers(PathGuidingKdTreeParams &params)
+{
+    ReserveBuffer(lookaheadStatistics, params.numWorkItems);
+    ReserveBuffer(newLookaheadStatistics, params.numWorkItems);
+    params.lookaheadStatistics = lookaheadStatistics.Data();
+}
+
+void PathGuidingSystem::ReserveVMMDistributions(PathGuidingKdTreeParams &params)
+{
+    ReserveBuffer(vmmDistributions,
+                  size_t(params.numVMMs) + params.numGuidingCellSplits,
+                  params.numVMMs);
+    params.vmmDistributions = vmmDistributions.Data();
+}
+
+template <typename T>
+T *PathGuidingSystem::ReduceNodeStatistics(const PathGuidingKdTreeParams &params,
+                                           DeviceKernel &kernel,
+                                           const DeviceBuffer<T> &input,
+                                           const DeviceBuffer<T> &output)
+{
+    T *reductionInput = input.Data();
+    T *reductionOutput = output.Data();
+    uint32_t workItemBound = params.numWorkItems;
+    for (uint32_t count = params.maxWorkItemCount; count > 1;
+         count = CeilDiv(count, VMM_BLOCK_SIZE))
+    {
+        Launch(*generateReductionWorkItems, 1, 1);
+        workItemBound = CeilDiv(workItemBound, VMM_BLOCK_SIZE) + params.numActiveNodeItems;
+        Launch(kernel, workItemBound, VMM_BLOCK_SIZE, reductionInput, reductionOutput);
+        std::swap(reductionInput, reductionOutput);
+    }
+    return reductionInput;
+}
+
+void PathGuidingSystem::CalculatePositionStatistics(PathGuidingKdTreeParams &params)
+{
+    GenerateWorkItems(params, PathGuidingKdTreeStage::PositionStatistics);
+    if (params.numWorkItems == 0)
+        return;
+
+    ReservePositionStatisticsBuffers(params);
+    UploadParams(params);
+
+    Launch(*calculateNodeBounds, params.numWorkItems, VMM_BLOCK_SIZE);
+    Launch(*calculateNodePositionStatistics, params.numWorkItems, VMM_BLOCK_SIZE);
+
+    ReduceNodeStatistics(
+        params, *reduceNodePositionStatistics, positionStatistics, newPositionStatistics);
+}
+
+void PathGuidingSystem::SelectNodeSplits(const PathGuidingKdTreeParams &params)
+{
+    if (params.numWorkItems == 0)
+        return;
+
+    Launch(*selectNodeSplits, CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE);
+}
+
+void PathGuidingSystem::PartitionSamples(PathGuidingKdTreeParams &params)
+{
+    GenerateWorkItems(params, PathGuidingKdTreeStage::Partition);
+    if (params.numWorkItems == 0)
+        return;
+
+    YBI_ASSERT(params.newSampleIndices && params.newSampleIndices != params.sampleIndices);
+    Launch(*partitionCount, params.numWorkItems, VMM_BLOCK_SIZE);
+    Launch(*partitionExclusiveScan, params.numActiveNodeItems, VMM_BLOCK_SIZE);
+
+    device->CopyDeviceToDeviceAsync(params.newSampleIndices,
+                                    params.sampleIndices,
+                                    size_t(params.numSampleIndices) * sizeof(uint32_t));
+    Launch(*partitionSamples, params.numWorkItems, VMM_BLOCK_SIZE, params.newSampleIndices);
+    std::swap(params.sampleIndices, params.newSampleIndices);
+}
+
+void PathGuidingSystem::CreateNodeItems(PathGuidingKdTreeParams &params)
+{
+    ReserveNodeItemBuffers(params);
+    UploadParams(params);
+    Launch(*generateNodes, 1, 1, splitDecision);
+    Launch(*generateNodeItems, 1, 1, splitDecision);
+    ReadBackParams(params);
 }
 
 void PathGuidingSystem::UpdateSampleCountSplits(PathGuidingKdTreeParams &params)
@@ -228,7 +294,7 @@ void PathGuidingSystem::UpdateSampleCountSplits(PathGuidingKdTreeParams &params)
     CreateNodeItems(params);
 }
 
-void PathGuidingSystem::UpdateLookaheadSplits(PathGuidingKdTreeParams &params)
+void PathGuidingSystem::ResetGuidingCellSplits(PathGuidingKdTreeParams &params)
 {
     const size_t nodeCapacity = size_t(params.numNodes) + size_t(2) * params.numNodeItemIndices;
     const size_t maskWordCount = CeilDiv(nodeCapacity, size_t(32));
@@ -236,57 +302,54 @@ void PathGuidingSystem::UpdateLookaheadSplits(PathGuidingKdTreeParams &params)
     device->Memzero(guidingCellSplitMask.Data(), maskWordCount * sizeof(uint32_t));
     params.guidingCellSplitMask = guidingCellSplitMask.Data();
     params.numGuidingCellSplits = 0;
-    device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
-
-    PathGuidingKdTreeStage stage = PathGuidingKdTreeStage::Lookahead;
-    void *workItemArguments[] = {kernelParams.KernelArg(), &stage};
-    DeviceKernelLaunchDesc desc;
-    desc.arguments = workItemArguments;
-    device->ExecuteKernel(*generateWorkItems, desc);
-    device->SyncDeviceStream();
-    device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
-    void *arguments[] = {kernelParams.KernelArg()};
-    desc.arguments = arguments;
-    if (params.numWorkItems != 0)
-    {
-        ReserveBuffer(lookaheadStatistics, params.numWorkItems);
-        ReserveBuffer(newLookaheadStatistics, params.numWorkItems);
-        params.lookaheadStatistics = lookaheadStatistics.Data();
-        device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
-        desc.blockX = VMM_BLOCK_SIZE;
-        desc.gridX = params.numWorkItems;
-        device->ExecuteKernel(*updateLookaheadCell, desc);
-        auto *statistics = ReduceNodeStatistics(params, *reduceLookaheadStatistics,
-                                                 lookaheadStatistics, newLookaheadStatistics);
-        void *accumulateArguments[] = {kernelParams.KernelArg(), &statistics};
-        desc.arguments = accumulateArguments;
-        desc.gridX = CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE);
-        device->ExecuteKernel(*accumulateLookaheadCells, desc);
-        desc.arguments = arguments;
-        desc.gridX = CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE);
-        device->ExecuteKernel(*shouldSplitGuidingCell, desc);
-        device->SyncDeviceStream();
-        device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
-    }
-
-    CreateNodeItems(params);
-
-    if (params.numGuidingCellSplits != 0)
-    {
-        ReserveBuffer(vmmDistributions,
-                      size_t(params.numVMMs) + params.numGuidingCellSplits,
-                      params.numVMMs);
-        params.vmmDistributions = vmmDistributions.Data();
-        device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
-        desc.gridX = 1;
-        desc.blockX = 1;
-        device->ExecuteKernel(*promoteGuidingCells, desc);
-        device->SyncDeviceStream();
-        device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
-    }
 }
 
-void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
+void PathGuidingSystem::UpdateLookaheadCells(PathGuidingKdTreeParams &params)
+{
+    GenerateWorkItems(params, PathGuidingKdTreeStage::Lookahead);
+    if (params.numWorkItems == 0)
+        return;
+
+    ReserveLookaheadStatisticsBuffers(params);
+    UploadParams(params);
+    Launch(*updateLookaheadCell, params.numWorkItems, VMM_BLOCK_SIZE);
+    auto *statistics = ReduceNodeStatistics(
+        params, *reduceLookaheadStatistics, lookaheadStatistics, newLookaheadStatistics);
+    Launch(*accumulateLookaheadCells,
+           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE, statistics);
+}
+
+void PathGuidingSystem::SelectGuidingCellSplits(PathGuidingKdTreeParams &params)
+{
+    if (params.numWorkItems == 0)
+        return;
+
+    Launch(*shouldSplitGuidingCell,
+           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE);
+    ReadBackParams(params);
+}
+
+void PathGuidingSystem::PromoteGuidingCells(PathGuidingKdTreeParams &params)
+{
+    if (params.numGuidingCellSplits == 0)
+        return;
+
+    ReserveVMMDistributions(params);
+    UploadParams(params);
+    Launch(*promoteGuidingCells, 1, 1);
+    ReadBackParams(params);
+}
+
+void PathGuidingSystem::UpdateLookaheadSplits(PathGuidingKdTreeParams &params)
+{
+    ResetGuidingCellSplits(params);
+    UpdateLookaheadCells(params);
+    SelectGuidingCellSplits(params);
+    CreateNodeItems(params);
+    PromoteGuidingCells(params);
+}
+
+void PathGuidingSystem::BeginUpdate(PathGuidingKdTreeParams &params)
 {
     params.generation = ++generation;
     params.splitDecision = splitDecision;
@@ -314,48 +377,35 @@ void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
     params.guidingCellSplitMask = guidingCellSplitMask.Data();
     params.vmmDistributions = vmmDistributions.Data();
     params.numVMMs = numVMMs;
+}
 
-    void *arguments[] = {kernelParams.KernelArg()};
-    PathGuidingKdTreeStage stage = PathGuidingKdTreeStage::PositionStatistics;
-    void *workItemArguments[] = {kernelParams.KernelArg(), &stage};
+void PathGuidingSystem::AdvanceFrontier(PathGuidingKdTreeParams &params)
+{
+    params.numNodeItemIndices = params.numNextNodeItemIndices;
+    params.numNextNodeItemIndices = 0;
+    std::swap(nodeItemIndices, nextNodeItemIndices);
+    params.nodeItemIndices = nodeItemIndices.Data();
+    params.nextNodeItemIndices = nextNodeItemIndices.Data();
+}
+
+void PathGuidingSystem::FinishUpdate(PathGuidingKdTreeParams &params)
+{
+    params.numNodeItemIndices = 0;
+    params.numWorkItems = 0;
+    params.numActiveNodeItems = 0;
+    numNodes = params.numNodes;
+    numVMMs = params.numVMMs;
+    UploadParams(params);
+}
+
+void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
+{
+    BeginUpdate(params);
     while (params.numNodeItemIndices != 0)
     {
-        ReserveBuffer(activeNodeItems, params.numNodeItemIndices);
-        const size_t workItemCapacity =
-            CeilDiv(params.numSampleIndices, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT) +
-            size_t(params.numNodeItemIndices);
-        ReserveBuffer(workItemLeftOffsets, workItemCapacity);
-        params.activeNodeItems = activeNodeItems.Data();
-        params.workItemLeftOffsets = workItemLeftOffsets.Data();
-        stage = PathGuidingKdTreeStage::PositionStatistics;
-
-        device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
-        DeviceKernelLaunchDesc desc;
-        desc.arguments = workItemArguments;
-        device->ExecuteKernel(*generateWorkItems, desc);
-        device->SyncDeviceStream();
-        device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
-        if (params.numWorkItems != 0)
-        {
-            ReserveBuffer(positionStatistics, params.numWorkItems);
-            ReserveBuffer(newPositionStatistics, params.numWorkItems);
-            params.positionStatistics = positionStatistics.Data();
-            device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
-            desc.arguments = arguments;
-            desc.blockX = VMM_BLOCK_SIZE;
-            desc.gridX = params.numWorkItems;
-            device->ExecuteKernel(*calculateNodeBounds, desc);
-            device->ExecuteKernel(*calculateNodePositionStatistics, desc);
-
-            ReduceNodeStatistics(params, *reduceNodePositionStatistics,
-                                 positionStatistics, newPositionStatistics);
-
-            // Select node splits.
-            desc.arguments = arguments;
-            desc.gridX = CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE);
-            device->ExecuteKernel(*selectNodeSplits, desc);
-        }
-
+        ReserveFrontierBuffers(params);
+        CalculatePositionStatistics(params);
+        SelectNodeSplits(params);
         PartitionSamples(params);
 
         switch (splitDecision)
@@ -367,18 +417,9 @@ void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
                 UpdateLookaheadSplits(params);
                 break;
         }
-        params.numNodeItemIndices = params.numNextNodeItemIndices;
-        params.numNextNodeItemIndices = 0;
-        std::swap(nodeItemIndices, nextNodeItemIndices);
-        params.nodeItemIndices = nodeItemIndices.Data();
-        params.nextNodeItemIndices = nextNodeItemIndices.Data();
+        AdvanceFrontier(params);
     }
-    params.numNodeItemIndices = 0;
-    params.numWorkItems = 0;
-    params.numActiveNodeItems = 0;
-    numNodes = params.numNodes;
-    numVMMs = params.numVMMs;
-    device->CopyToDevice(kernelParams.Data(), &params, sizeof(params));
+    FinishUpdate(params);
 }
 
 } // namespace ybi
