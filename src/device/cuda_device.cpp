@@ -1192,6 +1192,7 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
 
     char log[4096] = {};
     size_t logSize = sizeof(log);
+    OptixModule module = nullptr;
     OptixResult result = CreateOptixModuleCompat(optixDeviceContext,
                                                  &moduleCompileOptions,
                                                  &pipelineCompileOptions,
@@ -1199,12 +1200,14 @@ bool CUDADevice::CreateOptixPipeline(const std::string &ptx)
                                                  ptx.size(),
                                                  log,
                                                  &logSize,
-                                                 &optixPipeline.module);
+                                                 &module);
     if (!CheckOptixResult(result, "optixModuleCreate", log, logSize))
     {
         DestroyOptixPipeline();
         return false;
     }
+
+    optixPipeline.module = module;
 
     OptixProgramGroupDesc programGroupDescs[PROGRAM_GROUP_COUNT] = {};
     OptixProgramGroupOptions programGroupOptions = {};

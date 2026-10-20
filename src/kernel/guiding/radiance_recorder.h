@@ -54,8 +54,8 @@ struct RadianceRecord
                                             float samplePdf,
                                             const Vec3f &sampleAccumulatedEmission)
     {
-        InitializeIndirectSample(samplePosition, normal, direction, parentRecordIndex,
-                                 sampleThroughput, samplePdf);
+        InitializeIndirectSample(
+            samplePosition, normal, direction, parentRecordIndex, sampleThroughput, samplePdf);
         accumulatedEmission = sampleAccumulatedEmission;
     }
 
@@ -126,12 +126,23 @@ struct RadianceRecorder
 
     YBI_CPU_GPU void MarkDone(int recordIndex) const
     {
-        if (recordIndex == YBI_PATH_GUIDING_CAMERA_VERTEX)
-            return;
-        RadianceRecord &record = GetRecord(recordIndex);
-        if (AtomicSub(&record.references, 1u, AtomicOrder::AcqRel) == 1u)
+        while (recordIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
         {
-            BackpropagateRecursive(recordIndex);
+            RadianceRecord &record = GetRecord(recordIndex);
+            if (AtomicSub(&record.references, 1u, AtomicOrder::AcqRel) != 1u)
+                return;
+
+            const Vec3f incidentRadiance(
+                SafeDivide(record.accumulatedEmission.x, record.throughput.x),
+                SafeDivide(record.accumulatedEmission.y, record.throughput.y),
+                SafeDivide(record.accumulatedEmission.z, record.throughput.z));
+            WritePathGuidingTrainingSample(record, incidentRadiance.MaxComponent());
+            const int parentIndex = record.parentIndex;
+            if (parentIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
+                GetRecord(parentIndex).AtomicAddEmission(record.accumulatedEmission);
+
+            Free(static_cast<uint32_t>(recordIndex));
+            recordIndex = parentIndex;
         }
     }
 
@@ -148,25 +159,6 @@ struct RadianceRecorder
         sample.incidentRadiance = incidentRadiance;
         sample.pdf = record.pdf;
         return true;
-    }
-
-    YBI_CPU_GPU void BackpropagateRecursive(int recordIndex) const
-    {
-        RadianceRecord &record = GetRecord(recordIndex);
-        const Vec3f incidentRadiance(
-            SafeDivide(record.accumulatedEmission.x, record.throughput.x),
-            SafeDivide(record.accumulatedEmission.y, record.throughput.y),
-            SafeDivide(record.accumulatedEmission.z, record.throughput.z));
-        WritePathGuidingTrainingSample(record, incidentRadiance.MaxComponent());
-        const int parentIndex = record.parentIndex;
-
-        if (parentIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
-        {
-            RadianceRecord &parentRecord = GetRecord(parentIndex);
-            parentRecord.AtomicAddEmission(record.accumulatedEmission);
-            MarkDone(parentIndex);
-        }
-        Free(static_cast<uint32_t>(recordIndex));
     }
 };
 
