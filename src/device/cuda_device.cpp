@@ -488,14 +488,9 @@ void CUDADevice::WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event)
     CUDA_ASSERT(cuStreamWaitEvent(cudaStream.stream, cudaEvent.event, 0));
 }
 
-void CUDADevice::CopyToDevice3DAsync(DeviceStream &stream,
-                                     DeviceTexture &texture,
-                                     const DeviceTextureCopyDesc &desc)
+static CUDA_MEMCPY3D MakeTextureCopyDescriptor(const DeviceTexture &texture,
+                                               const DeviceTextureCopyDesc &desc)
 {
-    ContextScope contextScope(this);
-
-    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
-    YBI_ASSERT(cudaStream.stream);
     YBI_ASSERT(texture.array);
     YBI_ASSERT(desc.src);
     YBI_ASSERT(desc.srcRowPitch >= desc.widthInBytes);
@@ -530,6 +525,24 @@ void CUDADevice::CopyToDevice3DAsync(DeviceStream &stream,
     copy.Height = desc.height;
     copy.Depth = desc.depth;
 
+    return copy;
+}
+
+void CUDADevice::CopyToDevice3D(DeviceTexture &texture, const DeviceTextureCopyDesc &desc)
+{
+    ContextScope contextScope(this);
+    const CUDA_MEMCPY3D copy = MakeTextureCopyDescriptor(texture, desc);
+    CUDA_ASSERT(cuMemcpy3D(&copy));
+}
+
+void CUDADevice::CopyToDevice3DAsync(DeviceStream &stream,
+                                     DeviceTexture &texture,
+                                     const DeviceTextureCopyDesc &desc)
+{
+    ContextScope contextScope(this);
+    CUDADeviceStream &cudaStream = static_cast<CUDADeviceStream &>(stream);
+    YBI_ASSERT(cudaStream.stream);
+    const CUDA_MEMCPY3D copy = MakeTextureCopyDescriptor(texture, desc);
     CUDA_ASSERT(cuMemcpy3DAsync(&copy, cudaStream.stream));
 }
 

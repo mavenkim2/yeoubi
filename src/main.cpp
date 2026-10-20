@@ -80,6 +80,12 @@ struct SceneSession
             return false;
         }
 
+        for (EnvmapLight &light : container.envmapLights)
+        {
+            if (!LoadEnvmap(light, error))
+                return false;
+        }
+
         const bool hasOpenPbr = !container.openPbrMaterials.empty();
         const bool hasMaterialX = !container.materialXMaterials.empty();
         if (hasOpenPbr && hasMaterialX)

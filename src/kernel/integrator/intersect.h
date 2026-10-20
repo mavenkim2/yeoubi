@@ -4,6 +4,7 @@
 #include "kernel/integrator/mis.h"
 #include "kernel/integrator/terminate_path.h"
 #include "kernel/launch/kernel_params.h"
+#include "kernel/light/envmap.h"
 #include "kernel/light/sample.h"
 #include "kernel/raytracing/ray_cone.h"
 #include "kernel/raytracing/ray_offset.h"
@@ -29,9 +30,17 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
 
     if (info.type == INTERSECTION_TYPE_NONE)
     {
-        // TODO: stop hardcoding this :)
-        const Vec3f environment(0.5f);
-        radiance += throughput * environment;
+        Vec3f environment(0.f);
+        for (uint32_t lightIndex = 0; lightIndex < params.scene.numEnvmapLights; lightIndex++)
+            environment +=
+                EvaluateEnvmapLight(params.scene.envmapLights[lightIndex], rayDirection);
+        const Vec3f contribution = throughput * environment;
+        radiance += contribution;
+#if defined(YBI_USE_PATH_GUIDING)
+        const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
+        if (recordIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
+            params.radianceRecorder.GetRecord(recordIndex).AtomicAddEmission(contribution);
+#endif
         TerminatePath(params, sampleState, sampleIndex, radiance);
         return;
     }
@@ -51,10 +60,11 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
                 const float previousBsdfPdf = sampleState->ReadPreviousBsdfPdf(sampleIndex);
                 if (previousBsdfPdf > 0.f)
                 {
-                    const float lightPdf = PDFLight(params.scene,
-                                                    static_cast<uint32_t>(object.lightIndex),
-                                                    sampleState->ReadPreviousSurfacePosition(sampleIndex),
-                                                    lightHitPosition);
+                    const float lightPdf =
+                        PDFLight(params.scene,
+                                 static_cast<uint32_t>(object.lightIndex),
+                                 sampleState->ReadPreviousSurfacePosition(sampleIndex),
+                                 lightHitPosition);
                     misWeight = PowerHeuristic(previousBsdfPdf, lightPdf);
                 }
                 radiance += throughput * light.radiance * misWeight;

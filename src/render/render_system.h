@@ -1,10 +1,14 @@
 #include "core/arena.h"
+#include "device/device_memory.h"
+#include "device/device_texture.h"
 #include "render/virtual_texture/manager.h"
 #include "kernel/scene.h"
 #include "material/material.h"
 #include "material/material_compilation.h"
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ybi
 {
@@ -77,6 +81,13 @@ struct MaterialManager
 
 struct RenderSystem
 {
+    struct EnvmapLightResources
+    {
+        DeviceTexture texture;
+        DeviceBuffer<float> conditionalCDF;
+        DeviceBuffer<float> marginalCDF;
+    };
+
     Scene *rootScene;
     DataContainer *dataContainer;
 
@@ -89,6 +100,7 @@ struct RenderSystem
     // Data managers
     GeometryManager geometryManager;
     MaterialManager materialManager;
+    std::vector<EnvmapLightResources> envmapLightResources;
 
     RenderSystem(Device *device,
                  DisplayDevice *displayDevice,
@@ -97,6 +109,8 @@ struct RenderSystem
                  VirtualTextureManager *virtualTextureManager);
     ~RenderSystem();
     void Update(SceneImportContext *context);
+    void UpdateEnvmapLights();
+    void ReleaseEnvmapLights();
 };
 
 } // namespace ybi

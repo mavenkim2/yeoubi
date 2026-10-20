@@ -213,6 +213,7 @@ struct Device
     void SyncDeviceStream(DeviceStream &stream) { SyncDeviceStream(&stream); }
     virtual void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) = 0;
     virtual void WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event) = 0;
+    virtual void CopyToDevice3D(DeviceTexture &texture, const DeviceTextureCopyDesc &desc) = 0;
     virtual void CopyToDevice3DAsync(DeviceStream &stream,
                                      DeviceTexture &texture,
                                      const DeviceTextureCopyDesc &desc) = 0;

@@ -4,18 +4,19 @@
 #include "core/octahedral.h"
 #include "core/thread_context.h"
 #include "core/time.h"
+#include "core/vec4f.h"
 #include "device/device.h"
-#include "render/virtual_texture/manager.h"
-#include "scene/clusterizer.h"
 #include "kernel/geometry/cluster.h"
 #include "material/material.h"
-#include "scene/scene.h"
 #include "material/shader_compilation.h"
+#include "render/virtual_texture/manager.h"
+#include "scene/clusterizer.h"
+#include "scene/scene.h"
 #include <cstring>
 #include <memory>
 #include <stdexcept>
-#include <type_traits>
 #include <tbb/parallel_for.h>
+#include <type_traits>
 #include <unordered_set>
 
 #define YBI_USE_CLUSTERS
@@ -26,6 +27,7 @@ namespace ybi
 MaterialManager::~MaterialManager() = default;
 RenderSystem::~RenderSystem()
 {
+    ReleaseEnvmapLights();
     // DeviceScene stores raw pointers; release every allocation owned by this scene
     // before its device arena and the owning Device are destroyed.
     const auto release = [this](auto *&ptr) {
@@ -149,6 +151,88 @@ void RenderSystem::Update(SceneImportContext *context)
 
     materialManager.Update(device, displayDevice, dataContainer, &deviceScene, context);
     geometryManager.Update(device, deviceArena.get(), dataContainer, rootScene, &deviceScene);
+    UpdateEnvmapLights();
+}
+
+void RenderSystem::ReleaseEnvmapLights()
+{
+    if (deviceScene.envmapLights)
+    {
+        DeviceBuffer<DeviceEnvmapLight> lights(deviceScene.envmapLights,
+                                               deviceScene.numEnvmapLights);
+        device->Free(lights);
+        deviceScene.envmapLights = nullptr;
+    }
+    deviceScene.numEnvmapLights = 0;
+    for (EnvmapLightResources &resources : envmapLightResources)
+    {
+        device->DestroyTexture(resources.texture);
+        if (resources.conditionalCDF)
+            device->Free(resources.conditionalCDF);
+        if (resources.marginalCDF)
+            device->Free(resources.marginalCDF);
+    }
+    envmapLightResources.clear();
+}
+
+void RenderSystem::UpdateEnvmapLights()
+{
+    ReleaseEnvmapLights();
+    if (dataContainer->envmapLights.empty())
+        return;
+
+    const size_t lightCount = dataContainer->envmapLights.size();
+    envmapLightResources.reserve(lightCount);
+    std::vector<DeviceEnvmapLight> lights;
+    lights.reserve(lightCount);
+    for (EnvmapLight &light : dataContainer->envmapLights)
+    {
+        PrepareEnvmap(light);
+
+        envmapLightResources.emplace_back();
+        EnvmapLightResources &resources = envmapLightResources.back();
+        DeviceTextureInfo textureInfo{};
+        textureInfo.format = TextureFormat::RGBA32_FLOAT;
+        textureInfo.filterType = FilterType::Linear;
+        textureInfo.width = light.width;
+        textureInfo.height = light.height;
+        textureInfo.layers = 1;
+        textureInfo.addressMode[0] = TextureAddressMode::Wrap;
+        resources.texture = device->CreateTexture(textureInfo);
+
+        DeviceTextureCopyDesc copy{};
+        copy.src = light.pixels.data();
+        copy.srcRowPitch = size_t(light.width) * sizeof(Vec4f);
+        copy.srcSlicePitch = size_t(light.height) * copy.srcRowPitch;
+        copy.widthInBytes = copy.srcRowPitch;
+        copy.height = light.height;
+        device->CopyToDevice3D(resources.texture, copy);
+
+        resources.conditionalCDF = device->Alloc<float>(light.conditionalCDF.size());
+        resources.marginalCDF = device->Alloc<float>(light.marginalCDF.size());
+        device->CopyToDevice(resources.conditionalCDF.Data(),
+                             light.conditionalCDF.data(),
+                             resources.conditionalCDF.SizeInBytes());
+        device->CopyToDevice(resources.marginalCDF.Data(),
+                             light.marginalCDF.data(),
+                             resources.marginalCDF.SizeInBytes());
+
+        DeviceEnvmapLight deviceLight;
+        deviceLight.worldFromLocal = light.localToWorld;
+        deviceLight.localFromWorld = light.localToWorld.Inverse();
+        deviceLight.textureObject = resources.texture.textureObject;
+        deviceLight.textureFormat = textureInfo.format;
+        deviceLight.conditionalCDF = resources.conditionalCDF.Data();
+        deviceLight.marginalCDF = resources.marginalCDF.Data();
+        deviceLight.width = light.width;
+        deviceLight.height = light.height;
+        lights.push_back(deviceLight);
+    }
+
+    deviceScene.numEnvmapLights = static_cast<uint32_t>(lights.size());
+    deviceScene.envmapLights = device->Alloc<DeviceEnvmapLight>(lights.size()).Data();
+    device->CopyToDevice(
+        deviceScene.envmapLights, lights.data(), lights.size() * sizeof(DeviceEnvmapLight));
 }
 
 constexpr size_t INVALID_INDEX = ~size_t(0);
@@ -1061,7 +1145,8 @@ void GeometryManager::Update(Device *device,
     }
     if (hostMaterialHandles.size())
     {
-        deviceScene->materialHandles = device->Alloc<MaterialHandle>(hostMaterialHandles.size()).Data();
+        deviceScene->materialHandles =
+            device->Alloc<MaterialHandle>(hostMaterialHandles.size()).Data();
         device->CopyToDevice(deviceScene->materialHandles,
                              hostMaterialHandles.data(),
                              hostMaterialHandles.numBytes());
@@ -1301,10 +1386,10 @@ void MaterialManager::Update(Device *device,
     {
         const size_t materialBytes =
             sizeof(DeviceMaterial3) * materialXCompilation.materials.size();
-        deviceScene->deviceMaterial3s = device->Alloc<DeviceMaterial3>(materialXCompilation.materials.size()).Data();
-        device->CopyToDevice(deviceScene->deviceMaterial3s,
-                             materialXCompilation.materials.data(),
-                             materialBytes);
+        deviceScene->deviceMaterial3s =
+            device->Alloc<DeviceMaterial3>(materialXCompilation.materials.size()).Data();
+        device->CopyToDevice(
+            deviceScene->deviceMaterial3s, materialXCompilation.materials.data(), materialBytes);
     }
 
     // Compile shader nodes
@@ -1374,7 +1459,8 @@ void MaterialManager::Update(Device *device,
 
     if (hostMaterials.size())
     {
-        deviceScene->deviceMaterial2s = device->Alloc<DeviceMaterial2>(hostMaterials.size()).Data();
+        deviceScene->deviceMaterial2s =
+            device->Alloc<DeviceMaterial2>(hostMaterials.size()).Data();
         device->CopyToDevice(
             deviceScene->deviceMaterial2s, hostMaterials.data(), hostMaterials.numBytes());
     }

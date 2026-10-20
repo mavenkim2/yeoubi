@@ -5,6 +5,7 @@
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
 #include "kernel/geometry/cluster.h"
+#include "kernel/light/types.h"
 #include "material/opcodes.h"
 #include "material/openpbr_parameter_list.h"
 
@@ -143,6 +144,8 @@ struct DeviceScene
 
     DeviceLight *deviceLights;
     uint32_t numLights;
+    DeviceEnvmapLight *envmapLights;
+    uint32_t numEnvmapLights;
 
     // TODO: populate these and use them when clusterizer isn't used
     int *attributeIndices;

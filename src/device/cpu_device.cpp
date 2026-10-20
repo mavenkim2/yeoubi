@@ -238,6 +238,11 @@ void CPUDevice::WaitDeviceEvent(DeviceStream &, DeviceEvent &)
     YBI_ASSERT(false && "CPUDevice::WaitDeviceEvent is not implemented yet");
 }
 
+void CPUDevice::CopyToDevice3D(DeviceTexture &, const DeviceTextureCopyDesc &)
+{
+    YBI_ASSERT(false && "CPUDevice::CopyToDevice3D is not implemented yet");
+}
+
 void CPUDevice::CopyToDevice3DAsync(DeviceStream &, DeviceTexture &, const DeviceTextureCopyDesc &)
 {
     YBI_ASSERT(false && "CPUDevice::CopyToDevice3DAsync is not implemented yet");

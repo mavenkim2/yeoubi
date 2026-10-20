@@ -58,6 +58,7 @@ struct CPUDevice : Device
     void SyncDeviceStream(DeviceStream *stream = nullptr) override;
     void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) override;
     void WaitDeviceEvent(DeviceStream &stream, DeviceEvent &event) override;
+    void CopyToDevice3D(DeviceTexture &texture, const DeviceTextureCopyDesc &desc) override;
     void CopyToDevice3DAsync(DeviceStream &stream,
                              DeviceTexture &texture,
                              const DeviceTextureCopyDesc &desc) override;
