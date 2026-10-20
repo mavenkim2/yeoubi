@@ -70,12 +70,12 @@ YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
                                                          ? int(nodeItem.nodeIndex)
                                                          : node.ancestorGuidingCellIndex;
                 }
-                child.boundsMin = node.boundsMin;
-                child.boundsMax = node.boundsMax;
+                child.cellBoundsMin = node.cellBoundsMin;
+                child.cellBoundsMax = node.cellBoundsMax;
                 if (childIndex == 0)
-                    child.boundsMax[node.splitAxis] = node.splitLocation;
+                    child.cellBoundsMax[node.splitAxis] = node.splitLocation;
                 else
-                    child.boundsMin[node.splitAxis] = node.splitLocation;
+                    child.cellBoundsMin[node.splitAxis] = node.splitLocation;
                 params.nodes[node.childOffset + childIndex] = child;
                 params.nodeItems[node.childOffset + childIndex] = {};
             }
@@ -90,8 +90,6 @@ YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
                 nodeItem.sampleOffset + (childIndex == 0 ? 0 : nodeItem.numLeft);
             childItem.sampleCount =
                 childIndex == 0 ? nodeItem.numLeft : nodeItem.sampleCount - nodeItem.numLeft;
-            PathGuidingKdTreeNode &child = params.nodes[childItem.nodeIndex];
-            child.numSamples = childItem.sampleCount;
         }
     }
 }
@@ -130,20 +128,12 @@ YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams &params, PathGuidingK
     {
         const uint32_t nodeItemIndex = params.nodeItemIndices[frontierIndex];
         PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-        PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+        const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
         nodeItem.workItemOffset = totalWorkItemCount;
         nodeItem.workItemCount = 0;
         const bool matchesStage = node.MatchesStage(stage, params.generation);
-        if (stage == PathGuidingKdTreeStage::PositionStatistics)
-            node.numSamples = nodeItem.sampleCount;
         if (!matchesStage || nodeItem.sampleCount == 0)
             continue;
-
-        if (stage == PathGuidingKdTreeStage::PositionStatistics)
-        {
-            node.boundsMin = Vec3f(INFINITY);
-            node.boundsMax = Vec3f(-INFINITY);
-        }
         params.activeNodeItems[params.numActiveNodeItems++] = nodeItemIndex;
         const uint32_t sampleCount = nodeItem.sampleCount;
         const uint32_t workItemCount = CeilDiv(sampleCount, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT);
@@ -194,8 +184,8 @@ YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workIt
 {
     const PathGuidingKdTreeWorkItem workItem = GetKdTreeWorkItem(params, workItemIndex);
     PathGuidingKdTreeNode &node = params.nodes[workItem.nodeIndex];
-    Vec3f boundsMin(INFINITY);
-    Vec3f boundsMax(-INFINITY);
+    Vec3f boundsMin(FLOAT_INFINITY);
+    Vec3f boundsMax(-FLOAT_INFINITY);
     for (uint32_t sampleOffset = Backend::GetThreadIndex(); sampleOffset < workItem.sampleCount;
          sampleOffset += Backend::GetThreadStride())
     {
@@ -204,8 +194,8 @@ YBI_GPU void CalculateNodeBounds(PathGuidingKdTreeParams params, uint32_t workIt
         boundsMin = Min(boundsMin, position);
         boundsMax = Max(boundsMax, position);
     }
-    Backend::ReduceMin(boundsMin, node.boundsMin);
-    Backend::ReduceMax(boundsMax, node.boundsMax);
+    Backend::ReduceMin(boundsMin, node.positionBoundsMin);
+    Backend::ReduceMax(boundsMax, node.positionBoundsMax);
 }
 
 YBI_GPU PathGuidingKdTreePositionStatistics
@@ -254,46 +244,46 @@ YBI_GPU T LoadKdTreeReductionValue(const PathGuidingKdTreeNodeItem &nodeItem,
     return input[nodeItem.reductionInputOffset + offset];
 }
 
-YBI_GPU void StoreNodePositionStatistics(PathGuidingKdTreeParams params,
-                                         uint32_t nodeItemIndex,
-                                         uint32_t workItemIndex,
-                                         const PathGuidingKdTreePositionStatistics &statistics,
-                                         PathGuidingKdTreePositionStatistics *output)
+YBI_GPU void AccumulateNodePositionStatistics(
+    const PathGuidingKdTreeParams &params, uint32_t nodeItemIndex,
+    const PathGuidingKdTreePositionStatistics *input)
 {
-    output[workItemIndex] = statistics;
-    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-    if (nodeItem.workItemCount == 1)
-    {
-        PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-        node.meanX = statistics.mean.x;
-        node.meanY = statistics.mean.y;
-        node.meanZ = statistics.mean.z;
-        node.varianceX = statistics.variance.x;
-        node.varianceY = statistics.variance.y;
-        node.varianceZ = statistics.variance.z;
-        node.numSamples = statistics.numSamples;
-    }
+    PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+    // TODO: Avoid redundant bounds/statistics reductions on revisits while still
+    // allowing split selection to reconsider the node after promotion.
+    if (nodeItem.positionStatisticsAccumulated)
+        return;
+
+    // Only commit after every reduction level has finished. Nodes with one work
+    // item may otherwise appear repeatedly while larger nodes are still reduced.
+    YBI_ASSERT(nodeItem.workItemCount == 1);
+    const auto &statistics = input[nodeItem.workItemOffset];
+    YBI_ASSERT(statistics.numSamples == nodeItem.sampleCount);
+    PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+    node.positionStatistics = node.positionStatistics + statistics;
+    nodeItem.positionStatisticsAccumulated = true;
 }
 
 YBI_GPU void SelectNodeSplits(PathGuidingKdTreeParams params, uint32_t nodeItemIndex)
 {
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
     PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+    const auto &statistics = node.positionStatistics;
     if (params.splitDecision == PathGuidingSplitDecision::SampleCount)
     {
-        if (node.numSamples <= VMM_KD_TREE_SPLIT_SAMPLE_COUNT)
+        if (statistics.numSamples <= VMM_KD_TREE_SPLIT_SAMPLE_COUNT)
             return;
     }
-    else if (node.numSamples < VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT ||
+    else if (statistics.numSamples < VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT ||
              GetLookaheadDepth(params, node) >= params.maxLookaheadDepth)
     {
         return;
     }
-    const Vec3f boundsExtent = node.boundsMax - node.boundsMin;
+    const Vec3f boundsExtent = node.positionBoundsMax - node.positionBoundsMin;
     if (boundsExtent.MaxComponent() == 0.f)
         return;
-    Vec3f mean(node.meanX, node.meanY, node.meanZ);
-    const Vec3f variance(node.varianceX, node.varianceY, node.varianceZ);
+    Vec3f mean = statistics.mean;
+    const Vec3f variance = statistics.variance;
 
     const bool equalVariance = variance.x == variance.y && variance.y == variance.z;
     uint32_t splitAxis;
@@ -307,9 +297,10 @@ YBI_GPU void SelectNodeSplits(PathGuidingKdTreeParams params, uint32_t nodeItemI
         const uint32_t xyAxis = axisValues.y > axisValues.x ? 1 : 0;
         splitAxis = axisValues[xyAxis] > axisValues.z ? xyAxis : 2;
     }
-    mean[splitAxis] = Min(mean[splitAxis], node.boundsMax[splitAxis]);
-    if (mean[splitAxis] <= node.boundsMin[splitAxis])
-        mean[splitAxis] = nextafterf(node.boundsMin[splitAxis], node.boundsMax[splitAxis]);
+    mean[splitAxis] = Min(mean[splitAxis], node.positionBoundsMax[splitAxis]);
+    if (mean[splitAxis] <= node.positionBoundsMin[splitAxis])
+        mean[splitAxis] = nextafterf(node.positionBoundsMin[splitAxis],
+                                   node.positionBoundsMax[splitAxis]);
     node.splitAxis = int(splitAxis);
     node.splitLocation = mean[splitAxis];
 }

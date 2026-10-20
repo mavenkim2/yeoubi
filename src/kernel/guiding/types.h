@@ -138,12 +138,6 @@ struct LookaheadCell
     float radianceSecondMoment;
     uint32_t numSamples;
     Vec3f radianceWeightedDirectionSum;
-
-    YBI_GPU Vec3f CalculateMeanDirection() const;
-    YBI_GPU float CalculateMeanDirectionInvKappa() const;
-    YBI_GPU float CalculateSampleMean() const;
-    YBI_GPU float CalculateSampleVariance() const;
-    YBI_GPU LookaheadCell CalculateDelta(const LookaheadCell &rhs) const;
 };
 
 struct PathGuidingKdTreePositionStatistics
@@ -152,8 +146,8 @@ struct PathGuidingKdTreePositionStatistics
     Vec3f variance;
     uint32_t numSamples;
 
-    YBI_CPU_GPU PathGuidingKdTreePositionStatistics operator+(
-        const PathGuidingKdTreePositionStatistics &other) const
+    YBI_CPU_GPU PathGuidingKdTreePositionStatistics
+    operator+(const PathGuidingKdTreePositionStatistics &other) const
     {
         if (numSamples == 0)
             return other;
@@ -165,8 +159,8 @@ struct PathGuidingKdTreePositionStatistics
         const float weightA = float(numSamples) / float(result.numSamples);
         const Vec3f delta = other.mean - mean;
         result.mean = mean + delta * weightB;
-        result.variance = variance * weightA + other.variance * weightB +
-                          delta * delta * (weightA * weightB);
+        result.variance =
+            variance * weightA + other.variance * weightB + delta * delta * (weightA * weightB);
         return result;
     }
 };
@@ -178,8 +172,8 @@ struct PathGuidingKdTreeLookaheadStatistics
     Vec3f meanRadianceWeightedDirection;
     uint32_t numSamples;
 
-    YBI_CPU_GPU PathGuidingKdTreeLookaheadStatistics operator+(
-        const PathGuidingKdTreeLookaheadStatistics &other) const
+    YBI_CPU_GPU PathGuidingKdTreeLookaheadStatistics
+    operator+(const PathGuidingKdTreeLookaheadStatistics &other) const
     {
         if (numSamples == 0)
             return other;
@@ -191,7 +185,8 @@ struct PathGuidingKdTreeLookaheadStatistics
         result.meanRadiance = meanRadiance + (other.meanRadiance - meanRadiance) * weight;
         result.meanSquaredRadiance =
             meanSquaredRadiance + (other.meanSquaredRadiance - meanSquaredRadiance) * weight;
-        result.meanRadianceWeightedDirection = meanRadianceWeightedDirection +
+        result.meanRadianceWeightedDirection =
+            meanRadianceWeightedDirection +
             (other.meanRadianceWeightedDirection - meanRadianceWeightedDirection) * weight;
         return result;
     }
@@ -204,17 +199,14 @@ struct PathGuidingKdTreeNode
     int childOffset = -1;
     uint32_t treeDepth = 0;
 
-    Vec3f boundsMin = Vec3f(INFINITY);
-    Vec3f boundsMax = Vec3f(-INFINITY);
+    // Spatial region inherited from the parent, independent of sampled positions.
+    Vec3f cellBoundsMin = Vec3f(-FLOAT_INFINITY);
+    Vec3f cellBoundsMax = Vec3f(FLOAT_INFINITY);
 
-    float meanX = 0.f;
-    float meanY = 0.f;
-    float meanZ = 0.f;
-
-    float varianceX = 0.f;
-    float varianceY = 0.f;
-    float varianceZ = 0.f;
-    uint32_t numSamples = 0;
+    // Accumulated until a split plane is established; preserved on promotion.
+    PathGuidingKdTreePositionStatistics positionStatistics = {};
+    Vec3f positionBoundsMin = Vec3f(FLOAT_INFINITY);
+    Vec3f positionBoundsMax = Vec3f(-FLOAT_INFINITY);
     uint32_t partitionGeneration = 0;
 
     int guidingCellIndex = -1;
@@ -278,6 +270,8 @@ struct PathGuidingKdTreeNodeItem
     uint32_t sampleOffset;
     uint32_t sampleCount;
     uint32_t numLeft;
+    // Reset with the batch, preserved when this node is revisited after promotion.
+    bool positionStatisticsAccumulated = false;
 
     uint32_t workItemOffset;
     uint32_t workItemCount;
@@ -315,7 +309,7 @@ struct PathGuidingKdTreeParams
     uint32_t numGuidingCellSplits = 0;
     VMMDistribution *vmmDistributions;
     uint32_t numVMMs = 0;
-    float meanRadianceSplitThreshold = 0.1f;
+    float meanRadianceSplitThreshold = 0.05f;
 
     Vec3f *sampleDirection;
     float *sampleIncidentRadianceEstimate;

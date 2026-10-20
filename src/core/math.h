@@ -3,6 +3,12 @@
 #include "core/assert.h"
 #include "device/cuda_compat.h"
 
+#if defined(__CUDACC_RTC__)
+#include <cuda/std/limits>
+#else
+#include <limits>
+#endif
+
 #if defined(SIMD_4)
 #include <xmmintrin.h>
 #endif
@@ -15,6 +21,13 @@
 
 namespace ybi
 {
+
+// The Windows INFINITY macro converts an overflowing double literal to float.
+#if defined(__CUDACC_RTC__)
+inline constexpr float FLOAT_INFINITY = cuda::std::numeric_limits<float>::infinity();
+#else
+inline constexpr float FLOAT_INFINITY = std::numeric_limits<float>::infinity();
+#endif
 
 template <typename T, typename U>
 YBI_CPU_GPU auto CeilDiv(T value, U divisor)

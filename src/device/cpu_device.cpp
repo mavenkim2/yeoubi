@@ -35,6 +35,7 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
         {"CalculateNodePositionStatisticsKernel", CalculateNodePositionStatisticsKernelCPU},
         {"CreateKdTreeReductionWorkItemsKernel", CreateKdTreeReductionWorkItemsKernelCPU},
         {"ReduceNodePositionStatisticsKernel", ReduceNodePositionStatisticsKernelCPU},
+        {"AccumulateNodePositionStatisticsKernel", AccumulateNodePositionStatisticsKernelCPU},
         {"SelectNodeSplitsKernel", SelectNodeSplitsKernelCPU},
         {"PartitionCountKernel", PartitionCountKernelCPU},
         {"PartitionExclusiveScanKernel", PartitionExclusiveScanKernelCPU},

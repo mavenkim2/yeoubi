@@ -22,14 +22,14 @@ namespace ybi
 #define VMM_KD_TREE_CRITICAL_Z_SCORE 3.7190164855f
 #define VMM_KD_TREE_MIN_NUM_SAMPLES 1000u
 
-YBI_GPU Vec3f LookaheadCell::CalculateMeanDirection() const
+YBI_GPU Vec3f CalculateMeanDirection(const LookaheadCell &cell)
 {
-    return Normalize(radianceWeightedDirectionSum);
+    return Normalize(cell.radianceWeightedDirectionSum);
 }
 
-YBI_GPU float LookaheadCell::CalculateMeanDirectionInvKappa() const
+YBI_GPU float CalculateMeanDirectionInvKappa(const LookaheadCell &cell)
 {
-    const Vec3f r = radianceWeightedDirectionSum / radianceFirstMoment;
+    const Vec3f r = cell.radianceWeightedDirectionSum / cell.radianceFirstMoment;
     const float meanCosine = Min(Length(r), 1.f);
     if (meanCosine == 1.f)
         return 0.f; // Infinite concentration.
@@ -37,7 +37,7 @@ YBI_GPU float LookaheadCell::CalculateMeanDirectionInvKappa() const
     const float kappa = MeanCosineToKappa(meanCosine);
     const float kappaCothMinusOne = kappa * meanCosine;
     const float yMinusOne =
-        (radianceFirstMoment / radianceSecondMoment) * radianceFirstMoment * kappaCothMinusOne;
+        (cell.radianceFirstMoment / cell.radianceSecondMoment) * cell.radianceFirstMoment * kappaCothMinusOne;
     const float invY = 1.f / (1.f + yMinusOne);
     // Eq. (4), evaluated in 1/y to avoid polynomial overflow.
     const float numerator = 1.f + invY * (1.69934861f + invY * (5.38753272f + invY * 9.85021305f));
@@ -45,46 +45,36 @@ YBI_GPU float LookaheadCell::CalculateMeanDirectionInvKappa() const
     return Sqrt((invY / yMinusOne) * (denominator / numerator));
 }
 
-YBI_GPU float LookaheadCell::CalculateSampleMean() const
+YBI_GPU float CalculateSampleMean(const LookaheadCell &cell)
 {
-    return radianceFirstMoment / numSamples;
+    return cell.radianceFirstMoment / cell.numSamples;
 }
 
-YBI_GPU float LookaheadCell::CalculateSampleVariance() const
+YBI_GPU float CalculateSampleVariance(const LookaheadCell &cell)
 {
     // Variance of the estimated mean, not of an individual sample.
-    const double n = numSamples;
-    const double b1 = radianceFirstMoment;
-    const double numerator = n * radianceSecondMoment - b1 * b1;
+    const double n = cell.numSamples;
+    const double b1 = cell.radianceFirstMoment;
+    const double numerator = n * cell.radianceSecondMoment - b1 * b1;
     // Accumulated float moments can produce a small negative value through rounding.
     return static_cast<float>(Max(0.0, numerator) / (n * n * n));
 }
 
-YBI_GPU LookaheadCell LookaheadCell::CalculateDelta(const LookaheadCell &rhs) const
+YBI_GPU LookaheadCell CalculateDelta(const LookaheadCell &lhs, const LookaheadCell &rhs)
 {
-    YBI_ASSERT(rhs.numSamples <= numSamples);
-    LookaheadCell result = {radianceFirstMoment - rhs.radianceFirstMoment,
-                            radianceSecondMoment - rhs.radianceSecondMoment,
-                            numSamples - rhs.numSamples,
-                            radianceWeightedDirectionSum - rhs.radianceWeightedDirectionSum};
+    YBI_ASSERT(rhs.numSamples <= lhs.numSamples);
+    LookaheadCell result = {lhs.radianceFirstMoment - rhs.radianceFirstMoment,
+                            lhs.radianceSecondMoment - rhs.radianceSecondMoment,
+                            lhs.numSamples - rhs.numSamples,
+                            lhs.radianceWeightedDirectionSum - rhs.radianceWeightedDirectionSum};
 
     return result;
 }
 
-struct GuidingCell
-{
-};
-
-struct VMMKDTreeWorkspace
-{
-    float firstMoment;
-    float secondMoment;
-    Vec3f radianceWeightedDirectionSum;
-};
-
-YBI_GPU PathGuidingKdTreeLookaheadStatistics UpdateLookaheadCell(
-    const PathGuidingKdTreeParams &params, const PathGuidingKdTreeWorkItem &workItem,
-    uint32_t threadIndex)
+YBI_GPU PathGuidingKdTreeLookaheadStatistics
+UpdateLookaheadCell(const PathGuidingKdTreeParams &params,
+                    const PathGuidingKdTreeWorkItem &workItem,
+                    uint32_t threadIndex)
 {
     PathGuidingKdTreeLookaheadStatistics result = {};
     for (uint32_t sampleOffset = threadIndex; sampleOffset < workItem.sampleCount;
@@ -100,7 +90,8 @@ YBI_GPU PathGuidingKdTreeLookaheadStatistics UpdateLookaheadCell(
     return result;
 }
 
-YBI_GPU void AccumulateLookaheadCell(const PathGuidingKdTreeParams &params, uint32_t nodeItemIndex,
+YBI_GPU void AccumulateLookaheadCell(const PathGuidingKdTreeParams &params,
+                                     uint32_t nodeItemIndex,
                                      const PathGuidingKdTreeLookaheadStatistics *input)
 {
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
@@ -143,7 +134,7 @@ YBI_GPU bool ShouldSplitGuidingCell(const PathGuidingKdTreeParams &params,
         {
             continue;
         }
-        const LookaheadCell delta = parent.CalculateDelta(cell);
+        const LookaheadCell delta = CalculateDelta(parent, cell);
 
         const float oneMinusMeanRadianceSplitThreshold = 1.f - meanRadianceSplitThreshold;
         const float onePlusMeanRadianceSplitThreshold = 1.f + meanRadianceSplitThreshold;
@@ -156,11 +147,11 @@ YBI_GPU bool ShouldSplitGuidingCell(const PathGuidingKdTreeParams &params,
         const float cLookaheadMinus =
             onePlusMeanRadianceSplitThreshold * cell.numSamples - parent.numSamples;
 
-        const float meanDelta = delta.CalculateSampleMean();
-        const float varianceDelta = delta.CalculateSampleVariance();
+        const float meanDelta = CalculateSampleMean(delta);
+        const float varianceDelta = CalculateSampleVariance(delta);
 
-        const float meanLookahead = cell.CalculateSampleMean();
-        const float varianceLookahead = cell.CalculateSampleVariance();
+        const float meanLookahead = CalculateSampleMean(cell);
+        const float varianceLookahead = CalculateSampleVariance(cell);
 
         const float splitScorePlus = CalculateSplitScore(cDeltaPlus * meanDelta,
                                                          cLookaheadPlus * meanLookahead,
@@ -183,11 +174,11 @@ YBI_GPU bool ShouldSplitGuidingCell(const PathGuidingKdTreeParams &params,
             Dot(cell.radianceWeightedDirectionSum, cell.radianceWeightedDirectionSum) == 0.f)
             continue;
 
-        const Vec3f parentDirection = parent.CalculateMeanDirection();
-        const float parentInvKappa = parent.CalculateMeanDirectionInvKappa();
-        const Vec3f lookaheadDirection = cell.CalculateMeanDirection();
+        const Vec3f parentDirection = CalculateMeanDirection(parent);
+        const float parentInvKappa = CalculateMeanDirectionInvKappa(parent);
+        const Vec3f lookaheadDirection = CalculateMeanDirection(cell);
 
-        const float invSqrtK = Sqrt(parentInvKappa + cell.CalculateMeanDirectionInvKappa());
+        const float invSqrtK = Sqrt(parentInvKappa + CalculateMeanDirectionInvKappa(cell));
         if (invSqrtK >= params.vmfSplitMaxInvSqrtK)
             continue;
 
@@ -271,32 +262,5 @@ YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
         }
     }
 }
-
-#if 0
-template <typename Backend>
-YBI_GPU void Something(PathGuidingKdTreeParams params)
-{
-    for (uint32_t nodeItemIndex = 0; params.numNodeItemIndices
-}
-
-template <typename Backend>
-YBI_GPU void Something2(PathGuidingKdTreeParams params)
-{
-    const uint32_t blockIndex = Backend::GetBlockIndex();
-    const uint32_t blockStride = Backend::GetBlockStride();
-
-    for (uint32_t nodeItemIndex = blockIndex; nodeItemIndex < params.numNodeItemIndices;
-         nodeItemIndex += blockStride)
-    {
-        const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-        const PathGuidingKdTreeNode &node = nodes[workItem.nodeIndex];
-        if (node.IsGuidingCell())
-        {
-            UpdateLookaheadCell<Backend>(
-                params, ?, VMMKDTreeWorkspace &workspace);
-        }
-    }
-}
-#endif
 
 } // namespace ybi

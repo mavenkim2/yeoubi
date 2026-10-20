@@ -35,6 +35,8 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     generateReductionWorkItems = device->CreateDeviceKernel(desc);
     desc.entryName = "ReduceNodePositionStatisticsKernel";
     reduceNodePositionStatistics = device->CreateDeviceKernel(desc);
+    desc.entryName = "AccumulateNodePositionStatisticsKernel";
+    accumulateNodePositionStatistics = device->CreateDeviceKernel(desc);
     desc.entryName = "SelectNodeSplitsKernel";
     selectNodeSplits = device->CreateDeviceKernel(desc);
     desc.entryName = "PartitionCountKernel";
@@ -48,9 +50,9 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     desc.entryName = "CreateKdTreeNodeItemsKernel";
     generateNodeItems = device->CreateDeviceKernel(desc);
     YBI_ASSERT(generateWorkItems && calculateNodeBounds && calculateNodePositionStatistics &&
-               generateReductionWorkItems && reduceNodePositionStatistics && selectNodeSplits &&
-               partitionCount && partitionExclusiveScan && partitionSamples && generateNodes &&
-               generateNodeItems);
+               generateReductionWorkItems && reduceNodePositionStatistics &&
+               accumulateNodePositionStatistics && selectNodeSplits && partitionCount &&
+               partitionExclusiveScan && partitionSamples && generateNodes && generateNodeItems);
 
     switch (splitDecision)
     {
@@ -213,9 +215,8 @@ void PathGuidingSystem::ReserveLookaheadStatisticsBuffers(PathGuidingKdTreeParam
 
 void PathGuidingSystem::ReserveVMMDistributions(PathGuidingKdTreeParams &params)
 {
-    ReserveBuffer(vmmDistributions,
-                  size_t(params.numVMMs) + params.numGuidingCellSplits,
-                  params.numVMMs);
+    ReserveBuffer(
+        vmmDistributions, size_t(params.numVMMs) + params.numGuidingCellSplits, params.numVMMs);
     params.vmmDistributions = vmmDistributions.Data();
 }
 
@@ -251,8 +252,12 @@ void PathGuidingSystem::CalculatePositionStatistics(PathGuidingKdTreeParams &par
     Launch(*calculateNodeBounds, params.numWorkItems, VMM_BLOCK_SIZE);
     Launch(*calculateNodePositionStatistics, params.numWorkItems, VMM_BLOCK_SIZE);
 
-    ReduceNodeStatistics(
+    auto *statistics = ReduceNodeStatistics(
         params, *reduceNodePositionStatistics, positionStatistics, newPositionStatistics);
+    Launch(*accumulateNodePositionStatistics,
+           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE),
+           VMM_BLOCK_SIZE,
+           statistics);
 }
 
 void PathGuidingSystem::SelectNodeSplits(const PathGuidingKdTreeParams &params)
@@ -316,7 +321,9 @@ void PathGuidingSystem::UpdateLookaheadCells(PathGuidingKdTreeParams &params)
     auto *statistics = ReduceNodeStatistics(
         params, *reduceLookaheadStatistics, lookaheadStatistics, newLookaheadStatistics);
     Launch(*accumulateLookaheadCells,
-           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE, statistics);
+           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE),
+           VMM_BLOCK_SIZE,
+           statistics);
 }
 
 void PathGuidingSystem::SelectGuidingCellSplits(PathGuidingKdTreeParams &params)
@@ -325,7 +332,8 @@ void PathGuidingSystem::SelectGuidingCellSplits(PathGuidingKdTreeParams &params)
         return;
 
     Launch(*shouldSplitGuidingCell,
-           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE);
+           CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE),
+           VMM_BLOCK_SIZE);
     ReadBackParams(params);
 }
 

@@ -45,8 +45,7 @@ void CalculateNodePositionStatisticsCPU(PathGuidingKdTreeParams params)
         for (uint32_t thread = 0; thread < VMM_BLOCK_SIZE; ++thread)
             values[thread] = CalculateNodePositionStatistics(params, workItem, thread);
         const auto statistics = BlockReduceSum<PathGuidingKdTreePositionStatistics, VMM_BLOCK_SIZE>(values);
-        StoreNodePositionStatistics(params, workItem.nodeItemIndex, workItemIndex,
-                                    statistics, params.positionStatistics);
+        params.positionStatistics[workItemIndex] = statistics;
     });
 }
 
@@ -66,7 +65,15 @@ void ReduceNodePositionStatisticsCPU(PathGuidingKdTreeParams params,
         for (uint32_t thread = 0; thread < VMM_BLOCK_SIZE; ++thread)
             values[thread] = LoadKdTreeReductionValue(nodeItem, workItemIndex, thread, input);
         const auto statistics = BlockReduceSum<PathGuidingKdTreePositionStatistics, VMM_BLOCK_SIZE>(values);
-        StoreNodePositionStatistics(params, nodeItemIndex, workItemIndex, statistics, output);
+        output[workItemIndex] = statistics;
+    });
+}
+
+void AccumulateNodePositionStatisticsCPU(
+    PathGuidingKdTreeParams params, const PathGuidingKdTreePositionStatistics *input)
+{
+    tbb::parallel_for(0u, params.numActiveNodeItems, [&](uint32_t activeIndex) {
+        AccumulateNodePositionStatistics(params, params.activeNodeItems[activeIndex], input);
     });
 }
 
@@ -156,6 +163,13 @@ void ReduceNodePositionStatisticsKernelCPU(void **arguments)
 void SelectNodeSplitsKernelCPU(void **arguments)
 {
     SelectNodeSplitsCPU(GetKdTreeParams(arguments));
+}
+
+void AccumulateNodePositionStatisticsKernelCPU(void **arguments)
+{
+    const PathGuidingKdTreePositionStatistics *input = nullptr;
+    std::memcpy(&input, arguments[1], sizeof(input));
+    AccumulateNodePositionStatisticsCPU(GetKdTreeParams(arguments), input);
 }
 
 void PartitionCountKernelCPU(void **arguments)

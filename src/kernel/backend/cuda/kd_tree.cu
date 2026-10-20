@@ -56,8 +56,7 @@ extern "C" __global__ void CalculateNodePositionStatisticsKernel(
         const auto value = CalculateNodePositionStatistics(params, workItem, threadIdx.x);
         const auto statistics = BlockReduceSum<PathGuidingKdTreePositionStatistics, VMM_BLOCK_SIZE>(value);
         if (threadIdx.x == 0)
-            StoreNodePositionStatistics(params, workItem.nodeItemIndex, workItemIndex,
-                                        statistics, params.positionStatistics);
+            params.positionStatistics[workItemIndex] = statistics;
     }
 }
 
@@ -82,8 +81,18 @@ extern "C" __global__ void ReduceNodePositionStatisticsKernel(
         const auto value = LoadKdTreeReductionValue(nodeItem, workItemIndex, threadIdx.x, input);
         const auto statistics = BlockReduceSum<PathGuidingKdTreePositionStatistics, VMM_BLOCK_SIZE>(value);
         if (threadIdx.x == 0)
-            StoreNodePositionStatistics(params, nodeItemIndex, workItemIndex, statistics, output);
+            output[workItemIndex] = statistics;
     }
+}
+
+extern "C" __global__ void AccumulateNodePositionStatisticsKernel(
+    const PathGuidingKdTreeParams *kernelParams,
+    const PathGuidingKdTreePositionStatistics *input)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    for (uint32_t activeIndex = blockIdx.x * blockDim.x + threadIdx.x;
+         activeIndex < params.numActiveNodeItems; activeIndex += blockDim.x * gridDim.x)
+        AccumulateNodePositionStatistics(params, params.activeNodeItems[activeIndex], input);
 }
 
 extern "C" __global__ void SelectNodeSplitsKernel(const PathGuidingKdTreeParams *kernelParams)

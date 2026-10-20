@@ -35,6 +35,7 @@ class PathGuidingSystem
     std::unique_ptr<DeviceKernel> calculateNodePositionStatistics;
     std::unique_ptr<DeviceKernel> generateReductionWorkItems;
     std::unique_ptr<DeviceKernel> reduceNodePositionStatistics;
+    std::unique_ptr<DeviceKernel> accumulateNodePositionStatistics;
     std::unique_ptr<DeviceKernel> selectNodeSplits;
     std::unique_ptr<DeviceKernel> partitionCount;
     std::unique_ptr<DeviceKernel> partitionExclusiveScan;
