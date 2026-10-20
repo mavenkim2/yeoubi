@@ -69,6 +69,9 @@ struct WavefrontSampleState
     RNG *rng;
     RayCone *rayCone;
     Vec3f *radiance;
+#if defined(YBI_USE_PATH_GUIDING)
+    int *radianceRecordIndex;
+#endif
     Vec3f *throughput;
     Vec3f *previousSurfacePosition;
     float *previousBsdfPdf;
@@ -136,6 +139,18 @@ struct WavefrontSampleState
     {
         radiance[sampleIndex] = value;
     }
+
+#if defined(YBI_USE_PATH_GUIDING)
+    YBI_GPU int ReadRadianceRecordIndex(uint32_t sampleIndex) const
+    {
+        return radianceRecordIndex[sampleIndex];
+    }
+
+    YBI_GPU void WriteRadianceRecordIndex(uint32_t sampleIndex, int value) const
+    {
+        radianceRecordIndex[sampleIndex] = value;
+    }
+#endif
 
     YBI_GPU Vec3f ReadThroughput(uint32_t sampleIndex) const
     {

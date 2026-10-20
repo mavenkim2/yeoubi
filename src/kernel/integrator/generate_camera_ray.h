@@ -60,6 +60,9 @@ YBI_GPU void GenerateCameraRay(const WavefrontParams &params,
     state.WriteRNG(sampleIndex, rng);
     state.WriteRayCone(sampleIndex, rayCone);
     state.WriteRadiance(sampleIndex, Vec3f(0.f));
+#if defined(YBI_USE_PATH_GUIDING)
+    state.WriteRadianceRecordIndex(sampleIndex, -1);
+#endif
     state.WriteThroughput(sampleIndex, Vec3f(1.f));
     state.WritePreviousSurfacePosition(sampleIndex, Vec3f(0.f));
     state.WritePreviousBsdfPdf(sampleIndex, 0.f);

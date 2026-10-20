@@ -4,8 +4,8 @@
 #include "core/vec2f.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
-#include "material/opcodes.h"
 #include "kernel/geometry/cluster.h"
+#include "material/opcodes.h"
 #include "material/openpbr_parameter_list.h"
 
 namespace ybi

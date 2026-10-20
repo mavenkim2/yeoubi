@@ -10,8 +10,8 @@
 #include "kernel/launch/kernel_params.h"
 #include "material/lut.h"
 #include "render/render_system.h"
-#include "render/wavefront_integrator.h"
 #include "render/virtual_texture/manager.h"
+#include "render/wavefront_integrator.h"
 #include "scene/scene.h"
 #include <GLFW/glfw3.h>
 #include <cstdio>
@@ -261,7 +261,7 @@ void InteractiveApplication::CreateCamera()
     params.opaqueDielectricEnergyComplementTexture = session->dielectricEnergy.textureObject;
     params.opaqueDielectricAverageEnergyComplementTexture =
         session->dielectricAverage.textureObject;
-    session->vmfSplitTable.Bind(params.guiding);
+    // session->vmfSplitTable.Bind(params.guiding);
     params.sampleOffset = 0;
     params.accumulatedSamples = 0;
     progressiveState = ProgressiveState{};
@@ -300,7 +300,7 @@ void InteractiveApplication::SwitchCamera(size_t cameraIndex)
     params.opaqueDielectricEnergyComplementTexture = session->dielectricEnergy.textureObject;
     params.opaqueDielectricAverageEnergyComplementTexture =
         session->dielectricAverage.textureObject;
-    session->vmfSplitTable.Bind(params.guiding);
+    // session->vmfSplitTable.Bind(params.guiding);
     params.sampleOffset = 0;
     params.accumulatedSamples = 0;
     progressiveState = ProgressiveState{};
@@ -544,7 +544,7 @@ OfflineApplication::OfflineApplication(DeviceKind kind,
     params.opaqueDielectricEnergyComplementTexture = session->dielectricEnergy.textureObject;
     params.opaqueDielectricAverageEnergyComplementTexture =
         session->dielectricAverage.textureObject;
-    session->vmfSplitTable.Bind(params.guiding);
+    // session->vmfSplitTable.Bind(params.guiding);
     params.maxDepth = 10;
     params.samplesPerPixel = 1;
     if (pixel)
@@ -594,7 +594,8 @@ void OfflineApplication::Run()
 
         device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->StartProfiler();
-        device->DispatchKernel(KERNEL_INTERSECT, uint32_t(outputWidth) * outputHeight, 256, cudaParams);
+        device->DispatchKernel(
+            KERNEL_INTERSECT, uint32_t(outputWidth) * outputHeight, 256, cudaParams);
         device->SyncDeviceStream();
         device->StopProfiler();
 

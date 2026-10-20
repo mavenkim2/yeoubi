@@ -12,6 +12,9 @@ struct Device;
 struct DeviceKernel;
 struct KernelParams;
 struct WavefrontParams;
+#if defined(YBI_USE_PATH_GUIDING)
+struct PathGuidingTrainingSample;
+#endif
 
 class WavefrontIntegrator
 {
@@ -41,6 +44,12 @@ private:
     DeviceBuffer<uint32_t> numSampleStatesBuffer;
     DeviceBuffer<uint32_t> sampleIndicesBuffer;
     DeviceBuffer<WavefrontParams> kernelParamsBuffer;
+#if defined(YBI_USE_PATH_GUIDING)
+    DeviceBuffer<uint32_t> radianceRecordAllocationCursorBuffer;
+    DeviceBuffer<uint32_t> radianceRecordRetiredCountBuffer;
+    DeviceBuffer<PathGuidingTrainingSample> pathGuidingTrainingSamplesBuffer;
+    DeviceBuffer<uint32_t> pathGuidingTrainingSampleCountBuffer;
+#endif
 };
 
 } // namespace ybi

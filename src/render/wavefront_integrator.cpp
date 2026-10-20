@@ -43,6 +43,11 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     numSampleStatesBuffer = device->Alloc<uint32_t>(1);
     sampleIndicesBuffer = device->Alloc<uint32_t>(batchSize);
     kernelParamsBuffer = device->Alloc<WavefrontParams>(1);
+#if defined(YBI_USE_PATH_GUIDING)
+    radianceRecordAllocationCursorBuffer = device->Alloc<uint32_t>(1);
+    radianceRecordRetiredCountBuffer = device->Alloc<uint32_t>(1);
+    pathGuidingTrainingSampleCountBuffer = device->Alloc<uint32_t>(1);
+#endif
 }
 
 WavefrontIntegrator::~WavefrontIntegrator()
@@ -62,6 +67,16 @@ WavefrontIntegrator::~WavefrontIntegrator()
         device->Free(sampleIndicesBuffer);
     if (kernelParamsBuffer)
         device->Free(kernelParamsBuffer);
+#if defined(YBI_USE_PATH_GUIDING)
+    if (radianceRecordAllocationCursorBuffer)
+        device->Free(radianceRecordAllocationCursorBuffer);
+    if (radianceRecordRetiredCountBuffer)
+        device->Free(radianceRecordRetiredCountBuffer);
+    if (pathGuidingTrainingSamplesBuffer)
+        device->Free(pathGuidingTrainingSamplesBuffer);
+    if (pathGuidingTrainingSampleCountBuffer)
+        device->Free(pathGuidingTrainingSampleCountBuffer);
+#endif
 }
 
 void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
@@ -77,6 +92,9 @@ void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
     allocate(state.rng);
     allocate(state.rayCone);
     allocate(state.radiance);
+#if defined(YBI_USE_PATH_GUIDING)
+    allocate(state.radianceRecordIndex);
+#endif
     allocate(state.throughput);
     allocate(state.previousSurfacePosition);
     allocate(state.previousBsdfPdf);
@@ -133,6 +151,24 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
 
     WavefrontParams params{};
     static_cast<KernelParams &>(params) = kernelParams;
+#if defined(YBI_USE_PATH_GUIDING)
+    if (pathGuidingTrainingSamplesBuffer.Count() < params.radianceRecorder.availableCount)
+    {
+        if (pathGuidingTrainingSamplesBuffer)
+            device->Free(pathGuidingTrainingSamplesBuffer);
+        pathGuidingTrainingSamplesBuffer =
+            device->Alloc<PathGuidingTrainingSample>(params.radianceRecorder.availableCount);
+    }
+    params.radianceRecorder.allocationCursor = radianceRecordAllocationCursorBuffer.Data();
+    params.radianceRecorder.retiredListCount = radianceRecordRetiredCountBuffer.Data();
+    params.radianceRecorder.trainingSamples = pathGuidingTrainingSamplesBuffer.Data();
+    params.radianceRecorder.trainingSampleCount = pathGuidingTrainingSampleCountBuffer.Data();
+    params.radianceRecorder.trainingSamplesMax =
+        static_cast<uint32_t>(pathGuidingTrainingSamplesBuffer.Count());
+    device->MemzeroAsync(radianceRecordAllocationCursorBuffer.Data(), sizeof(uint32_t));
+    device->MemzeroAsync(radianceRecordRetiredCountBuffer.Data(), sizeof(uint32_t));
+    device->MemzeroAsync(pathGuidingTrainingSampleCountBuffer.Data(), sizeof(uint32_t));
+#endif
     params.sampleState = sampleState;
     params.numSampleStates = numSampleStatesBuffer.Data();
     params.maxNumSampleState = batchSize;

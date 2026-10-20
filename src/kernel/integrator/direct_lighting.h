@@ -74,15 +74,40 @@ DirectLighting(const KernelParams &params, const SampleState *sampleState, uint3
             if (shadowDistance > 0.f)
             {
                 const Vec3f shadowDirection = shadowToLight / shadowDistance;
+                Vec3f contribution(0.f);
                 if (TraceVisibility(params.bvhHandle,
                                     shadowOrigin,
                                     shadowDirection,
                                     shadowDistance * (1.f - 1e-4f)))
                 {
                     const float misWeight = PowerHeuristic(lightPdf, sampledLightBsdfPdf);
-                    radiance += throughput * sampledLight.radiance * sampledLightBsdfWeight *
-                                misWeight / lightPdf;
+                    contribution = throughput * sampledLight.radiance * sampledLightBsdfWeight *
+                                   misWeight / lightPdf;
+                    radiance += contribution;
                 }
+#if defined(YBI_USE_PATH_GUIDING)
+                // TODO: do i want to create a sample here? could just add to previous node
+                const int parentRecordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
+                int childRecordIndex;
+                if (params.radianceRecorder.AllocateRecord(childRecordIndex))
+                {
+                    RadianceRecord &child = params.radianceRecorder.GetRecord(childRecordIndex);
+                    child.InitializeDirectSample(position,
+                                                 sampleState->ReadShadingNormal(sampleIndex),
+                                                 sampledLightDirection,
+                                                 parentRecordIndex,
+                                                 throughput * sampledLightBsdfWeight / lightPdf,
+                                                 lightPdf,
+                                                 contribution);
+                    params.radianceRecorder.IncrementCount(parentRecordIndex);
+                    params.radianceRecorder.MarkDone(childRecordIndex);
+                }
+                else if (parentRecordIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
+                {
+                    params.radianceRecorder.GetRecord(parentRecordIndex)
+                        .AtomicAddEmission(contribution);
+                }
+#endif
             }
         }
     }

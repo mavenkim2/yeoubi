@@ -13,9 +13,8 @@ namespace ybi
 {
 
 template <typename SampleState>
-YBI_GPU void IndirectLighting(const KernelParams &params,
-                              const SampleState *sampleState,
-                              uint32_t sampleIndex)
+YBI_GPU void
+IndirectLighting(const KernelParams &params, const SampleState *sampleState, uint32_t sampleIndex)
 {
     const uint32_t depth = sampleState->ReadDepth(sampleIndex);
 
@@ -53,12 +52,10 @@ YBI_GPU void IndirectLighting(const KernelParams &params,
         return;
     }
 
-    const Vec3f weight = DeviceDispatch<Vec3f>(material.evaluateCallableIndex,
-                                               &params,
-                                               &closureInfo,
-                                               viewDirection,
-                                               nextDirection) /
-                         pdf;
+    const Vec3f weight =
+        DeviceDispatch<Vec3f>(
+            material.evaluateCallableIndex, &params, &closureInfo, viewDirection, nextDirection) /
+        pdf;
     Vec3f throughput = sampleState->ReadThroughput(sampleIndex) * weight;
 
     // Match the roulette policy used by the unidirectional integrator.
@@ -80,6 +77,25 @@ YBI_GPU void IndirectLighting(const KernelParams &params,
     Vec3f geometricNormal = sampleState->ReadGeometricNormal(sampleIndex);
     if (Dot(nextDirection, geometricNormal) < 0.f)
         geometricNormal = -geometricNormal;
+
+#ifdef YBI_USE_PATH_GUIDING
+    int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
+    int childRecordIndex;
+    const bool recordAllocated = params.radianceRecorder.AllocateRecord(childRecordIndex);
+    assert(recordAllocated);
+
+    RadianceRecord &child = params.radianceRecorder.records[childRecordIndex];
+    child.InitializeIndirectSample(position,
+                                   sampleState->ReadShadingNormal(sampleIndex),
+                                   nextDirection,
+                                   recordIndex,
+                                   throughput,
+                                   pdf);
+
+    sampleState->WriteRadianceRecordIndex(sampleIndex, childRecordIndex);
+    params.radianceRecorder.IncrementCount(recordIndex);
+    params.radianceRecorder.MarkDone(recordIndex);
+#endif
 
     sampleState->WriteThroughput(sampleIndex, throughput);
     sampleState->WritePreviousSurfacePosition(sampleIndex, position);

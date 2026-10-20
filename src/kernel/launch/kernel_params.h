@@ -3,9 +3,12 @@
 #include "core/affine_transform.h"
 #include "core/matrix4x4.h"
 #include "device/device_texture.h"
+#if defined(YBI_USE_PATH_GUIDING)
+#include "kernel/guiding/radiance_recorder.h"
+#endif
 #include "kernel/guiding/types.h"
-#include "kernel/texture/types.h"
 #include "kernel/scene.h"
+#include "kernel/texture/types.h"
 
 namespace ybi
 {
@@ -37,11 +40,13 @@ struct KernelParams
     Vec3f *accumulation;
     uint32_t accumulatedSamples;
 
+#if defined(YBI_USE_PATH_GUIDING)
+    RadianceRecorder radianceRecorder;
+#endif
+
     // OpenPBR lookup tables
     uint64_t opaqueDielectricEnergyComplementTexture;
     uint64_t opaqueDielectricAverageEnergyComplementTexture;
-
-    PathGuidingKdTreeParams guiding;
 
     // Virtual textures
     DeviceTextureDescriptor *textureDescriptors;

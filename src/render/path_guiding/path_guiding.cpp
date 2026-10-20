@@ -12,6 +12,7 @@
 #include "core/math.h"
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
+#include "kernel/guiding/radiance_recorder.h"
 #include <utility>
 
 namespace ybi
