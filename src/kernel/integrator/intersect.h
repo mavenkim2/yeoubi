@@ -31,9 +31,18 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
     if (info.type == INTERSECTION_TYPE_NONE)
     {
         Vec3f environment(0.f);
+        const float previousBsdfPdf = sampleState->ReadPreviousBsdfPdf(sampleIndex);
+        const bool useMIS = previousBsdfPdf > 0.f &&
+                            !(sampleState->ReadPreviousBsdfFlags(sampleIndex) & BSDF_DELTA);
         for (uint32_t lightIndex = 0; lightIndex < params.scene.numEnvmapLights; lightIndex++)
-            environment +=
-                EvaluateEnvmapLight(params.scene.envmapLights[lightIndex], rayDirection);
+        {
+            const float misWeight =
+                useMIS ? PowerHeuristic(previousBsdfPdf,
+                                        PDFEnvmapLight(params.scene, lightIndex, rayDirection))
+                       : 1.f;
+            environment += EvaluateEnvmapLight(params.scene.envmapLights[lightIndex], rayDirection) *
+                           misWeight;
+        }
         const Vec3f contribution = throughput * environment;
         radiance += contribution;
 #if defined(YBI_USE_PATH_GUIDING)
@@ -58,7 +67,8 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
             {
                 float misWeight = 1.f;
                 const float previousBsdfPdf = sampleState->ReadPreviousBsdfPdf(sampleIndex);
-                if (previousBsdfPdf > 0.f)
+                if (previousBsdfPdf > 0.f &&
+                    !(sampleState->ReadPreviousBsdfFlags(sampleIndex) & BSDF_DELTA))
                 {
                     const float lightPdf =
                         PDFLight(params.scene,

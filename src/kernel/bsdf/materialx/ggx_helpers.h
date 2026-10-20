@@ -9,6 +9,11 @@
 namespace ybi
 {
 
+YBI_CPU_GPU bool IsSmoothMicrofacet(const Vec2f &roughness)
+{
+    return roughness.x == 0.f && roughness.y == 0.f;
+}
+
 // NOTE: these are taken from MaterialX implementations
 YBI_CPU_GPU float GGXNDF(const Vec3f &h, const Vec2f &alpha)
 {
@@ -73,7 +78,7 @@ YBI_CPU_GPU Vec3f FresnelConductor(float cosTheta, Vec3f ior, Vec3f extinction)
     Vec3f intermediateValue0 = eta2 - etak2 - sin2Theta;
 
     Vec3f a2plusb2 = Sqrt(Sqr(intermediateValue0) + 4.f * eta2 * etak2);
-    Vec3f a = Sqrt(0.5f * (a2plusb2 + intermediateValue0));
+    Vec3f a = Sqrt(Max(0.5f * (a2plusb2 + intermediateValue0), 0.f));
 
     Vec3f intermediateValue1 = 2.f * a * cosTheta;
     Vec3f Rs =

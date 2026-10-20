@@ -29,13 +29,13 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
     const ClosureEvaluationInfo closureInfo = sampleState->ReadClosureEvaluationInfo(sampleIndex);
     const Vec3f viewDirection = -sampleState->ReadRayDirection(sampleIndex);
     RNG rng = sampleState->ReadRNG(sampleIndex);
-    Vec3f nextDirection;
+    BsdfSample sample;
 
     const bool success = DeviceDispatch<bool>(material.sampleCallableIndex,
                                               &params,
                                               &closureInfo,
                                               viewDirection,
-                                              &nextDirection,
+                                              &sample,
                                               Vec3f(rng.Uniform(), rng.Uniform2D()));
     sampleState->WriteRNG(sampleIndex, rng);
     if (!success)
@@ -44,22 +44,10 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
         return;
     }
 
-    const float pdf = DeviceDispatch<float>(
-        material.pdfCallableIndex, &params, &closureInfo, viewDirection, nextDirection);
-    if (!(pdf > 0.f))
-    {
-        TerminatePath(params, sampleState, sampleIndex);
-        return;
-    }
-
-    const Vec3f weight =
-        DeviceDispatch<Vec3f>(
-            material.evaluateCallableIndex, &params, &closureInfo, viewDirection, nextDirection) /
-        pdf;
-    Vec3f throughput = sampleState->ReadThroughput(sampleIndex) * weight;
-
-    // Match the roulette policy used by the unidirectional integrator.
-    const float survivalProbability = throughput.MaxComponent();
+    const Vec3f nextDirection = sample.direction;
+    Vec3f throughput = sampleState->ReadThroughput(sampleIndex) * sample.weight;
+    const float etaScale = sampleState->ReadEtaScale(sampleIndex) * Sqr(sample.eta);
+    const float survivalProbability = (throughput * etaScale).MaxComponent();
     if (survivalProbability < 1.f && depth > 1)
     {
         const float rouletteSample = rng.Uniform();
@@ -90,7 +78,7 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
                                    nextDirection,
                                    recordIndex,
                                    throughput,
-                                   pdf);
+                                   sample.pdf);
 
     sampleState->WriteRadianceRecordIndex(sampleIndex, childRecordIndex);
     params.radianceRecorder.IncrementCount(recordIndex);
@@ -98,8 +86,10 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
 #endif
 
     sampleState->WriteThroughput(sampleIndex, throughput);
+    sampleState->WriteEtaScale(sampleIndex, etaScale);
     sampleState->WritePreviousSurfacePosition(sampleIndex, position);
-    sampleState->WritePreviousBsdfPdf(sampleIndex, pdf);
+    sampleState->WritePreviousBsdfPdf(sampleIndex, sample.pdf);
+    sampleState->WritePreviousBsdfFlags(sampleIndex, sample.flags);
     sampleState->WriteRayOrigin(sampleIndex, OffsetRayOrigin(position, geometricNormal));
     sampleState->WriteRayDirection(sampleIndex, nextDirection);
     sampleState->WriteDepth(sampleIndex, depth + 1);

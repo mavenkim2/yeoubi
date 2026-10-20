@@ -1,18 +1,37 @@
 YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
                                       const ClosureEvaluationInfo &info,
                                       const Vec3f &viewDirection,
-                                      Vec3f &lightDirection,
+                                      BsdfSample &sample,
                                       Vec3f u)
 {
     const OrthonormalBasis frame =
         MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
+    const Vec3f localViewDirection = frame.WorldToLocal(viewDirection);
+    const Vec2f roughness = YBI_MATERIAL_ROUGHNESS(info);
+    if (IsSmoothMicrofacet(roughness))
+    {
+        if (localViewDirection.z <= 0.f)
+            return false;
+        sample.direction = frame.LocalToWorld(
+            Vec3f(-localViewDirection.x, -localViewDirection.y, localViewDirection.z));
+        sample.weight = YBI_MATERIAL_WEIGHT(info) *
+                        FresnelConductor(Min(localViewDirection.z, 1.f),
+                                         YBI_MATERIAL_IOR(info),
+                                         YBI_MATERIAL_EXTINCTION(info));
+        sample.pdf = 1.f;
+        sample.eta = 1.f;
+        sample.flags = BSDF_REFLECTION | BSDF_DELTA;
+        return true;
+    }
     Vec3f localLightDirection;
-    if (!SampleConductorBsdf(frame.WorldToLocal(viewDirection),
+    if (!SampleConductorBsdf(localViewDirection,
                              u.Xy(),
-                             YBI_MATERIAL_ROUGHNESS(info),
+                             roughness,
                              localLightDirection))
         return false;
-    lightDirection = frame.LocalToWorld(localLightDirection);
+    sample.direction = frame.LocalToWorld(localLightDirection);
+    sample.eta = 1.f;
+    sample.flags = BSDF_REFLECTION;
     return true;
 }
 
@@ -21,6 +40,8 @@ YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
                                          const Vec3f &viewDirection,
                                          const Vec3f &lightDirection)
 {
+    if (IsSmoothMicrofacet(YBI_MATERIAL_ROUGHNESS(info)))
+        return Vec3f(0.f);
     const OrthonormalBasis frame =
         MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
     return EvaluateConductorBsdf(frame.WorldToLocal(viewDirection),
@@ -36,6 +57,8 @@ YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,
                                     const Vec3f &viewDirection,
                                     const Vec3f &lightDirection)
 {
+    if (IsSmoothMicrofacet(YBI_MATERIAL_ROUGHNESS(info)))
+        return 0.f;
     const OrthonormalBasis frame =
         MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
     return PDFConductorBsdf(frame.WorldToLocal(viewDirection),
@@ -54,6 +77,10 @@ YBI_GPU float YBI_MATERIAL_SELF_ALBEDO(const KernelParams &params,
     bsdf.ior = YBI_MATERIAL_IOR(info);
     bsdf.extinction = YBI_MATERIAL_EXTINCTION(info);
     bsdf.alpha = YBI_MATERIAL_ROUGHNESS(info);
+    if (IsSmoothMicrofacet(bsdf.alpha))
+        return (bsdf.weight * FresnelConductor(Min(frame.WorldToLocal(viewDirection).z, 1.f),
+                                              bsdf.ior,
+                                              bsdf.extinction)).MaxComponent();
     return ConductorDirectionalAlbedo(bsdf, frame.WorldToLocal(viewDirection).z).MaxComponent();
 }
 

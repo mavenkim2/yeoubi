@@ -22,6 +22,7 @@
 #include "kernel/integrator/mis.h"
 #include "kernel/integrator/shade_hit.h"
 #include "kernel/light/sample.h"
+#include "kernel/light/visibility.h"
 #include "kernel/raytracing/ray_cone.h"
 #include "kernel/raytracing/ray_offset.h"
 #include "kernel/raytracing/trace.h"
@@ -269,6 +270,8 @@ YBI_GPU void RenderUnidirectional()
     Vec3f throughput(1.f);
     Vec3f previousSurfacePosition(0.f);
     float previousBsdfPdf = 0.f;
+    uint32_t previousBsdfFlags = 0u;
+    float etaScale = 1.f;
     bool hasPreviousBsdfSample = false;
 
     for (int depth = 0; depth <= maxDepth;)
@@ -278,16 +281,19 @@ YBI_GPU void RenderUnidirectional()
 
         if (info.type == INTERSECTION_TYPE_NONE)
         {
-            // Place the procedural sun outside the open front of the room (+Z).
-            // Environment rays point toward the source, so its light travels along
-            // -sunDirection, directly into the room with a slight downward angle.
-            const Vec3f sunDirection = Normalize(Vec3f(0.0f, 0.25f, 1.0f));
-            //
-            Vec3f environment(0.5f);
-            // if (Dot(rayDirection, sunDirection) > 0.995f)
-            //     environment = Vec3f(20.0f);
+            Vec3f environment(0.f);
+            const bool useMIS = hasPreviousBsdfSample && !(previousBsdfFlags & BSDF_DELTA);
+            for (uint32_t lightIndex = 0; lightIndex < params.scene.numEnvmapLights; lightIndex++)
+            {
+                const float misWeight =
+                    useMIS ? PowerHeuristic(previousBsdfPdf,
+                                            PDFEnvmapLight(params.scene, lightIndex, rayDirection))
+                           : 1.f;
+                environment +=
+                    EvaluateEnvmapLight(params.scene.envmapLights[lightIndex], rayDirection) *
+                    misWeight;
+            }
             radiance += throughput * environment;
-            //     Vec3f(0.5f);
             break;
         }
 
@@ -302,7 +308,7 @@ YBI_GPU void RenderUnidirectional()
             if (localRayDirection.z > 0.f)
             {
                 float misWeight = 1.f;
-                if (hasPreviousBsdfSample)
+                if (hasPreviousBsdfSample && !(previousBsdfFlags & BSDF_DELTA))
                 {
                     const Vec3f lightHitPosition = rayOrigin + info.t * rayDirection;
                     const float lightPdf = PDFLight(params.scene,
@@ -358,6 +364,7 @@ YBI_GPU void RenderUnidirectional()
         const DeviceMaterial3 *materialXMaterial = nullptr;
         float closureData[MAX_CLOSURE_SIZE];
         ClosureInitializationInfo closureInitializationInfo;
+        closureInitializationInfo.geometricNormal = shadingInfo.geometricNormal;
         closureInitializationInfo.shadingNormal = shadingInfo.shadingNormal;
         closureInitializationInfo.dpdu = shadingInfo.dpdu;
         closureInitializationInfo.closureData = closureData;
@@ -416,22 +423,14 @@ YBI_GPU void RenderUnidirectional()
         }
 
         // Sample Light
-        if (params.scene.numLights > 0)
+        if (GetLightCount(params.scene) > 0)
         {
-            int sampledLightIndex;
-            Vec3f sampledLightPosition;
-            float lightPdf;
-            Vec3f sampledLightDirection = SampleLight(params.scene,
-                                                      shadingInfo.position,
-                                                      Vec3f(rng.Uniform(), rng.Uniform2D()),
-                                                      sampledLightIndex,
-                                                      sampledLightPosition,
-                                                      lightPdf);
-
-            if (lightPdf != 0.f)
+            LightSample lightSample;
+            if (SampleLight(params.scene,
+                            shadingInfo.position,
+                            Vec3f(rng.Uniform(), rng.Uniform2D()),
+                            lightSample))
             {
-                const DeviceLight &sampledLight = params.scene.deviceLights[sampledLightIndex];
-
                 Vec3f sampledLightBsdfWeight;
                 float sampledLightBsdfPdf;
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
@@ -440,35 +439,25 @@ YBI_GPU void RenderUnidirectional()
                                           &params,
                                           &closureEvaluationInfo,
                                           worldViewDirection,
-                                          sampledLightDirection);
+                                          lightSample.direction);
                 sampledLightBsdfPdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
                                                             &params,
                                                             &closureEvaluationInfo,
                                                             worldViewDirection,
-                                                            sampledLightDirection);
+                                                            lightSample.direction);
 #else
                 sampledLightBsdfWeight =
-                    EvaluateOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
-                sampledLightBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, sampledLightDirection);
+                    EvaluateOpenPBR(bsdf, worldViewDirection, lightSample.direction);
+                sampledLightBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, lightSample.direction);
 #endif
                 if (sampledLightBsdfWeight.MaxComponent() != 0.f)
                 {
-                    const Vec3f shadowNormal = Dot(sampledLightDirection, geometricNormal) >= 0.f
-                                                   ? geometricNormal
-                                                   : -geometricNormal;
-                    const Vec3f shadowOrigin = OffsetRayOrigin(shadingInfo.position, shadowNormal);
-                    const Vec3f shadowToLight = sampledLightPosition - shadowOrigin;
-                    const float shadowDistance = Length(shadowToLight);
-                    const Vec3f shadowDirection = shadowToLight / shadowDistance;
-
-                    if (TraceVisibility(bvhHandle,
-                                        shadowOrigin,
-                                        shadowDirection,
-                                        shadowDistance * (1.f - 1e-4f)))
+                    if (IsLightSampleVisible(
+                            bvhHandle, lightSample, shadingInfo.position, geometricNormal))
                     {
-                        const float misWeight = PowerHeuristic(lightPdf, sampledLightBsdfPdf);
-                        radiance += throughput * sampledLight.radiance * sampledLightBsdfWeight *
-                                    misWeight / lightPdf;
+                        const float misWeight = PowerHeuristic(lightSample.pdf, sampledLightBsdfPdf);
+                        radiance += throughput * lightSample.radiance * sampledLightBsdfWeight *
+                                    misWeight / lightSample.pdf;
                     }
                 }
             }
@@ -477,35 +466,22 @@ YBI_GPU void RenderUnidirectional()
         Vec3f worldLightDirection, weight;
         bool success = false;
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
+        BsdfSample bsdfSample;
         if (materialXMaterial)
         {
             success = DeviceDispatch<bool>(materialXMaterial->sampleCallableIndex,
                                            &params,
                                            &closureEvaluationInfo,
                                            worldViewDirection,
-                                           &worldLightDirection,
+                                           &bsdfSample,
                                            Vec3f(rng.Uniform(), rng.Uniform2D()));
 
             if (success)
             {
-                const float pdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
-                                                        &params,
-                                                        &closureEvaluationInfo,
-                                                        worldViewDirection,
-                                                        worldLightDirection);
-                if (pdf > 0.f)
-                {
-                    weight = DeviceDispatch<Vec3f>(materialXMaterial->evaluateCallableIndex,
-                                                   &params,
-                                                   &closureEvaluationInfo,
-                                                   worldViewDirection,
-                                                   worldLightDirection) /
-                             pdf;
-                }
-                else
-                {
-                    success = false;
-                }
+                worldLightDirection = bsdfSample.direction;
+                weight = bsdfSample.weight;
+                etaScale *= Sqr(bsdfSample.eta);
+                previousBsdfFlags = bsdfSample.flags;
             }
         }
 #else
@@ -519,14 +495,14 @@ YBI_GPU void RenderUnidirectional()
         throughput *= weight;
 
         // Russian roulette
-        if (throughput.MaxComponent() < 1.f && depth > 1)
+        const float survivalProbability = (throughput * etaScale).MaxComponent();
+        if (survivalProbability < 1.f && depth > 1)
         {
-            float weight = throughput.MaxComponent();
-            if (rng.Uniform() >= weight)
+            if (rng.Uniform() >= survivalProbability)
             {
                 break;
             }
-            throughput /= weight;
+            throughput /= survivalProbability;
         }
 
         const Vec3f nextDirection = worldLightDirection;
@@ -535,11 +511,7 @@ YBI_GPU void RenderUnidirectional()
 #if defined(YBI_MATERIAL_BACKEND_MATERIALX)
         if (materialXMaterial)
         {
-            previousBsdfPdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
-                                                    &params,
-                                                    &closureEvaluationInfo,
-                                                    worldViewDirection,
-                                                    worldLightDirection);
+            previousBsdfPdf = bsdfSample.pdf;
         }
 #else
         previousBsdfPdf = PDFOpenPBR(bsdf, worldViewDirection, worldLightDirection);

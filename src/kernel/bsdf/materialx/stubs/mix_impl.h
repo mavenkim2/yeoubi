@@ -1,21 +1,29 @@
 YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
                                       const ClosureEvaluationInfo &info,
                                       const Vec3f &viewDirection,
-                                      Vec3f &lightDirection,
+                                      BsdfSample &sample,
                                       Vec3f u)
 {
     const float mix = Clamp(YBI_MATERIAL_MIX(info), 0.f, 1.f);
     const float bgProbability = 1.f - mix;
     if (u.x < bgProbability)
     {
-        u.x /= bgProbability;
+        u.x = ClampRandomNumber(u.x / bgProbability);
         YBI_MATERIAL_DEBUG_PRINT_0(bgProbability, mix, bgProbability, mix);
-        return YBI_MATERIAL_SAMPLE_BG(params, info, viewDirection, lightDirection, u);
+        if (!YBI_MATERIAL_SAMPLE_BG(params, info, viewDirection, sample, u))
+            return false;
+        if (sample.flags & BSDF_DELTA)
+            sample.pdf *= bgProbability;
+        return true;
     }
 
-    u.x = (u.x - bgProbability) / mix;
+    u.x = ClampRandomNumber((u.x - bgProbability) / mix);
     YBI_MATERIAL_DEBUG_PRINT_1(mix, bgProbability, bgProbability, mix);
-    return YBI_MATERIAL_SAMPLE_FG(params, info, viewDirection, lightDirection, u);
+    if (!YBI_MATERIAL_SAMPLE_FG(params, info, viewDirection, sample, u))
+        return false;
+    if (sample.flags & BSDF_DELTA)
+        sample.pdf *= mix;
+    return true;
 }
 
 YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,

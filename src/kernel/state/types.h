@@ -75,6 +75,8 @@ struct WavefrontSampleState
     Vec3f *throughput;
     Vec3f *previousSurfacePosition;
     float *previousBsdfPdf;
+    uint32_t *previousBsdfFlags;
+    float *etaScale;
     Vec3f *rayOrigin;
     Vec3f *rayDirection;
     uint32_t *depth;
@@ -180,6 +182,26 @@ struct WavefrontSampleState
     YBI_GPU void WritePreviousBsdfPdf(uint32_t sampleIndex, float value) const
     {
         previousBsdfPdf[sampleIndex] = value;
+    }
+
+    YBI_GPU uint32_t ReadPreviousBsdfFlags(uint32_t sampleIndex) const
+    {
+        return previousBsdfFlags[sampleIndex];
+    }
+
+    YBI_GPU void WritePreviousBsdfFlags(uint32_t sampleIndex, uint32_t value) const
+    {
+        previousBsdfFlags[sampleIndex] = value;
+    }
+
+    YBI_GPU float ReadEtaScale(uint32_t sampleIndex) const
+    {
+        return etaScale[sampleIndex];
+    }
+
+    YBI_GPU void WriteEtaScale(uint32_t sampleIndex, float value) const
+    {
+        etaScale[sampleIndex] = value;
     }
 
     YBI_GPU Vec3f ReadRayOrigin(uint32_t sampleIndex) const
@@ -375,6 +397,7 @@ struct WavefrontSampleState
     YBI_GPU ClosureInitializationInfo ReadClosureInitializationInfo(uint32_t sampleIndex) const
     {
         ClosureInitializationInfo info;
+        info.geometricNormal = ReadGeometricNormal(sampleIndex);
         info.shadingNormal = ReadShadingNormal(sampleIndex);
         info.dpdu = ReadDpdu(sampleIndex);
         info.uv = ReadUV(sampleIndex);
@@ -389,6 +412,7 @@ struct WavefrontSampleState
     YBI_GPU ClosureEvaluationInfo ReadClosureEvaluationInfo(uint32_t sampleIndex) const
     {
         ClosureEvaluationInfo info;
+        info.geometricNormal = ReadGeometricNormal(sampleIndex);
         info.shadingNormal = ReadShadingNormal(sampleIndex);
         info.dpdu = ReadDpdu(sampleIndex);
         info.closureData = closureData + sampleIndex * MAX_CLOSURE_SIZE;

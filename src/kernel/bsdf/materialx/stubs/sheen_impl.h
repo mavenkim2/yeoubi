@@ -1,7 +1,7 @@
 YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
                                       const ClosureEvaluationInfo &info,
                                       const Vec3f &viewDirection,
-                                      Vec3f &lightDirection,
+                                      BsdfSample &sample,
                                       Vec3f u)
 {
     const OrthonormalBasis frame =
@@ -12,7 +12,9 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
                                YBI_MATERIAL_ROUGHNESS(info),
                                localLightDirection))
         return false;
-    lightDirection = frame.LocalToWorld(localLightDirection);
+    sample.direction = frame.LocalToWorld(localLightDirection);
+    sample.eta = 1.f;
+    sample.flags = BSDF_REFLECTION;
     return true;
 }
 

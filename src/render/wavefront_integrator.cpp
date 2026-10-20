@@ -98,6 +98,8 @@ void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
     allocate(state.throughput);
     allocate(state.previousSurfacePosition);
     allocate(state.previousBsdfPdf);
+    allocate(state.previousBsdfFlags);
+    allocate(state.etaScale);
     allocate(state.rayOrigin);
     allocate(state.rayDirection);
     allocate(state.depth);

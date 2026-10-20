@@ -8,6 +8,14 @@
 namespace ybi
 {
 
+struct LightSample
+{
+    Vec3f direction;
+    Vec3f radiance;
+    float distance;
+    float pdf;
+};
+
 struct DeviceEnvmapLight
 {
     AffineTransform worldFromLocal = AffineTransform::Identity();

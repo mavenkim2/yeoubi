@@ -742,6 +742,7 @@ struct DielectricBsdfNode final : BsdfNodeBase
              {"YBI_MATERIAL_WEIGHT", GET_CLOSURE_PREFIX + weightName},
              {"YBI_MATERIAL_TINT", GET_CLOSURE_PREFIX + tintName},
              {"YBI_MATERIAL_IOR", GET_CLOSURE_PREFIX + iorName},
+             {"YBI_MATERIAL_SCATTER_FLAGS", std::to_string(scatterFlags) + "u"},
              {"YBI_MATERIAL_ROUGHNESS", GET_CLOSURE_PREFIX + roughnessName},
              {"YBI_MATERIAL_NORMAL", GET_CLOSURE_PREFIX + normal->FullName(materialPrefix)}});
     }
@@ -755,6 +756,7 @@ struct DielectricBsdfNode final : BsdfNodeBase
     MaterialNodeBase *tint = nullptr;
     MaterialNodeBase *ior = nullptr;
     MaterialNodeBase *roughness = nullptr;
+    uint32_t scatterFlags = BSDF_REFLECTION;
 };
 
 struct OrenNayarBsdfNode final : BsdfNodeBase
@@ -1456,10 +1458,17 @@ static MaterialCompilationContext ConvertGraph(
             case MaterialOpcode::dielectric_bsdf:
             {
                 AssertStringInput(node, "distribution", "ggx");
-                AssertStringInput(node, "scatter_mode", "R");
                 AssertZeroFloatInput(node, "thinfilm_thickness");
 
                 DielectricBsdfNode *dielectric = static_cast<DielectricBsdfNode *>(newNode);
+                if (const MaterialInput *input = FindInput(node, "scatter_mode"))
+                {
+                    const std::string *mode = std::get_if<std::string>(&input->value);
+                    YBI_ASSERT(mode && (*mode == "R" || *mode == "T" || *mode == "RT"));
+                    dielectric->scatterFlags = *mode == "R" ? BSDF_REFLECTION :
+                                              *mode == "T" ? BSDF_TRANSMISSION :
+                                                             BSDF_REFLECTION | BSDF_TRANSMISSION;
+                }
                 dielectric->weight = AddFloatInput(context, sourceNodes, node, "weight", 1.0f);
                 dielectric->tint = AddColor3Input(context, sourceNodes, node, "tint", Vec3f(1.0f));
                 dielectric->ior = AddFloatInput(context, sourceNodes, node, "ior", 1.5f);
@@ -1655,7 +1664,9 @@ MaterialCompilationResult MaterialCompiler::Finalize(Device &device) const
             return CompileWithMacros(stubPath,
                                      {{"YBI_MATERIAL_CALLABLE_SIGNATURE", callableSignature},
                                       {"YBI_MATERIAL_CALLABLE_NAME", directCallablePrefix + name},
-                                      {"YBI_MATERIAL_CALLABLE_IMPL", implementation}});
+                                      {"YBI_MATERIAL_CALLABLE_IMPL", implementation},
+                                      {"YBI_MATERIAL_CALLABLE_EVALUATE", EVALUATE_PREFIX + rootName},
+                                      {"YBI_MATERIAL_CALLABLE_PDF", PDF_PREFIX + rootName}});
         };
 
         result.source += compileCallable("kernel/bsdf/materialx/stubs/initialize_callable_impl.h",

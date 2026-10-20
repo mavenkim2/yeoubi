@@ -7,6 +7,7 @@
 #include "kernel/bsdf/materialx/bsdf_types.h"
 #include "kernel/bsdf/materialx/closure.h"
 #include "kernel/bsdf/materialx/ggx_helpers.h"
+#include "kernel/bsdf/sample.h"
 #include "kernel/scene.h"
 
 namespace ybi
@@ -82,18 +83,60 @@ PDFDielectricBsdf(const Vec3f &viewDirection, const Vec3f &lightDirection, const
     return GGXNDF(h, alpha) * g1V / (4.f * nDotV);
 }
 
-// https://seblagarde.wordpress.com/2013/04/29/memo-on-fresnel-equations/
 YBI_CPU_GPU float FresnelDielectric(float cosTheta, float ior)
 {
-    float c = cosTheta;
-    float g2 = ior * ior + c * c - 1.0;
-    if (g2 < 0.0)
-    {
-        return 1.0;
-    }
+    if (ior == 1.f)
+        return 0.f;
+    const float cosI = Clamp(Abs(cosTheta), 0.f, 1.f);
+    const float sin2T = Max(0.f, 1.f - cosI * cosI) / Sqr(ior);
+    if (sin2T >= 1.f)
+        return 1.f;
+    const float cosT = Sqrt(Max(0.f, 1.f - sin2T));
+    const float parallel = (ior * cosI - cosT) / (ior * cosI + cosT);
+    const float perpendicular = (cosI - ior * cosT) / (cosI + ior * cosT);
+    return Clamp(0.5f * (Sqr(parallel) + Sqr(perpendicular)), 0.f, 1.f);
+}
 
-    float g = sqrtf(g2);
-    return 0.5 * Sqr((g - c) / (g + c)) * (1.0 + Sqr(((g + c) * c - 1.f) / ((g - c) * c + 1.f)));
+YBI_CPU_GPU bool SampleSmoothDielectricBsdf(const Vec3f &viewDirection,
+                                            float u,
+                                            float weight,
+                                            const Vec3f &tint,
+                                            float eta,
+                                            uint32_t scatterFlags,
+                                            BsdfSample &sample)
+{
+    if (viewDirection.z <= 0.f)
+        return false;
+
+    const float cosI = Min(viewDirection.z, 1.f);
+    const float inverseEta = 1.f / eta;
+    const float sin2T = Max(0.f, 1.f - Sqr(cosI)) / Sqr(eta);
+    const float fresnel = FresnelDielectric(cosI, eta);
+    const float reflection = (scatterFlags & BSDF_REFLECTION) ? fresnel : 0.f;
+    const float transmission = (scatterFlags & BSDF_TRANSMISSION) ? 1.f - fresnel : 0.f;
+    const float total = reflection + transmission;
+    if (total == 0.f)
+        return false;
+
+    const float reflectionProbability = reflection / total;
+    if (u < reflectionProbability)
+    {
+        sample.direction = Vec3f(-viewDirection.x, -viewDirection.y, viewDirection.z);
+        sample.pdf = reflectionProbability;
+        sample.weight = Max(tint, 0.f) * (weight * reflection / sample.pdf);
+        sample.eta = 1.f;
+        sample.flags = BSDF_REFLECTION | BSDF_DELTA;
+    }
+    else
+    {
+        const float cosT = eta == 1.f ? cosI : Sqrt(Max(0.f, 1.f - sin2T));
+        sample.direction = Vec3f(-viewDirection.Xy() * inverseEta, -cosT);
+        sample.pdf = 1.f - reflectionProbability;
+        sample.weight = Max(tint, 0.f) * (weight * transmission * Sqr(inverseEta) / sample.pdf);
+        sample.eta = eta;
+        sample.flags = BSDF_TRANSMISSION | BSDF_DELTA;
+    }
+    return true;
 }
 
 YBI_CPU_GPU float IorToF0(float ior)

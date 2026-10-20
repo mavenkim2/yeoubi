@@ -2,6 +2,7 @@
 
 #include "core/vec2f.h"
 #include "core/vec3f.h"
+#include "kernel/bsdf/sample.h"
 
 namespace ybi
 {
@@ -10,6 +11,7 @@ namespace ybi
 
 struct ClosureEvaluationInfo
 {
+    Vec3f geometricNormal;
     Vec3f shadingNormal;
     Vec3f dpdu;
     float *closureData;

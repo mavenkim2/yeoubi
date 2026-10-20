@@ -64,6 +64,8 @@ extern "C" __global__ void StreamCompaction(WavefrontSampleState inputState,
         outputState.previousSurfacePosition[laneOffset] =
             inputState.previousSurfacePosition[sampleIndex];
         outputState.previousBsdfPdf[laneOffset] = inputState.previousBsdfPdf[sampleIndex];
+        outputState.previousBsdfFlags[laneOffset] = inputState.previousBsdfFlags[sampleIndex];
+        outputState.etaScale[laneOffset] = inputState.etaScale[sampleIndex];
         outputState.rayOrigin[laneOffset] = inputState.rayOrigin[sampleIndex];
         outputState.rayDirection[laneOffset] = inputState.rayDirection[sampleIndex];
         outputState.depth[laneOffset] = inputState.depth[sampleIndex];

@@ -66,6 +66,8 @@ YBI_GPU void GenerateCameraRay(const WavefrontParams &params,
     state.WriteThroughput(sampleIndex, Vec3f(1.f));
     state.WritePreviousSurfacePosition(sampleIndex, Vec3f(0.f));
     state.WritePreviousBsdfPdf(sampleIndex, 0.f);
+    state.WritePreviousBsdfFlags(sampleIndex, 0u);
+    state.WriteEtaScale(sampleIndex, 1.f);
     state.WriteRayOrigin(sampleIndex, rayOrigin);
     state.WriteRayDirection(sampleIndex, rayDirection);
     state.WriteDepth(sampleIndex, 0u);

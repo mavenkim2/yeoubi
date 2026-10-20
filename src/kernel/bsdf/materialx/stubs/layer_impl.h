@@ -1,7 +1,7 @@
 YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
                                       const ClosureEvaluationInfo &info,
                                       const Vec3f &viewDirection,
-                                      Vec3f &lightDirection,
+                                      BsdfSample &sample,
                                       Vec3f u)
 {
     float albedoTop = YBI_MATERIAL_ALBEDO_TOP(params, info, viewDirection);
@@ -14,18 +14,31 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
 
     if (u.x < prob)
     {
-        u.x = u.x / prob;
+        u.x = ClampRandomNumber(u.x / prob);
         YBI_MATERIAL_DEBUG_PRINT_0(
             prob, 1.f - prob, albedoTop, transmittanceTop, albedoBottom, weightedBottomAlbedo);
-        return YBI_MATERIAL_SAMPLE_TOP(params, info, viewDirection, lightDirection, u);
+        if (!YBI_MATERIAL_SAMPLE_TOP(params, info, viewDirection, sample, u))
+            return false;
+        if (sample.flags & BSDF_DELTA)
+        {
+            sample.weight /= prob;
+            sample.pdf *= prob;
+        }
     }
     else
     {
-        u.x = (u.x - prob) / (1.f - prob);
+        u.x = ClampRandomNumber((u.x - prob) / (1.f - prob));
         YBI_MATERIAL_DEBUG_PRINT_1(
             1.f - prob, prob, albedoTop, transmittanceTop, albedoBottom, weightedBottomAlbedo);
-        return YBI_MATERIAL_SAMPLE_BOTTOM(params, info, viewDirection, lightDirection, u);
+        if (!YBI_MATERIAL_SAMPLE_BOTTOM(params, info, viewDirection, sample, u))
+            return false;
+        if (sample.flags & BSDF_DELTA)
+        {
+            sample.weight *= transmittanceTop / (1.f - prob);
+            sample.pdf *= 1.f - prob;
+        }
     }
+    return true;
 }
 
 YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
