@@ -5,7 +5,7 @@
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
 #include "kernel/light/types.h"
-#include "kernel/sampling/cdf.h"
+#include "kernel/sampling/alias.h"
 #include "kernel/texture/sampling.h"
 
 namespace ybi
@@ -52,8 +52,11 @@ YBI_CPU_GPU float PDFEnvmapLight(const DeviceEnvmapLight &light, const Vec3f &wo
 
     Vec2f uv = EnvmapDirectionToUV(localDirection);
     uv.y = Min(uv.y, FLOAT_BEFORE_ONE);
-    const float pdfUV =
-        PDFPiecewise2DCDF(light.conditionalCDF, light.marginalCDF, light.width, light.height, uv);
+    const float pdfUV = PDFAliasTable2D(light.conditionalAlias,
+                                       light.marginalAlias,
+                                       light.distributionWidth,
+                                       light.distributionHeight,
+                                       uv);
     return pdfUV / (2.f * YBI_PI * YBI_PI * sinTheta);
 }
 
@@ -68,8 +71,13 @@ YBI_GPU bool SampleEnvmapLight(const DeviceEnvmapLight &light,
     pdf = 0.f;
     Vec2f uv;
     float pdfUV;
-    if (!SamplePiecewise2DCDF(
-            light.conditionalCDF, light.marginalCDF, light.width, light.height, u, uv, pdfUV))
+    if (!SampleAliasTable2D(light.conditionalAlias,
+                             light.marginalAlias,
+                             light.distributionWidth,
+                             light.distributionHeight,
+                             u,
+                             uv,
+                             pdfUV))
         return false;
 
     const float sinTheta = Sin(YBI_PI * uv.y);

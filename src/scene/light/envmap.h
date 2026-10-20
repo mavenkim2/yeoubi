@@ -3,6 +3,7 @@
 #include "core/affine_transform.h"
 #include "core/vec3f.h"
 #include "core/vec4f.h"
+#include "kernel/sampling/types.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -20,12 +21,16 @@ struct EnvmapLight
     uint32_t width = 0;
     uint32_t height = 0;
     std::vector<Vec4f> pixels; // Linear RGBA; RGB includes radianceScale.
-    std::vector<float> conditionalCDF;
-    std::vector<float> marginalCDF;
+    uint32_t distributionWidth = 0;
+    uint32_t distributionHeight = 0;
+    std::vector<AliasEntry> conditionalAlias;
+    std::vector<AliasEntry> marginalAlias;
     float totalWeight = 0.f;
 };
 
 bool LoadEnvmap(EnvmapLight &light, std::string *error);
-void PrepareEnvmap(EnvmapLight &light);
+void PrepareEnvmap(EnvmapLight &light,
+                    uint32_t maxDistributionWidth = 2048,
+                    uint32_t maxDistributionHeight = 1024);
 
 } // namespace ybi

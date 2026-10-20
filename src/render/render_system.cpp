@@ -167,10 +167,10 @@ void RenderSystem::ReleaseEnvmapLights()
     for (EnvmapLightResources &resources : envmapLightResources)
     {
         device->DestroyTexture(resources.texture);
-        if (resources.conditionalCDF)
-            device->Free(resources.conditionalCDF);
-        if (resources.marginalCDF)
-            device->Free(resources.marginalCDF);
+        if (resources.conditionalAlias)
+            device->Free(resources.conditionalAlias);
+        if (resources.marginalAlias)
+            device->Free(resources.marginalAlias);
     }
     envmapLightResources.clear();
 }
@@ -208,24 +208,26 @@ void RenderSystem::UpdateEnvmapLights()
         copy.height = light.height;
         device->CopyToDevice3D(resources.texture, copy);
 
-        resources.conditionalCDF = device->Alloc<float>(light.conditionalCDF.size());
-        resources.marginalCDF = device->Alloc<float>(light.marginalCDF.size());
-        device->CopyToDevice(resources.conditionalCDF.Data(),
-                             light.conditionalCDF.data(),
-                             resources.conditionalCDF.SizeInBytes());
-        device->CopyToDevice(resources.marginalCDF.Data(),
-                             light.marginalCDF.data(),
-                             resources.marginalCDF.SizeInBytes());
+        resources.conditionalAlias = device->Alloc<AliasEntry>(light.conditionalAlias.size());
+        resources.marginalAlias = device->Alloc<AliasEntry>(light.marginalAlias.size());
+        device->CopyToDevice(resources.conditionalAlias.Data(),
+                             light.conditionalAlias.data(),
+                             resources.conditionalAlias.SizeInBytes());
+        device->CopyToDevice(resources.marginalAlias.Data(),
+                             light.marginalAlias.data(),
+                             resources.marginalAlias.SizeInBytes());
 
         DeviceEnvmapLight deviceLight;
         deviceLight.worldFromLocal = light.localToWorld;
         deviceLight.localFromWorld = light.localToWorld.Inverse();
         deviceLight.textureObject = resources.texture.textureObject;
         deviceLight.textureFormat = textureInfo.format;
-        deviceLight.conditionalCDF = resources.conditionalCDF.Data();
-        deviceLight.marginalCDF = resources.marginalCDF.Data();
+        deviceLight.conditionalAlias = resources.conditionalAlias.Data();
+        deviceLight.marginalAlias = resources.marginalAlias.Data();
         deviceLight.width = light.width;
         deviceLight.height = light.height;
+        deviceLight.distributionWidth = light.distributionWidth;
+        deviceLight.distributionHeight = light.distributionHeight;
         lights.push_back(deviceLight);
     }
 

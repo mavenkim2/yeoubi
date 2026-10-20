@@ -2,7 +2,7 @@
 
 #include "core/math.h"
 #include "io/image.h"
-#include "render/sampling/cdf.h"
+#include "render/sampling/alias.h"
 #include <atomic>
 #include <cmath>
 #include <tbb/parallel_for.h>
@@ -92,26 +92,56 @@ bool LoadEnvmap(EnvmapLight &light, std::string *error)
     return true;
 }
 
-void PrepareEnvmap(EnvmapLight &light)
+void PrepareEnvmap(EnvmapLight &light,
+                    uint32_t maxDistributionWidth,
+                    uint32_t maxDistributionHeight)
 {
     const uint32_t width = light.width;
     const uint32_t height = light.height;
     YBI_ASSERT(width > 0 && height > 0);
     YBI_ASSERT(light.pixels.size() == size_t(width) * height);
+    YBI_ASSERT(maxDistributionWidth > 0 && maxDistributionHeight > 0);
 
-    std::vector<float> values(light.pixels.size());
-    tbb::parallel_for(size_t(0), size_t(height), [&](size_t y) {
-        const float theta = YBI_PI * (float(y) + 0.5f) / float(height);
-        const float sinTheta = Sin(theta);
-        for (uint32_t x = 0; x < width; x++)
+    const uint32_t distributionWidth = Min(width, maxDistributionWidth);
+    const uint32_t distributionHeight = Min(height, maxDistributionHeight);
+    std::vector<float> values(size_t(distributionWidth) * distributionHeight);
+    std::vector<float> sinTheta(height);
+    for (uint32_t y = 0; y < height; y++)
+        sinTheta[y] = Sin(YBI_PI * (float(y) + 0.5f) / float(height));
+
+    tbb::parallel_for(size_t(0), size_t(distributionHeight), [&](size_t y) {
+        const float y0 = float(y) * float(height) / float(distributionHeight);
+        const float y1 = float(y + 1) * float(height) / float(distributionHeight);
+        const uint32_t sourceYBegin = static_cast<uint32_t>(Floor(y0));
+        const uint32_t sourceYEnd = Min(static_cast<uint32_t>(ceilf(y1)), height);
+        for (uint32_t x = 0; x < distributionWidth; x++)
         {
-            const size_t pixelIndex = y * width + x;
-            const Vec3f pixel = light.pixels[pixelIndex].Xyz();
-            values[pixelIndex] = EnvmapSamplingWeight(pixel, sinTheta);
+            const float x0 = float(x) * float(width) / float(distributionWidth);
+            const float x1 = float(x + 1) * float(width) / float(distributionWidth);
+            const uint32_t sourceXBegin = static_cast<uint32_t>(Floor(x0));
+            const uint32_t sourceXEnd = Min(static_cast<uint32_t>(ceilf(x1)), width);
+            float weight = 0.f;
+            for (uint32_t sourceY = sourceYBegin; sourceY < sourceYEnd; sourceY++)
+            {
+                const float overlapY =
+                    Min(y1, float(sourceY + 1)) - Max(y0, float(sourceY));
+                float rowWeight = 0.f;
+                for (uint32_t sourceX = sourceXBegin; sourceX < sourceXEnd; sourceX++)
+                {
+                    const float overlapX =
+                        Min(x1, float(sourceX + 1)) - Max(x0, float(sourceX));
+                    const Vec3f pixel = light.pixels[size_t(sourceY) * width + sourceX].Xyz();
+                    rowWeight += overlapX * EnvmapSamplingWeight(pixel, sinTheta[sourceY]);
+                }
+                weight += overlapY * rowWeight;
+            }
+            values[y * distributionWidth + x] = weight / ((x1 - x0) * (y1 - y0));
         }
     });
-    light.totalWeight =
-        CreatePiecewise2DCDF(values, width, height, light.conditionalCDF, light.marginalCDF);
+    light.totalWeight = CreateAliasTable2D(values, distributionWidth, distributionHeight,
+                                           light.conditionalAlias, light.marginalAlias);
+    light.distributionWidth = distributionWidth;
+    light.distributionHeight = distributionHeight;
 }
 
 } // namespace ybi

@@ -84,8 +84,8 @@ struct RenderSystem
     struct EnvmapLightResources
     {
         DeviceTexture texture;
-        DeviceBuffer<float> conditionalCDF;
-        DeviceBuffer<float> marginalCDF;
+        DeviceBuffer<AliasEntry> conditionalAlias;
+        DeviceBuffer<AliasEntry> marginalAlias;
     };
 
     Scene *rootScene;

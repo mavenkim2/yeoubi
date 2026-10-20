@@ -274,6 +274,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/render_system.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/light/envmap.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/sampling/cdf.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/sampling/alias.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/wavefront_integrator.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
