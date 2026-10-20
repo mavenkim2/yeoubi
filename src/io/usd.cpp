@@ -2084,6 +2084,41 @@ Scene *USDSceneLoader::LoadScene(Arena *arena,
             // pxr::UsdAttribute intensityAttr = rectLight.GetIntensityAttr();
             // intensityAttr.GetSamp
         }
+
+        for (const pxr::UsdPrim &prim : data.environmentLight)
+        {
+            pxr::UsdLuxDomeLight dome(prim);
+
+            for (const pxr::UsdShadeInput &input : pxr::UsdShadeConnectableAPI(prim).GetInputs())
+            {
+                YBI_ASSERT(!input.GetAttr().HasAuthoredConnections() &&
+                           "Connected DomeLight inputs are not supported");
+            }
+
+            pxr::SdfAssetPath texture;
+            pxr::TfToken format;
+            pxr::GfVec3f color(1.f);
+            float intensity = 1.f;
+            float exposure = 0.f;
+
+            dome.GetTextureFileAttr().Get(&texture, timeCode);
+            dome.GetTextureFormatAttr().Get(&format, timeCode);
+            dome.GetColorAttr().Get(&color, timeCode);
+            dome.GetIntensityAttr().Get(&intensity, timeCode);
+            dome.GetExposureAttr().Get(&exposure, timeCode);
+
+            EnvmapLight light;
+            light.texturePath = texture.GetResolvedPath();
+            light.textureFormat = format.GetString();
+            light.localToWorld =
+                ConvertAffineTransform(xformCache.GetLocalToWorldTransform(prim));
+            light.radianceScale =
+                Vec3f(color[0], color[1], color[2]) * intensity * exp2f(exposure);
+
+            YBI_ASSERT(texture.GetAssetPath().empty() || !light.texturePath.empty());
+
+            container->envmapLights.push_back(std::move(light));
+        }
     }
 
     // Defer loading of geometry attributes until all material graphs have been traversed.

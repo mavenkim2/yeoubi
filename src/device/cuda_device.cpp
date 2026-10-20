@@ -1023,9 +1023,12 @@ DeviceTexture CUDADevice::CreateTexture(const DeviceTextureInfo &info)
     resourceDesc.res.array.hArray = array;
 
     CUDA_TEXTURE_DESC textureDesc = {};
-    textureDesc.addressMode[0] = CU_TR_ADDRESS_MODE_CLAMP;
-    textureDesc.addressMode[1] = CU_TR_ADDRESS_MODE_CLAMP;
-    textureDesc.addressMode[2] = CU_TR_ADDRESS_MODE_CLAMP;
+    for (uint32_t axis = 0; axis < 3; axis++)
+    {
+        textureDesc.addressMode[axis] = info.addressMode[axis] == TextureAddressMode::Wrap
+                                            ? CU_TR_ADDRESS_MODE_WRAP
+                                            : CU_TR_ADDRESS_MODE_CLAMP;
+    }
     textureDesc.filterMode = filterMode;
     textureDesc.flags = CU_TRSF_NORMALIZED_COORDINATES;
     textureDesc.maxAnisotropy = 1;

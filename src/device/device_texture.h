@@ -36,6 +36,12 @@ enum class FilterType
     Linear,
 };
 
+enum class TextureAddressMode
+{
+    Clamp,
+    Wrap,
+};
+
 struct DeviceTextureInfo
 {
     TextureFormat format;
@@ -47,6 +53,9 @@ struct DeviceTextureInfo
     uint32_t layers = 0;
     uint32_t depth = 0;
     uint32_t mips = 0;
+    TextureAddressMode addressMode[3] = {TextureAddressMode::Clamp,
+                                         TextureAddressMode::Clamp,
+                                         TextureAddressMode::Clamp};
     // bool enableSurfaceWrites = true;
 };
 

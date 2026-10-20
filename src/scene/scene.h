@@ -6,6 +6,7 @@
 #include "core/matrix4x4.h"
 #include "device/device_memory.h"
 #include "scene/bvh.h"
+#include "scene/light/envmap.h"
 #include "kernel/scene.h"
 #include "material/material.h"
 #include "material/openpbr_parameters.h"
@@ -298,6 +299,7 @@ struct DataContainer
     std::vector<MaterialHandle> materialHandles;
 
     std::vector<RectLight> rectLights;
+    std::vector<EnvmapLight> envmapLights;
 
     Attributes attributes;
 

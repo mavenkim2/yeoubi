@@ -199,6 +199,7 @@ add_subdirectory(third_party/libtiff EXCLUDE_FROM_ALL)
 
 add_executable(yeoubi_virtual_textures
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/image.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/material/shader_compilation.cpp
@@ -264,12 +265,15 @@ target_compile_options(generate_vmf_split_table PRIVATE ${YBI_COMPILE_OPTIONS})
 add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/core/allocation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/camera_json.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/io/image.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/io/usd_material.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/material/shader_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/material/material_compilation.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/scene.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/render_system.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/scene/light/envmap.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/src/render/sampling/cdf.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/wavefront_integrator.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/lut.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/device.cpp
@@ -282,6 +286,7 @@ add_executable(yeoubi
                ${CMAKE_CURRENT_SOURCE_DIR}/src/device/cpu_device.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/application.cpp
                ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+               ${YBI_MINIZ_SOURCE}
                ${YBI_SOURCE}
 )
 
@@ -533,10 +538,12 @@ target_include_directories(yeoubi PRIVATE
 
 target_include_directories(yeoubi SYSTEM PRIVATE
     ${YBI_THIRD_PARTY_INCLUDE_DIRECTORIES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinyexr/deps/miniz"
 )
 
 target_link_libraries(yeoubi PRIVATE
     ${YBI_DEPENDENCIES}
+    TIFF::tiff
 )
 
 target_compile_definitions(yeoubi PRIVATE
