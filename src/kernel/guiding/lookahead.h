@@ -36,8 +36,8 @@ YBI_GPU float CalculateMeanDirectionInvKappa(const LookaheadCell &cell)
 
     const float kappa = MeanCosineToKappa(meanCosine);
     const float kappaCothMinusOne = kappa * meanCosine;
-    const float yMinusOne =
-        (cell.radianceFirstMoment / cell.radianceSecondMoment) * cell.radianceFirstMoment * kappaCothMinusOne;
+    const float yMinusOne = (cell.radianceFirstMoment / cell.radianceSecondMoment) *
+                            cell.radianceFirstMoment * kappaCothMinusOne;
     const float invY = 1.f / (1.f + yMinusOne);
     // Eq. (4), evaluated in 1/y to avoid polynomial overflow.
     const float numerator = 1.f + invY * (1.69934861f + invY * (5.38753272f + invY * 9.85021305f));
@@ -236,6 +236,9 @@ YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
             right.guidingCellIndex = int(params.numVMMs++);
             params.vmmDistributions[right.guidingCellIndex] =
                 params.vmmDistributions[left.guidingCellIndex];
+            if (params.vmmStatistics)
+                params.vmmStatistics[right.guidingCellIndex] =
+                    params.vmmStatistics[left.guidingCellIndex];
             left.ancestorGuidingCellIndex = -1;
             right.ancestorGuidingCellIndex = -1;
             node.guidingCellIndex = -1;

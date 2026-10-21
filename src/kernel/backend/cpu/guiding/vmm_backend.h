@@ -1,6 +1,8 @@
 #pragma once
 
+#include "core/atomic.h"
 #include "core/simd_float4.h"
+#include "kernel/backend/cpu/reduction.h"
 #include "kernel/guiding/types.h"
 
 #if defined(SIMD_4)
@@ -29,14 +31,23 @@ struct CpuSIMDVMMBackend
 
     static void Sync() {}
 
+    template <typename T, typename Function>
+    static T ReduceBlock(const Function &function)
+    {
+        T values[VMM_BLOCK_SIZE] = {};
+        for (uint32_t thread = 0; thread < VMM_BLOCK_SIZE; ++thread)
+            values[thread] = function(thread);
+        return BlockReduceSum<T, VMM_BLOCK_SIZE>(values);
+    }
+
     static ExclusiveScanResult ExclusiveScanAdd(uint32_t value) { return {0, value}; }
 
     static void ReduceAdd(int64_t value, int64_t &destination) { destination += value; }
     static void ReduceAdd(uint32_t value, uint32_t &destination) { destination += value; }
     static void ReduceAdd(float value, float &destination) { destination += value; }
 
-    static void ReduceMin(float value, float &destination) { destination = fminf(value, destination); }
-    static void ReduceMax(float value, float &destination) { destination = fmaxf(value, destination); }
+    static void ReduceMin(float value, float &destination) { AtomicMin(&destination, value); }
+    static void ReduceMax(float value, float &destination) { AtomicMax(&destination, value); }
 
     static void ReduceMin(const Vec3f &value, Vec3f &destination)
     {

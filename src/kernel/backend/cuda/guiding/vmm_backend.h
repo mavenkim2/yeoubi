@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/atomic.h"
+#include "kernel/backend/cuda/reduction.h"
 #include "kernel/backend/cuda/warp_reduce.h"
 #include "kernel/guiding/types.h"
 #include <cstdio>
@@ -31,6 +32,12 @@ struct CudaVMMBackend
     YBI_GPU static void Sync()
     {
         __syncthreads();
+    }
+
+    template <typename T, typename Function>
+    YBI_GPU static T ReduceBlock(const Function &function)
+    {
+        return BlockReduceSum<T, VMM_BLOCK_SIZE>(function(threadIdx.x));
     }
 
     YBI_GPU static ExclusiveScanResult ExclusiveScanAdd(uint32_t value)

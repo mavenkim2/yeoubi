@@ -8,6 +8,7 @@
 #include "core/simd_float4.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
+#include "kernel/guiding/parallax.h"
 #include "kernel/guiding/sample.h"
 #include "kernel/guiding/types.h"
 #include "kernel/guiding/vmf.h"
@@ -322,8 +323,7 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
             YBI_ASSERT(All(sample.incidentRadianceEstimate >= Float(0.f)));
             const Float sampleWeight = sample.incidentRadianceEstimate / sample.pdf;
             Float assignments[VMM_MAX_NUM_COMPONENTS];
-            const Float pdf =
-                SoftAssignment<Float>(distribution, sample.direction, assignments);
+            const Float pdf = SoftAssignment<Float>(distribution, sample.direction, assignments);
             localLogLikelihood += sampleWeight * Log(pdf);
             for (uint32_t k = 0; k < distribution.numComponents; ++k)
             {
@@ -359,6 +359,12 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
     // Commit only the final E-step statistics, not every EM iteration.
     CommitVMMStatistics<Backend, Partial>(
         previousStats, workspace.currentStats, distribution.numComponents, componentMask);
+    if constexpr (!Partial)
+    {
+        if (Backend::GetThreadIndex() == 0)
+            distribution.initialized = true;
+        Backend::Sync();
+    }
 }
 
 template <typename Backend>
@@ -415,9 +421,8 @@ YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
         const Float sampleWeight = Li / sample.pdf;
         Float assignments[VMM_MAX_NUM_COMPONENTS];
         const Float V = SoftAssignment<Float>(distribution, sample.direction, assignments);
-        const Float directionLengthSquared = Sqr(sample.direction.x) +
-                                             Sqr(sample.direction.y) +
-                                             Sqr(sample.direction.z);
+        const Float directionLengthSquared =
+            Sqr(sample.direction.x) + Sqr(sample.direction.y) + Sqr(sample.direction.z);
         for (uint32_t k = 0; k < numComponents; ++k)
         {
             const Float assignment = assignments[k];

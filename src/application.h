@@ -134,7 +134,7 @@ private:
     bool singlePixel = false;
     std::unique_ptr<SceneSession> session;
     KernelParams params{};
-    DeviceBuffer<KernelParams> cudaParams;
+    std::unique_ptr<WavefrontIntegrator> integrator;
     DeviceBuffer<Vec3f> kernelOutput;
     DeviceBuffer<Vec3f> accumulation;
     DeviceBuffer<uint8_t> outputImage;

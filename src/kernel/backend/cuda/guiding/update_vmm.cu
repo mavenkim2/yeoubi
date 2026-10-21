@@ -1,4 +1,4 @@
-#include "kernel/backend/cuda/vmm_backend.h"
+#include "kernel/backend/cuda/guiding/vmm_backend.h"
 #include "kernel/launch/vmm_update_params.h"
 
 namespace ybi
@@ -27,6 +27,8 @@ extern "C" __global__ void UpdateVMMKernel(const VMMUpdateParams *kernelParams)
     if (Backend::GetThreadIndex() == 0)
     {
         distribution.numComponents = params.distributions[mixtureIndex].numComponents;
+        distribution.pivotPosition = params.distributions[mixtureIndex].pivotPosition;
+        distribution.initialized = params.distributions[mixtureIndex].initialized;
         previousStats.numSamples = params.statistics[mixtureIndex].numSamples;
         YBI_ASSERT(distribution.numComponents > 0 &&
                    distribution.numComponents <= VMM_MAX_NUM_COMPONENTS);
@@ -38,6 +40,7 @@ extern "C" __global__ void UpdateVMMKernel(const VMMUpdateParams *kernelParams)
         distribution.weights[k] = params.distributions[mixtureIndex].weights[k];
         distribution.meanDirection[k] = params.distributions[mixtureIndex].meanDirection[k];
         distribution.kappa[k] = params.distributions[mixtureIndex].kappa[k];
+        distribution.distance[k] = params.distributions[mixtureIndex].distance[k];
         previousStats.sumWeightedDirections[k] =
             params.statistics[mixtureIndex].sumWeightedDirections[k];
         previousStats.sumWeightedStats[k] = params.statistics[mixtureIndex].sumWeightedStats[k];
@@ -57,12 +60,15 @@ extern "C" __global__ void UpdateVMMKernel(const VMMUpdateParams *kernelParams)
         params.distributions[mixtureIndex].weights[k] = distribution.weights[k];
         params.distributions[mixtureIndex].meanDirection[k] = distribution.meanDirection[k];
         params.distributions[mixtureIndex].kappa[k] = distribution.kappa[k];
+        params.distributions[mixtureIndex].distance[k] = distribution.distance[k];
         params.statistics[mixtureIndex].sumWeightedDirections[k] =
             previousStats.sumWeightedDirections[k];
         params.statistics[mixtureIndex].sumWeightedStats[k] = previousStats.sumWeightedStats[k];
     }
     if (Backend::GetThreadIndex() == 0)
     {
+        params.distributions[mixtureIndex].pivotPosition = distribution.pivotPosition;
+        params.distributions[mixtureIndex].initialized = distribution.initialized;
         params.statistics[mixtureIndex].numSamples = previousStats.numSamples;
     }
 }

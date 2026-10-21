@@ -30,7 +30,7 @@ cmake_pop_check_state()
 option(WITH_CUDA "Enable CUDA backend" OFF)
 option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
 option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
-option(YBI_USE_PATH_GUIDING "Enable Yeoubi path guiding" OFF)
+option(YBI_USE_PATH_GUIDING "Enable Yeoubi path guiding" ON)
 option(YBI_MATERIAL_DEBUG "Print MaterialX BSDF sampling decisions" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
@@ -111,16 +111,13 @@ if (YBI_USE_PATH_GUIDING)
     if (NOT YBI_HAS_SSE41)
         message(FATAL_ERROR "YBI_USE_PATH_GUIDING requires SSE4.1 for the CPU kd-tree backend")
     endif()
-    set(YBI_KD_TREE_KERNEL_PATH "")
-    set(YBI_LOOKAHEAD_KERNEL_PATH "")
+    set(YBI_GUIDING_DISPATCH_KERNEL_PATH "")
     if (YBI_HAS_CUDA AND OPTIX_FOUND)
-        set(YBI_KD_TREE_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/kd_tree.ptx")
-        set(YBI_LOOKAHEAD_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/lookahead.ptx")
+        set(YBI_GUIDING_DISPATCH_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/guiding_dispatch.ptx")
     endif()
     list(APPEND YBI_COMPILE_DEFINITIONS
         YBI_USE_PATH_GUIDING
-        YBI_KD_TREE_KERNEL_PATH=\"${YBI_KD_TREE_KERNEL_PATH}\"
-        YBI_LOOKAHEAD_KERNEL_PATH=\"${YBI_LOOKAHEAD_KERNEL_PATH}\")
+        YBI_GUIDING_DISPATCH_KERNEL_PATH=\"${YBI_GUIDING_DISPATCH_KERNEL_PATH}\")
 endif()
 
 # Vulkan
@@ -293,8 +290,7 @@ add_executable(yeoubi
 
 if (YBI_USE_PATH_GUIDING)
     target_sources(yeoubi PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/kd_tree.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/lookahead.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/guiding/dispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/path_guiding.cpp)
 endif()
 
@@ -450,7 +446,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     set(YBI_UPDATE_VMM_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/update_vmm.ptx")
     set(YBI_UPDATE_VMM_KERNEL_DEPFILE "${YBI_UPDATE_VMM_KERNEL_PATH}.d")
 
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/update_vmm.cu"
+    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/guiding/update_vmm.cu"
         NO_FAST_MATH
         OUTPUT "${YBI_UPDATE_VMM_KERNEL_PATH}"
         DEPFILE "${YBI_UPDATE_VMM_KERNEL_DEPFILE}"
@@ -461,26 +457,16 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_dependencies(yeoubi yeoubi_update_vmm_kernel)
 
     if (YBI_USE_PATH_GUIDING)
-        set(YBI_KD_TREE_KERNEL_DEPFILE "${YBI_KD_TREE_KERNEL_PATH}.d")
-        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/kd_tree.cu"
+        set(YBI_GUIDING_DISPATCH_KERNEL_DEPFILE "${YBI_GUIDING_DISPATCH_KERNEL_PATH}.d")
+        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/guiding/dispatch.cu"
             NO_FAST_MATH
-            OUTPUT "${YBI_KD_TREE_KERNEL_PATH}"
-            DEPFILE "${YBI_KD_TREE_KERNEL_DEPFILE}"
+            OUTPUT "${YBI_GUIDING_DISPATCH_KERNEL_PATH}"
+            DEPFILE "${YBI_GUIDING_DISPATCH_KERNEL_DEPFILE}"
             ARCHITECTURE sm_75
             OPTIONS --fmad=false
         )
-        add_custom_target(yeoubi_kd_tree_kernel DEPENDS ${YBI_KD_TREE_KERNEL_PATH})
-        add_dependencies(yeoubi yeoubi_kd_tree_kernel)
-
-        compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/lookahead.cu"
-            NO_FAST_MATH
-            OUTPUT "${YBI_LOOKAHEAD_KERNEL_PATH}"
-            DEPFILE "${YBI_LOOKAHEAD_KERNEL_PATH}.d"
-            ARCHITECTURE sm_75
-            OPTIONS --fmad=false
-        )
-        add_custom_target(yeoubi_lookahead_kernel DEPENDS ${YBI_LOOKAHEAD_KERNEL_PATH})
-        add_dependencies(yeoubi yeoubi_lookahead_kernel)
+        add_custom_target(yeoubi_guiding_dispatch_kernel DEPENDS ${YBI_GUIDING_DISPATCH_KERNEL_PATH})
+        add_dependencies(yeoubi yeoubi_guiding_dispatch_kernel)
     endif()
 
     # Stream compaction

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/vec2u.h"
 #include "device/device_memory.h"
 #include "kernel/state/types.h"
 #include <memory>
@@ -23,6 +24,7 @@ public:
     ~WavefrontIntegrator();
 
     bool RenderSamples(const KernelParams &params);
+    bool RenderSamples(const KernelParams &params, Vec2u outputSize);
 
 private:
     static constexpr uint32_t batchSize = 512u * 1024u;

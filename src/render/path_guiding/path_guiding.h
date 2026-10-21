@@ -24,6 +24,7 @@ class PathGuidingSystem
     DeviceBuffer<PathGuidingKdTreeLookaheadStatistics> newLookaheadStatistics;
     DeviceBuffer<uint32_t> guidingCellSplitMask;
     DeviceBuffer<VMMDistribution> vmmDistributions;
+    DeviceBuffer<SufficientStatistics> vmmStatistics;
     uint32_t numNodes = 1;
     uint32_t numVMMs = 0;
     uint32_t generation = 0;
@@ -45,13 +46,13 @@ class PathGuidingSystem
     std::unique_ptr<DeviceKernel> accumulateLookaheadCells;
     std::unique_ptr<DeviceKernel> shouldSplitGuidingCell;
     std::unique_ptr<DeviceKernel> promoteGuidingCells;
+    std::unique_ptr<DeviceKernel> applyParallaxShift;
 
     template <typename T>
     void ReserveBuffer(DeviceBuffer<T> &buffer, size_t count, size_t preserveCount = 0);
     void UploadParams(PathGuidingKdTreeParams &params);
     void ReadBackParams(PathGuidingKdTreeParams &params);
-    template <typename... Args>
-    void Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX, Args... args);
+    void Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX);
     void GenerateWorkItems(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage);
     void ReserveFrontierBuffers(PathGuidingKdTreeParams &params);
     void ReservePositionStatisticsBuffers(PathGuidingKdTreeParams &params);
@@ -59,8 +60,10 @@ class PathGuidingSystem
     void ReserveLookaheadStatisticsBuffers(PathGuidingKdTreeParams &params);
     void ReserveVMMDistributions(PathGuidingKdTreeParams &params);
     template <typename T>
-    T *ReduceNodeStatistics(const PathGuidingKdTreeParams &params, DeviceKernel &kernel,
-                             const DeviceBuffer<T> &input, const DeviceBuffer<T> &output);
+    void ReduceNodeStatistics(PathGuidingKdTreeParams &params,
+                              DeviceKernel &kernel,
+                              T *&statistics,
+                              T *&newStatistics);
     void CalculatePositionStatistics(PathGuidingKdTreeParams &params);
     void SelectNodeSplits(const PathGuidingKdTreeParams &params);
     void PartitionSamples(PathGuidingKdTreeParams &params);
@@ -76,14 +79,16 @@ class PathGuidingSystem
     void FinishUpdate(PathGuidingKdTreeParams &params);
 
 public:
-    PathGuidingSystem(Device *device,
-                      DeviceKind deviceKind,
-                      PathGuidingSplitDecision splitDecision = PathGuidingSplitDecision::SampleCount);
+    PathGuidingSystem(
+        Device *device,
+        DeviceKind deviceKind,
+        PathGuidingSplitDecision splitDecision = PathGuidingSplitDecision::SampleCount);
     ~PathGuidingSystem();
     PathGuidingSystem(const PathGuidingSystem &) = delete;
     PathGuidingSystem &operator=(const PathGuidingSystem &) = delete;
 
     void UpdateKDTree(PathGuidingKdTreeParams &params);
+    void UpdateVMMs(PathGuidingKdTreeParams &params);
 };
 
 } // namespace ybi

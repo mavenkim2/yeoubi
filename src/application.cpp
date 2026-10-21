@@ -561,7 +561,7 @@ OfflineApplication::OfflineApplication(DeviceKind kind,
 
     const size_t pixelCount =
         singlePixel ? 1u : static_cast<size_t>(params.imageWidth) * params.imageHeight;
-    cudaParams = device->Alloc<KernelParams>(1);
+    integrator = std::make_unique<WavefrontIntegrator>(device.get());
     kernelOutput = device->Alloc<Vec3f>(pixelCount);
     accumulation = device->Alloc<Vec3f>(pixelCount);
     outputImage = device->Alloc<uint8_t>(pixelCount * 4);
@@ -581,7 +581,6 @@ OfflineApplication::~OfflineApplication()
     device->Free(outputImage);
     device->Free(accumulation);
     device->Free(kernelOutput);
-    device->Free(cudaParams);
 }
 
 void OfflineApplication::Run()
@@ -598,19 +597,24 @@ void OfflineApplication::Run()
         params.sampleOffset = sampleIndex;
         params.accumulatedSamples = sampleIndex;
 
-        device->CopyToDevice(cudaParams.Data(), &params, sizeof(KernelParams));
         device->StartProfiler();
-        device->DispatchKernel(
-            KERNEL_INTERSECT, uint32_t(outputWidth) * outputHeight, 256, cudaParams);
-        device->SyncDeviceStream();
+        const bool rendered = integrator->RenderSamples(params, Vec2u(outputWidth, outputHeight));
         device->StopProfiler();
+        if (!rendered)
+        {
+            std::fprintf(stderr, "Offline rendering failed.\n");
+            std::exit(EXIT_FAILURE);
+        }
 
-        void *arguments[] = {&params};
+        KernelParams accumulationParams = params;
+        accumulationParams.imageWidth = outputWidth;
+        accumulationParams.imageHeight = outputHeight;
+        void *arguments[] = {&accumulationParams};
         DeviceKernelLaunchDesc launch;
         launch.gridX = CeilDiv(outputWidth, 8);
         launch.gridY = CeilDiv(outputHeight, 8);
-        launch.blockX = singlePixel ? 1 : 8;
-        launch.blockY = singlePixel ? 1 : 8;
+        launch.blockX = 8;
+        launch.blockY = 8;
         launch.arguments = arguments;
         device->ExecuteKernel(*accumulateKernel, launch);
         session->textures->CopyFeedback();

@@ -4,8 +4,13 @@
 #if !defined(SIMD_4)
 #error "YBI_USE_PATH_GUIDING requires SIMD_4 for the CPU kd-tree backend"
 #endif
-#include "kernel/backend/cpu/kd_tree.h"
-#include "kernel/backend/cpu/lookahead.h"
+#include "kernel/backend/cpu/guiding/dispatch.h"
+#include "kernel/backend/cpu/kernel.h"
+#undef YBI_KERNEL
+#undef YBI_ITERATE_WORK_ITEMS
+#undef YBI_ITERATE_ELEMENTS
+#undef YBI_END_ITERATE_WORK_ITEMS
+#undef YBI_FIRST_THREAD
 #endif
 #include <cstring>
 
@@ -28,23 +33,56 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
         void (*function)(void **arguments);
     };
     static const KernelEntry entries[] = {
-        {"CreateKdTreeNodesKernel", CreateKdTreeNodesKernelCPU},
-        {"CreateKdTreeNodeItemsKernel", CreateKdTreeNodeItemsKernelCPU},
-        {"CreateKdTreeWorkItemsKernel", CreateKdTreeWorkItemsKernelCPU},
-        {"CalculateNodeBoundsKernel", CalculateNodeBoundsKernelCPU},
-        {"CalculateNodePositionStatisticsKernel", CalculateNodePositionStatisticsKernelCPU},
-        {"CreateKdTreeReductionWorkItemsKernel", CreateKdTreeReductionWorkItemsKernelCPU},
-        {"ReduceNodePositionStatisticsKernel", ReduceNodePositionStatisticsKernelCPU},
-        {"AccumulateNodePositionStatisticsKernel", AccumulateNodePositionStatisticsKernelCPU},
-        {"SelectNodeSplitsKernel", SelectNodeSplitsKernelCPU},
-        {"PartitionCountKernel", PartitionCountKernelCPU},
-        {"PartitionExclusiveScanKernel", PartitionExclusiveScanKernelCPU},
-        {"PartitionSamplesKernel", PartitionSamplesKernelCPU},
-        {"UpdateLookaheadCellKernel", UpdateLookaheadCellKernelCPU},
-        {"ReduceLookaheadStatisticsKernel", ReduceLookaheadStatisticsKernelCPU},
-        {"AccumulateLookaheadCellsKernel", AccumulateLookaheadCellsKernelCPU},
-        {"ShouldSplitGuidingCellKernel", ShouldSplitGuidingCellKernelCPU},
-        {"PromoteGuidingCellsKernel", PromoteGuidingCellsKernelCPU},
+        /************************************************************
+         * Kd-tree
+         ************************************************************/
+
+        {"CreateKdTreeNodesKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeNodesKernel>},
+        {"CreateKdTreeNodeItemsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeNodeItemsKernel>},
+        {"CreateKdTreeWorkItemsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeWorkItemsKernel>},
+        {"CalculateNodeBoundsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CalculateNodeBoundsKernel>},
+        {"CalculateNodePositionStatisticsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CalculateNodePositionStatisticsKernel>},
+        {"CreateKdTreeReductionWorkItemsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeReductionWorkItemsKernel>},
+        {"ReduceNodePositionStatisticsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, ReduceNodePositionStatisticsKernel>},
+        {"AccumulateNodePositionStatisticsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, AccumulateNodePositionStatisticsKernel>},
+        {"SelectNodeSplitsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, SelectNodeSplitsKernel>},
+        {"PartitionCountKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, PartitionCountKernel>},
+        {"PartitionExclusiveScanKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, PartitionExclusiveScanKernel>},
+        {"PartitionSamplesKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, PartitionSamplesKernel>},
+
+        /************************************************************
+         * Lookahead
+         ************************************************************/
+
+        {"UpdateLookaheadCellKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, UpdateLookaheadCellKernel>},
+        {"ReduceLookaheadStatisticsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, ReduceLookaheadStatisticsKernel>},
+        {"AccumulateLookaheadCellsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, AccumulateLookaheadCellsKernel>},
+        {"ShouldSplitGuidingCellKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, ShouldSplitGuidingCellKernel>},
+        {"PromoteGuidingCellsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, PromoteGuidingCellsKernel>},
+
+        /************************************************************
+         * Parallax
+         ************************************************************/
+
+        {"ApplyParallaxShiftDispatchKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, ApplyParallaxShiftDispatchKernel>},
     };
     for (const KernelEntry &entry : entries)
     {

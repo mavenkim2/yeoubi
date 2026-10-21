@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/octahedral.h"
 #include "core/simd_float4.h"
 #include "kernel/guiding/types.h"
 
@@ -21,13 +22,27 @@ template <typename Float>
 YBI_GPU Vector3<Float>
 LoadSampleDirection(const PathGuidingKdTreeParams &params, uint32_t sampleIndex, uint32_t numValidSamples);
 
+template <typename Float>
+YBI_GPU Float LoadSampleDistance(const PathGuidingKdTreeParams &params,
+                                 uint32_t sampleIndex,
+                                 uint32_t numValidSamples);
+
+template <>
+YBI_GPU float LoadSampleDistance<float>(const PathGuidingKdTreeParams &params,
+                                        uint32_t sampleIndex,
+                                        uint32_t numValidSamples)
+{
+    YBI_ASSERT(numValidSamples == 1);
+    return params.sampleDistance ? params.sampleDistance[sampleIndex] : FLOAT_INFINITY;
+}
+
 template <>
 YBI_GPU Vec3f LoadSampleDirection<float>(const PathGuidingKdTreeParams &params,
                                          uint32_t sampleIndex,
                                          uint32_t numValidSamples)
 {
     YBI_ASSERT(numValidSamples == 1);
-    return params.sampleDirection[sampleIndex];
+    return DecodeOctahedral(params.sampleDirection[sampleIndex]);
 }
 
 template <>
@@ -61,13 +76,31 @@ YBI_GPU SampleData LoadSampleData<SampleData>(const PathGuidingKdTreeParams &par
 {
     YBI_ASSERT(numSamples == 1);
     SampleData sampleData{};
-    sampleData.direction = params.sampleDirection[sampleIndex];
+    sampleData.direction = LoadSampleDirection<float>(params, sampleIndex, numSamples);
     sampleData.incidentRadianceEstimate = params.sampleIncidentRadianceEstimate[sampleIndex];
     sampleData.pdf = params.samplePdf[sampleIndex];
+    sampleData.distance = LoadSampleDistance<float>(params, sampleIndex, numSamples);
     return sampleData;
 }
 
 #if defined(SIMD_4)
+
+template <>
+inline Float4 LoadSampleDistance<Float4>(const PathGuidingKdTreeParams &params,
+                                         uint32_t sampleIndex,
+                                         uint32_t numValidSamples)
+{
+    YBI_ASSERT(numValidSamples > 0 && numValidSamples <= Float4::Width);
+    if (numValidSamples == Float4::Width)
+        return params.sampleDistance ? LoadUnaligned(params.sampleDistance + sampleIndex)
+                                     : Float4(FLOAT_INFINITY);
+
+    float distances[Float4::Width] = {1.f, 1.f, 1.f, 1.f};
+    for (uint32_t lane = 0; lane < numValidSamples; ++lane)
+        distances[lane] = params.sampleDistance ? params.sampleDistance[sampleIndex + lane]
+                                               : FLOAT_INFINITY;
+    return LoadUnaligned(distances);
+}
 
 template <>
 inline Vector3<Float4> LoadSampleDirection<Float4>(const PathGuidingKdTreeParams &params,
@@ -76,12 +109,17 @@ inline Vector3<Float4> LoadSampleDirection<Float4>(const PathGuidingKdTreeParams
 {
     YBI_ASSERT(numValidSamples > 0 && numValidSamples <= Float4::Width);
     if (numValidSamples == Float4::Width)
-        return LoadUnaligned(params.sampleDirection + sampleIndex);
+        return DecodeOctahedral4(params.sampleDirection + sampleIndex);
 
-    Vec3f directions[Float4::Width] = {};
+    // A short range need not have padding; decode only after copying its valid entries.
+    uint32_t directions[Float4::Width] = {};
     for (uint32_t lane = 0; lane < numValidSamples; ++lane)
         directions[lane] = params.sampleDirection[sampleIndex + lane];
-    return LoadUnaligned(directions);
+    const auto decoded = DecodeOctahedral4(directions);
+    const Mask4 valid = Mask4::Create((1u << numValidSamples) - 1u);
+    return {Select(valid, decoded.x, Float4(0.f)),
+            Select(valid, decoded.y, Float4(0.f)),
+            Select(valid, decoded.z, Float4(0.f))};
 }
 
 template <>
@@ -138,6 +176,7 @@ inline VMMSampleData<Float4> LoadSampleData<VMMSampleData<Float4>>(const PathGui
     VMMSampleData<Float4> sample{};
     sample.direction = LoadSampleDirection<Float4>(params, sampleIndex, numSamples);
     sample.incidentRadianceEstimate = LoadRadiance<Float4>(params, sampleIndex, numSamples);
+    sample.distance = LoadSampleDistance<Float4>(params, sampleIndex, numSamples);
     if (numSamples == Float4::Width)
     {
         sample.pdf = LoadUnaligned(params.samplePdf + sampleIndex);

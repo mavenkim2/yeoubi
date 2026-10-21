@@ -172,26 +172,84 @@ AtomicAdd(float *destination, float value, AtomicOrder order = AtomicOrder::Rela
 #endif
 }
 
-#if defined(__CUDACC__)
-
-YBI_GPU void AtomicMin(float *destination, float value)
+YBI_CPU_GPU void AtomicMin(float *destination, float value)
 {
+#if defined(__CUDA_ARCH__)
     const int bits = __float_as_int(value);
     if (bits >= 0)
         atomicMin(reinterpret_cast<int *>(destination), bits);
     else
         atomicMax(reinterpret_cast<unsigned int *>(destination), __float_as_uint(value));
+#elif defined(_MSC_VER)
+    volatile long *bits = reinterpret_cast<volatile long *>(destination);
+    long expected = _InterlockedCompareExchange(bits, 0, 0);
+    for (;;)
+    {
+        float previous;
+        memcpy(&previous, &expected, sizeof(previous));
+        const float next = fminf(value, previous);
+        long desired;
+        memcpy(&desired, &next, sizeof(desired));
+        const long observed = _InterlockedCompareExchange(bits, desired, expected);
+        if (observed == expected)
+            return;
+        expected = observed;
+    }
+#else
+    float expected;
+    __atomic_load(destination, &expected, __ATOMIC_RELAXED);
+    for (;;)
+    {
+        float desired = fminf(value, expected);
+        if (__atomic_compare_exchange(destination,
+                                      &expected,
+                                      &desired,
+                                      false,
+                                      __ATOMIC_RELAXED,
+                                      __ATOMIC_RELAXED))
+            return;
+    }
+#endif
 }
 
-YBI_GPU void AtomicMax(float *destination, float value)
+YBI_CPU_GPU void AtomicMax(float *destination, float value)
 {
+#if defined(__CUDA_ARCH__)
     const int bits = __float_as_int(value);
     if (bits >= 0)
         atomicMax(reinterpret_cast<int *>(destination), bits);
     else
         atomicMin(reinterpret_cast<unsigned int *>(destination), __float_as_uint(value));
-}
-
+#elif defined(_MSC_VER)
+    volatile long *bits = reinterpret_cast<volatile long *>(destination);
+    long expected = _InterlockedCompareExchange(bits, 0, 0);
+    for (;;)
+    {
+        float previous;
+        memcpy(&previous, &expected, sizeof(previous));
+        const float next = fmaxf(value, previous);
+        long desired;
+        memcpy(&desired, &next, sizeof(desired));
+        const long observed = _InterlockedCompareExchange(bits, desired, expected);
+        if (observed == expected)
+            return;
+        expected = observed;
+    }
+#else
+    float expected;
+    __atomic_load(destination, &expected, __ATOMIC_RELAXED);
+    for (;;)
+    {
+        float desired = fmaxf(value, expected);
+        if (__atomic_compare_exchange(destination,
+                                      &expected,
+                                      &desired,
+                                      false,
+                                      __ATOMIC_RELAXED,
+                                      __ATOMIC_RELAXED))
+            return;
+    }
 #endif
+}
 
 } // namespace ybi

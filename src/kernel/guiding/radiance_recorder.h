@@ -16,6 +16,7 @@ struct PathGuidingTrainingSample
     uint32_t octahedralDirection;
     float incidentRadiance;
     float pdf;
+    float distance;
 };
 
 struct RadianceRecord
@@ -28,6 +29,7 @@ struct RadianceRecord
     Vec3f accumulatedEmission;
     Vec3f throughput;
     float pdf;
+    float distance;
 
     YBI_CPU_GPU void InitializeIndirectSample(const Vec3f &samplePosition,
                                               const Vec3f &normal,
@@ -44,6 +46,7 @@ struct RadianceRecord
         accumulatedEmission = Vec3f(0.f);
         throughput = sampleThroughput;
         pdf = samplePdf;
+        distance = FLOAT_INFINITY;
     }
 
     YBI_CPU_GPU void InitializeDirectSample(const Vec3f &samplePosition,
@@ -158,6 +161,7 @@ struct RadianceRecorder
         sample.octahedralDirection = record.octahedralDirection;
         sample.incidentRadiance = incidentRadiance;
         sample.pdf = record.pdf;
+        sample.distance = record.distance;
         return true;
     }
 };

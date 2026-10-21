@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/vec2u.h"
 #include "kernel/launch/kernel_params.h"
 #include "kernel/state/types.h"
 
@@ -16,6 +17,7 @@ struct WavefrontParams : KernelParams
     uint32_t *sampleIndices;
     uint32_t numSampleIndices;
 
+    Vec2u outputSize;
     uint64_t cameraWorkOffset;
     uint32_t cameraSampleStateOffset;
 };

@@ -42,7 +42,7 @@ YBI_GPU void GenerateCameraRay(const WavefrontParams &params,
     YBI_ASSERT(params.imageWidth > 0 && params.imageHeight > 0);
 
     const WavefrontSampleState &state = params.sampleState;
-    const Vec2u pixel = CameraWorkIndexToPixel(workIndex, params.imageWidth, params.imageHeight);
+    const Vec2u pixel = CameraWorkIndexToPixel(workIndex, params.outputSize.x, params.outputSize.y);
 
     const Vec2u raster(pixel.x + params.pixelOffsetX, pixel.y + params.pixelOffsetY);
     RNG rng = RNG::Init(raster, params.sampleOffset);
@@ -56,7 +56,7 @@ YBI_GPU void GenerateCameraRay(const WavefrontParams &params,
     RayCone rayCone{};
     rayCone.spreadAngle = atanf(2.f * tanf(0.5f * params.fovRadians) / float(params.imageHeight));
 
-    state.WritePixelIndex(sampleIndex, pixel.x + pixel.y * params.imageWidth);
+    state.WritePixelIndex(sampleIndex, pixel.x + pixel.y * params.outputSize.x);
     state.WriteRNG(sampleIndex, rng);
     state.WriteRayCone(sampleIndex, rayCone);
     state.WriteRadiance(sampleIndex, Vec3f(0.f));

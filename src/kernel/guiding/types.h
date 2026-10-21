@@ -22,8 +22,11 @@ struct VMMDistribution
     // NOTE: must sum to 1
     float weights[VMM_MAX_NUM_COMPONENTS];
     float kappa[VMM_MAX_NUM_COMPONENTS];
+    float distance[VMM_MAX_NUM_COMPONENTS];
 
+    Vec3f pivotPosition;
     uint32_t numComponents;
+    bool initialized;
 };
 
 template <typename Float>
@@ -33,6 +36,7 @@ struct VMMSampleData
     Vector3<Float> position;
     Float incidentRadianceEstimate;
     Float pdf;
+    Float distance;
 };
 
 using SampleData = VMMSampleData<float>;
@@ -282,6 +286,7 @@ struct PathGuidingKdTreeNodeItem
 struct PathGuidingKdTreeParams
 {
     PathGuidingSplitDecision splitDecision = PathGuidingSplitDecision::SampleCount;
+    PathGuidingKdTreeStage stage = PathGuidingKdTreeStage::PositionStatistics;
     uint32_t maxLookaheadDepth = 0;
     PathGuidingKdTreeNode *nodes;
     uint32_t numNodes = 0;
@@ -299,7 +304,9 @@ struct PathGuidingKdTreeParams
     uint32_t numActiveNodeItems;
     uint32_t generation;
     PathGuidingKdTreePositionStatistics *positionStatistics;
+    PathGuidingKdTreePositionStatistics *newPositionStatistics = nullptr;
     PathGuidingKdTreeLookaheadStatistics *lookaheadStatistics;
+    PathGuidingKdTreeLookaheadStatistics *newLookaheadStatistics = nullptr;
 
     SampleData *sampleData;
     uint32_t *sampleIndices;
@@ -308,12 +315,17 @@ struct PathGuidingKdTreeParams
     uint32_t *guidingCellSplitMask;
     uint32_t numGuidingCellSplits = 0;
     VMMDistribution *vmmDistributions;
+    SufficientStatistics *vmmStatistics = nullptr;
     uint32_t numVMMs = 0;
+    uint32_t *vmmUpdateNodeIndices = nullptr;
+    uint32_t numVMMUpdateNodes = 0;
     float meanRadianceSplitThreshold = 0.05f;
 
-    Vec3f *sampleDirection;
+    // Packed with EncodeOctahedral; decoded to unit vectors when loading samples.
+    uint32_t *sampleDirection;
     float *sampleIncidentRadianceEstimate;
     float *samplePdf;
+    float *sampleDistance = nullptr;
     uint64_t vmfSplitTexture;
     float vmfSplitMaxInvSqrtK;
 };

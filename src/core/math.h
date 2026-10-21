@@ -63,6 +63,17 @@ YBI_CPU_GPU float Abs(float a)
     return fabsf(a);
 }
 
+YBI_CPU_GPU bool IsFinite(float value)
+{
+#if defined(__CUDACC_RTC__)
+    return cuda::std::isfinite(value);
+#elif defined(__CUDA_ARCH__)
+    return isfinite(value);
+#else
+    return std::isfinite(value);
+#endif
+}
+
 YBI_CPU_GPU float Cos(float a)
 {
     return cosf(a);

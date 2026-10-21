@@ -135,6 +135,11 @@ void WavefrontIntegrator::FreeSampleState()
 
 bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
 {
+    return RenderSamples(kernelParams, Vec2u(kernelParams.imageWidth, kernelParams.imageHeight));
+}
+
+bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u outputSize)
+{
     size_t uploadOffset = 0;
     const auto copyToDevice = [this, &uploadOffset](void *dst, void *src, size_t size) {
         YBI_ASSERT(uploadOffset + size <= hostUploadBuffer.SizeInBytes());
@@ -153,6 +158,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
 
     WavefrontParams params{};
     static_cast<KernelParams &>(params) = kernelParams;
+    params.outputSize = outputSize;
 #if defined(YBI_USE_PATH_GUIDING)
     if (pathGuidingTrainingSamplesBuffer.Count() < params.radianceRecorder.availableCount)
     {
@@ -176,7 +182,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams)
     params.maxNumSampleState = batchSize;
     params.sampleIndices = sampleIndicesBuffer.Data();
 
-    const uint64_t numPixels = uint64_t(params.imageWidth) * params.imageHeight;
+    const uint64_t numPixels = uint64_t(outputSize.x) * outputSize.y;
     uint32_t numSampleStates = static_cast<uint32_t>(Min<uint64_t>(batchSize, numPixels));
 
     const KernelType *kernelTypes = params.sampleState.kernelTypes;
