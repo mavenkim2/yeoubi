@@ -30,7 +30,7 @@ cmake_pop_check_state()
 option(WITH_CUDA "Enable CUDA backend" OFF)
 option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
 option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
-option(YBI_USE_PATH_GUIDING "Enable Yeoubi path guiding" ON)
+option(YBI_USE_PATH_GUIDING "Enable Yeoubi path guiding" OFF)
 option(YBI_MATERIAL_DEBUG "Print MaterialX BSDF sampling decisions" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
@@ -442,20 +442,6 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_select_sample_indices_kernel DEPENDS ${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_select_sample_indices_kernel)
 
-    # VMM fitting: one CUDA block per mixture.
-    set(YBI_UPDATE_VMM_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/update_vmm.ptx")
-    set(YBI_UPDATE_VMM_KERNEL_DEPFILE "${YBI_UPDATE_VMM_KERNEL_PATH}.d")
-
-    compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/guiding/update_vmm.cu"
-        NO_FAST_MATH
-        OUTPUT "${YBI_UPDATE_VMM_KERNEL_PATH}"
-        DEPFILE "${YBI_UPDATE_VMM_KERNEL_DEPFILE}"
-        ARCHITECTURE sm_75
-        OPTIONS --fmad=false
-    )
-    add_custom_target(yeoubi_update_vmm_kernel DEPENDS ${YBI_UPDATE_VMM_KERNEL_PATH})
-    add_dependencies(yeoubi yeoubi_update_vmm_kernel)
-
     if (YBI_USE_PATH_GUIDING)
         set(YBI_GUIDING_DISPATCH_KERNEL_DEPFILE "${YBI_GUIDING_DISPATCH_KERNEL_PATH}.d")
         compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/guiding/dispatch.cu"
@@ -504,7 +490,6 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_GENERATE_CAMERA_RAY_KERNEL_PATH=\"${YBI_GENERATE_CAMERA_RAY_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_COUNT_KERNELS_KERNEL_PATH=\"${YBI_COUNT_KERNELS_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH=\"${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH}\")
-    list (APPEND YBI_COMPILE_DEFINITIONS YBI_UPDATE_VMM_KERNEL_PATH=\"${YBI_UPDATE_VMM_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_STREAM_COMPACTION_KERNEL_PATH=\"${YBI_STREAM_COMPACTION_KERNEL_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_INCLUDE_PATH=\"${YBI_OPTIX_INCLUDE_PATH}\")
     list (APPEND YBI_COMPILE_DEFINITIONS YBI_OPTIX_SDK_INCLUDE_PATH=\"${YBI_OPTIX_SDK_INCLUDE_PATH}\")

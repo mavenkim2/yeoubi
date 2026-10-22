@@ -6,6 +6,7 @@
 
 #include "render/path_guiding/path_guiding.h"
 #include "core/math.h"
+#include "kernel/guiding/guiding.h"
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
 #include "kernel/guiding/radiance_recorder.h"
@@ -24,6 +25,8 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     desc.filename = YBI_GUIDING_DISPATCH_KERNEL_PATH;
     desc.entryName = "CreateKdTreeWorkItemsKernel";
     generateWorkItems = device->CreateDeviceKernel(desc);
+    desc.entryName = "CollectVMMUpdateNodesKernel";
+    collectVMMUpdateNodes = device->CreateDeviceKernel(desc);
     desc.entryName = "CalculateNodeBoundsKernel";
     calculateNodeBounds = device->CreateDeviceKernel(desc);
     desc.entryName = "CalculateNodePositionStatisticsKernel";
@@ -46,14 +49,19 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     generateNodes = device->CreateDeviceKernel(desc);
     desc.entryName = "CreateKdTreeNodeItemsKernel";
     generateNodeItems = device->CreateDeviceKernel(desc);
-    YBI_ASSERT(generateWorkItems && calculateNodeBounds && calculateNodePositionStatistics &&
-               generateReductionWorkItems && reduceNodePositionStatistics &&
-               accumulateNodePositionStatistics && selectNodeSplits && partitionCount &&
-               partitionExclusiveScan && partitionSamples && generateNodes && generateNodeItems);
+    YBI_ASSERT(generateWorkItems && collectVMMUpdateNodes && calculateNodeBounds &&
+               calculateNodePositionStatistics && generateReductionWorkItems &&
+               reduceNodePositionStatistics && accumulateNodePositionStatistics &&
+               selectNodeSplits && partitionCount && partitionExclusiveScan && partitionSamples &&
+               generateNodes && generateNodeItems);
 
+    desc.entryName = "UpdateVMMKernel";
+    updateVMM = device->CreateDeviceKernel(desc);
     desc.entryName = "ApplyParallaxShiftDispatchKernel";
     applyParallaxShift = device->CreateDeviceKernel(desc);
-    YBI_ASSERT(applyParallaxShift);
+    desc.entryName = "ReprojectSamplesKernel";
+    reprojectSamples = device->CreateDeviceKernel(desc);
+    YBI_ASSERT(updateVMM && applyParallaxShift && reprojectSamples);
 
     switch (splitDecision)
     {
@@ -82,9 +90,7 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     {
         root.guidingCellIndex = 0;
         VMMDistribution rootDistribution{};
-        rootDistribution.numComponents = 1;
-        rootDistribution.meanDirection[0] = Vec3f(0.f, 0.f, 1.f);
-        rootDistribution.weights[0] = 1.f;
+        InitializeUniformVMM(rootDistribution);
         vmmDistributions = device->Alloc<VMMDistribution>(1);
         device->CopyToDevice(vmmDistributions.Data(), &rootDistribution, sizeof(rootDistribution));
         SufficientStatistics rootStatistics{};
@@ -133,6 +139,16 @@ PathGuidingSystem::~PathGuidingSystem()
         device->Free(vmmDistributions);
     if (vmmStatistics)
         device->Free(vmmStatistics);
+    if (vmmUpdateNodeIndices)
+        device->Free(vmmUpdateNodeIndices);
+    if (sampleDirection)
+        device->Free(sampleDirection);
+    if (sampleIncidentRadianceEstimate)
+        device->Free(sampleIncidentRadianceEstimate);
+    if (samplePdf)
+        device->Free(samplePdf);
+    if (sampleDistance)
+        device->Free(sampleDistance);
 }
 
 template <typename T>
@@ -230,9 +246,23 @@ void PathGuidingSystem::ReserveVMMDistributions(PathGuidingKdTreeParams &params)
     params.vmmStatistics = vmmStatistics.Data();
 }
 
+void PathGuidingSystem::ReserveVMMTrainingBuffers(PathGuidingKdTreeParams &params)
+{
+    ReserveBuffer(sampleDirection, params.numSampleIndices);
+    ReserveBuffer(sampleIncidentRadianceEstimate, params.numSampleIndices);
+    ReserveBuffer(samplePdf, params.numSampleIndices);
+    ReserveBuffer(sampleDistance, params.numSampleIndices);
+    params.sampleDirection = sampleDirection.Data();
+    params.sampleIncidentRadianceEstimate = sampleIncidentRadianceEstimate.Data();
+    params.samplePdf = samplePdf.Data();
+    params.sampleDistance = sampleDistance.Data();
+}
+
 template <typename T>
-void PathGuidingSystem::ReduceNodeStatistics(
-    PathGuidingKdTreeParams &params, DeviceKernel &kernel, T *&statistics, T *&newStatistics)
+void PathGuidingSystem::ReduceNodeStatistics(PathGuidingKdTreeParams &params,
+                                             DeviceKernel &kernel,
+                                             T *&statistics,
+                                             T *&newStatistics)
 {
     uint32_t workItemBound = params.numWorkItems;
     for (uint32_t count = params.maxWorkItemCount; count > 1;
@@ -413,7 +443,11 @@ void PathGuidingSystem::FinishUpdate(PathGuidingKdTreeParams &params)
     params.numActiveNodeItems = 0;
     numNodes = params.numNodes;
     numVMMs = params.numVMMs;
+    ReserveBuffer(vmmUpdateNodeIndices, params.numVMMs);
+    params.vmmUpdateNodeIndices = vmmUpdateNodeIndices.Data();
     UploadParams(params);
+    Launch(*collectVMMUpdateNodes, 1, 1);
+    ReadBackParams(params);
 }
 
 void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
@@ -445,19 +479,19 @@ void PathGuidingSystem::UpdateVMMs(PathGuidingKdTreeParams &params)
     if (params.numVMMUpdateNodes == 0)
         return;
 
-    YBI_ASSERT(params.vmmUpdateNodeIndices && params.nodes && params.vmmDistributions &&
-               params.vmmStatistics);
+    YBI_ASSERT(params.vmmUpdateNodeIndices && params.nodes && params.nodeItems &&
+               params.vmmDistributions && params.vmmStatistics);
+    YBI_ASSERT(params.numSampleIndices == 0 || (params.sampleData && params.sampleIndices));
+    ReserveVMMTrainingBuffers(params);
     UploadParams(params);
     Launch(*applyParallaxShift, params.numVMMUpdateNodes, 32);
+    Launch(*reprojectSamples, params.numVMMUpdateNodes, 32);
+    Launch(*updateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
 
-    // reproject
-    // em iterations
     // split statistics, split
     // partial update
     // merge
     // update component distances
-
-    // TODO: initialize new mixtures?
 }
 
 } // namespace ybi

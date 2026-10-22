@@ -3,6 +3,7 @@
 #include "device/cuda_compat.h"
 
 #define YBI_KERNEL extern "C" __global__ void
+#define YBI_SHARED __shared__
 #define YBI_ITERATE_WORK_ITEMS(index, count) \
     for (uint32_t index = blockIdx.x; index < (count); index += gridDim.x)
 #define YBI_ITERATE_ELEMENTS(index, count) \

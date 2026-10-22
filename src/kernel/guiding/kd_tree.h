@@ -16,6 +16,16 @@ namespace ybi
 #define VMM_KD_TREE_SPLIT_SAMPLE_COUNT (32u * 1024u)
 #define VMM_KD_TREE_LOOKAHEAD_SPLIT_SAMPLE_COUNT 1000u
 
+YBI_GPU void CollectVMMUpdateNodes(PathGuidingKdTreeParams &params)
+{
+    params.numVMMUpdateNodes = 0;
+    for (uint32_t nodeIndex = 0; nodeIndex < params.numNodes; ++nodeIndex)
+    {
+        if (params.nodes[nodeIndex].IsGuidingCell() && params.nodeItems[nodeIndex].sampleCount > 0)
+            params.vmmUpdateNodeIndices[params.numVMMUpdateNodes++] = nodeIndex;
+    }
+}
+
 YBI_GPU uint32_t GetLookaheadDepth(const PathGuidingKdTreeParams &params,
                                    const PathGuidingKdTreeNode &node)
 {

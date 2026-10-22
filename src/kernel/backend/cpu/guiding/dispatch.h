@@ -9,6 +9,7 @@ namespace ybi
  * Kd-tree
  ************************************************************/
 
+void CollectVMMUpdateNodesKernel(PathGuidingKdTreeParams *kernelParams);
 void CreateKdTreeNodesKernel(PathGuidingKdTreeParams *kernelParams);
 void CreateKdTreeNodeItemsKernel(PathGuidingKdTreeParams *kernelParams);
 void CreateKdTreeWorkItemsKernel(PathGuidingKdTreeParams *kernelParams);
@@ -23,9 +24,16 @@ void PartitionExclusiveScanKernel(PathGuidingKdTreeParams *kernelParams);
 void PartitionSamplesKernel(PathGuidingKdTreeParams *kernelParams);
 
 /************************************************************
+ * VMM
+ ************************************************************/
+
+void UpdateVMMKernel(PathGuidingKdTreeParams *kernelParams);
+
+/************************************************************
  * Parallax
  ************************************************************/
 
+void ReprojectSamplesKernel(PathGuidingKdTreeParams *kernelParams);
 void ApplyParallaxShiftDispatchKernel(PathGuidingKdTreeParams *kernelParams);
 
 /************************************************************

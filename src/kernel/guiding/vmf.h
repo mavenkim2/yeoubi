@@ -1,3 +1,7 @@
+// Implementation adapted from https://github.com/OpenPathGuidingLibrary/openpgl.
+// Copyright 2020 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+// Full license: licenses/OpenPGL.txt (relative to the repository root).
 #pragma once
 
 #include "core/lane.h"
@@ -46,6 +50,36 @@ YBI_GPU Float EvalVMF(const Vector3<Float> &w, const Vec3f &meanDirection, float
         w.x * Float(meanDirection.x) + w.y * Float(meanDirection.y) + w.z * Float(meanDirection.z);
     const Float exponent = Float(kappa) * (cosine - Float(1.f));
     return Float(VMFNormalization(kappa)) * Exp(exponent);
+}
+
+template <typename Float>
+YBI_GPU Float SoftAssignment(const VMMDistribution &distribution,
+                             const Vector3<Float> &sampleDirection,
+                             Float *softAssignment)
+{
+    Float V(0.f);
+
+    for (uint32_t componentIndex = 0; componentIndex < distribution.numComponents;
+         componentIndex++)
+    {
+        const Float v = Float(distribution.weights[componentIndex]) *
+                        EvalVMF<Float>(sampleDirection,
+                                       distribution.meanDirection[componentIndex],
+                                       distribution.kappa[componentIndex]);
+
+        V += v;
+
+        softAssignment[componentIndex] = v;
+    }
+
+    // A zero-density lane has zero assignments and log likelihood log(1) = 0.
+    const Float pdf = Select(V == Float(0.f), Float(1.f), V);
+    const Float reciprocalPdf = Float(1.f) / pdf;
+    for (uint32_t k = 0; k < distribution.numComponents; ++k)
+    {
+        softAssignment[k] = softAssignment[k] * reciprocalPdf;
+    }
+    return pdf;
 }
 
 YBI_GPU float EvalVMF(const Vec3f &w, const Vec3f &meanDirection, float kappa)

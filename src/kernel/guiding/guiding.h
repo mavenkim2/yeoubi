@@ -20,34 +20,24 @@ namespace ybi
 // "Robust Fitting of Parallax-Aware Mixtures for Path Guiding", ACM TOG, 2020.
 // https://doi.org/10.1145/3386569.3392421
 
-template <typename Float>
-YBI_GPU Float SoftAssignment(const VMMDistribution &distribution,
-                             const Vector3<Float> &sampleDirection,
-                             Float *softAssignment)
+YBI_CPU_GPU void InitializeUniformVMM(VMMDistribution &distribution,
+                                      const VMMFitConfiguration &cfg = VMMFitConfiguration{})
 {
-    Float V(0.f);
-
-    for (uint32_t componentIndex = 0; componentIndex < distribution.numComponents;
-         componentIndex++)
+    YBI_ASSERT(cfg.initialNumComponents > 0 && cfg.initialNumComponents <= VMM_MAX_NUM_COMPONENTS);
+    YBI_ASSERT(cfg.initialKappa >= 0.f && IsFinite(cfg.initialKappa));
+    distribution = {};
+    distribution.numComponents = cfg.initialNumComponents;
+    const float weight = 1.f / float(cfg.initialNumComponents);
+    const float goldenRatio = 1.618033988749895f;
+    for (uint32_t k = 0; k < cfg.initialNumComponents; ++k)
     {
-        const Float v = Float(distribution.weights[componentIndex]) *
-                        EvalVMF<Float>(sampleDirection,
-                                       distribution.meanDirection[componentIndex],
-                                       distribution.kappa[componentIndex]);
-
-        V += v;
-
-        softAssignment[componentIndex] = v;
+        const float phi = 2.f * YBI_PI * (float(k) / goldenRatio);
+        const float z = 1.f - (2.f * float(k) + 1.f) / float(cfg.initialNumComponents);
+        const float radius = Sqrt(Max(0.f, 1.f - z * z));
+        distribution.meanDirection[k] = Vec3f(radius * Cos(phi), radius * Sin(phi), z);
+        distribution.weights[k] = weight;
+        distribution.kappa[k] = cfg.initialKappa;
     }
-
-    // A zero-density lane has zero assignments and log likelihood log(1) = 0.
-    const Float pdf = Select(V == Float(0.f), Float(1.f), V);
-    const Float reciprocalPdf = Float(1.f) / pdf;
-    for (uint32_t k = 0; k < distribution.numComponents; ++k)
-    {
-        softAssignment[k] = softAssignment[k] * reciprocalPdf;
-    }
-    return pdf;
 }
 
 template <bool Partial = false>
@@ -365,6 +355,67 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
             distribution.initialized = true;
         Backend::Sync();
     }
+}
+
+template <typename Backend>
+YBI_GPU void UpdateNodeVMM(const PathGuidingKdTreeParams &params,
+                           uint32_t updateIndex,
+                           VMMDistribution &distribution,
+                           SufficientStatistics &previousStats,
+                           VMMUpdateWorkspace &workspace)
+{
+    const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
+    SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
+
+    if (Backend::GetThreadIndex() == 0)
+    {
+        distribution.numComponents = storedDistribution.numComponents;
+        distribution.pivotPosition = storedDistribution.pivotPosition;
+        distribution.initialized = storedDistribution.initialized;
+        previousStats.numSamples = storedStats.numSamples;
+    }
+    Backend::Sync();
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        distribution.weights[k] = storedDistribution.weights[k];
+        distribution.meanDirection[k] = storedDistribution.meanDirection[k];
+        distribution.kappa[k] = storedDistribution.kappa[k];
+        distribution.distance[k] = storedDistribution.distance[k];
+        previousStats.sumWeightedDirections[k] = storedStats.sumWeightedDirections[k];
+        previousStats.sumWeightedStats[k] = storedStats.sumWeightedStats[k];
+        previousStats.sumDistanceWeights[k] = storedStats.sumDistanceWeights[k];
+    }
+    Backend::Sync();
+
+    const VMMUpdateRange range{nodeItem.sampleOffset,
+                               nodeItem.sampleCount,
+                               previousStats.numSamples + float(nodeItem.sampleCount)};
+    UpdateVMM<Backend>(
+        params, distribution, previousStats, range, params.vmmFitConfiguration, workspace);
+
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        storedDistribution.weights[k] = distribution.weights[k];
+        storedDistribution.meanDirection[k] = distribution.meanDirection[k];
+        storedDistribution.kappa[k] = distribution.kappa[k];
+        storedDistribution.distance[k] = distribution.distance[k];
+        storedStats.sumWeightedDirections[k] = previousStats.sumWeightedDirections[k];
+        storedStats.sumWeightedStats[k] = previousStats.sumWeightedStats[k];
+        storedStats.sumDistanceWeights[k] = previousStats.sumDistanceWeights[k];
+    }
+    if (Backend::GetThreadIndex() == 0)
+    {
+        storedDistribution.numComponents = distribution.numComponents;
+        storedDistribution.pivotPosition = distribution.pivotPosition;
+        storedDistribution.initialized = distribution.initialized;
+        storedStats.numSamples = previousStats.numSamples;
+    }
+    Backend::Sync();
 }
 
 template <typename Backend>

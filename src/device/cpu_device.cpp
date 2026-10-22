@@ -7,6 +7,7 @@
 #include "kernel/backend/cpu/guiding/dispatch.h"
 #include "kernel/backend/cpu/kernel.h"
 #undef YBI_KERNEL
+#undef YBI_SHARED
 #undef YBI_ITERATE_WORK_ITEMS
 #undef YBI_ITERATE_ELEMENTS
 #undef YBI_END_ITERATE_WORK_ITEMS
@@ -37,6 +38,8 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
          * Kd-tree
          ************************************************************/
 
+        {"CollectVMMUpdateNodesKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CollectVMMUpdateNodesKernel>},
         {"CreateKdTreeNodesKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeNodesKernel>},
         {"CreateKdTreeNodeItemsKernel",
@@ -78,9 +81,17 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
          DispatchKernelCPU<PathGuidingKdTreeParams, PromoteGuidingCellsKernel>},
 
         /************************************************************
+         * VMM
+         ************************************************************/
+
+        {"UpdateVMMKernel", DispatchKernelCPU<PathGuidingKdTreeParams, UpdateVMMKernel>},
+
+        /************************************************************
          * Parallax
          ************************************************************/
 
+        {"ReprojectSamplesKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, ReprojectSamplesKernel>},
         {"ApplyParallaxShiftDispatchKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, ApplyParallaxShiftDispatchKernel>},
     };

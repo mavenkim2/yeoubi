@@ -5,6 +5,7 @@
 #include <tbb/parallel_for.h>
 
 #define YBI_KERNEL void
+#define YBI_SHARED
 #define YBI_ITERATE_WORK_ITEMS(index, count) \
     tbb::parallel_for(0u, (count), [&](uint32_t index)
 #define YBI_ITERATE_ELEMENTS(index, count) YBI_ITERATE_WORK_ITEMS(index, count)

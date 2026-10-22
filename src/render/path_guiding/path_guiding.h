@@ -25,6 +25,11 @@ class PathGuidingSystem
     DeviceBuffer<uint32_t> guidingCellSplitMask;
     DeviceBuffer<VMMDistribution> vmmDistributions;
     DeviceBuffer<SufficientStatistics> vmmStatistics;
+    DeviceBuffer<uint32_t> vmmUpdateNodeIndices;
+    DeviceBuffer<uint32_t> sampleDirection;
+    DeviceBuffer<float> sampleIncidentRadianceEstimate;
+    DeviceBuffer<float> samplePdf;
+    DeviceBuffer<float> sampleDistance;
     uint32_t numNodes = 1;
     uint32_t numVMMs = 0;
     uint32_t generation = 0;
@@ -32,6 +37,7 @@ class PathGuidingSystem
     std::unique_ptr<DeviceKernel> generateNodes;
     std::unique_ptr<DeviceKernel> generateNodeItems;
     std::unique_ptr<DeviceKernel> generateWorkItems;
+    std::unique_ptr<DeviceKernel> collectVMMUpdateNodes;
     std::unique_ptr<DeviceKernel> calculateNodeBounds;
     std::unique_ptr<DeviceKernel> calculateNodePositionStatistics;
     std::unique_ptr<DeviceKernel> generateReductionWorkItems;
@@ -46,7 +52,9 @@ class PathGuidingSystem
     std::unique_ptr<DeviceKernel> accumulateLookaheadCells;
     std::unique_ptr<DeviceKernel> shouldSplitGuidingCell;
     std::unique_ptr<DeviceKernel> promoteGuidingCells;
+    std::unique_ptr<DeviceKernel> updateVMM;
     std::unique_ptr<DeviceKernel> applyParallaxShift;
+    std::unique_ptr<DeviceKernel> reprojectSamples;
 
     template <typename T>
     void ReserveBuffer(DeviceBuffer<T> &buffer, size_t count, size_t preserveCount = 0);
@@ -59,6 +67,7 @@ class PathGuidingSystem
     void ReserveNodeItemBuffers(PathGuidingKdTreeParams &params);
     void ReserveLookaheadStatisticsBuffers(PathGuidingKdTreeParams &params);
     void ReserveVMMDistributions(PathGuidingKdTreeParams &params);
+    void ReserveVMMTrainingBuffers(PathGuidingKdTreeParams &params);
     template <typename T>
     void ReduceNodeStatistics(PathGuidingKdTreeParams &params,
                               DeviceKernel &kernel,

@@ -47,6 +47,7 @@ struct VMMStatistics
     // No default member initializers: the CUDA backend allocates this in shared memory.
     Vector3<Float> sumWeightedDirections[VMM_MAX_NUM_COMPONENTS];
     Float sumWeightedStats[VMM_MAX_NUM_COMPONENTS];
+    Float sumDistanceWeights[VMM_MAX_NUM_COMPONENTS];
 
     // May be fractional after decaying previous observations.
     float numSamples;
@@ -61,6 +62,12 @@ struct VMMUpdateWorkspace
     float sumWeights;
     float normalization;
     float partialWeightScale;
+};
+
+struct VMMComponentDistanceWorkspace
+{
+    float batchSumWeights[VMM_MAX_NUM_COMPONENTS];
+    float batchSumWeightedInverseDistances[VMM_MAX_NUM_COMPONENTS];
 };
 
 struct VMMMapConfiguration
@@ -79,6 +86,8 @@ struct VMMFitConfiguration
     float splittingThreshold{0.75f};
     float mergingThreshold{0.00625f};
     bool printLogLikelihood{false};
+    uint32_t initialNumComponents{VMM_MAX_NUM_COMPONENTS / 2};
+    float initialKappa{0.5f};
 };
 
 struct VMMUpdateRange
@@ -319,6 +328,7 @@ struct PathGuidingKdTreeParams
     uint32_t numVMMs = 0;
     uint32_t *vmmUpdateNodeIndices = nullptr;
     uint32_t numVMMUpdateNodes = 0;
+    VMMFitConfiguration vmmFitConfiguration;
     float meanRadianceSplitThreshold = 0.05f;
 
     // Packed with EncodeOctahedral; decoded to unit vectors when loading samples.

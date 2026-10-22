@@ -1,12 +1,13 @@
 #pragma once
 
+#include "kernel/guiding/guiding.h"
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
 #include "kernel/guiding/parallax.h"
 
-#if !defined(YBI_KERNEL) || !defined(YBI_ITERATE_WORK_ITEMS) || !defined(YBI_ITERATE_ELEMENTS) || \
-    !defined(YBI_END_ITERATE_WORK_ITEMS) || !defined(YBI_FIRST_THREAD) || \
-    !defined(YBI_GUIDING_BACKEND)
+#if !defined(YBI_KERNEL) || !defined(YBI_SHARED) || !defined(YBI_ITERATE_WORK_ITEMS) || \
+    !defined(YBI_ITERATE_ELEMENTS) || !defined(YBI_END_ITERATE_WORK_ITEMS) || \
+    !defined(YBI_FIRST_THREAD) || !defined(YBI_GUIDING_BACKEND)
 #error "Guiding dispatch requires backend kernel macros and YBI_GUIDING_BACKEND"
 #endif
 
@@ -16,6 +17,14 @@ namespace ybi
 /************************************************************
  * Kd-tree
  ************************************************************/
+
+YBI_KERNEL CollectVMMUpdateNodesKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    if (YBI_FIRST_THREAD)
+    {
+        CollectVMMUpdateNodes(*kernelParams);
+    }
+}
 
 YBI_KERNEL CreateKdTreeNodesKernel(PathGuidingKdTreeParams *kernelParams)
 {
@@ -148,8 +157,37 @@ YBI_KERNEL PartitionSamplesKernel(PathGuidingKdTreeParams *kernelParams)
 }
 
 /************************************************************
+ * VMM
+ ************************************************************/
+
+YBI_KERNEL UpdateVMMKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_WORK_ITEMS(updateIndex, params.numVMMUpdateNodes)
+    {
+        YBI_SHARED VMMDistribution distribution;
+        YBI_SHARED SufficientStatistics previousStats;
+        YBI_SHARED VMMUpdateWorkspace workspace;
+
+        UpdateNodeVMM<YBI_GUIDING_BACKEND>(
+            params, updateIndex, distribution, previousStats, workspace);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
+
+/************************************************************
  * Parallax
  ************************************************************/
+
+YBI_KERNEL ReprojectSamplesKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, params.numVMMUpdateNodes)
+    {
+        ReprojectSamples<YBI_GUIDING_BACKEND>(params, workItemIndex);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
 
 YBI_KERNEL ApplyParallaxShiftDispatchKernel(PathGuidingKdTreeParams *kernelParams)
 {
