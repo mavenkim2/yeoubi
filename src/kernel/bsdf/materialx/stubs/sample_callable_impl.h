@@ -23,5 +23,6 @@ YBI_MATERIAL_CALLABLE_NAME(const KernelParams *params,
             YBI_MATERIAL_CALLABLE_EVALUATE(*params, *info, viewDirection, sample->direction) /
             sample->pdf;
     }
+    sample->stochasticPdf = sample->pdf;
     return true;
 }

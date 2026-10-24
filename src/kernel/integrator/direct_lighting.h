@@ -3,6 +3,9 @@
 #include "core/math.h"
 #include "device/cuda_compat.h"
 #include "kernel/backend/dispatch.h"
+#if defined(YBI_USE_PATH_GUIDING)
+#include "kernel/guiding/api.h"
+#endif
 #include "kernel/integrator/mis.h"
 #include "kernel/launch/kernel_params.h"
 #include "kernel/light/sample.h"
@@ -40,11 +43,18 @@ DirectLighting(const KernelParams &params, const SampleState *sampleState, uint3
     LightSample lightSample;
     if (SampleLight(scene, position, Vec3f(rng.Uniform(), rng.Uniform2D()), lightSample))
     {
-        const Vec3f sampledLightBsdfWeight = DeviceDispatch<Vec3f>(material.evaluateCallableIndex,
-                                                                   &params,
-                                                                   &closureInfo,
-                                                                   viewDirection,
-                                                                   lightSample.direction);
+        BsdfEvaluationProperties *evaluationProperties = nullptr;
+#if defined(YBI_USE_PATH_GUIDING)
+        BsdfEvaluationProperties properties;
+        evaluationProperties = &properties;
+#endif
+        const Vec3f sampledLightBsdfWeight = DeviceDispatch<Vec3f>(
+            material.evaluateCallableIndex,
+            &params,
+            &closureInfo,
+            viewDirection,
+            lightSample.direction,
+            evaluationProperties);
         const float sampledLightBsdfPdf = DeviceDispatch<float>(material.pdfCallableIndex,
                                                                 &params,
                                                                 &closureInfo,
@@ -55,33 +65,28 @@ DirectLighting(const KernelParams &params, const SampleState *sampleState, uint3
             Vec3f contribution(0.f);
             if (IsLightSampleVisible(params.bvhHandle, lightSample, position, geometricNormal))
             {
-                const float misWeight = PowerHeuristic(lightSample.pdf, sampledLightBsdfPdf);
+                float continuationPdf = sampledLightBsdfPdf;
+#if defined(YBI_USE_PATH_GUIDING)
+                continuationPdf = GuidingProposalPDF(
+                    params.pathGuiding, position, lightSample.direction, sampledLightBsdfPdf);
+#endif
+                const float misWeight = PowerHeuristic(lightSample.pdf, continuationPdf);
                 contribution = throughput * lightSample.radiance * sampledLightBsdfWeight *
                                misWeight / lightSample.pdf;
                 radiance += contribution;
             }
 #if defined(YBI_USE_PATH_GUIDING)
-            // TODO: do i want to create a sample here? could just add to previous node
             const int parentRecordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
-            int childRecordIndex;
-            if (params.radianceRecorder.AllocateRecord(childRecordIndex))
-            {
-                RadianceRecord &child = params.radianceRecorder.GetRecord(childRecordIndex);
-                child.InitializeDirectSample(position,
-                                             sampleState->ReadShadingNormal(sampleIndex),
-                                             lightSample.direction,
-                                             parentRecordIndex,
-                                             throughput * sampledLightBsdfWeight / lightSample.pdf,
-                                             lightSample.pdf,
-                                             contribution);
-                params.radianceRecorder.IncrementCount(parentRecordIndex);
-                params.radianceRecorder.MarkDone(childRecordIndex);
-            }
-            else if (parentRecordIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
-            {
-                params.radianceRecorder.GetRecord(parentRecordIndex)
-                    .AtomicAddEmission(contribution);
-            }
+            params.radianceRecorder.RecordDirectSample(position,
+                                                       sampleState->ReadShadingNormal(sampleIndex),
+                                                       lightSample.direction,
+                                                       parentRecordIndex,
+                                                       throughput * sampledLightBsdfWeight /
+                                                           lightSample.pdf,
+                                                       lightSample.pdf,
+                                                       lightSample.distance,
+                                                       contribution,
+                                                       properties);
 #endif
         }
     }

@@ -36,28 +36,39 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
         return false;
     sample.direction = frame.LocalToWorld(localLightDirection);
     sample.eta = 1.f;
-    sample.flags = BSDF_REFLECTION;
+    sample.refractionDistanceScale = 1.f;
+    sample.flags = BSDF_REFLECTION | BSDF_GLOSSY;
+    sample.sampledRoughness = Min(roughness.x, roughness.y);
     return true;
 }
 
 YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
                                          const ClosureEvaluationInfo &info,
                                          const Vec3f &viewDirection,
-                                         const Vec3f &lightDirection)
+                                         const Vec3f &lightDirection,
+                                         BsdfEvaluationProperties *properties = nullptr)
 {
-    if (IsSmoothMicrofacet(YBI_MATERIAL_ROUGHNESS(info)) ||
+    const Vec2f roughness = YBI_MATERIAL_ROUGHNESS(info);
+    if (IsSmoothMicrofacet(roughness) ||
         YBI_MATERIAL_SCATTER_FLAGS != BSDF_REFLECTION)
         return Vec3f(0.f);
     const OrthonormalBasis frame =
         MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
     const float ior = YBI_MATERIAL_IOR(info);
     const float eta = Dot(viewDirection, info.geometricNormal) > 0.f ? ior : 1.f / ior;
-    return EvaluateDielectricBsdf(frame.WorldToLocal(viewDirection),
+    const Vec3f value = EvaluateDielectricBsdf(frame.WorldToLocal(viewDirection),
                                   frame.WorldToLocal(lightDirection),
                                   YBI_MATERIAL_WEIGHT(info),
                                   YBI_MATERIAL_TINT(info),
                                   eta,
-                                  YBI_MATERIAL_ROUGHNESS(info));
+                                  roughness);
+    if (properties && value.MaxComponent() > 0.f)
+    {
+        properties->flags |= BSDF_REFLECTION | BSDF_GLOSSY;
+        properties->maxRoughness =
+            Max(properties->maxRoughness, Max(roughness.x, roughness.y));
+    }
+    return value;
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,

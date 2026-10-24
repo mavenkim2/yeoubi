@@ -1,9 +1,6 @@
 #include "device/cpu_device.h"
 #include "core/allocation.h"
 #if defined(YBI_USE_PATH_GUIDING)
-#if !defined(SIMD_4)
-#error "YBI_USE_PATH_GUIDING requires SIMD_4 for the CPU kd-tree backend"
-#endif
 #include "kernel/backend/cpu/guiding/dispatch.h"
 #include "kernel/backend/cpu/kernel.h"
 #undef YBI_KERNEL
@@ -34,16 +31,23 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
         void (*function)(void **arguments);
     };
     static const KernelEntry entries[] = {
+        {"ReturnRetiredRecordsKernel",
+         DispatchKernelCPU<RadianceRecorder, ReturnRetiredRecordsKernel>},
+
         /************************************************************
          * Kd-tree
          ************************************************************/
 
+        {"InitializePathGuidingSampleIndicesKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, InitializePathGuidingSampleIndicesKernel>},
         {"CollectVMMUpdateNodesKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, CollectVMMUpdateNodesKernel>},
         {"CreateKdTreeNodesKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeNodesKernel>},
         {"CreateKdTreeNodeItemsKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeNodeItemsKernel>},
+        {"CopySampleCountDistributionsKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, CopySampleCountDistributionsKernel>},
         {"CreateKdTreeWorkItemsKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, CreateKdTreeWorkItemsKernel>},
         {"CalculateNodeBoundsKernel",
@@ -85,6 +89,10 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
          ************************************************************/
 
         {"UpdateVMMKernel", DispatchKernelCPU<PathGuidingKdTreeParams, UpdateVMMKernel>},
+        {"PartialUpdateVMMKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, PartialUpdateVMMKernel>},
+        {"SplitVMMKernel", DispatchKernelCPU<PathGuidingKdTreeParams, SplitVMMKernel>},
+        {"MergeVMMKernel", DispatchKernelCPU<PathGuidingKdTreeParams, MergeVMMKernel>},
 
         /************************************************************
          * Parallax
@@ -92,6 +100,8 @@ std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDe
 
         {"ReprojectSamplesKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, ReprojectSamplesKernel>},
+        {"UpdateComponentDistancesKernel",
+         DispatchKernelCPU<PathGuidingKdTreeParams, UpdateComponentDistancesKernel>},
         {"ApplyParallaxShiftDispatchKernel",
          DispatchKernelCPU<PathGuidingKdTreeParams, ApplyParallaxShiftDispatchKernel>},
     };

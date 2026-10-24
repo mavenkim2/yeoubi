@@ -44,12 +44,18 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
 YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
                                          const ClosureEvaluationInfo &info,
                                          const Vec3f &viewDirection,
-                                         const Vec3f &lightDirection)
+                                         const Vec3f &lightDirection,
+                                         BsdfEvaluationProperties *properties = nullptr)
 {
     float transmittanceTop = YBI_MATERIAL_TRANSMITTANCE_TOP(params, info, viewDirection);
-    return YBI_MATERIAL_EVALUATE_TOP(params, info, viewDirection, lightDirection) +
-           transmittanceTop *
-               YBI_MATERIAL_EVALUATE_BOTTOM(params, info, viewDirection, lightDirection);
+    const Vec3f top =
+        YBI_MATERIAL_EVALUATE_TOP(params, info, viewDirection, lightDirection, properties);
+    const Vec3f bottom = YBI_MATERIAL_EVALUATE_BOTTOM(params,
+                                                     info,
+                                                     viewDirection,
+                                                     lightDirection,
+                                                     transmittanceTop > 0.f ? properties : nullptr);
+    return top + transmittanceTop * bottom;
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,

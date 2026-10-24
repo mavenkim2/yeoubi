@@ -125,6 +125,7 @@ YBI_CPU_GPU bool SampleSmoothDielectricBsdf(const Vec3f &viewDirection,
         sample.pdf = reflectionProbability;
         sample.weight = Max(tint, 0.f) * (weight * reflection / sample.pdf);
         sample.eta = 1.f;
+        sample.refractionDistanceScale = 1.f;
         sample.flags = BSDF_REFLECTION | BSDF_DELTA;
     }
     else
@@ -134,8 +135,12 @@ YBI_CPU_GPU bool SampleSmoothDielectricBsdf(const Vec3f &viewDirection,
         sample.pdf = 1.f - reflectionProbability;
         sample.weight = Max(tint, 0.f) * (weight * transmission * Sqr(inverseEta) / sample.pdf);
         sample.eta = eta;
+        const float distanceScale = cosI / (cosT * eta);
+        sample.refractionDistanceScale =
+            distanceScale > 0.f && IsFinite(distanceScale) ? distanceScale : 0.f;
         sample.flags = BSDF_TRANSMISSION | BSDF_DELTA;
     }
+    sample.sampledRoughness = 0.f;
     return true;
 }
 

@@ -27,6 +27,16 @@ struct VMMDistribution
     Vec3f pivotPosition;
     uint32_t numComponents;
     bool initialized;
+    bool split;
+};
+
+struct PathGuidingTrainingSample
+{
+    Vec3f position;
+    uint32_t octahedralDirection;
+    float incidentRadiance;
+    float pdf;
+    float distance;
 };
 
 template <typename Float>
@@ -51,6 +61,10 @@ struct VMMStatistics
 
     // May be fractional after decaying previous observations.
     float numSamples;
+    float sumWeights;
+    float overallNumSamples;
+    uint64_t numSamplesAfterLastSplit;
+    uint64_t numSamplesAfterLastMerge;
 };
 
 using SufficientStatistics = VMMStatistics<float>;
@@ -59,7 +73,6 @@ struct VMMUpdateWorkspace
 {
     SufficientStatistics currentStats;
     float logLikelihood;
-    float sumWeights;
     float normalization;
     float partialWeightScale;
 };
@@ -88,6 +101,12 @@ struct VMMFitConfiguration
     bool printLogLikelihood{false};
     uint32_t initialNumComponents{VMM_MAX_NUM_COMPONENTS / 2};
     float initialKappa{0.5f};
+    bool useSplitAndMerge{true};
+    bool partialReFit{true};
+    uint32_t minSamplesForSplitting{4000};
+    uint32_t minSamplesForPartialRefitting{4000};
+    uint32_t minSamplesForMerging{8000};
+    float decayOnSpatialSplit{0.25f};
 };
 
 struct VMMUpdateRange
@@ -102,6 +121,7 @@ template <typename Float>
 struct VMMSplitStatistics
 {
     Float chiSquareEstimates[VMM_MAX_NUM_COMPONENTS];
+    Float numSamples[VMM_MAX_NUM_COMPONENTS];
     Float sumWeights[VMM_MAX_NUM_COMPONENTS];
     Vector3<Float> sumWeightedCovariances[VMM_MAX_NUM_COMPONENTS];
 };
@@ -317,7 +337,7 @@ struct PathGuidingKdTreeParams
     PathGuidingKdTreeLookaheadStatistics *lookaheadStatistics;
     PathGuidingKdTreeLookaheadStatistics *newLookaheadStatistics = nullptr;
 
-    SampleData *sampleData;
+    PathGuidingTrainingSample *sampleData;
     uint32_t *sampleIndices;
     uint32_t *newSampleIndices;
     uint32_t numSampleIndices;
@@ -325,17 +345,14 @@ struct PathGuidingKdTreeParams
     uint32_t numGuidingCellSplits = 0;
     VMMDistribution *vmmDistributions;
     SufficientStatistics *vmmStatistics = nullptr;
+    VMMSplitStatistics<float> *vmmSplitStatistics = nullptr;
     uint32_t numVMMs = 0;
     uint32_t *vmmUpdateNodeIndices = nullptr;
     uint32_t numVMMUpdateNodes = 0;
+    uint32_t *vmmSplitComponentMasks = nullptr;
     VMMFitConfiguration vmmFitConfiguration;
     float meanRadianceSplitThreshold = 0.05f;
 
-    // Packed with EncodeOctahedral; decoded to unit vectors when loading samples.
-    uint32_t *sampleDirection;
-    float *sampleIncidentRadianceEstimate;
-    float *samplePdf;
-    float *sampleDistance = nullptr;
     uint64_t vmfSplitTexture;
     float vmfSplitMaxInvSqrtK;
 };

@@ -2,7 +2,7 @@
 #include "kernel/backend/cpu/guiding/dispatch.h"
 #include "kernel/backend/cpu/guiding/vmm_backend.h"
 
-#define YBI_GUIDING_BACKEND CpuSIMDVMMBackend
+#define YBI_GUIDING_BACKEND CpuVMMBackend
 #include "kernel/guiding/dispatch.h"
 #undef YBI_GUIDING_BACKEND
 #undef YBI_KERNEL

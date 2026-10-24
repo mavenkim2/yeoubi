@@ -29,12 +29,21 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
 YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
                                          const ClosureEvaluationInfo &info,
                                          const Vec3f &viewDirection,
-                                         const Vec3f &lightDirection)
+                                         const Vec3f &lightDirection,
+                                         BsdfEvaluationProperties *properties = nullptr)
 {
     const float mix = Clamp(YBI_MATERIAL_MIX(info), 0.f, 1.f);
-    return (1.f - mix) *
-               YBI_MATERIAL_EVALUATE_BG(params, info, viewDirection, lightDirection) +
-           mix * YBI_MATERIAL_EVALUATE_FG(params, info, viewDirection, lightDirection);
+    const Vec3f background = YBI_MATERIAL_EVALUATE_BG(params,
+                                                     info,
+                                                     viewDirection,
+                                                     lightDirection,
+                                                     mix < 1.f ? properties : nullptr);
+    const Vec3f foreground = YBI_MATERIAL_EVALUATE_FG(params,
+                                                     info,
+                                                     viewDirection,
+                                                     lightDirection,
+                                                     mix > 0.f ? properties : nullptr);
+    return (1.f - mix) * background + mix * foreground;
 }
 
 YBI_GPU float YBI_MATERIAL_SELF_PDF(const KernelParams &params,

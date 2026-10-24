@@ -3,6 +3,9 @@
 #include "core/math.h"
 #include "device/cuda_compat.h"
 #include "kernel/backend/dispatch.h"
+#if defined(YBI_USE_PATH_GUIDING)
+#include "kernel/guiding/api.h"
+#endif
 #include "kernel/integrator/terminate_path.h"
 #include "kernel/launch/kernel_params.h"
 #include "kernel/raytracing/ray_offset.h"
@@ -28,15 +31,54 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
     const DeviceMaterial3 &material = scene.deviceMaterial3s[handle.index];
     const ClosureEvaluationInfo closureInfo = sampleState->ReadClosureEvaluationInfo(sampleIndex);
     const Vec3f viewDirection = -sampleState->ReadRayDirection(sampleIndex);
+    const Vec3f position = sampleState->ReadPosition(sampleIndex);
     RNG rng = sampleState->ReadRNG(sampleIndex);
     BsdfSample sample;
 
+#ifdef YBI_USE_PATH_GUIDING
+    auto sampleBsdf = [&](BsdfSample &sample) {
+        const bool success = DeviceDispatch<bool>(material.sampleCallableIndex,
+                                                  &params,
+                                                  &closureInfo,
+                                                  viewDirection,
+                                                  &sample,
+                                                  Vec3f(rng.Uniform(), rng.Uniform2D()));
+        return success;
+    };
+    auto evalBsdf = [&](const Vec3f &direction) {
+        BsdfSample sample{};
+        BsdfEvaluationProperties properties;
+
+        const Vec3f bsdfCos = DeviceDispatch<Vec3f>(material.evaluateCallableIndex,
+                                                    &params,
+                                                    &closureInfo,
+                                                    viewDirection,
+                                                    direction,
+                                                    &properties);
+        sample.direction = direction;
+        sample.pdf = DeviceDispatch<float>(
+            material.pdfCallableIndex, &params, &closureInfo, viewDirection, direction);
+        if (sample.pdf > 0.f)
+            sample.weight = bsdfCos / sample.pdf;
+        // The current material evaluation callable supports continuous reflection.
+        sample.eta = 1.f;
+        sample.flags = properties.flags;
+        sample.sampledRoughness = properties.maxRoughness;
+
+        return sample;
+    };
+
+    const bool success =
+        SampleGuiding(sample, params.pathGuiding, position, sampleBsdf, evalBsdf, rng.Uniform3D());
+#else
     const bool success = DeviceDispatch<bool>(material.sampleCallableIndex,
                                               &params,
                                               &closureInfo,
                                               viewDirection,
                                               &sample,
                                               Vec3f(rng.Uniform(), rng.Uniform2D()));
+#endif
+
     sampleState->WriteRNG(sampleIndex, rng);
     if (!success)
     {
@@ -47,6 +89,7 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
     const Vec3f nextDirection = sample.direction;
     Vec3f throughput = sampleState->ReadThroughput(sampleIndex) * sample.weight;
     const float etaScale = sampleState->ReadEtaScale(sampleIndex) * Sqr(sample.eta);
+#if 0
     const float survivalProbability = (throughput * etaScale).MaxComponent();
     if (survivalProbability < 1.f && depth > 1)
     {
@@ -60,29 +103,17 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
         }
         throughput /= survivalProbability;
     }
+#endif
 
-    const Vec3f position = sampleState->ReadPosition(sampleIndex);
     Vec3f geometricNormal = sampleState->ReadGeometricNormal(sampleIndex);
     if (Dot(nextDirection, geometricNormal) < 0.f)
         geometricNormal = -geometricNormal;
 
 #ifdef YBI_USE_PATH_GUIDING
-    int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
-    int childRecordIndex;
-    const bool recordAllocated = params.radianceRecorder.AllocateRecord(childRecordIndex);
-    assert(recordAllocated);
-
-    RadianceRecord &child = params.radianceRecorder.records[childRecordIndex];
-    child.InitializeIndirectSample(position,
-                                   sampleState->ReadShadingNormal(sampleIndex),
-                                   nextDirection,
-                                   recordIndex,
-                                   throughput,
-                                   sample.pdf);
-
+    const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
+    const int childRecordIndex = params.radianceRecorder.RecordIndirectSample(
+        position, sampleState->ReadShadingNormal(sampleIndex), sample, recordIndex, throughput);
     sampleState->WriteRadianceRecordIndex(sampleIndex, childRecordIndex);
-    params.radianceRecorder.IncrementCount(recordIndex);
-    params.radianceRecorder.MarkDone(recordIndex);
 #endif
 
     sampleState->WriteThroughput(sampleIndex, throughput);

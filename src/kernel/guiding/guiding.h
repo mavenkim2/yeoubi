@@ -5,7 +5,6 @@
 #pragma once
 
 #include "core/frame.h"
-#include "core/simd_float4.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
 #include "kernel/guiding/parallax.h"
@@ -26,6 +25,7 @@ YBI_CPU_GPU void InitializeUniformVMM(VMMDistribution &distribution,
     YBI_ASSERT(cfg.initialNumComponents > 0 && cfg.initialNumComponents <= VMM_MAX_NUM_COMPONENTS);
     YBI_ASSERT(cfg.initialKappa >= 0.f && IsFinite(cfg.initialKappa));
     distribution = {};
+    distribution.split = true;
     distribution.numComponents = cfg.initialNumComponents;
     const float weight = 1.f / float(cfg.initialNumComponents);
     const float goldenRatio = 1.618033988749895f;
@@ -118,9 +118,11 @@ BeginVMMIteration(uint32_t numSamples, uint32_t numComponents, VMMUpdateWorkspac
     }
     if (Backend::GetThreadIndex() == 0)
     {
+        // TODO: Exclude zero-weight samples from directional EM, retain them for spatial/lookahead
+        // statistics, and preserve the previous distribution for batches with no positive weight.
         workspace.currentStats.numSamples = float(numSamples);
+        workspace.currentStats.sumWeights = 0.f;
         workspace.logLikelihood = 0.f;
-        workspace.sumWeights = 0.f;
         workspace.normalization = 0.f;
     }
     Backend::Sync();
@@ -144,7 +146,7 @@ YBI_GPU void ReduceVMMStatistics(const typename Backend::VMMStatistics &localSta
 }
 
 template <typename Backend>
-YBI_GPU bool NormalizeVMMStatistics(uint32_t numComponents, VMMUpdateWorkspace &workspace)
+YBI_GPU void NormalizeVMMStatistics(uint32_t numComponents, VMMUpdateWorkspace &workspace)
 {
     if (Backend::GetThreadIndex() == 0)
     {
@@ -153,14 +155,11 @@ YBI_GPU bool NormalizeVMMStatistics(uint32_t numComponents, VMMUpdateWorkspace &
         {
             sum += workspace.currentStats.sumWeightedStats[k];
         }
-        workspace.sumWeights = sum;
-        workspace.normalization = SafeDivide(workspace.currentStats.numSamples, sum);
+        workspace.currentStats.sumWeights = sum;
+        workspace.normalization =
+            sum > FLT_EPSILON ? workspace.currentStats.numSamples / sum : 1.f;
     }
     Backend::Sync();
-    if (workspace.sumWeights == 0.f)
-    {
-        return false;
-    }
     for (uint32_t k = Backend::GetThreadIndex(); k < numComponents;
          k += Backend::GetThreadStride())
     {
@@ -168,7 +167,6 @@ YBI_GPU bool NormalizeVMMStatistics(uint32_t numComponents, VMMUpdateWorkspace &
         workspace.currentStats.sumWeightedStats[k] *= workspace.normalization;
     }
     Backend::Sync();
-    return true;
 }
 
 template <typename Backend, bool Partial = false>
@@ -241,6 +239,7 @@ YBI_GPU void CommitVMMStatistics(SufficientStatistics &previousStats,
             {
                 previousStats.sumWeightedDirections[k] = currentStats.sumWeightedDirections[k];
                 previousStats.sumWeightedStats[k] = currentStats.sumWeightedStats[k];
+                previousStats.sumDistanceWeights[k] = 0.f;
             }
         }
         else
@@ -267,6 +266,8 @@ YBI_GPU void CommitVMMStatistics(SufficientStatistics &previousStats,
         else
         {
             previousStats.numSamples += currentStats.numSamples;
+            previousStats.sumWeights += currentStats.sumWeights;
+            previousStats.overallNumSamples += currentStats.numSamples;
         }
     }
     Backend::Sync();
@@ -325,10 +326,7 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
 
         ReduceVMMStatistics<Backend>(
             localStats, localLogLikelihood, distribution.numComponents, workspace);
-        if (!NormalizeVMMStatistics<Backend>(distribution.numComponents, workspace))
-        {
-            return;
-        }
+        NormalizeVMMStatistics<Backend>(distribution.numComponents, workspace);
         UpdateVMMComponents<Backend, Partial>(distribution,
                                               workspace,
                                               previousStats,
@@ -358,67 +356,6 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
 }
 
 template <typename Backend>
-YBI_GPU void UpdateNodeVMM(const PathGuidingKdTreeParams &params,
-                           uint32_t updateIndex,
-                           VMMDistribution &distribution,
-                           SufficientStatistics &previousStats,
-                           VMMUpdateWorkspace &workspace)
-{
-    const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
-    const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
-    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
-    VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
-    SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
-
-    if (Backend::GetThreadIndex() == 0)
-    {
-        distribution.numComponents = storedDistribution.numComponents;
-        distribution.pivotPosition = storedDistribution.pivotPosition;
-        distribution.initialized = storedDistribution.initialized;
-        previousStats.numSamples = storedStats.numSamples;
-    }
-    Backend::Sync();
-    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
-         k += Backend::GetThreadStride())
-    {
-        distribution.weights[k] = storedDistribution.weights[k];
-        distribution.meanDirection[k] = storedDistribution.meanDirection[k];
-        distribution.kappa[k] = storedDistribution.kappa[k];
-        distribution.distance[k] = storedDistribution.distance[k];
-        previousStats.sumWeightedDirections[k] = storedStats.sumWeightedDirections[k];
-        previousStats.sumWeightedStats[k] = storedStats.sumWeightedStats[k];
-        previousStats.sumDistanceWeights[k] = storedStats.sumDistanceWeights[k];
-    }
-    Backend::Sync();
-
-    const VMMUpdateRange range{nodeItem.sampleOffset,
-                               nodeItem.sampleCount,
-                               previousStats.numSamples + float(nodeItem.sampleCount)};
-    UpdateVMM<Backend>(
-        params, distribution, previousStats, range, params.vmmFitConfiguration, workspace);
-
-    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
-         k += Backend::GetThreadStride())
-    {
-        storedDistribution.weights[k] = distribution.weights[k];
-        storedDistribution.meanDirection[k] = distribution.meanDirection[k];
-        storedDistribution.kappa[k] = distribution.kappa[k];
-        storedDistribution.distance[k] = distribution.distance[k];
-        storedStats.sumWeightedDirections[k] = previousStats.sumWeightedDirections[k];
-        storedStats.sumWeightedStats[k] = previousStats.sumWeightedStats[k];
-        storedStats.sumDistanceWeights[k] = previousStats.sumDistanceWeights[k];
-    }
-    if (Backend::GetThreadIndex() == 0)
-    {
-        storedDistribution.numComponents = distribution.numComponents;
-        storedDistribution.pivotPosition = distribution.pivotPosition;
-        storedDistribution.initialized = distribution.initialized;
-        storedStats.numSamples = previousStats.numSamples;
-    }
-    Backend::Sync();
-}
-
-template <typename Backend>
 YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
                                          const VMMDistribution &distribution,
                                          const VMMUpdateRange &range,
@@ -439,6 +376,7 @@ YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
          k += Backend::GetThreadStride())
     {
         workspace.statistics.chiSquareEstimates[k] = 0.f;
+        workspace.statistics.numSamples[k] = 0.f;
         workspace.statistics.sumWeights[k] = 0.f;
         workspace.statistics.sumWeightedCovariances[k] = Vec3f(0.f);
         BuildOrthonormalBasis(
@@ -474,9 +412,17 @@ YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
         const Float V = SoftAssignment<Float>(distribution, sample.direction, assignments);
         const Float directionLengthSquared =
             Sqr(sample.direction.x) + Sqr(sample.direction.y) + Sqr(sample.direction.z);
+        Float sumAssignments(0.f);
+        for (uint32_t k = 0; k < numComponents; ++k)
+            sumAssignments += assignments[k];
+        const Float numSamples =
+            Select(sumAssignments > Float(0.f),
+                   Select(directionLengthSquared > Float(0.f), Float(1.f), Float(0.f)),
+                   Float(0.f));
         for (uint32_t k = 0; k < numComponents; ++k)
         {
             const Float assignment = assignments[k];
+            localStats.numSamples[k] += numSamples;
             const Float weightedComponentPdf = assignment * V;
             Float chiSquareEstimate = Sqr(Li) * assignment / (Sqr(mcEstimate) * V);
             chiSquareEstimate = chiSquareEstimate - Float(2.f) * assignment * Li / mcEstimate;
@@ -501,6 +447,7 @@ YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
     {
         Backend::ReduceAdd(localStats.chiSquareEstimates[k],
                            workspace.statistics.chiSquareEstimates[k]);
+        Backend::ReduceAdd(localStats.numSamples[k], workspace.statistics.numSamples[k]);
         Backend::ReduceAdd(localStats.sumWeights[k], workspace.statistics.sumWeights[k]);
         Backend::ReduceAdd(localStats.sumWeightedCovariances[k],
                            workspace.statistics.sumWeightedCovariances[k]);
@@ -510,7 +457,9 @@ YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
          k += Backend::GetThreadStride())
     {
         workspace.statistics.chiSquareEstimates[k] =
-            Max(0.f, workspace.statistics.chiSquareEstimates[k] / float(range.numSamples));
+            Max(0.f,
+                SafeDivide(workspace.statistics.chiSquareEstimates[k],
+                           workspace.statistics.numSamples[k]));
     }
     Backend::Sync();
 }
@@ -561,6 +510,7 @@ YBI_CPU_GPU bool SplitVMMComponent(VMMDistribution &distribution,
     const float childKappa = MeanCosineToKappa(childMeanCosine);
     const float childWeight = 0.5f * distribution.weights[componentIndex];
     const float childStatsWeight = 0.5f * previousStats.sumWeightedStats[componentIndex];
+    const float childDistanceWeight = 0.5f * previousStats.sumDistanceWeights[componentIndex];
     const uint32_t childIndex = distribution.numComponents;
 
     distribution.weights[componentIndex] = childWeight;
@@ -569,14 +519,19 @@ YBI_CPU_GPU bool SplitVMMComponent(VMMDistribution &distribution,
     distribution.meanDirection[childIndex] = direction1;
     distribution.kappa[componentIndex] = childKappa;
     distribution.kappa[childIndex] = childKappa;
+    distribution.distance[childIndex] = distribution.distance[componentIndex];
     previousStats.sumWeightedStats[componentIndex] = childStatsWeight;
     previousStats.sumWeightedStats[childIndex] = childStatsWeight;
+    previousStats.sumDistanceWeights[componentIndex] = childDistanceWeight;
+    previousStats.sumDistanceWeights[childIndex] = childDistanceWeight;
     previousStats.sumWeightedDirections[componentIndex] =
         direction0 * (childMeanCosine * childStatsWeight);
     previousStats.sumWeightedDirections[childIndex] =
         direction1 * (childMeanCosine * childStatsWeight);
     workspace.statistics.chiSquareEstimates[componentIndex] = 0.f;
     workspace.statistics.chiSquareEstimates[childIndex] = 0.f;
+    workspace.statistics.numSamples[componentIndex] = 0.f;
+    workspace.statistics.numSamples[childIndex] = 0.f;
     workspace.statistics.sumWeights[componentIndex] = 0.f;
     workspace.statistics.sumWeights[childIndex] = 0.f;
     workspace.statistics.sumWeightedCovariances[componentIndex] = Vec3f(0.f);
@@ -590,15 +545,32 @@ template <typename Backend>
 YBI_GPU uint32_t SplitVMM(const PathGuidingKdTreeParams &params,
                           VMMDistribution &distribution,
                           SufficientStatistics &previousStats,
+                          VMMSplitStatistics<float> &splitStatistics,
                           const VMMUpdateRange &range,
                           float fluxEstimate,
                           const VMMFitConfiguration &cfg,
-                          VMMSplitWorkspace &workspace)
+                          VMMSplitWorkspace &workspace,
+                          bool splitComponents = true)
 {
     YBI_ASSERT(cfg.splittingThreshold >= 0.f);
     YBI_ASSERT(cfg.map.maxMeanCosine > 0.f);
     CalculateVMMSplitStatistics<Backend>(params, distribution, range, fluxEstimate, workspace);
-    if (Backend::GetThreadIndex() == 0)
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        const float batchNumSamples = workspace.statistics.numSamples[k];
+        const float numSamples = splitStatistics.numSamples[k] + batchNumSamples;
+        workspace.statistics.chiSquareEstimates[k] =
+            SafeDivide(splitStatistics.chiSquareEstimates[k] * splitStatistics.numSamples[k] +
+                           workspace.statistics.chiSquareEstimates[k] * batchNumSamples,
+                       numSamples);
+        workspace.statistics.numSamples[k] = numSamples;
+        workspace.statistics.sumWeights[k] += splitStatistics.sumWeights[k];
+        workspace.statistics.sumWeightedCovariances[k] +=
+            splitStatistics.sumWeightedCovariances[k];
+    }
+    Backend::Sync();
+    if (splitComponents && Backend::GetThreadIndex() == 0)
     {
         const uint32_t numComponents = distribution.numComponents;
         uint32_t candidates[VMM_MAX_NUM_COMPONENTS];
@@ -625,6 +597,15 @@ YBI_GPU uint32_t SplitVMM(const PathGuidingKdTreeParams &params,
                 ++workspace.numSplits;
             }
         }
+    }
+    Backend::Sync();
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        splitStatistics.chiSquareEstimates[k] = workspace.statistics.chiSquareEstimates[k];
+        splitStatistics.numSamples[k] = workspace.statistics.numSamples[k];
+        splitStatistics.sumWeights[k] = workspace.statistics.sumWeights[k];
+        splitStatistics.sumWeightedCovariances[k] = workspace.statistics.sumWeightedCovariances[k];
     }
     Backend::Sync();
     return workspace.numSplits;
@@ -710,8 +691,55 @@ YBI_CPU_GPU float CalculateVMMMergeCost(const VMMDistribution &distribution,
     return Max(0.f, integral / merged.weight - merged.weight);
 }
 
+YBI_CPU_GPU void MergeVMMSplitStatistics(const VMMDistribution &distribution,
+                                         VMMSplitStatistics<float> &statistics,
+                                         uint32_t component0,
+                                         uint32_t component1,
+                                         const VMMMergeCandidate &merged)
+{
+    const float weight0 = distribution.weights[component0];
+    const float weight1 = distribution.weights[component1];
+    const float sumWeights = statistics.sumWeights[component0] + statistics.sumWeights[component1];
+    const Vec3f covariance0 = SafeDivide(statistics.sumWeightedCovariances[component0],
+                                         statistics.sumWeights[component0]);
+    const Vec3f covariance1 = SafeDivide(statistics.sumWeightedCovariances[component1],
+                                         statistics.sumWeights[component1]);
+    Vec3f tangent, bitangent;
+    BuildOrthonormalBasis(merged.meanDirection, tangent, bitangent);
+    const Vec3f direction0 = distribution.meanDirection[component0];
+    const Vec3f direction1 = distribution.meanDirection[component1];
+    const float angle0 = acosf(Clamp(Dot(direction0, merged.meanDirection), -1.f, 1.f));
+    const float angle1 = acosf(Clamp(Dot(direction1, merged.meanDirection), -1.f, 1.f));
+    const Vec3f mean0 = Vec3f(Dot(direction0, tangent), Dot(direction0, bitangent), 0.f) *
+                        SafeDivide(angle0, Sin(angle0));
+    const Vec3f mean1 = Vec3f(Dot(direction1, tangent), Dot(direction1, bitangent), 0.f) *
+                        SafeDivide(angle1, Sin(angle1));
+    const Vec3f outer0(Sqr(mean0.x), Sqr(mean0.y), mean0.x * mean0.y);
+    const Vec3f outer1(Sqr(mean1.x), Sqr(mean1.y), mean1.x * mean1.y);
+    statistics.sumWeightedCovariances[component0] =
+        SafeDivide((covariance0 + outer0) * weight0 + (covariance1 + outer1) * weight1,
+                   merged.weight) *
+        sumWeights;
+    statistics.sumWeights[component0] = sumWeights;
+    statistics.numSamples[component0] = SafeDivide(weight0 * statistics.numSamples[component0] +
+                                                       weight1 * statistics.numSamples[component1],
+                                                   merged.weight);
+    statistics.chiSquareEstimates[component0] += statistics.chiSquareEstimates[component1];
+
+    const uint32_t last = distribution.numComponents - 1;
+    statistics.sumWeightedCovariances[component1] = statistics.sumWeightedCovariances[last];
+    statistics.sumWeights[component1] = statistics.sumWeights[last];
+    statistics.numSamples[component1] = statistics.numSamples[last];
+    statistics.chiSquareEstimates[component1] = statistics.chiSquareEstimates[last];
+    statistics.sumWeightedCovariances[last] = Vec3f(0.f);
+    statistics.sumWeights[last] = 0.f;
+    statistics.numSamples[last] = 0.f;
+    statistics.chiSquareEstimates[last] = 0.f;
+}
+
 YBI_CPU_GPU void MergeVMMComponents(VMMDistribution &distribution,
                                     SufficientStatistics &previousStats,
+                                    VMMSplitStatistics<float> &splitStatistics,
                                     uint32_t component0,
                                     uint32_t component1,
                                     const VMMMapConfiguration &cfg,
@@ -720,19 +748,28 @@ YBI_CPU_GPU void MergeVMMComponents(VMMDistribution &distribution,
     YBI_ASSERT(component0 < component1 && component1 < distribution.numComponents);
     const VMMMergeCandidate merged =
         CalculateVMMMergedComponent(distribution, component0, component1, cfg);
+    MergeVMMSplitStatistics(distribution, splitStatistics, component0, component1, merged);
+    const float distance =
+        SafeDivide(distribution.weights[component0] * distribution.distance[component0] +
+                       distribution.weights[component1] * distribution.distance[component1],
+                   merged.weight);
     distribution.weights[component0] = merged.weight;
     distribution.meanDirection[component0] = merged.meanDirection;
     distribution.kappa[component0] = merged.kappa;
+    distribution.distance[component0] = distance;
     previousStats.sumWeightedStats[component0] += previousStats.sumWeightedStats[component1];
     previousStats.sumWeightedDirections[component0] +=
         previousStats.sumWeightedDirections[component1];
+    previousStats.sumDistanceWeights[component0] += previousStats.sumDistanceWeights[component1];
 
     const uint32_t last = distribution.numComponents - 1;
     distribution.weights[component1] = distribution.weights[last];
     distribution.meanDirection[component1] = distribution.meanDirection[last];
     distribution.kappa[component1] = distribution.kappa[last];
+    distribution.distance[component1] = distribution.distance[last];
     previousStats.sumWeightedStats[component1] = previousStats.sumWeightedStats[last];
     previousStats.sumWeightedDirections[component1] = previousStats.sumWeightedDirections[last];
+    previousStats.sumDistanceWeights[component1] = previousStats.sumDistanceWeights[last];
     const bool movedComponentSelected = (componentMask & (1u << last)) != 0;
     componentMask &= ~((1u << component1) | (1u << last));
     if (component1 != last && movedComponentSelected)
@@ -744,8 +781,10 @@ YBI_CPU_GPU void MergeVMMComponents(VMMDistribution &distribution,
     distribution.weights[last] = 0.f;
     distribution.meanDirection[last] = Vec3f(0.f);
     distribution.kappa[last] = 0.f;
+    distribution.distance[last] = 0.f;
     previousStats.sumWeightedStats[last] = 0.f;
     previousStats.sumWeightedDirections[last] = Vec3f(0.f);
+    previousStats.sumDistanceWeights[last] = 0.f;
     --distribution.numComponents;
 }
 
@@ -763,6 +802,7 @@ YBI_CPU_GPU void VMMComponentPairFromIndex(uint32_t pair,
 template <typename Backend>
 YBI_GPU uint32_t MergeVMM(VMMDistribution &distribution,
                           SufficientStatistics &previousStats,
+                          VMMSplitStatistics<float> &splitStatistics,
                           const VMMFitConfiguration &cfg,
                           VMMMergeWorkspace &workspace)
 {
@@ -787,7 +827,10 @@ YBI_GPU uint32_t MergeVMM(VMMDistribution &distribution,
             uint32_t component0, component1;
             VMMComponentPairFromIndex(pair, numComponents, component0, component1);
             workspace.costs[pair] =
-                CalculateVMMMergeCost(distribution, component0, component1, cfg.map);
+                splitStatistics.numSamples[component0] > 0.f &&
+                        splitStatistics.numSamples[component1] > 0.f
+                    ? CalculateVMMMergeCost(distribution, component0, component1, cfg.map)
+                    : FLOAT_INFINITY;
         }
         Backend::Sync();
         if (Backend::GetThreadIndex() == 0)
@@ -812,8 +855,13 @@ YBI_GPU uint32_t MergeVMM(VMMDistribution &distribution,
             workspace.merged = best0 != best1;
             if (workspace.merged)
             {
-                MergeVMMComponents(
-                    distribution, previousStats, best0, best1, cfg.map, workspace.componentMask);
+                MergeVMMComponents(distribution,
+                                   previousStats,
+                                   splitStatistics,
+                                   best0,
+                                   best1,
+                                   cfg.map,
+                                   workspace.componentMask);
                 ++workspace.numMerges;
             }
         }
@@ -824,6 +872,247 @@ YBI_GPU uint32_t MergeVMM(VMMDistribution &distribution,
         }
     }
     return workspace.numMerges;
+}
+
+/************************************************************
+ * Node dispatch helpers
+ ************************************************************/
+
+template <typename Backend>
+YBI_GPU void DecayVMMStatistics(VMMDistribution &distribution,
+                                SufficientStatistics &statistics,
+                                VMMSplitStatistics<float> &splitStatistics,
+                                float decay)
+{
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        statistics.sumWeightedDirections[k] *= decay;
+        statistics.sumWeightedStats[k] *= decay;
+        statistics.sumDistanceWeights[k] *= decay;
+        splitStatistics.numSamples[k] *= decay;
+        splitStatistics.sumWeights[k] *= decay;
+        splitStatistics.sumWeightedCovariances[k] *= decay;
+    }
+    Backend::Sync();
+    if (Backend::GetThreadIndex() == 0)
+    {
+        statistics.numSamples *= decay;
+        statistics.sumWeights *= decay;
+        distribution.split = false;
+    }
+    Backend::Sync();
+}
+
+template <typename Backend>
+YBI_GPU void LoadVMM(const VMMDistribution &storedDistribution,
+                     const SufficientStatistics &storedStats,
+                     VMMDistribution &distribution,
+                     SufficientStatistics &previousStats)
+{
+    if (Backend::GetThreadIndex() == 0)
+    {
+        distribution.numComponents = storedDistribution.numComponents;
+        distribution.pivotPosition = storedDistribution.pivotPosition;
+        distribution.initialized = storedDistribution.initialized;
+        distribution.split = storedDistribution.split;
+        previousStats.numSamples = storedStats.numSamples;
+        previousStats.sumWeights = storedStats.sumWeights;
+        previousStats.overallNumSamples = storedStats.overallNumSamples;
+        previousStats.numSamplesAfterLastSplit = storedStats.numSamplesAfterLastSplit;
+        previousStats.numSamplesAfterLastMerge = storedStats.numSamplesAfterLastMerge;
+    }
+    Backend::Sync();
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        distribution.weights[k] = storedDistribution.weights[k];
+        distribution.meanDirection[k] = storedDistribution.meanDirection[k];
+        distribution.kappa[k] = storedDistribution.kappa[k];
+        distribution.distance[k] = storedDistribution.distance[k];
+        previousStats.sumWeightedDirections[k] = storedStats.sumWeightedDirections[k];
+        previousStats.sumWeightedStats[k] = storedStats.sumWeightedStats[k];
+        previousStats.sumDistanceWeights[k] = storedStats.sumDistanceWeights[k];
+    }
+    Backend::Sync();
+}
+
+template <typename Backend>
+YBI_GPU void StoreVMM(VMMDistribution &storedDistribution,
+                      SufficientStatistics &storedStats,
+                      const VMMDistribution &distribution,
+                      const SufficientStatistics &previousStats)
+{
+    for (uint32_t k = Backend::GetThreadIndex(); k < distribution.numComponents;
+         k += Backend::GetThreadStride())
+    {
+        storedDistribution.weights[k] = distribution.weights[k];
+        storedDistribution.meanDirection[k] = distribution.meanDirection[k];
+        storedDistribution.kappa[k] = distribution.kappa[k];
+        storedDistribution.distance[k] = distribution.distance[k];
+        storedStats.sumWeightedDirections[k] = previousStats.sumWeightedDirections[k];
+        storedStats.sumWeightedStats[k] = previousStats.sumWeightedStats[k];
+        storedStats.sumDistanceWeights[k] = previousStats.sumDistanceWeights[k];
+    }
+    if (Backend::GetThreadIndex() == 0)
+    {
+        storedDistribution.numComponents = distribution.numComponents;
+        storedDistribution.pivotPosition = distribution.pivotPosition;
+        storedDistribution.initialized = distribution.initialized;
+        storedDistribution.split = distribution.split;
+        storedStats.numSamples = previousStats.numSamples;
+        storedStats.sumWeights = previousStats.sumWeights;
+        storedStats.overallNumSamples = previousStats.overallNumSamples;
+        storedStats.numSamplesAfterLastSplit = previousStats.numSamplesAfterLastSplit;
+        storedStats.numSamplesAfterLastMerge = previousStats.numSamplesAfterLastMerge;
+    }
+    Backend::Sync();
+}
+
+template <typename Backend, bool Partial = false>
+YBI_GPU void UpdateNodeVMM(const PathGuidingKdTreeParams &params,
+                           uint32_t updateIndex,
+                           VMMDistribution &distribution,
+                           SufficientStatistics &previousStats,
+                           VMMUpdateWorkspace &workspace)
+{
+    const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    uint32_t componentMask = ~0u;
+    if constexpr (Partial)
+    {
+        if (!params.vmmFitConfiguration.useSplitAndMerge ||
+            !params.vmmFitConfiguration.partialReFit ||
+            nodeItem.sampleCount < params.vmmFitConfiguration.minSamplesForPartialRefitting)
+            return;
+        componentMask = params.vmmSplitComponentMasks[node.guidingCellIndex];
+        if (componentMask == 0)
+            return;
+    }
+    VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
+    SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
+    LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+
+    if constexpr (!Partial)
+    {
+        if (distribution.split)
+            DecayVMMStatistics<Backend>(distribution,
+                                        previousStats,
+                                        params.vmmSplitStatistics[node.guidingCellIndex],
+                                        params.vmmFitConfiguration.decayOnSpatialSplit);
+        if (distribution.initialized && params.vmmFitConfiguration.useSplitAndMerge &&
+            Backend::GetThreadIndex() == 0)
+        {
+            previousStats.numSamplesAfterLastSplit += nodeItem.sampleCount;
+            previousStats.numSamplesAfterLastMerge += nodeItem.sampleCount;
+        }
+        Backend::Sync();
+    }
+    const float overallNumSamples =
+        previousStats.overallNumSamples + (Partial ? 0.f : float(nodeItem.sampleCount));
+    const VMMUpdateRange range{nodeItem.sampleOffset, nodeItem.sampleCount, overallNumSamples};
+    UpdateVMM<Backend, Partial>(params,
+                                distribution,
+                                previousStats,
+                                range,
+                                params.vmmFitConfiguration,
+                                workspace,
+                                componentMask);
+    StoreVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+}
+
+template <typename Backend>
+YBI_GPU void SplitNodeVMM(const PathGuidingKdTreeParams &params,
+                          uint32_t updateIndex,
+                          VMMDistribution &distribution,
+                          SufficientStatistics &previousStats,
+                          VMMSplitWorkspace &workspace)
+{
+    const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    if (!params.vmmFitConfiguration.useSplitAndMerge)
+    {
+        if (Backend::GetThreadIndex() == 0)
+            params.vmmSplitComponentMasks[node.guidingCellIndex] = 0;
+        return;
+    }
+    VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
+    SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
+    LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+
+    const VMMUpdateRange range{
+        nodeItem.sampleOffset, nodeItem.sampleCount, previousStats.overallNumSamples};
+    const bool splitComponents = previousStats.overallNumSamples == float(nodeItem.sampleCount) ||
+                                 previousStats.numSamplesAfterLastSplit >=
+                                     params.vmmFitConfiguration.minSamplesForSplitting;
+    const float fluxEstimate = SafeDivide(previousStats.sumWeights, previousStats.numSamples);
+    SplitVMM<Backend>(params,
+                      distribution,
+                      previousStats,
+                      params.vmmSplitStatistics[node.guidingCellIndex],
+                      range,
+                      fluxEstimate,
+                      params.vmmFitConfiguration,
+                      workspace,
+                      splitComponents);
+    if (Backend::GetThreadIndex() == 0)
+    {
+        params.vmmSplitComponentMasks[node.guidingCellIndex] = workspace.componentMask;
+        if (splitComponents)
+            previousStats.numSamplesAfterLastSplit = 0;
+    }
+    Backend::Sync();
+    StoreVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+}
+
+template <typename Backend>
+YBI_GPU void MergeNodeVMM(const PathGuidingKdTreeParams &params,
+                          uint32_t updateIndex,
+                          VMMDistribution &distribution,
+                          SufficientStatistics &previousStats,
+                          VMMMergeWorkspace &workspace)
+{
+    const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+    if (!params.vmmFitConfiguration.useSplitAndMerge)
+        return;
+    VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
+    SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
+    LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+    if (previousStats.overallNumSamples != float(params.nodeItems[nodeIndex].sampleCount) &&
+        previousStats.numSamplesAfterLastMerge < params.vmmFitConfiguration.minSamplesForMerging)
+        return;
+    MergeVMM<Backend>(distribution,
+                      previousStats,
+                      params.vmmSplitStatistics[node.guidingCellIndex],
+                      params.vmmFitConfiguration,
+                      workspace);
+    if (Backend::GetThreadIndex() == 0)
+        previousStats.numSamplesAfterLastMerge = 0;
+    Backend::Sync();
+    StoreVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+}
+
+template <typename Backend>
+YBI_GPU void UpdateNodeComponentDistances(const PathGuidingKdTreeParams &params,
+                                          uint32_t updateIndex,
+                                          VMMDistribution &distribution,
+                                          SufficientStatistics &previousStats,
+                                          VMMComponentDistanceWorkspace &workspace)
+{
+    const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
+    const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
+    SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
+    LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
+
+    const VMMUpdateRange range{
+        nodeItem.sampleOffset, nodeItem.sampleCount, previousStats.overallNumSamples};
+    UpdateComponentDistances<Backend>(params, distribution, previousStats, range, workspace);
+    StoreVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
 }
 
 } // namespace ybi

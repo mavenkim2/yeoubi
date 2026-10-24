@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/atomic.h"
+#include "core/octahedral.h"
 #include "core/vec3f.h"
 #include "device/cuda_compat.h"
 #include "kernel/guiding/kd_tree.h"
@@ -81,10 +82,11 @@ UpdateLookaheadCell(const PathGuidingKdTreeParams &params,
          sampleOffset += VMM_BLOCK_SIZE)
     {
         const uint32_t sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
-        const SampleData &sample = params.sampleData[sampleIndex];
+        const PathGuidingTrainingSample &sample = params.sampleData[sampleIndex];
         YBI_ASSERT(sample.pdf > 0.f);
-        const float Li = sample.incidentRadianceEstimate / sample.pdf;
-        const PathGuidingKdTreeLookaheadStatistics value{Li, Sqr(Li), sample.direction * Li, 1};
+        const float Li = sample.incidentRadiance / sample.pdf;
+        const Vec3f direction = DecodeOctahedral(sample.octahedralDirection);
+        const PathGuidingKdTreeLookaheadStatistics value{Li, Sqr(Li), direction * Li, 1};
         result = result + value;
     }
     return result;
@@ -236,9 +238,14 @@ YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
             right.guidingCellIndex = int(params.numVMMs++);
             params.vmmDistributions[right.guidingCellIndex] =
                 params.vmmDistributions[left.guidingCellIndex];
+            params.vmmDistributions[left.guidingCellIndex].split = true;
+            params.vmmDistributions[right.guidingCellIndex].split = true;
             if (params.vmmStatistics)
                 params.vmmStatistics[right.guidingCellIndex] =
                     params.vmmStatistics[left.guidingCellIndex];
+            if (params.vmmSplitStatistics)
+                params.vmmSplitStatistics[right.guidingCellIndex] =
+                    params.vmmSplitStatistics[left.guidingCellIndex];
             left.ancestorGuidingCellIndex = -1;
             right.ancestorGuidingCellIndex = -1;
             node.guidingCellIndex = -1;

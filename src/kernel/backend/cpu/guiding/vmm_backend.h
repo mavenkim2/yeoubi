@@ -1,24 +1,22 @@
 #pragma once
 
 #include "core/atomic.h"
-#include "core/simd_float4.h"
 #include "kernel/backend/cpu/reduction.h"
 #include "kernel/guiding/types.h"
 
-#if defined(SIMD_4)
 #include <cstdio>
 
 namespace ybi
 {
 
-// One CPU worker owns each VMM. SIMD lanes process independent samples.
-struct CpuSIMDVMMBackend
+// One CPU worker owns each VMM.
+struct CpuVMMBackend
 {
-    using Float = Float4;
+    using Float = float;
     using Vector3 = ybi::Vector3<Float>;
     using SampleData = VMMSampleData<Float>;
     using VMMStatistics = ybi::VMMStatistics<Float>;
-    static constexpr uint32_t SampleWidth = 4;
+    static constexpr uint32_t SampleWidth = 1;
     static uint32_t GetThreadIndex()
     {
         return 0;
@@ -63,11 +61,6 @@ struct CpuSIMDVMMBackend
         ReduceMax(value.z, destination.z);
     }
 
-    static void ReduceAdd(Float value, float &destination)
-    {
-        destination += ReduceSum(value);
-    }
-
     static void ReduceAdd(const Vector3 &value, Vec3f &destination)
     {
         ReduceAdd(value.x, destination.x);
@@ -102,4 +95,3 @@ struct CpuSIMDVMMBackend
 
 } // namespace ybi
 
-#endif

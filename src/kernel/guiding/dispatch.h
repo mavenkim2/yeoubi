@@ -4,6 +4,7 @@
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
 #include "kernel/guiding/parallax.h"
+#include "kernel/guiding/radiance_recorder.h"
 
 #if !defined(YBI_KERNEL) || !defined(YBI_SHARED) || !defined(YBI_ITERATE_WORK_ITEMS) || \
     !defined(YBI_ITERATE_ELEMENTS) || !defined(YBI_END_ITERATE_WORK_ITEMS) || \
@@ -14,9 +15,28 @@
 namespace ybi
 {
 
+YBI_KERNEL ReturnRetiredRecordsKernel(RadianceRecorder *recorder)
+{
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, 1u)
+    {
+        ReturnRetiredRecords<YBI_GUIDING_BACKEND>(*recorder);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
+
 /************************************************************
  * Kd-tree
  ************************************************************/
+
+YBI_KERNEL InitializePathGuidingSampleIndicesKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_ELEMENTS(sampleIndex, params.numSampleIndices)
+    {
+        params.sampleIndices[sampleIndex] = sampleIndex;
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
 
 YBI_KERNEL CollectVMMUpdateNodesKernel(PathGuidingKdTreeParams *kernelParams)
 {
@@ -39,6 +59,14 @@ YBI_KERNEL CreateKdTreeNodeItemsKernel(PathGuidingKdTreeParams *kernelParams)
     if (YBI_FIRST_THREAD)
     {
         CreateKdTreeNodeItems(*kernelParams, kernelParams->splitDecision);
+    }
+}
+
+YBI_KERNEL CopySampleCountDistributionsKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    if (YBI_FIRST_THREAD)
+    {
+        CopySampleCountDistributions(*kernelParams);
     }
 }
 
@@ -175,9 +203,69 @@ YBI_KERNEL UpdateVMMKernel(PathGuidingKdTreeParams *kernelParams)
     YBI_END_ITERATE_WORK_ITEMS;
 }
 
+YBI_KERNEL PartialUpdateVMMKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_WORK_ITEMS(updateIndex, params.numVMMUpdateNodes)
+    {
+        YBI_SHARED VMMDistribution distribution;
+        YBI_SHARED SufficientStatistics previousStats;
+        YBI_SHARED VMMUpdateWorkspace workspace;
+
+        UpdateNodeVMM<YBI_GUIDING_BACKEND, true>(
+            params, updateIndex, distribution, previousStats, workspace);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
+
+YBI_KERNEL SplitVMMKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_WORK_ITEMS(updateIndex, params.numVMMUpdateNodes)
+    {
+        YBI_SHARED VMMDistribution distribution;
+        YBI_SHARED SufficientStatistics previousStats;
+        YBI_SHARED VMMSplitWorkspace workspace;
+
+        SplitNodeVMM<YBI_GUIDING_BACKEND>(
+            params, updateIndex, distribution, previousStats, workspace);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
+
+YBI_KERNEL MergeVMMKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_WORK_ITEMS(updateIndex, params.numVMMUpdateNodes)
+    {
+        YBI_SHARED VMMDistribution distribution;
+        YBI_SHARED SufficientStatistics previousStats;
+        YBI_SHARED VMMMergeWorkspace workspace;
+
+        MergeNodeVMM<YBI_GUIDING_BACKEND>(
+            params, updateIndex, distribution, previousStats, workspace);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
+
 /************************************************************
  * Parallax
  ************************************************************/
+
+YBI_KERNEL UpdateComponentDistancesKernel(PathGuidingKdTreeParams *kernelParams)
+{
+    const PathGuidingKdTreeParams &params = *kernelParams;
+    YBI_ITERATE_WORK_ITEMS(updateIndex, params.numVMMUpdateNodes)
+    {
+        YBI_SHARED VMMDistribution distribution;
+        YBI_SHARED SufficientStatistics previousStats;
+        YBI_SHARED VMMComponentDistanceWorkspace workspace;
+
+        UpdateNodeComponentDistances<YBI_GUIDING_BACKEND>(
+            params, updateIndex, distribution, previousStats, workspace);
+    }
+    YBI_END_ITERATE_WORK_ITEMS;
+}
 
 YBI_KERNEL ReprojectSamplesKernel(PathGuidingKdTreeParams *kernelParams)
 {

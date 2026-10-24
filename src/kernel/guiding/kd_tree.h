@@ -26,6 +26,32 @@ YBI_GPU void CollectVMMUpdateNodes(PathGuidingKdTreeParams &params)
     }
 }
 
+YBI_GPU void CopySampleCountDistributions(PathGuidingKdTreeParams &params)
+{
+    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
+    {
+        PathGuidingKdTreeNode &node = params.nodes[params.nodeItemIndices[frontierIndex]];
+        if (!node.IsGuidingCell() || !node.HasChildren())
+            continue;
+
+        PathGuidingKdTreeNode &left = params.nodes[node.childOffset];
+        PathGuidingKdTreeNode &right = params.nodes[node.childOffset + 1];
+        left.guidingCellIndex = node.guidingCellIndex;
+        right.guidingCellIndex = int(params.numVMMs++);
+        params.vmmDistributions[right.guidingCellIndex] =
+            params.vmmDistributions[left.guidingCellIndex];
+        params.vmmDistributions[left.guidingCellIndex].split = true;
+        params.vmmDistributions[right.guidingCellIndex].split = true;
+        if (params.vmmStatistics)
+            params.vmmStatistics[right.guidingCellIndex] =
+                params.vmmStatistics[left.guidingCellIndex];
+        if (params.vmmSplitStatistics)
+            params.vmmSplitStatistics[right.guidingCellIndex] =
+                params.vmmSplitStatistics[left.guidingCellIndex];
+        node.guidingCellIndex = -1;
+    }
+}
+
 YBI_GPU uint32_t GetLookaheadDepth(const PathGuidingKdTreeParams &params,
                                    const PathGuidingKdTreeNode &node)
 {
@@ -217,7 +243,7 @@ CalculateNodePositionStatistics(PathGuidingKdTreeParams params,
     for (uint32_t sampleOffset = threadIndex; sampleOffset < workItem.sampleCount;
          sampleOffset += VMM_BLOCK_SIZE)
     {
-        const SampleData &sample =
+        const PathGuidingTrainingSample &sample =
             params.sampleData[params.sampleIndices[workItem.sampleOffset + sampleOffset]];
         const PathGuidingKdTreePositionStatistics value{sample.position, Vec3f(0.f), 1};
         result = result + value;
@@ -254,9 +280,9 @@ YBI_GPU T LoadKdTreeReductionValue(const PathGuidingKdTreeNodeItem &nodeItem,
     return input[nodeItem.reductionInputOffset + offset];
 }
 
-YBI_GPU void AccumulateNodePositionStatistics(
-    const PathGuidingKdTreeParams &params, uint32_t nodeItemIndex,
-    const PathGuidingKdTreePositionStatistics *input)
+YBI_GPU void AccumulateNodePositionStatistics(const PathGuidingKdTreeParams &params,
+                                              uint32_t nodeItemIndex,
+                                              const PathGuidingKdTreePositionStatistics *input)
 {
     PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
     // TODO: Avoid redundant bounds/statistics reductions on revisits while still
@@ -309,8 +335,8 @@ YBI_GPU void SelectNodeSplits(PathGuidingKdTreeParams params, uint32_t nodeItemI
     }
     mean[splitAxis] = Min(mean[splitAxis], node.positionBoundsMax[splitAxis]);
     if (mean[splitAxis] <= node.positionBoundsMin[splitAxis])
-        mean[splitAxis] = nextafterf(node.positionBoundsMin[splitAxis],
-                                   node.positionBoundsMax[splitAxis]);
+        mean[splitAxis] =
+            nextafterf(node.positionBoundsMin[splitAxis], node.positionBoundsMax[splitAxis]);
     node.splitAxis = int(splitAxis);
     node.splitLocation = mean[splitAxis];
 }
@@ -325,7 +351,7 @@ YBI_GPU void PartitionCount(PathGuidingKdTreeParams params, uint32_t workItemInd
     for (uint32_t sampleIndex = Backend::GetThreadIndex(); sampleIndex < workItem.sampleCount;
          sampleIndex += Backend::GetThreadStride())
     {
-        const SampleData &sample =
+        const PathGuidingTrainingSample &sample =
             params.sampleData[params.sampleIndices[workItem.sampleOffset + sampleIndex]];
         const bool predicate = sample.position[node.splitAxis] < node.splitLocation;
         numLefts += predicate;

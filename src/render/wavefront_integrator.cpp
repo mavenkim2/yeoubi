@@ -1,10 +1,10 @@
 #include "render/wavefront_integrator.h"
 #include "core/math.h"
 #include "device/device.h"
-#include "kernel/guiding/guiding.h"
-#include "kernel/guiding/kd_tree.h"
-#include "kernel/launch/wavefront_params.h"
+#if defined(YBI_USE_PATH_GUIDING)
 #include "render/path_guiding/path_guiding.h"
+#endif
+#include "kernel/launch/wavefront_params.h"
 #include <cstring>
 #include <type_traits>
 #include <utility>
@@ -44,9 +44,8 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     sampleIndicesBuffer = device->Alloc<uint32_t>(batchSize);
     kernelParamsBuffer = device->Alloc<WavefrontParams>(1);
 #if defined(YBI_USE_PATH_GUIDING)
-    radianceRecordAllocationCursorBuffer = device->Alloc<uint32_t>(1);
-    radianceRecordRetiredCountBuffer = device->Alloc<uint32_t>(1);
-    pathGuidingTrainingSampleCountBuffer = device->Alloc<uint32_t>(1);
+    pathGuidingSystem =
+        std::make_unique<PathGuidingSystem>(device, PathGuidingSplitDecision::Lookahead);
 #endif
 }
 
@@ -67,16 +66,6 @@ WavefrontIntegrator::~WavefrontIntegrator()
         device->Free(sampleIndicesBuffer);
     if (kernelParamsBuffer)
         device->Free(kernelParamsBuffer);
-#if defined(YBI_USE_PATH_GUIDING)
-    if (radianceRecordAllocationCursorBuffer)
-        device->Free(radianceRecordAllocationCursorBuffer);
-    if (radianceRecordRetiredCountBuffer)
-        device->Free(radianceRecordRetiredCountBuffer);
-    if (pathGuidingTrainingSamplesBuffer)
-        device->Free(pathGuidingTrainingSamplesBuffer);
-    if (pathGuidingTrainingSampleCountBuffer)
-        device->Free(pathGuidingTrainingSampleCountBuffer);
-#endif
 }
 
 void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
@@ -153,6 +142,10 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
         // next frame reuses the pinned staging buffer.
         if (!success)
             device->SyncDeviceStream();
+#if defined(YBI_USE_PATH_GUIDING)
+        else
+            pathGuidingSystem->Update();
+#endif
         return success;
     };
 
@@ -160,22 +153,8 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
     static_cast<KernelParams &>(params) = kernelParams;
     params.outputSize = outputSize;
 #if defined(YBI_USE_PATH_GUIDING)
-    if (pathGuidingTrainingSamplesBuffer.Count() < params.radianceRecorder.availableCount)
-    {
-        if (pathGuidingTrainingSamplesBuffer)
-            device->Free(pathGuidingTrainingSamplesBuffer);
-        pathGuidingTrainingSamplesBuffer =
-            device->Alloc<PathGuidingTrainingSample>(params.radianceRecorder.availableCount);
-    }
-    params.radianceRecorder.allocationCursor = radianceRecordAllocationCursorBuffer.Data();
-    params.radianceRecorder.retiredListCount = radianceRecordRetiredCountBuffer.Data();
-    params.radianceRecorder.trainingSamples = pathGuidingTrainingSamplesBuffer.Data();
-    params.radianceRecorder.trainingSampleCount = pathGuidingTrainingSampleCountBuffer.Data();
-    params.radianceRecorder.trainingSamplesMax =
-        static_cast<uint32_t>(pathGuidingTrainingSamplesBuffer.Count());
-    device->MemzeroAsync(radianceRecordAllocationCursorBuffer.Data(), sizeof(uint32_t));
-    device->MemzeroAsync(radianceRecordRetiredCountBuffer.Data(), sizeof(uint32_t));
-    device->MemzeroAsync(pathGuidingTrainingSampleCountBuffer.Data(), sizeof(uint32_t));
+    params.radianceRecorder = pathGuidingSystem->BeginRecording(batchSize);
+    params.pathGuiding = pathGuidingSystem->GetKernelParams();
 #endif
     params.sampleState = sampleState;
     params.numSampleStates = numSampleStatesBuffer.Data();
@@ -211,6 +190,9 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
     if (!device->DispatchKernel(
             KERNEL_INTERSECT, numSampleStates, launch.blockX, kernelParamsBuffer))
         return finish(false);
+#if defined(YBI_USE_PATH_GUIDING)
+    params.radianceRecorder = pathGuidingSystem->UpdateRadianceRecorder();
+#endif
 
     while (true)
     {
@@ -290,6 +272,11 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
         if (!device->DispatchKernel(
                 nextKernel, dispatchParams.numSampleIndices, launch.blockX, kernelParamsBuffer))
             return finish(false);
+#if defined(YBI_USE_PATH_GUIDING)
+        if (nextKernel == KERNEL_INTERSECT || nextKernel == KERNEL_DIRECT_LIGHTING ||
+            nextKernel == KERNEL_INDIRECT_LIGHTING)
+            params.radianceRecorder = pathGuidingSystem->UpdateRadianceRecorder();
+#endif
     }
 }
 

@@ -6,23 +6,43 @@
 
 #include "render/path_guiding/path_guiding.h"
 #include "core/math.h"
+#include "kernel/guiding/api.h"
 #include "kernel/guiding/guiding.h"
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
 #include "kernel/guiding/radiance_recorder.h"
+#include <cstdio>
+#include <limits>
 #include <utility>
+#include <vector>
 
 namespace ybi
 {
 
 PathGuidingSystem::PathGuidingSystem(Device *device,
-                                     DeviceKind,
-                                     PathGuidingSplitDecision splitDecision)
-    : device(device), splitDecision(splitDecision)
+                                     PathGuidingSplitDecision splitDecision,
+                                     size_t maxTrainingSampleBytes)
+    : device(device), splitDecision(splitDecision), maxTrainingSampleBytes(maxTrainingSampleBytes)
 {
     YBI_ASSERT(device);
     DeviceKernelDesc desc;
     desc.filename = YBI_GUIDING_DISPATCH_KERNEL_PATH;
+    desc.entryName = "ReturnRetiredRecordsKernel";
+    returnRetiredRecords = device->CreateDeviceKernel(desc);
+    YBI_ASSERT(returnRetiredRecords);
+    radianceRecorderParams = device->Alloc<RadianceRecorder>(1);
+    YBI_ASSERT(radianceRecorderParams);
+    radianceRecordAllocationCursorBuffer = device->Alloc<uint32_t>(1);
+    radianceRecordRetiredCountBuffer = device->Alloc<uint32_t>(1);
+    pathGuidingTrainingSampleCountBuffer = device->Alloc<uint32_t>(1);
+    radianceRecorder.allocationCursor = radianceRecordAllocationCursorBuffer.Data();
+    radianceRecorder.retiredListCount = radianceRecordRetiredCountBuffer.Data();
+    device->Memzero(radianceRecordAllocationCursorBuffer.Data(), sizeof(uint32_t));
+    device->Memzero(radianceRecordRetiredCountBuffer.Data(), sizeof(uint32_t));
+    device->Memzero(pathGuidingTrainingSampleCountBuffer.Data(), sizeof(uint32_t));
+    desc.entryName = "InitializePathGuidingSampleIndicesKernel";
+    initializeSampleIndices = device->CreateDeviceKernel(desc);
+    YBI_ASSERT(initializeSampleIndices);
     desc.entryName = "CreateKdTreeWorkItemsKernel";
     generateWorkItems = device->CreateDeviceKernel(desc);
     desc.entryName = "CollectVMMUpdateNodesKernel";
@@ -57,15 +77,27 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
 
     desc.entryName = "UpdateVMMKernel";
     updateVMM = device->CreateDeviceKernel(desc);
+    desc.entryName = "PartialUpdateVMMKernel";
+    partialUpdateVMM = device->CreateDeviceKernel(desc);
+    desc.entryName = "SplitVMMKernel";
+    splitVMM = device->CreateDeviceKernel(desc);
+    desc.entryName = "MergeVMMKernel";
+    mergeVMM = device->CreateDeviceKernel(desc);
+    desc.entryName = "UpdateComponentDistancesKernel";
+    updateComponentDistances = device->CreateDeviceKernel(desc);
     desc.entryName = "ApplyParallaxShiftDispatchKernel";
     applyParallaxShift = device->CreateDeviceKernel(desc);
     desc.entryName = "ReprojectSamplesKernel";
     reprojectSamples = device->CreateDeviceKernel(desc);
-    YBI_ASSERT(updateVMM && applyParallaxShift && reprojectSamples);
+    YBI_ASSERT(updateVMM && partialUpdateVMM && splitVMM && mergeVMM && updateComponentDistances &&
+               applyParallaxShift && reprojectSamples);
 
     switch (splitDecision)
     {
         case PathGuidingSplitDecision::SampleCount:
+            desc.entryName = "CopySampleCountDistributionsKernel";
+            copySampleCountDistributions = device->CreateDeviceKernel(desc);
+            YBI_ASSERT(copySampleCountDistributions);
             break;
         case PathGuidingSplitDecision::Lookahead:
             desc.entryName = "UpdateLookaheadCellKernel";
@@ -84,20 +116,23 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
     }
     kernelParams = device->Alloc<PathGuidingKdTreeParams>(1);
     YBI_ASSERT(kernelParams);
+    PathGuidingKdTreeParams initialParams{};
+    UploadParams(initialParams);
 
     PathGuidingKdTreeNode root{};
-    if (splitDecision == PathGuidingSplitDecision::Lookahead)
-    {
-        root.guidingCellIndex = 0;
-        VMMDistribution rootDistribution{};
-        InitializeUniformVMM(rootDistribution);
-        vmmDistributions = device->Alloc<VMMDistribution>(1);
-        device->CopyToDevice(vmmDistributions.Data(), &rootDistribution, sizeof(rootDistribution));
-        SufficientStatistics rootStatistics{};
-        vmmStatistics = device->Alloc<SufficientStatistics>(1);
-        device->CopyToDevice(vmmStatistics.Data(), &rootStatistics, sizeof(rootStatistics));
-        numVMMs = 1;
-    }
+    root.guidingCellIndex = 0;
+    VMMDistribution rootDistribution{};
+    InitializeUniformVMM(rootDistribution);
+    vmmDistributions = device->Alloc<VMMDistribution>(1);
+    device->CopyToDevice(vmmDistributions.Data(), &rootDistribution, sizeof(rootDistribution));
+    SufficientStatistics rootStatistics{};
+    vmmStatistics = device->Alloc<SufficientStatistics>(1);
+    device->CopyToDevice(vmmStatistics.Data(), &rootStatistics, sizeof(rootStatistics));
+    VMMSplitStatistics<float> rootSplitStatistics{};
+    vmmSplitStatistics = device->Alloc<VMMSplitStatistics<float>>(1);
+    device->CopyToDevice(
+        vmmSplitStatistics.Data(), &rootSplitStatistics, sizeof(rootSplitStatistics));
+    numVMMs = 1;
     nodes = device->Alloc<PathGuidingKdTreeNode>(1);
     device->CopyToDevice(nodes.Data(), &root, sizeof(root));
 
@@ -111,6 +146,29 @@ PathGuidingSystem::PathGuidingSystem(Device *device,
 
 PathGuidingSystem::~PathGuidingSystem()
 {
+    ClearTrainingSamples();
+    if (vmfSplitTable.texture.textureObject)
+        device->DestroyTexture(vmfSplitTable.texture);
+    if (trainingSampleIndices)
+        device->Free(trainingSampleIndices);
+    if (trainingSampleScratchIndices)
+        device->Free(trainingSampleScratchIndices);
+    if (radianceRecorderParams)
+        device->Free(radianceRecorderParams);
+    if (radianceRecords)
+        device->Free(radianceRecords);
+    if (radianceRecordFreeList)
+        device->Free(radianceRecordFreeList);
+    if (radianceRecordRetiredList)
+        device->Free(radianceRecordRetiredList);
+    if (radianceRecordAllocationCursorBuffer)
+        device->Free(radianceRecordAllocationCursorBuffer);
+    if (radianceRecordRetiredCountBuffer)
+        device->Free(radianceRecordRetiredCountBuffer);
+    if (pathGuidingTrainingSamplesBuffer)
+        device->Free(pathGuidingTrainingSamplesBuffer);
+    if (pathGuidingTrainingSampleCountBuffer)
+        device->Free(pathGuidingTrainingSampleCountBuffer);
     if (kernelParams)
         device->Free(kernelParams);
     if (activeNodeItems)
@@ -139,16 +197,12 @@ PathGuidingSystem::~PathGuidingSystem()
         device->Free(vmmDistributions);
     if (vmmStatistics)
         device->Free(vmmStatistics);
+    if (vmmSplitStatistics)
+        device->Free(vmmSplitStatistics);
     if (vmmUpdateNodeIndices)
         device->Free(vmmUpdateNodeIndices);
-    if (sampleDirection)
-        device->Free(sampleDirection);
-    if (sampleIncidentRadianceEstimate)
-        device->Free(sampleIncidentRadianceEstimate);
-    if (samplePdf)
-        device->Free(samplePdf);
-    if (sampleDistance)
-        device->Free(sampleDistance);
+    if (vmmSplitComponentMasks)
+        device->Free(vmmSplitComponentMasks);
 }
 
 template <typename T>
@@ -186,6 +240,160 @@ void PathGuidingSystem::Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t bl
     desc.gridX = gridX;
     desc.blockX = blockX;
     device->ExecuteKernel(kernel, desc);
+}
+
+void PathGuidingSystem::AllocateRadianceRecords(uint32_t count)
+{
+    count = Min(count, maxRadianceRecords);
+    const uint32_t oldCount = radianceRecorder.availableCount;
+    if (count <= oldCount)
+        return;
+
+    DeviceBuffer<RadianceRecord> newRecords = device->Alloc<RadianceRecord>(count);
+    DeviceBuffer<int> newFreeList = device->Alloc<int>(count);
+    DeviceBuffer<int> newRetiredList = device->Alloc<int>(count);
+    if (oldCount != 0)
+    {
+        device->CopyDeviceToDeviceAsync(
+            newRecords.Data(), radianceRecords.Data(), size_t(oldCount) * sizeof(RadianceRecord));
+        device->CopyDeviceToDeviceAsync(
+            newFreeList.Data(), radianceRecordFreeList.Data(), size_t(oldCount) * sizeof(int));
+        device->SyncDeviceStream();
+    }
+
+    std::vector<int> newIndices(count - oldCount);
+    for (uint32_t i = oldCount; i < count; ++i)
+        newIndices[i - oldCount] = int(i);
+    device->CopyToDevice(
+        newFreeList.Data() + oldCount, newIndices.data(), newIndices.size() * sizeof(int));
+
+    device->Free(radianceRecords);
+    device->Free(radianceRecordFreeList);
+    device->Free(radianceRecordRetiredList);
+    radianceRecords = newRecords;
+    radianceRecordFreeList = newFreeList;
+    radianceRecordRetiredList = newRetiredList;
+    radianceRecorder.records = radianceRecords.Data();
+    radianceRecorder.freeList = radianceRecordFreeList.Data();
+    radianceRecorder.retiredList = radianceRecordRetiredList.Data();
+    radianceRecorder.availableCount = count;
+    radianceRecorder.retiredListMax = count;
+}
+
+void PathGuidingSystem::ReserveTrainingSampleBuffer()
+{
+    if (pathGuidingTrainingSamplesBuffer.Count() < radianceRecorder.availableCount)
+    {
+        device->SyncDeviceStream();
+        if (pathGuidingTrainingSamplesBuffer)
+            device->Free(pathGuidingTrainingSamplesBuffer);
+        pathGuidingTrainingSamplesBuffer =
+            device->Alloc<PathGuidingTrainingSample>(radianceRecorder.availableCount);
+    }
+    radianceRecorder.trainingSamples = pathGuidingTrainingSamplesBuffer.Data();
+    radianceRecorder.trainingSampleCount = pathGuidingTrainingSampleCountBuffer.Data();
+    radianceRecorder.trainingSamplesMax =
+        static_cast<uint32_t>(pathGuidingTrainingSamplesBuffer.Count());
+}
+
+void PathGuidingSystem::DrainTrainingSamples()
+{
+    uint32_t writtenCount;
+    device->CopyToHost(
+        &writtenCount, pathGuidingTrainingSampleCountBuffer.Data(), sizeof(writtenCount));
+    const uint32_t sampleCount =
+        Min(writtenCount, uint32_t(pathGuidingTrainingSamplesBuffer.Count()));
+    droppedTrainingSampleCount += writtenCount - sampleCount;
+
+    const size_t maxSampleCount = maxTrainingSampleBytes / sizeof(PathGuidingTrainingSample);
+    const size_t appendCount = Min<size_t>(sampleCount, maxSampleCount - trainingSampleCount);
+    if (appendCount != 0)
+    {
+        const size_t requiredCount = trainingSampleCount + appendCount;
+        if (trainingSamples.Count() < requiredCount)
+        {
+            const size_t capacity =
+                Min(maxSampleCount, Max(trainingSampleCount * 2, requiredCount));
+            DeviceBuffer<PathGuidingTrainingSample> replacement =
+                device->Alloc<PathGuidingTrainingSample>(capacity);
+            YBI_ASSERT(replacement);
+            if (trainingSampleCount != 0)
+            {
+                device->CopyDeviceToDeviceAsync(replacement.Data(),
+                                                trainingSamples.Data(),
+                                                trainingSampleCount *
+                                                    sizeof(PathGuidingTrainingSample));
+                device->SyncDeviceStream();
+            }
+            device->Free(trainingSamples);
+            trainingSamples = replacement;
+        }
+        device->CopyDeviceToDeviceAsync(trainingSamples.Data() + trainingSampleCount,
+                                        pathGuidingTrainingSamplesBuffer.Data(),
+                                        appendCount * sizeof(PathGuidingTrainingSample));
+        trainingSampleCount = requiredCount;
+    }
+    droppedTrainingSampleCount += sampleCount - appendCount;
+    device->Memzero(pathGuidingTrainingSampleCountBuffer.Data(), sizeof(uint32_t));
+}
+
+void PathGuidingSystem::ClearTrainingSamples()
+{
+    device->SyncDeviceStream();
+    device->Free(trainingSamples);
+    trainingSampleCount = 0;
+    droppedTrainingSampleCount = 0;
+    device->Memzero(pathGuidingTrainingSampleCountBuffer.Data(), sizeof(uint32_t));
+}
+
+RadianceRecorder PathGuidingSystem::BeginRecording(uint32_t recordCapacity)
+{
+    device->SyncDeviceStream();
+    DrainTrainingSamples();
+    AllocateRadianceRecords(recordCapacity);
+    ReserveTrainingSampleBuffer();
+    radianceRecorder.allocationCursor = radianceRecordAllocationCursorBuffer.Data();
+    radianceRecorder.retiredListCount = radianceRecordRetiredCountBuffer.Data();
+    device->Memzero(radianceRecordAllocationCursorBuffer.Data(), sizeof(uint32_t));
+    device->Memzero(radianceRecordRetiredCountBuffer.Data(), sizeof(uint32_t));
+    device->Memzero(pathGuidingTrainingSampleCountBuffer.Data(), sizeof(uint32_t));
+    device->CopyToDevice(
+        radianceRecorderParams.Data(), &radianceRecorder, sizeof(radianceRecorder));
+    return radianceRecorder;
+}
+
+RadianceRecorder PathGuidingSystem::UpdateRadianceRecorder()
+{
+    YBI_ASSERT(radianceRecorder.allocationCursor && radianceRecorder.retiredListCount);
+    YBI_ASSERT(radianceRecorder.availableCount == 0 || radianceRecorder.freeList);
+    YBI_ASSERT(radianceRecorder.retiredListMax == 0 || radianceRecorder.retiredList);
+
+    uint32_t allocationCount;
+    device->SyncDeviceStream();
+    device->CopyToHost(
+        &allocationCount, radianceRecorder.allocationCursor, sizeof(allocationCount));
+    DrainTrainingSamples();
+
+    void *arguments[] = {radianceRecorderParams.KernelArg()};
+    DeviceKernelLaunchDesc desc;
+    desc.arguments = arguments;
+    desc.gridX = 1;
+    desc.blockX = VMM_BLOCK_SIZE;
+    device->ExecuteKernel(*returnRetiredRecords, desc);
+
+    if (allocationCount > radianceRecorder.availableCount &&
+        radianceRecorder.availableCount < maxRadianceRecords)
+    {
+        device->SyncDeviceStream();
+        const uint32_t capacity = uint32_t(Min<uint64_t>(
+            maxRadianceRecords,
+            Max<uint64_t>(allocationCount, uint64_t(radianceRecorder.availableCount) * 2)));
+        AllocateRadianceRecords(capacity);
+        ReserveTrainingSampleBuffer();
+        device->CopyToDevice(
+            radianceRecorderParams.Data(), &radianceRecorder, sizeof(radianceRecorder));
+    }
+    return radianceRecorder;
 }
 
 void PathGuidingSystem::GenerateWorkItems(PathGuidingKdTreeParams &params,
@@ -236,26 +444,21 @@ void PathGuidingSystem::ReserveLookaheadStatisticsBuffers(PathGuidingKdTreeParam
     params.newLookaheadStatistics = newLookaheadStatistics.Data();
 }
 
-void PathGuidingSystem::ReserveVMMDistributions(PathGuidingKdTreeParams &params)
+void PathGuidingSystem::ReserveVMMDistributions(PathGuidingKdTreeParams &params,
+                                                uint32_t splitCount)
 {
-    ReserveBuffer(
-        vmmDistributions, size_t(params.numVMMs) + params.numGuidingCellSplits, params.numVMMs);
-    ReserveBuffer(
-        vmmStatistics, size_t(params.numVMMs) + params.numGuidingCellSplits, params.numVMMs);
+    ReserveBuffer(vmmDistributions, size_t(params.numVMMs) + splitCount, params.numVMMs);
+    ReserveBuffer(vmmStatistics, size_t(params.numVMMs) + splitCount, params.numVMMs);
+    ReserveBuffer(vmmSplitStatistics, size_t(params.numVMMs) + splitCount, params.numVMMs);
     params.vmmDistributions = vmmDistributions.Data();
     params.vmmStatistics = vmmStatistics.Data();
+    params.vmmSplitStatistics = vmmSplitStatistics.Data();
 }
 
 void PathGuidingSystem::ReserveVMMTrainingBuffers(PathGuidingKdTreeParams &params)
 {
-    ReserveBuffer(sampleDirection, params.numSampleIndices);
-    ReserveBuffer(sampleIncidentRadianceEstimate, params.numSampleIndices);
-    ReserveBuffer(samplePdf, params.numSampleIndices);
-    ReserveBuffer(sampleDistance, params.numSampleIndices);
-    params.sampleDirection = sampleDirection.Data();
-    params.sampleIncidentRadianceEstimate = sampleIncidentRadianceEstimate.Data();
-    params.samplePdf = samplePdf.Data();
-    params.sampleDistance = sampleDistance.Data();
+    ReserveBuffer(vmmSplitComponentMasks, params.numVMMs);
+    params.vmmSplitComponentMasks = vmmSplitComponentMasks.Data();
 }
 
 template <typename T>
@@ -334,6 +537,10 @@ void PathGuidingSystem::CreateNodeItems(PathGuidingKdTreeParams &params)
 void PathGuidingSystem::UpdateSampleCountSplits(PathGuidingKdTreeParams &params)
 {
     CreateNodeItems(params);
+    ReserveVMMDistributions(params, params.numNodeItemIndices);
+    UploadParams(params);
+    Launch(*copySampleCountDistributions, 1, 1);
+    ReadBackParams(params);
 }
 
 void PathGuidingSystem::ResetGuidingCellSplits(PathGuidingKdTreeParams &params)
@@ -381,7 +588,7 @@ void PathGuidingSystem::PromoteGuidingCells(PathGuidingKdTreeParams &params)
     if (params.numGuidingCellSplits == 0)
         return;
 
-    ReserveVMMDistributions(params);
+    ReserveVMMDistributions(params, params.numGuidingCellSplits);
     UploadParams(params);
     Launch(*promoteGuidingCells, 1, 1);
     ReadBackParams(params);
@@ -424,6 +631,7 @@ void PathGuidingSystem::BeginUpdate(PathGuidingKdTreeParams &params)
     params.guidingCellSplitMask = guidingCellSplitMask.Data();
     params.vmmDistributions = vmmDistributions.Data();
     params.vmmStatistics = vmmStatistics.Data();
+    params.vmmSplitStatistics = vmmSplitStatistics.Data();
     params.numVMMs = numVMMs;
 }
 
@@ -448,6 +656,86 @@ void PathGuidingSystem::FinishUpdate(PathGuidingKdTreeParams &params)
     UploadParams(params);
     Launch(*collectVMMUpdateNodes, 1, 1);
     ReadBackParams(params);
+}
+
+void PathGuidingSystem::Update()
+{
+    ++renderedSamples;
+    if (renderedSamples < nextUpdateSample)
+        return;
+
+    device->SyncDeviceStream();
+    DrainTrainingSamples();
+    const size_t sampleCount = trainingSampleCount;
+    if (sampleCount != 0)
+    {
+        YBI_ASSERT(sampleCount <= std::numeric_limits<uint32_t>::max());
+        if (!vmfSplitTable.texture.textureObject)
+        {
+            vmfSplitTable = LoadVMFSplitTable(*device);
+            if (!vmfSplitTable.texture.textureObject)
+                return;
+        }
+        PathGuidingKdTreeParams params{};
+        vmfSplitTable.Bind(params);
+        device->SyncDeviceStream();
+        ReserveBuffer(trainingSampleIndices, sampleCount);
+        ReserveBuffer(trainingSampleScratchIndices, sampleCount);
+        params.sampleData = trainingSamples.Data();
+        params.sampleIndices = trainingSampleIndices.Data();
+        params.newSampleIndices = trainingSampleScratchIndices.Data();
+        params.numSampleIndices = static_cast<uint32_t>(sampleCount);
+        UploadParams(params);
+        Launch(*initializeSampleIndices,
+               CeilDiv(params.numSampleIndices, uint32_t(VMM_BLOCK_SIZE)),
+               VMM_BLOCK_SIZE);
+        UpdateKDTree(params);
+        UpdateVMMs(params);
+        device->SyncDeviceStream();
+        trainingSampleCount = 0;
+    }
+
+    ++iteration;
+    PrintUpdateStatistics(sampleCount);
+    lastUpdateSample = renderedSamples;
+    if (renderedSamples >= 8)
+        updateSampleCount = Min(updateSampleCount * 2, 16u);
+    nextUpdateSample = renderedSamples + updateSampleCount;
+}
+
+void PathGuidingSystem::PrintUpdateStatistics(size_t sampleCount) const
+{
+    const size_t fieldBytes = nodes.SizeInBytes() + vmmDistributions.SizeInBytes() +
+                              vmmStatistics.SizeInBytes() + vmmSplitStatistics.SizeInBytes();
+    const size_t totalBytes =
+        fieldBytes + kernelParams.SizeInBytes() + radianceRecorderParams.SizeInBytes() +
+        radianceRecords.SizeInBytes() +
+        radianceRecordFreeList.SizeInBytes() + radianceRecordRetiredList.SizeInBytes() +
+        radianceRecordAllocationCursorBuffer.SizeInBytes() +
+        radianceRecordRetiredCountBuffer.SizeInBytes() +
+        pathGuidingTrainingSamplesBuffer.SizeInBytes() +
+        pathGuidingTrainingSampleCountBuffer.SizeInBytes() + trainingSamples.SizeInBytes() +
+        trainingSampleIndices.SizeInBytes() + trainingSampleScratchIndices.SizeInBytes() +
+        activeNodeItems.SizeInBytes() + nodeItems.SizeInBytes() + nodeItemIndices.SizeInBytes() +
+        nextNodeItemIndices.SizeInBytes() + workItemLeftOffsets.SizeInBytes() +
+        positionStatistics.SizeInBytes() + newPositionStatistics.SizeInBytes() +
+        lookaheadStatistics.SizeInBytes() + newLookaheadStatistics.SizeInBytes() +
+        guidingCellSplitMask.SizeInBytes() + vmmUpdateNodeIndices.SizeInBytes() +
+        vmmSplitComponentMasks.SizeInBytes() +
+        (vmfSplitTable.texture.textureObject ? VMFSplitTableSize * sizeof(float) : 0);
+    constexpr double MiB = 1024.0 * 1024.0;
+    std::printf("Path guiding iteration %u: spp=%llu, batch_spp=%llu, training_samples=%zu, "
+                "dropped_total=%llu, nodes=%u, vmms=%u, field=%.2f MiB, total=%.2f MiB\n",
+                iteration,
+                static_cast<unsigned long long>(renderedSamples),
+                static_cast<unsigned long long>(renderedSamples - lastUpdateSample),
+                sampleCount,
+                static_cast<unsigned long long>(droppedTrainingSampleCount),
+                numNodes,
+                numVMMs,
+                fieldBytes / MiB,
+                totalBytes / MiB);
+    std::fflush(stdout);
 }
 
 void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
@@ -480,18 +768,17 @@ void PathGuidingSystem::UpdateVMMs(PathGuidingKdTreeParams &params)
         return;
 
     YBI_ASSERT(params.vmmUpdateNodeIndices && params.nodes && params.nodeItems &&
-               params.vmmDistributions && params.vmmStatistics);
+               params.vmmDistributions && params.vmmStatistics && params.vmmSplitStatistics);
     YBI_ASSERT(params.numSampleIndices == 0 || (params.sampleData && params.sampleIndices));
     ReserveVMMTrainingBuffers(params);
     UploadParams(params);
     Launch(*applyParallaxShift, params.numVMMUpdateNodes, 32);
     Launch(*reprojectSamples, params.numVMMUpdateNodes, 32);
     Launch(*updateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
-
-    // split statistics, split
-    // partial update
-    // merge
-    // update component distances
+    Launch(*splitVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
+    Launch(*partialUpdateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
+    Launch(*mergeVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
+    Launch(*updateComponentDistances, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
 }
 
 } // namespace ybi

@@ -40,15 +40,15 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
                 useMIS ? PowerHeuristic(previousBsdfPdf,
                                         PDFEnvmapLight(params.scene, lightIndex, rayDirection))
                        : 1.f;
-            environment += EvaluateEnvmapLight(params.scene.envmapLights[lightIndex], rayDirection) *
-                           misWeight;
+            environment +=
+                EvaluateEnvmapLight(params.scene.envmapLights[lightIndex], rayDirection) *
+                misWeight;
         }
         const Vec3f contribution = throughput * environment;
         radiance += contribution;
 #if defined(YBI_USE_PATH_GUIDING)
         const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
-        if (recordIndex != YBI_PATH_GUIDING_CAMERA_VERTEX)
-            params.radianceRecorder.GetRecord(recordIndex).AtomicAddEmission(contribution);
+        params.radianceRecorder.RecordEmission(recordIndex, contribution);
 #endif
         TerminatePath(params, sampleState, sampleIndex, radiance);
         return;
@@ -56,6 +56,13 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
     else
     {
         const Object &object = params.scene.objects[info.id];
+#if defined(YBI_USE_PATH_GUIDING)
+        if (object.lightIndex < 0)
+        {
+            params.radianceRecorder.RecordDistance(
+                sampleState->ReadRadianceRecordIndex(sampleIndex), rayOrigin + info.t * rayDirection);
+        }
+#endif
         if (object.lightIndex >= 0)
         {
             const DeviceLight &light = params.scene.deviceLights[object.lightIndex];
@@ -77,7 +84,13 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
                                  lightHitPosition);
                     misWeight = PowerHeuristic(previousBsdfPdf, lightPdf);
                 }
-                radiance += throughput * light.radiance * misWeight;
+                const Vec3f contribution = throughput * light.radiance * misWeight;
+                radiance += contribution;
+#if defined(YBI_USE_PATH_GUIDING)
+                const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
+                params.radianceRecorder.RecordDistance(recordIndex, lightHitPosition);
+                params.radianceRecorder.RecordEmission(recordIndex, contribution);
+#endif
             }
 
             const Vec3f lightTangentX = info.objectToWorld.TransformVector(Vec3f(1.f, 0.f, 0.f));

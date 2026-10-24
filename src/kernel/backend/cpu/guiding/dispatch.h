@@ -1,17 +1,22 @@
 #pragma once
 
 #include "kernel/guiding/types.h"
+#include "kernel/guiding/radiance_recorder.h"
 
 namespace ybi
 {
+
+void ReturnRetiredRecordsKernel(RadianceRecorder *recorder);
 
 /************************************************************
  * Kd-tree
  ************************************************************/
 
+void InitializePathGuidingSampleIndicesKernel(PathGuidingKdTreeParams *kernelParams);
 void CollectVMMUpdateNodesKernel(PathGuidingKdTreeParams *kernelParams);
 void CreateKdTreeNodesKernel(PathGuidingKdTreeParams *kernelParams);
 void CreateKdTreeNodeItemsKernel(PathGuidingKdTreeParams *kernelParams);
+void CopySampleCountDistributionsKernel(PathGuidingKdTreeParams *kernelParams);
 void CreateKdTreeWorkItemsKernel(PathGuidingKdTreeParams *kernelParams);
 void CalculateNodeBoundsKernel(PathGuidingKdTreeParams *kernelParams);
 void CalculateNodePositionStatisticsKernel(PathGuidingKdTreeParams *kernelParams);
@@ -28,12 +33,16 @@ void PartitionSamplesKernel(PathGuidingKdTreeParams *kernelParams);
  ************************************************************/
 
 void UpdateVMMKernel(PathGuidingKdTreeParams *kernelParams);
+void PartialUpdateVMMKernel(PathGuidingKdTreeParams *kernelParams);
+void SplitVMMKernel(PathGuidingKdTreeParams *kernelParams);
+void MergeVMMKernel(PathGuidingKdTreeParams *kernelParams);
 
 /************************************************************
  * Parallax
  ************************************************************/
 
 void ReprojectSamplesKernel(PathGuidingKdTreeParams *kernelParams);
+void UpdateComponentDistancesKernel(PathGuidingKdTreeParams *kernelParams);
 void ApplyParallaxShiftDispatchKernel(PathGuidingKdTreeParams *kernelParams);
 
 /************************************************************

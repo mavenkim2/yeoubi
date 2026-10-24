@@ -439,7 +439,8 @@ YBI_GPU void RenderUnidirectional()
                                           &params,
                                           &closureEvaluationInfo,
                                           worldViewDirection,
-                                          lightSample.direction);
+                                          lightSample.direction,
+                                          static_cast<BsdfEvaluationProperties *>(nullptr));
                 sampledLightBsdfPdf = DeviceDispatch<float>(materialXMaterial->pdfCallableIndex,
                                                             &params,
                                                             &closureEvaluationInfo,

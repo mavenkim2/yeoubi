@@ -42,6 +42,7 @@ struct KernelParams
 
 #if defined(YBI_USE_PATH_GUIDING)
     RadianceRecorder radianceRecorder;
+    const PathGuidingKdTreeParams *pathGuiding;
 #endif
 
     // OpenPBR lookup tables

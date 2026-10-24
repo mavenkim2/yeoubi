@@ -107,6 +107,8 @@ YBI_GPU void ReprojectSamples(const PathGuidingKdTreeParams &params, uint32_t up
 
     YBI_ASSERT(node.positionStatistics.numSamples > 0);
     const Vec3f pivotPosition = node.positionStatistics.mean;
+    const Vec3f variance = node.positionStatistics.variance;
+    const float minDistance = 9.f * Sqrt(Sqrt(Max(FLT_EPSILON, Dot(variance, variance))));
     VMMDistribution &distribution = params.vmmDistributions[node.guidingCellIndex];
     if (!distribution.initialized && Backend::GetThreadIndex() == 0)
         distribution.pivotPosition = pivotPosition;
@@ -116,24 +118,22 @@ YBI_GPU void ReprojectSamples(const PathGuidingKdTreeParams &params, uint32_t up
     {
         const uint32_t outputIndex = nodeItem.sampleOffset + sampleOffset;
         const uint32_t sampleIndex = params.sampleIndices[outputIndex];
-        const SampleData &sample = params.sampleData[sampleIndex];
-        Vec3f direction = sample.direction;
+        PathGuidingTrainingSample &sample = params.sampleData[sampleIndex];
+        Vec3f direction = DecodeOctahedral(sample.octahedralDirection);
         float distance = sample.distance;
         if (distance > 0.f && IsFinite(distance))
         {
+            distance = Max(distance, minDistance);
             const Vec3f offset = sample.position - pivotPosition + direction * distance;
             const float shiftedDistance = Length(offset);
-            if (IsFinite(shiftedDistance))
+            if (shiftedDistance > FLT_EPSILON && IsFinite(shiftedDistance))
             {
                 distance = shiftedDistance;
-                if (shiftedDistance > FLT_EPSILON)
-                    direction = offset / shiftedDistance;
+                direction = offset / shiftedDistance;
             }
         }
-        params.sampleDirection[outputIndex] = EncodeOctahedral(direction);
-        params.sampleDistance[outputIndex] = distance;
-        params.sampleIncidentRadianceEstimate[outputIndex] = sample.incidentRadianceEstimate;
-        params.samplePdf[outputIndex] = sample.pdf;
+        sample.octahedralDirection = EncodeOctahedral(direction);
+        sample.distance = distance;
     }
 }
 
