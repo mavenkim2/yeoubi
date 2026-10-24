@@ -6,8 +6,8 @@
 #include "core/thread_context.h"
 #include "device/device.h"
 #include "device/device_texture.h"
-#include "kernel/launch/kernel_params.h"
 #include "display_device/display_device.h"
+#include "kernel/launch/kernel_params.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -408,7 +408,8 @@ void VirtualTextureManager::Finalize()
 
     for (DeviceBuffer<FeedbackRequest> &hostFeedback : hostPinnedFeedbackRequests)
     {
-        hostFeedback = device->AllocHost<FeedbackRequest>(static_cast<size_t>(feedbackCapacity) + 1);
+        hostFeedback =
+            device->AllocHost<FeedbackRequest>(static_cast<size_t>(feedbackCapacity) + 1);
         memset(hostFeedback.Data(), 0, feedbackSize);
     }
 }
@@ -570,10 +571,12 @@ void VirtualTextureManager::ProcessFeedback(Arena *arena,
         info.lruIndex = lruIndex;
     }
 
+#if 0
     if (updateRequests.size())
     {
         printf("num updates: %zu\n", updateRequests.size());
     }
+#endif
 }
 
 void VirtualTextureManager::LoadPages(std::shared_ptr<DeviceEvent> pageTableUpdatesDone)
@@ -690,8 +693,7 @@ void VirtualTextureManager::Update(KernelParams *params)
 
     device->Memzero(feedback.Data(), sizeof(FeedbackRequest));
 
-    FeedbackRequest *requests =
-        hostPinnedFeedbackRequests[currentFrame].Data();
+    FeedbackRequest *requests = hostPinnedFeedbackRequests[currentFrame].Data();
     uint32_t numRequests = requests[0].textureIndex;
     numRequests = std::min(numRequests, feedbackCapacity);
 
@@ -764,7 +766,8 @@ void VirtualTextureManager::Update(KernelParams *params)
             {
                 device->Free(deviceUpdateRequestBuffer);
             }
-            deviceUpdateRequestBuffer = device->Alloc<PageDescriptorUpdateRequest>(numUpdateRequests);
+            deviceUpdateRequestBuffer =
+                device->Alloc<PageDescriptorUpdateRequest>(numUpdateRequests);
         }
 
         if (hostPinnedUpdateRequestBuffer.Count() < numUpdateRequests)
@@ -844,8 +847,7 @@ void VirtualTextureManager::UpdateSync(KernelParams *params)
 
     device->Memzero(feedback.Data(), sizeof(FeedbackRequest));
 
-    FeedbackRequest *requests =
-        hostPinnedFeedbackRequests[currentFrame].Data();
+    FeedbackRequest *requests = hostPinnedFeedbackRequests[currentFrame].Data();
     uint32_t numRequests = requests[0].textureIndex;
     numRequests = std::min(numRequests, feedbackCapacity);
 
