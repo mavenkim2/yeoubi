@@ -53,9 +53,10 @@ YBI_GPU Float EvalVMF(const Vector3<Float> &w, const Vec3f &meanDirection, float
 }
 
 template <typename Float>
-YBI_GPU Float SoftAssignment(const VMMDistribution &distribution,
-                             const Vector3<Float> &sampleDirection,
-                             Float *softAssignment)
+YBI_GPU bool SoftAssignment(const VMMDistribution &distribution,
+                            const Vector3<Float> &sampleDirection,
+                            Float *softAssignment,
+                            Float &pdf)
 {
     Float V(0.f);
 
@@ -66,20 +67,19 @@ YBI_GPU Float SoftAssignment(const VMMDistribution &distribution,
                         EvalVMF<Float>(sampleDirection,
                                        distribution.meanDirection[componentIndex],
                                        distribution.kappa[componentIndex]);
-
         V += v;
 
         softAssignment[componentIndex] = v;
     }
 
-    // A zero-density lane has zero assignments and log likelihood log(1) = 0.
-    const Float pdf = Select(V == Float(0.f), Float(1.f), V);
-    const Float reciprocalPdf = Float(1.f) / pdf;
+    pdf = V;
+    if (pdf <= Float(1e-16f))
+        return false;
     for (uint32_t k = 0; k < distribution.numComponents; ++k)
     {
-        softAssignment[k] = softAssignment[k] * reciprocalPdf;
+        softAssignment[k] /= pdf;
     }
-    return pdf;
+    return true;
 }
 
 YBI_GPU float EvalVMF(const Vec3f &w, const Vec3f &meanDirection, float kappa)

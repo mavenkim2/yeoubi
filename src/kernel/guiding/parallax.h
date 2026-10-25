@@ -59,7 +59,9 @@ YBI_GPU void UpdateComponentDistances(const PathGuidingKdTreeParams &params,
         YBI_ASSERT(All(sample.distance > Float(0.f)));
         const Float sampleWeight = sample.incidentRadianceEstimate / sample.pdf;
         Float assignments[VMM_MAX_NUM_COMPONENTS];
-        const Float pdf = SoftAssignment<Float>(distribution, sample.direction, assignments);
+        Float pdf;
+        if (!SoftAssignment<Float>(distribution, sample.direction, assignments, pdf))
+            continue;
         for (uint32_t k = 0; k < numComponents; ++k)
         {
             if (distribution.weights[k] > FLT_EPSILON)
