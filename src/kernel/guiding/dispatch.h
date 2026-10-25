@@ -72,10 +72,11 @@ YBI_KERNEL CopySampleCountDistributionsKernel(PathGuidingKdTreeParams *kernelPar
 
 YBI_KERNEL CreateKdTreeWorkItemsKernel(PathGuidingKdTreeParams *kernelParams)
 {
-    if (YBI_FIRST_THREAD)
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, 1u)
     {
-        CreateKdTreeWorkItems(*kernelParams, kernelParams->stage);
+        CreateKdTreeWorkItems<YBI_GUIDING_BACKEND>(*kernelParams, kernelParams->stage);
     }
+    YBI_END_ITERATE_WORK_ITEMS;
 }
 
 YBI_KERNEL CalculateNodeBoundsKernel(PathGuidingKdTreeParams *kernelParams)

@@ -38,6 +38,8 @@ struct CpuVMMBackend
         return BlockReduceSum<T, VMM_BLOCK_SIZE>(values);
     }
 
+    static uint32_t ReduceBlockMax(uint32_t value) { return value; }
+
     static ExclusiveScanResult ExclusiveScanAdd(uint32_t value) { return {0, value}; }
 
     static void ReduceAdd(int64_t value, int64_t &destination) { destination += value; }

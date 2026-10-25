@@ -36,6 +36,32 @@ YBI_GPU T BlockReduceSum(T value)
     return result;
 }
 
+// Only thread zero receives the block maximum.
+template <uint32_t BlockSize = 256>
+YBI_GPU uint32_t BlockReduceMax(uint32_t value)
+{
+    static_assert(BlockSize >= 32 && BlockSize <= 1024 && BlockSize % 32 == 0,
+                  "Block reduction requires complete warps");
+    YBI_ASSERT(blockDim.x == BlockSize && blockDim.y == 1 && blockDim.z == 1);
+    __shared__ uint32_t warpValues[BlockSize / 32];
+    const uint32_t lane = threadIdx.x & 31u;
+    const uint32_t warp = threadIdx.x >> 5;
+    value = WarpReduceMax(value);
+    if (lane == 0)
+        warpValues[warp] = value;
+    __syncthreads();
+
+    uint32_t result = 0;
+    if (warp == 0)
+    {
+        if (lane < BlockSize / 32)
+            result = warpValues[lane];
+        result = WarpReduceMax(result);
+    }
+    __syncthreads();
+    return result;
+}
+
 // Each pass writes CeilDiv(count, BlockSize) values to a separate output buffer.
 template <typename T, uint32_t BlockSize = 256>
 __global__ void ReduceKernel(const T *input, uint32_t count, T *output)

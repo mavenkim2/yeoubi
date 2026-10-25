@@ -73,6 +73,14 @@ YBI_GPU float WarpReduceMax(float value)
     return value;
 }
 
+YBI_GPU uint32_t WarpReduceMax(uint32_t value)
+{
+#pragma unroll
+    for (uint32_t offset = 16; offset > 0; offset >>= 1)
+        value = Max(value, __shfl_down_sync(0xffffffffu, value, offset));
+    return value;
+}
+
 YBI_GPU Vec3f WarpReduceSum(Vec3f value)
 {
     value.x = WarpReduceSum(value.x);

@@ -214,9 +214,8 @@ YBI_GPU void ShouldSplitGuidingCell(PathGuidingKdTreeParams &params, uint32_t no
 }
 
 template <typename Backend>
-YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params,
-                                 uint32_t &vmmOffset,
-                                 uint32_t &frontierOffset)
+YBI_GPU void
+PromoteGuidingCells(PathGuidingKdTreeParams &params, uint32_t &vmmOffset, uint32_t &frontierOffset)
 {
     for (uint32_t nodeIndex = Backend::GetThreadIndex(); nodeIndex < params.numNodes;
          nodeIndex += Backend::GetThreadStride())

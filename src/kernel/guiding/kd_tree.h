@@ -155,30 +155,49 @@ YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams &params,
     }
 }
 
+template <typename Backend>
 YBI_GPU void CreateKdTreeWorkItems(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage)
 {
     uint32_t totalWorkItemCount = 0;
-    params.numActiveNodeItems = 0;
-    params.maxWorkItemCount = 0;
-    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
+    uint32_t numActiveNodeItems = 0;
+    uint32_t maxWorkItemCount = 0;
+    for (uint32_t tileOffset = 0; tileOffset < params.numNodeItemIndices;
+         tileOffset += Backend::GetThreadStride())
     {
-        const uint32_t nodeItemIndex = params.nodeItemIndices[frontierIndex];
-        PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-        const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-        nodeItem.workItemOffset = totalWorkItemCount;
-        nodeItem.workItemCount = 0;
-        const bool matchesStage = node.MatchesStage(stage, params.generation);
-        if (!matchesStage || nodeItem.sampleCount == 0)
-            continue;
-        params.activeNodeItems[params.numActiveNodeItems++] = nodeItemIndex;
-        const uint32_t sampleCount = nodeItem.sampleCount;
-        const uint32_t workItemCount = CeilDiv(sampleCount, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT);
+        const uint32_t frontierIndex = tileOffset + Backend::GetThreadIndex();
+        const bool valid = frontierIndex < params.numNodeItemIndices;
+        uint32_t nodeItemIndex = 0;
+        uint32_t workItemCount = 0;
+        if (valid)
+        {
+            nodeItemIndex = params.nodeItemIndices[frontierIndex];
+            const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+            const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+            if (node.MatchesStage(stage, params.generation))
+                workItemCount = CeilDiv(nodeItem.sampleCount, VMM_KD_TREE_WORK_ITEM_SAMPLE_LIMIT);
+        }
 
-        nodeItem.workItemCount = workItemCount;
-        params.maxWorkItemCount = Max(params.maxWorkItemCount, workItemCount);
-        totalWorkItemCount += workItemCount;
+        const auto workScan = Backend::ExclusiveScanAdd(workItemCount);
+        const auto activeScan = Backend::ExclusiveScanAdd(uint32_t(workItemCount != 0));
+        if (valid)
+        {
+            PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+            nodeItem.workItemOffset = totalWorkItemCount + workScan.prefix;
+            nodeItem.workItemCount = workItemCount;
+            if (workItemCount != 0)
+                params.activeNodeItems[numActiveNodeItems + activeScan.prefix] = nodeItemIndex;
+        }
+        totalWorkItemCount += workScan.total;
+        numActiveNodeItems += activeScan.total;
+        maxWorkItemCount = Max(maxWorkItemCount, workItemCount);
     }
-    params.numWorkItems = totalWorkItemCount;
+    maxWorkItemCount = Backend::ReduceBlockMax(maxWorkItemCount);
+    if (Backend::GetThreadIndex() == 0)
+    {
+        params.numWorkItems = totalWorkItemCount;
+        params.numActiveNodeItems = numActiveNodeItems;
+        params.maxWorkItemCount = maxWorkItemCount;
+    }
 }
 
 YBI_GPU uint32_t FindKdTreeNodeItemIndex(PathGuidingKdTreeParams params, uint32_t workItemIndex)

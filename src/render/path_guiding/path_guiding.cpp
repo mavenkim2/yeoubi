@@ -423,7 +423,7 @@ void PathGuidingSystem::GenerateWorkItems(PathGuidingKdTreeParams &params,
 {
     params.stage = stage;
     UploadParams(params);
-    Launch(*generateWorkItems, 1, 1, "kd.work_items");
+    Launch(*generateWorkItems, 1, VMM_BLOCK_SIZE, "kd.work_items");
     ReadBackParams(params);
 }
 

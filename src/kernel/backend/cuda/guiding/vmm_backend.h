@@ -40,6 +40,11 @@ struct CudaVMMBackend
         return BlockReduceSum<T, VMM_BLOCK_SIZE>(function(threadIdx.x));
     }
 
+    YBI_GPU static uint32_t ReduceBlockMax(uint32_t value)
+    {
+        return BlockReduceMax<VMM_BLOCK_SIZE>(value);
+    }
+
     YBI_GPU static ExclusiveScanResult ExclusiveScanAdd(uint32_t value)
     {
         __shared__ uint32_t warpOffsets[32];
