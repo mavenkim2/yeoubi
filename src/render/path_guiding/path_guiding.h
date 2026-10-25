@@ -57,6 +57,15 @@ class PathGuidingSystem
     uint32_t updateSampleCount = 1;
     uint32_t iteration = 0;
 
+    struct StageTimer
+    {
+        const char *stage;
+        std::unique_ptr<DeviceEventTimer> timer;
+    };
+    std::vector<StageTimer> stageTimers;
+    bool timingUpdate = false;
+    uint32_t updateFrontierCount = 0;
+
     std::unique_ptr<DeviceKernel> generateNodes;
     std::unique_ptr<DeviceKernel> initializeSampleIndices;
     std::unique_ptr<DeviceKernel> generateNodeItems;
@@ -94,7 +103,10 @@ class PathGuidingSystem
     void PrintUpdateStatistics(size_t sampleCount) const;
     void UploadParams(PathGuidingKdTreeParams &params);
     void ReadBackParams(PathGuidingKdTreeParams &params);
-    void Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX);
+    std::unique_ptr<DeviceEventTimer> StartStageTimer();
+    void StopStageTimer(const char *stage, std::unique_ptr<DeviceEventTimer> timer);
+    void PrintUpdateTimings(double wallMilliseconds, double lutMilliseconds);
+    void Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX, const char *stage);
     void GenerateWorkItems(PathGuidingKdTreeParams &params, PathGuidingKdTreeStage stage);
     void ReserveFrontierBuffers(PathGuidingKdTreeParams &params);
     void ReservePositionStatisticsBuffers(PathGuidingKdTreeParams &params);
@@ -106,7 +118,8 @@ class PathGuidingSystem
     void ReduceNodeStatistics(PathGuidingKdTreeParams &params,
                               DeviceKernel &kernel,
                               T *&statistics,
-                              T *&newStatistics);
+                              T *&newStatistics,
+                              const char *stage);
     void CalculatePositionStatistics(PathGuidingKdTreeParams &params);
     void SelectNodeSplits(const PathGuidingKdTreeParams &params);
     void PartitionSamples(PathGuidingKdTreeParams &params);

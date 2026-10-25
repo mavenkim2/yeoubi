@@ -50,7 +50,7 @@ YBI_KERNEL CreateKdTreeNodesKernel(PathGuidingKdTreeParams *kernelParams)
 {
     if (YBI_FIRST_THREAD)
     {
-        CreateKdTreeNodes(*kernelParams, kernelParams->splitDecision);
+        CreateKdTreeNodes(*kernelParams);
     }
 }
 
@@ -350,10 +350,14 @@ YBI_KERNEL ShouldSplitGuidingCellKernel(PathGuidingKdTreeParams *kernelParams)
 
 YBI_KERNEL PromoteGuidingCellsKernel(PathGuidingKdTreeParams *kernelParams)
 {
-    if (YBI_FIRST_THREAD)
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, 1u)
     {
-        PromoteGuidingCells(*kernelParams);
+        YBI_SHARED uint32_t vmmOffset;
+        YBI_SHARED uint32_t frontierOffset;
+        PromoteGuidingCells<YBI_GUIDING_BACKEND>(
+            *kernelParams, vmmOffset, frontierOffset);
     }
+    YBI_END_ITERATE_WORK_ITEMS;
 }
 
 } // namespace ybi

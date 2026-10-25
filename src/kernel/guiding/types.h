@@ -244,6 +244,7 @@ struct PathGuidingKdTreeNode
 
     int guidingCellIndex = -1;
     int ancestorGuidingCellIndex = -1;
+    int parentIndex = -1;
     LookaheadCell lookaheadCell = {};
 
     YBI_CPU_GPU bool HasChildren() const
@@ -264,6 +265,14 @@ struct PathGuidingKdTreeNode
     YBI_CPU_GPU bool IsGuidingCell() const
     {
         return guidingCellIndex >= 0;
+    }
+
+    YBI_CPU_GPU int GetGuidingAncestorIndex(const PathGuidingKdTreeNode *nodes) const
+    {
+        int index = parentIndex;
+        while (index >= 0 && !nodes[index].IsGuidingCell())
+            index = nodes[index].parentIndex;
+        return index;
     }
 
     YBI_CPU_GPU bool IsLookahead() const

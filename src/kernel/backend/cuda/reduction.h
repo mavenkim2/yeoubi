@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kernel/backend/cuda/warp_reduce.h"
+#include "kernel/backend/cuda/warp_helpers.h"
 
 #if defined(__CUDACC__)
 

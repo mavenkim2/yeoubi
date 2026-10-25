@@ -2,7 +2,7 @@
 
 #include "core/atomic.h"
 #include "kernel/backend/cuda/reduction.h"
-#include "kernel/backend/cuda/warp_reduce.h"
+#include "kernel/backend/cuda/warp_helpers.h"
 #include "kernel/guiding/types.h"
 #include <cstdio>
 
@@ -47,36 +47,22 @@ struct CudaVMMBackend
         const uint32_t laneIndex = threadIdx.x & 31u;
         const uint32_t warpIndex = threadIdx.x >> 5;
         const uint32_t numWarps = blockDim.x >> 5;
-        uint32_t inclusive = value;
-#pragma unroll
-        for (uint32_t offset = 1; offset < 32; offset <<= 1)
-        {
-            const uint32_t other = __shfl_up_sync(0xffffffffu, inclusive, offset);
-            if (laneIndex >= offset)
-                inclusive += other;
-        }
+        const uint32_t exclusive = WarpExclusivePrefixSum(value);
         if (laneIndex == 31)
-            warpOffsets[warpIndex] = inclusive;
+            warpOffsets[warpIndex] = exclusive + value;
         __syncthreads();
 
         if (warpIndex == 0)
         {
             const uint32_t warpSum = laneIndex < numWarps ? warpOffsets[laneIndex] : 0;
-            uint32_t warpInclusive = warpSum;
-#pragma unroll
-            for (uint32_t offset = 1; offset < 32; offset <<= 1)
-            {
-                const uint32_t other = __shfl_up_sync(0xffffffffu, warpInclusive, offset);
-                if (laneIndex >= offset)
-                    warpInclusive += other;
-            }
+            const uint32_t warpInclusive = WarpInclusivePrefixSum(warpSum);
             if (laneIndex < numWarps)
                 warpOffsets[laneIndex] = warpInclusive - warpSum;
             if (laneIndex == numWarps - 1)
                 total = warpInclusive;
         }
         __syncthreads();
-        const ExclusiveScanResult result{warpOffsets[warpIndex] + inclusive - value, total};
+        const ExclusiveScanResult result{warpOffsets[warpIndex] + exclusive, total};
         __syncthreads();
         return result;
     }

@@ -41,7 +41,7 @@ struct CUDADeviceEvent : DeviceEvent
     CUcontext context = nullptr;
     CUevent event = nullptr;
 
-    explicit CUDADeviceEvent(CUcontext context);
+    CUDADeviceEvent(CUcontext context, bool enableTiming = false);
     ~CUDADeviceEvent() override;
 };
 
@@ -135,6 +135,8 @@ struct CUDADevice : Device
     void DestroyTexture(DeviceTexture &texture) override;
     std::unique_ptr<DeviceStream> CreateDeviceStream() override;
     std::shared_ptr<DeviceEvent> CreateDeviceEvent() override;
+    std::unique_ptr<DeviceEventTimer> StartEventTimer(DeviceStream *stream = nullptr) override;
+    void StopEventTimer(DeviceEventTimer &timer, DeviceStream *stream = nullptr) override;
     using Device::SyncDeviceStream;
     void SyncDeviceStream(DeviceStream *stream = nullptr) override;
     void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) override;

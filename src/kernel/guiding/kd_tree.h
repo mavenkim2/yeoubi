@@ -82,8 +82,7 @@ YBI_GPU bool LookaheadContinuationCriteria(const PathGuidingKdTreeParams &params
            !IsGuidingCellMarkedForSplit(params, ancestorIndex);
 }
 
-YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
-                               PathGuidingSplitDecision splitDecision)
+YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params)
 {
     for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
     {
@@ -100,7 +99,8 @@ YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params,
             {
                 PathGuidingKdTreeNode child{};
                 child.treeDepth = node.treeDepth + 1;
-                if (splitDecision == PathGuidingSplitDecision::Lookahead)
+                child.parentIndex = int(nodeItem.nodeIndex);
+                if (params.splitDecision == PathGuidingSplitDecision::Lookahead)
                 {
                     child.ancestorGuidingCellIndex = node.IsGuidingCell()
                                                          ? int(nodeItem.nodeIndex)

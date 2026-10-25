@@ -209,16 +209,16 @@ struct RadianceRecorder
         }
 
         GetRecord(childRecordIndex)
-            .InitializeDirectSample(position,
-                                    normal,
-                                    direction,
-                                    parentRecordIndex,
-                                    throughput,
-                                    pdf,
-                                    distance,
-                                    contribution,
-                                    IsPathGuidingTrainingSampleEligible(properties.flags,
-                                                                       properties.maxRoughness));
+            .InitializeDirectSample(
+                position,
+                normal,
+                direction,
+                parentRecordIndex,
+                throughput,
+                pdf,
+                distance,
+                contribution,
+                IsPathGuidingTrainingSampleEligible(properties.flags, properties.maxRoughness));
         IncrementCount(parentRecordIndex);
         MarkDone(childRecordIndex);
     }
@@ -246,15 +246,15 @@ struct RadianceRecorder
         const float distanceScale = propagateDistance ? sample.refractionDistanceScale : 0.f;
 
         GetRecord(childRecordIndex)
-            .InitializeIndirectSample(position,
-                                      normal,
-                                      sample.direction,
-                                      parentRecordIndex,
-                                      throughput,
-                                      sample.stochasticPdf,
-                                      distanceScale,
-                                      IsPathGuidingTrainingSampleEligible(sample.flags,
-                                                                         sample.sampledRoughness));
+            .InitializeIndirectSample(
+                position,
+                normal,
+                sample.direction,
+                parentRecordIndex,
+                throughput,
+                sample.stochasticPdf,
+                distanceScale,
+                IsPathGuidingTrainingSampleEligible(sample.flags, sample.sampledRoughness));
         IncrementCount(parentRecordIndex);
         MarkDone(parentRecordIndex);
         return childRecordIndex;

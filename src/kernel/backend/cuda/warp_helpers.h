@@ -10,6 +10,26 @@
 namespace ybi
 {
 
+YBI_GPU uint32_t WarpInclusivePrefixSum(uint32_t value)
+{
+    const uint32_t threadIndex =
+        threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z);
+    const uint32_t laneIndex = threadIndex & 31u;
+#pragma unroll
+    for (uint32_t offset = 1; offset < 32; offset <<= 1)
+    {
+        const uint32_t other = __shfl_up_sync(0xffffffffu, value, offset);
+        if (laneIndex >= offset)
+            value += other;
+    }
+    return value;
+}
+
+YBI_GPU uint32_t WarpExclusivePrefixSum(uint32_t value)
+{
+    return WarpInclusivePrefixSum(value) - value;
+}
+
 template <typename T>
 YBI_GPU T WarpReduceSum(T value)
 {

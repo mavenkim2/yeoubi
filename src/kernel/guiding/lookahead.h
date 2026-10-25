@@ -213,29 +213,54 @@ YBI_GPU void ShouldSplitGuidingCell(PathGuidingKdTreeParams &params, uint32_t no
     }
 }
 
-YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
+template <typename Backend>
+YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params,
+                                 uint32_t &vmmOffset,
+                                 uint32_t &frontierOffset)
 {
-    for (uint32_t nodeIndex = 0; nodeIndex < params.numNodes; ++nodeIndex)
+    for (uint32_t nodeIndex = Backend::GetThreadIndex(); nodeIndex < params.numNodes;
+         nodeIndex += Backend::GetThreadStride())
     {
         PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
-        if (node.IsLookahead())
-        {
-            const uint32_t ancestorIndex = uint32_t(node.ancestorGuidingCellIndex);
-            if (IsGuidingCellMarkedForSplit(params, ancestorIndex))
-                node.lookaheadCell = {};
-        }
+        if (node.IsLookahead() &&
+            IsGuidingCellMarkedForSplit(params, uint32_t(node.ancestorGuidingCellIndex)))
+            node.lookaheadCell = {};
     }
+    Backend::Sync();
 
-    for (uint32_t nodeIndex = 0; nodeIndex < params.numNodes; ++nodeIndex)
+    for (uint32_t tileOffset = 0; tileOffset < params.numNodes;
+         tileOffset += Backend::GetThreadStride())
     {
-        PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
-        if (IsGuidingCellMarkedForSplit(params, nodeIndex))
+        const uint32_t nodeIndex = tileOffset + Backend::GetThreadIndex();
+        const bool promote =
+            nodeIndex < params.numNodes && IsGuidingCellMarkedForSplit(params, nodeIndex);
+        uint32_t childCount = 0;
+        if (promote)
         {
+            const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
             YBI_ASSERT(node.IsGuidingCell() && node.HasChildren());
+            childCount = uint32_t(params.nodeItems[node.childOffset].sampleCount != 0) +
+                         uint32_t(params.nodeItems[node.childOffset + 1].sampleCount != 0);
+        }
+
+        const auto vmmScan = Backend::ExclusiveScanAdd(uint32_t(promote));
+        const auto frontierScan = Backend::ExclusiveScanAdd(childCount);
+        if (Backend::GetThreadIndex() == 0)
+        {
+            vmmOffset = params.numVMMs;
+            params.numVMMs += vmmScan.total;
+            frontierOffset = params.numNextNodeItemIndices;
+            params.numNextNodeItemIndices += frontierScan.total;
+        }
+        Backend::Sync();
+
+        if (promote)
+        {
+            PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
             PathGuidingKdTreeNode &left = params.nodes[node.childOffset];
             PathGuidingKdTreeNode &right = params.nodes[node.childOffset + 1];
             left.guidingCellIndex = node.guidingCellIndex;
-            right.guidingCellIndex = int(params.numVMMs++);
+            right.guidingCellIndex = int(vmmOffset + vmmScan.prefix);
             params.vmmDistributions[right.guidingCellIndex] =
                 params.vmmDistributions[left.guidingCellIndex];
             params.vmmDistributions[left.guidingCellIndex].split = true;
@@ -246,30 +271,24 @@ YBI_GPU void PromoteGuidingCells(PathGuidingKdTreeParams &params)
             if (params.vmmSplitStatistics)
                 params.vmmSplitStatistics[right.guidingCellIndex] =
                     params.vmmSplitStatistics[left.guidingCellIndex];
-            left.ancestorGuidingCellIndex = -1;
-            right.ancestorGuidingCellIndex = -1;
             node.guidingCellIndex = -1;
-            node.ancestorGuidingCellIndex = -1;
+            uint32_t outputIndex = frontierOffset + frontierScan.prefix;
             for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
             {
                 const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
                 if (params.nodeItems[childNodeIndex].sampleCount != 0)
-                    params.nextNodeItemIndices[params.numNextNodeItemIndices++] = childNodeIndex;
+                    params.nextNodeItemIndices[outputIndex++] = childNodeIndex;
             }
         }
+        Backend::Sync();
+    }
 
-        if (node.HasChildren())
-        {
-            YBI_ASSERT(uint32_t(node.childOffset) > nodeIndex);
-            const int ancestorIndex =
-                node.IsGuidingCell() ? int(nodeIndex) : node.ancestorGuidingCellIndex;
-            for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
-            {
-                PathGuidingKdTreeNode &child = params.nodes[node.childOffset + childIndex];
-                if (!child.IsGuidingCell())
-                    child.ancestorGuidingCellIndex = ancestorIndex;
-            }
-        }
+    for (uint32_t nodeIndex = Backend::GetThreadIndex(); nodeIndex < params.numNodes;
+         nodeIndex += Backend::GetThreadStride())
+    {
+        PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
+        node.ancestorGuidingCellIndex =
+            node.IsGuidingCell() ? -1 : node.GetGuidingAncestorIndex(params.nodes);
     }
 }
 

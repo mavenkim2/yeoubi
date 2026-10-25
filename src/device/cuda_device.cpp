@@ -176,10 +176,10 @@ CUDADeviceStream::~CUDADeviceStream()
     stream = nullptr;
 }
 
-CUDADeviceEvent::CUDADeviceEvent(CUcontext context) : context(context)
+CUDADeviceEvent::CUDADeviceEvent(CUcontext context, bool enableTiming) : context(context)
 {
     CUDA_ASSERT(cuCtxPushCurrent(context));
-    CUDA_ASSERT(cuEventCreate(&event, CU_EVENT_DISABLE_TIMING));
+    CUDA_ASSERT(cuEventCreate(&event, enableTiming ? CU_EVENT_DEFAULT : CU_EVENT_DISABLE_TIMING));
     CUDA_ASSERT(cuCtxPopCurrent(nullptr));
 }
 
@@ -442,6 +442,42 @@ std::unique_ptr<DeviceStream> CUDADevice::CreateDeviceStream()
 std::shared_ptr<DeviceEvent> CUDADevice::CreateDeviceEvent()
 {
     return std::make_shared<CUDADeviceEvent>(cudaContext);
+}
+
+namespace
+{
+struct CUDAEventTimer : DeviceEventTimer
+{
+    CUDADeviceEvent start;
+    CUDADeviceEvent stop;
+    bool stopped = false;
+
+    CUDAEventTimer(CUcontext context) : start(context, true), stop(context, true) {}
+
+    float ElapsedMilliseconds() const override
+    {
+        YBI_ASSERT(stopped);
+        CUDA_ASSERT(cuCtxPushCurrent(start.context));
+        float milliseconds;
+        CUDA_ASSERT(cuEventElapsedTime(&milliseconds, start.event, stop.event));
+        CUDA_ASSERT(cuCtxPopCurrent(nullptr));
+        return milliseconds;
+    }
+};
+}
+
+std::unique_ptr<DeviceEventTimer> CUDADevice::StartEventTimer(DeviceStream *stream)
+{
+    auto timer = std::make_unique<CUDAEventTimer>(cudaContext);
+    RecordDeviceEvent(stream, timer->start);
+    return timer;
+}
+
+void CUDADevice::StopEventTimer(DeviceEventTimer &timer, DeviceStream *stream)
+{
+    auto &cudaTimer = static_cast<CUDAEventTimer &>(timer);
+    RecordDeviceEvent(stream, cudaTimer.stop);
+    cudaTimer.stopped = true;
 }
 
 void CUDADevice::SyncDeviceStream(DeviceStream *stream)

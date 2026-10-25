@@ -11,8 +11,11 @@
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
 #include "kernel/guiding/radiance_recorder.h"
+#include <chrono>
 #include <cstdio>
 #include <limits>
+#include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -232,14 +235,33 @@ void PathGuidingSystem::ReadBackParams(PathGuidingKdTreeParams &params)
     device->CopyToHost(&params, kernelParams.Data(), sizeof(params));
 }
 
-void PathGuidingSystem::Launch(DeviceKernel &kernel, uint32_t gridX, uint32_t blockX)
+std::unique_ptr<DeviceEventTimer> PathGuidingSystem::StartStageTimer()
+{
+    return timingUpdate ? device->StartEventTimer() : nullptr;
+}
+
+void PathGuidingSystem::StopStageTimer(const char *stage, std::unique_ptr<DeviceEventTimer> timer)
+{
+    if (timer)
+    {
+        device->StopEventTimer(*timer);
+        stageTimers.push_back({stage, std::move(timer)});
+    }
+}
+
+void PathGuidingSystem::Launch(DeviceKernel &kernel,
+                                uint32_t gridX,
+                                uint32_t blockX,
+                                const char *stage)
 {
     void *arguments[] = {kernelParams.KernelArg()};
     DeviceKernelLaunchDesc desc;
     desc.arguments = arguments;
     desc.gridX = gridX;
     desc.blockX = blockX;
+    auto timer = StartStageTimer();
     device->ExecuteKernel(kernel, desc);
+    StopStageTimer(stage, std::move(timer));
 }
 
 void PathGuidingSystem::AllocateRadianceRecords(uint32_t count)
@@ -401,7 +423,7 @@ void PathGuidingSystem::GenerateWorkItems(PathGuidingKdTreeParams &params,
 {
     params.stage = stage;
     UploadParams(params);
-    Launch(*generateWorkItems, 1, 1);
+    Launch(*generateWorkItems, 1, 1, "kd.work_items");
     ReadBackParams(params);
 }
 
@@ -465,7 +487,8 @@ template <typename T>
 void PathGuidingSystem::ReduceNodeStatistics(PathGuidingKdTreeParams &params,
                                              DeviceKernel &kernel,
                                              T *&statistics,
-                                             T *&newStatistics)
+                                             T *&newStatistics,
+                                             const char *stage)
 {
     uint32_t workItemBound = params.numWorkItems;
     for (uint32_t count = params.maxWorkItemCount; count > 1;
@@ -473,9 +496,9 @@ void PathGuidingSystem::ReduceNodeStatistics(PathGuidingKdTreeParams &params,
     {
         std::swap(statistics, newStatistics);
         UploadParams(params);
-        Launch(*generateReductionWorkItems, 1, 1);
+        Launch(*generateReductionWorkItems, 1, 1, "kd.reduction_setup");
         workItemBound = CeilDiv(workItemBound, VMM_BLOCK_SIZE) + params.numActiveNodeItems;
-        Launch(kernel, workItemBound, VMM_BLOCK_SIZE);
+        Launch(kernel, workItemBound, VMM_BLOCK_SIZE, stage);
     }
 }
 
@@ -488,16 +511,19 @@ void PathGuidingSystem::CalculatePositionStatistics(PathGuidingKdTreeParams &par
     ReservePositionStatisticsBuffers(params);
     UploadParams(params);
 
-    Launch(*calculateNodeBounds, params.numWorkItems, VMM_BLOCK_SIZE);
-    Launch(*calculateNodePositionStatistics, params.numWorkItems, VMM_BLOCK_SIZE);
+    Launch(*calculateNodeBounds, params.numWorkItems, VMM_BLOCK_SIZE, "kd.bounds");
+    Launch(*calculateNodePositionStatistics, params.numWorkItems, VMM_BLOCK_SIZE,
+           "kd.position_stats");
 
     ReduceNodeStatistics(params,
                          *reduceNodePositionStatistics,
                          params.positionStatistics,
-                         params.newPositionStatistics);
+                         params.newPositionStatistics,
+                         "kd.position_stats");
     Launch(*accumulateNodePositionStatistics,
            CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE),
-           VMM_BLOCK_SIZE);
+           VMM_BLOCK_SIZE,
+           "kd.position_stats");
 }
 
 void PathGuidingSystem::SelectNodeSplits(const PathGuidingKdTreeParams &params)
@@ -505,7 +531,8 @@ void PathGuidingSystem::SelectNodeSplits(const PathGuidingKdTreeParams &params)
     if (params.numWorkItems == 0)
         return;
 
-    Launch(*selectNodeSplits, CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE);
+    Launch(*selectNodeSplits, CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE), VMM_BLOCK_SIZE,
+           "kd.split_decision");
 }
 
 void PathGuidingSystem::PartitionSamples(PathGuidingKdTreeParams &params)
@@ -515,13 +542,15 @@ void PathGuidingSystem::PartitionSamples(PathGuidingKdTreeParams &params)
         return;
 
     YBI_ASSERT(params.newSampleIndices && params.newSampleIndices != params.sampleIndices);
-    Launch(*partitionCount, params.numWorkItems, VMM_BLOCK_SIZE);
-    Launch(*partitionExclusiveScan, params.numActiveNodeItems, VMM_BLOCK_SIZE);
+    Launch(*partitionCount, params.numWorkItems, VMM_BLOCK_SIZE, "kd.partition");
+    Launch(*partitionExclusiveScan, params.numActiveNodeItems, VMM_BLOCK_SIZE, "kd.partition");
 
+    auto copyTimer = StartStageTimer();
     device->CopyDeviceToDeviceAsync(params.newSampleIndices,
                                     params.sampleIndices,
                                     size_t(params.numSampleIndices) * sizeof(uint32_t));
-    Launch(*partitionSamples, params.numWorkItems, VMM_BLOCK_SIZE);
+    StopStageTimer("kd.partition_copy", std::move(copyTimer));
+    Launch(*partitionSamples, params.numWorkItems, VMM_BLOCK_SIZE, "kd.partition");
     std::swap(params.sampleIndices, params.newSampleIndices);
 }
 
@@ -529,8 +558,8 @@ void PathGuidingSystem::CreateNodeItems(PathGuidingKdTreeParams &params)
 {
     ReserveNodeItemBuffers(params);
     UploadParams(params);
-    Launch(*generateNodes, 1, 1);
-    Launch(*generateNodeItems, 1, 1);
+    Launch(*generateNodes, 1, 1, "kd.nodes");
+    Launch(*generateNodeItems, 1, 1, "kd.nodes");
     ReadBackParams(params);
 }
 
@@ -539,7 +568,7 @@ void PathGuidingSystem::UpdateSampleCountSplits(PathGuidingKdTreeParams &params)
     CreateNodeItems(params);
     ReserveVMMDistributions(params, params.numNodeItemIndices);
     UploadParams(params);
-    Launch(*copySampleCountDistributions, 1, 1);
+    Launch(*copySampleCountDistributions, 1, 1, "kd.copy_distributions");
     ReadBackParams(params);
 }
 
@@ -561,15 +590,17 @@ void PathGuidingSystem::UpdateLookaheadCells(PathGuidingKdTreeParams &params)
 
     ReserveLookaheadStatisticsBuffers(params);
     UploadParams(params);
-    Launch(*updateLookaheadCell, params.numWorkItems, VMM_BLOCK_SIZE);
+    Launch(*updateLookaheadCell, params.numWorkItems, VMM_BLOCK_SIZE, "kd.lookahead_stats");
 
     ReduceNodeStatistics(params,
                          *reduceLookaheadStatistics,
                          params.lookaheadStatistics,
-                         params.newLookaheadStatistics);
+                         params.newLookaheadStatistics,
+                         "kd.lookahead_stats");
     Launch(*accumulateLookaheadCells,
            CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE),
-           VMM_BLOCK_SIZE);
+           VMM_BLOCK_SIZE,
+           "kd.lookahead_stats");
 }
 
 void PathGuidingSystem::SelectGuidingCellSplits(PathGuidingKdTreeParams &params)
@@ -579,7 +610,8 @@ void PathGuidingSystem::SelectGuidingCellSplits(PathGuidingKdTreeParams &params)
 
     Launch(*shouldSplitGuidingCell,
            CeilDiv(params.numActiveNodeItems, VMM_BLOCK_SIZE),
-           VMM_BLOCK_SIZE);
+           VMM_BLOCK_SIZE,
+           "kd.lookahead_decision");
     ReadBackParams(params);
 }
 
@@ -590,7 +622,7 @@ void PathGuidingSystem::PromoteGuidingCells(PathGuidingKdTreeParams &params)
 
     ReserveVMMDistributions(params, params.numGuidingCellSplits);
     UploadParams(params);
-    Launch(*promoteGuidingCells, 1, 1);
+    Launch(*promoteGuidingCells, 1, VMM_BLOCK_SIZE, "kd.promote");
     ReadBackParams(params);
 }
 
@@ -654,7 +686,7 @@ void PathGuidingSystem::FinishUpdate(PathGuidingKdTreeParams &params)
     ReserveBuffer(vmmUpdateNodeIndices, params.numVMMs);
     params.vmmUpdateNodeIndices = vmmUpdateNodeIndices.Data();
     UploadParams(params);
-    Launch(*collectVMMUpdateNodes, 1, 1);
+    Launch(*collectVMMUpdateNodes, 1, 1, "kd.collect_vmms");
     ReadBackParams(params);
 }
 
@@ -665,6 +697,11 @@ void PathGuidingSystem::Update()
         return;
 
     device->SyncDeviceStream();
+    const auto updateStart = std::chrono::steady_clock::now();
+    double lutMilliseconds = 0.0;
+    stageTimers.clear();
+    updateFrontierCount = 0;
+    timingUpdate = true;
     DrainTrainingSamples();
     const size_t sampleCount = trainingSampleCount;
     if (sampleCount != 0)
@@ -672,9 +709,15 @@ void PathGuidingSystem::Update()
         YBI_ASSERT(sampleCount <= std::numeric_limits<uint32_t>::max());
         if (!vmfSplitTable.texture.textureObject)
         {
+            const auto lutStart = std::chrono::steady_clock::now();
             vmfSplitTable = LoadVMFSplitTable(*device);
+            lutMilliseconds = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - lutStart).count();
             if (!vmfSplitTable.texture.textureObject)
+            {
+                timingUpdate = false;
                 return;
+            }
         }
         PathGuidingKdTreeParams params{};
         vmfSplitTable.Bind(params);
@@ -688,15 +731,20 @@ void PathGuidingSystem::Update()
         UploadParams(params);
         Launch(*initializeSampleIndices,
                CeilDiv(params.numSampleIndices, uint32_t(VMM_BLOCK_SIZE)),
-               VMM_BLOCK_SIZE);
+               VMM_BLOCK_SIZE,
+               "prepare.indices");
         UpdateKDTree(params);
         UpdateVMMs(params);
         device->SyncDeviceStream();
         trainingSampleCount = 0;
     }
 
+    timingUpdate = false;
+    const double wallMilliseconds = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - updateStart).count();
     ++iteration;
     PrintUpdateStatistics(sampleCount);
+    PrintUpdateTimings(wallMilliseconds, lutMilliseconds);
     lastUpdateSample = renderedSamples;
     if (renderedSamples >= 8)
         updateSampleCount = Min(updateSampleCount * 2, 16u);
@@ -738,11 +786,53 @@ void PathGuidingSystem::PrintUpdateStatistics(size_t sampleCount) const
     std::fflush(stdout);
 }
 
+void PathGuidingSystem::PrintUpdateTimings(double wallMilliseconds, double lutMilliseconds)
+{
+    struct StageTotal
+    {
+        double milliseconds = 0.0;
+        uint32_t calls = 0;
+    };
+    std::map<std::string, StageTotal> totals;
+    for (const StageTimer &entry : stageTimers)
+    {
+        StageTotal &total = totals[entry.stage];
+        total.milliseconds += entry.timer->ElapsedMilliseconds();
+        ++total.calls;
+    }
+    double kdMilliseconds = 0.0;
+    double vmmMilliseconds = 0.0;
+    double deviceMilliseconds = 0.0;
+    for (const auto &entry : totals)
+    {
+        deviceMilliseconds += entry.second.milliseconds;
+        if (entry.first.compare(0, 3, "kd.") == 0)
+            kdMilliseconds += entry.second.milliseconds;
+        if (entry.first.compare(0, 4, "vmm.") == 0)
+            vmmMilliseconds += entry.second.milliseconds;
+    }
+    std::printf("Path guiding timing %u: spp=%llu, wall_ms=%.3f, device_ms=%.3f, "
+                "kd_ms=%.3f, vmm_ms=%.3f, lut_ms=%.3f, frontiers=%u, timed_operations=%zu\n",
+                iteration,
+                static_cast<unsigned long long>(renderedSamples),
+                wallMilliseconds, deviceMilliseconds, kdMilliseconds, vmmMilliseconds,
+                lutMilliseconds, updateFrontierCount, stageTimers.size());
+    for (const auto &entry : totals)
+    {
+        std::printf("Path guiding stage %u: %s, device_ms=%.3f, calls=%u\n",
+                    iteration, entry.first.c_str(), entry.second.milliseconds, entry.second.calls);
+    }
+    stageTimers.clear();
+    std::fflush(stdout);
+}
+
 void PathGuidingSystem::UpdateKDTree(PathGuidingKdTreeParams &params)
 {
     BeginUpdate(params);
     while (params.numNodeItemIndices != 0)
     {
+        if (timingUpdate)
+            ++updateFrontierCount;
         ReserveFrontierBuffers(params);
         CalculatePositionStatistics(params);
         SelectNodeSplits(params);
@@ -772,13 +862,13 @@ void PathGuidingSystem::UpdateVMMs(PathGuidingKdTreeParams &params)
     YBI_ASSERT(params.numSampleIndices == 0 || (params.sampleData && params.sampleIndices));
     ReserveVMMTrainingBuffers(params);
     UploadParams(params);
-    Launch(*applyParallaxShift, params.numVMMUpdateNodes, 32);
-    Launch(*reprojectSamples, params.numVMMUpdateNodes, 32);
-    Launch(*updateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
-    Launch(*splitVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
-    Launch(*partialUpdateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
-    Launch(*mergeVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
-    Launch(*updateComponentDistances, params.numVMMUpdateNodes, VMM_BLOCK_SIZE);
+    Launch(*applyParallaxShift, params.numVMMUpdateNodes, 32, "vmm.parallax");
+    Launch(*reprojectSamples, params.numVMMUpdateNodes, 32, "vmm.reproject");
+    Launch(*updateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE, "vmm.fit");
+    Launch(*splitVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE, "vmm.split");
+    Launch(*partialUpdateVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE, "vmm.refit");
+    Launch(*mergeVMM, params.numVMMUpdateNodes, VMM_BLOCK_SIZE, "vmm.merge");
+    Launch(*updateComponentDistances, params.numVMMUpdateNodes, VMM_BLOCK_SIZE, "vmm.distance");
 }
 
 } // namespace ybi

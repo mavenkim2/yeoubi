@@ -92,6 +92,13 @@ struct DeviceEvent
     virtual ~DeviceEvent() = default;
 };
 
+struct DeviceEventTimer
+{
+    virtual ~DeviceEventTimer() = default;
+    // Read after the stream containing StopEventTimer has completed.
+    virtual float ElapsedMilliseconds() const = 0;
+};
+
 struct DeviceKernelDesc
 {
     std::string filename;
@@ -209,6 +216,8 @@ struct Device
     virtual void DestroyTexture(DeviceTexture &texture) = 0;
     virtual std::unique_ptr<DeviceStream> CreateDeviceStream() = 0;
     virtual std::shared_ptr<DeviceEvent> CreateDeviceEvent() = 0;
+    virtual std::unique_ptr<DeviceEventTimer> StartEventTimer(DeviceStream *stream = nullptr);
+    virtual void StopEventTimer(DeviceEventTimer &timer, DeviceStream *stream = nullptr);
     virtual void SyncDeviceStream(DeviceStream *stream = nullptr) = 0;
     void SyncDeviceStream(DeviceStream &stream) { SyncDeviceStream(&stream); }
     virtual void RecordDeviceEvent(DeviceStream *stream, DeviceEvent &event) = 0;
