@@ -48,18 +48,20 @@ YBI_KERNEL CollectVMMUpdateNodesKernel(PathGuidingKdTreeParams *kernelParams)
 
 YBI_KERNEL CreateKdTreeNodesKernel(PathGuidingKdTreeParams *kernelParams)
 {
-    if (YBI_FIRST_THREAD)
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, 1u)
     {
-        CreateKdTreeNodes(*kernelParams);
+        CreateKdTreeNodes<YBI_GUIDING_BACKEND>(*kernelParams);
     }
+    YBI_END_ITERATE_WORK_ITEMS;
 }
 
 YBI_KERNEL CreateKdTreeNodeItemsKernel(PathGuidingKdTreeParams *kernelParams)
 {
-    if (YBI_FIRST_THREAD)
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, 1u)
     {
-        CreateKdTreeNodeItems(*kernelParams, kernelParams->splitDecision);
+        CreateKdTreeNodeItems<YBI_GUIDING_BACKEND>(*kernelParams, kernelParams->splitDecision);
     }
+    YBI_END_ITERATE_WORK_ITEMS;
 }
 
 YBI_KERNEL CopySampleCountDistributionsKernel(PathGuidingKdTreeParams *kernelParams)
@@ -108,10 +110,11 @@ YBI_KERNEL CalculateNodePositionStatisticsKernel(PathGuidingKdTreeParams *kernel
 
 YBI_KERNEL CreateKdTreeReductionWorkItemsKernel(PathGuidingKdTreeParams *kernelParams)
 {
-    if (YBI_FIRST_THREAD)
+    YBI_ITERATE_WORK_ITEMS(workItemIndex, 1u)
     {
-        CreateKdTreeReductionWorkItems(*kernelParams);
+        CreateKdTreeReductionWorkItems<YBI_GUIDING_BACKEND>(*kernelParams);
     }
+    YBI_END_ITERATE_WORK_ITEMS;
 }
 
 YBI_KERNEL ReduceNodePositionStatisticsKernel(PathGuidingKdTreeParams *kernelParams)

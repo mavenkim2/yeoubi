@@ -496,7 +496,7 @@ void PathGuidingSystem::ReduceNodeStatistics(PathGuidingKdTreeParams &params,
     {
         std::swap(statistics, newStatistics);
         UploadParams(params);
-        Launch(*generateReductionWorkItems, 1, 1, "kd.reduction_setup");
+        Launch(*generateReductionWorkItems, 1, VMM_BLOCK_SIZE, "kd.reduction_setup");
         workItemBound = CeilDiv(workItemBound, VMM_BLOCK_SIZE) + params.numActiveNodeItems;
         Launch(kernel, workItemBound, VMM_BLOCK_SIZE, stage);
     }
@@ -558,8 +558,8 @@ void PathGuidingSystem::CreateNodeItems(PathGuidingKdTreeParams &params)
 {
     ReserveNodeItemBuffers(params);
     UploadParams(params);
-    Launch(*generateNodes, 1, 1, "kd.nodes");
-    Launch(*generateNodeItems, 1, 1, "kd.nodes");
+    Launch(*generateNodes, 1, VMM_BLOCK_SIZE, "kd.nodes");
+    Launch(*generateNodeItems, 1, VMM_BLOCK_SIZE, "kd.nodes");
     ReadBackParams(params);
 }
 

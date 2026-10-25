@@ -33,7 +33,8 @@ YBI_GPU uint32_t WarpExclusivePrefixSum(uint32_t value)
 template <typename T>
 YBI_GPU T WarpReduceSum(T value)
 {
-    static_assert(std::is_trivially_copyable<T>::value, "Warp reduction requires a trivially copyable type");
+    static_assert(std::is_trivially_copyable<T>::value,
+                  "Warp reduction requires a trivially copyable type");
 #pragma unroll
     for (uint32_t offset = 16; offset > 0; offset >>= 1)
     {

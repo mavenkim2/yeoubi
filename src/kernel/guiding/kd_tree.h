@@ -82,77 +82,111 @@ YBI_GPU bool LookaheadContinuationCriteria(const PathGuidingKdTreeParams &params
            !IsGuidingCellMarkedForSplit(params, ancestorIndex);
 }
 
+template <typename Backend>
 YBI_GPU void CreateKdTreeNodes(PathGuidingKdTreeParams &params)
 {
-    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
+    uint32_t numNodes = params.numNodes;
+    for (uint32_t tileOffset = 0; tileOffset < params.numNodeItemIndices;
+         tileOffset += Backend::GetThreadStride())
     {
-        const PathGuidingKdTreeNodeItem &nodeItem =
-            params.nodeItems[params.nodeItemIndices[frontierIndex]];
-        PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-        if (nodeItem.sampleCount == 0 || node.NeedsSplit())
-            continue;
-        if (!node.HasChildren())
+        const uint32_t frontierIndex = tileOffset + Backend::GetThreadIndex();
+        uint32_t nodeItemIndex = 0;
+        bool process = false;
+        bool createChildren = false;
+        if (frontierIndex < params.numNodeItemIndices)
         {
-            node.childOffset = int(params.numNodes);
-            params.numNodes += 2;
+            nodeItemIndex = params.nodeItemIndices[frontierIndex];
+            const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+            const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+            process = nodeItem.sampleCount != 0 && !node.NeedsSplit();
+            createChildren = process && !node.HasChildren();
+        }
+
+        const auto scan = Backend::ExclusiveScanAdd(createChildren ? 2u : 0u);
+        if (process)
+        {
+            const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+            PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+            if (createChildren)
+            {
+                node.childOffset = int(numNodes + scan.prefix);
+                for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
+                {
+                    PathGuidingKdTreeNode child{};
+                    child.treeDepth = node.treeDepth + 1;
+                    child.parentIndex = int(nodeItem.nodeIndex);
+                    if (params.splitDecision == PathGuidingSplitDecision::Lookahead)
+                    {
+                        child.ancestorGuidingCellIndex = node.IsGuidingCell()
+                                                             ? int(nodeItem.nodeIndex)
+                                                             : node.ancestorGuidingCellIndex;
+                    }
+                    child.cellBoundsMin = node.cellBoundsMin;
+                    child.cellBoundsMax = node.cellBoundsMax;
+                    if (childIndex == 0)
+                        child.cellBoundsMax[node.splitAxis] = node.splitLocation;
+                    else
+                        child.cellBoundsMin[node.splitAxis] = node.splitLocation;
+                    params.nodes[node.childOffset + childIndex] = child;
+                    params.nodeItems[node.childOffset + childIndex] = {};
+                }
+            }
+
             for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
             {
-                PathGuidingKdTreeNode child{};
-                child.treeDepth = node.treeDepth + 1;
-                child.parentIndex = int(nodeItem.nodeIndex);
-                if (params.splitDecision == PathGuidingSplitDecision::Lookahead)
-                {
-                    child.ancestorGuidingCellIndex = node.IsGuidingCell()
-                                                         ? int(nodeItem.nodeIndex)
-                                                         : node.ancestorGuidingCellIndex;
-                }
-                child.cellBoundsMin = node.cellBoundsMin;
-                child.cellBoundsMax = node.cellBoundsMax;
-                if (childIndex == 0)
-                    child.cellBoundsMax[node.splitAxis] = node.splitLocation;
-                else
-                    child.cellBoundsMin[node.splitAxis] = node.splitLocation;
-                params.nodes[node.childOffset + childIndex] = child;
-                params.nodeItems[node.childOffset + childIndex] = {};
+                const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
+                PathGuidingKdTreeNodeItem &childItem = params.nodeItems[childNodeIndex];
+                childItem.nodeIndex = childNodeIndex;
+                childItem.sampleOffset =
+                    nodeItem.sampleOffset + (childIndex == 0 ? 0 : nodeItem.numLeft);
+                childItem.sampleCount =
+                    childIndex == 0 ? nodeItem.numLeft : nodeItem.sampleCount - nodeItem.numLeft;
             }
         }
-
-        for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
-        {
-            const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
-            PathGuidingKdTreeNodeItem &childItem = params.nodeItems[childNodeIndex];
-            childItem.nodeIndex = childNodeIndex;
-            childItem.sampleOffset =
-                nodeItem.sampleOffset + (childIndex == 0 ? 0 : nodeItem.numLeft);
-            childItem.sampleCount =
-                childIndex == 0 ? nodeItem.numLeft : nodeItem.sampleCount - nodeItem.numLeft;
-        }
+        numNodes += scan.total;
     }
+    Backend::Sync();
+    if (Backend::GetThreadIndex() == 0)
+        params.numNodes = numNodes;
 }
 
+template <typename Backend>
 YBI_GPU void CreateKdTreeNodeItems(PathGuidingKdTreeParams &params,
                                    PathGuidingSplitDecision splitDecision)
 {
-    params.numNextNodeItemIndices = 0;
-    for (uint32_t frontierIndex = 0; frontierIndex < params.numNodeItemIndices; ++frontierIndex)
+    uint32_t numNextNodeItemIndices = 0;
+    for (uint32_t tileOffset = 0; tileOffset < params.numNodeItemIndices;
+         tileOffset += Backend::GetThreadStride())
     {
-        const uint32_t nodeItemIndex = params.nodeItemIndices[frontierIndex];
-        const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
-        const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
-        if (nodeItem.sampleCount == 0 || !node.HasChildren())
-            continue;
-        if (splitDecision == PathGuidingSplitDecision::Lookahead &&
-            !LookaheadContinuationCriteria(params, nodeItemIndex))
-            continue;
-        for (uint32_t childIndex = 0; childIndex < 2; ++childIndex)
+        const uint32_t frontierIndex = tileOffset + Backend::GetThreadIndex();
+        uint32_t childOffset = 0;
+        bool appendLeft = false;
+        bool appendRight = false;
+        if (frontierIndex < params.numNodeItemIndices)
         {
-            const uint32_t childNodeIndex = uint32_t(node.childOffset) + childIndex;
-            if (params.nodeItems[childNodeIndex].sampleCount != 0)
+            const uint32_t nodeItemIndex = params.nodeItemIndices[frontierIndex];
+            const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+            const PathGuidingKdTreeNode &node = params.nodes[nodeItem.nodeIndex];
+            if (nodeItem.sampleCount != 0 && node.HasChildren() &&
+                (splitDecision != PathGuidingSplitDecision::Lookahead ||
+                 LookaheadContinuationCriteria(params, nodeItemIndex)))
             {
-                params.nextNodeItemIndices[params.numNextNodeItemIndices++] = childNodeIndex;
+                childOffset = uint32_t(node.childOffset);
+                appendLeft = params.nodeItems[childOffset].sampleCount != 0;
+                appendRight = params.nodeItems[childOffset + 1].sampleCount != 0;
             }
         }
+
+        const auto scan = Backend::ExclusiveScanAdd(uint32_t(appendLeft) + uint32_t(appendRight));
+        uint32_t outputIndex = numNextNodeItemIndices + scan.prefix;
+        if (appendLeft)
+            params.nextNodeItemIndices[outputIndex++] = childOffset;
+        if (appendRight)
+            params.nextNodeItemIndices[outputIndex] = childOffset + 1;
+        numNextNodeItemIndices += scan.total;
     }
+    if (Backend::GetThreadIndex() == 0)
+        params.numNextNodeItemIndices = numNextNodeItemIndices;
 }
 
 template <typename Backend>
@@ -270,20 +304,36 @@ CalculateNodePositionStatistics(PathGuidingKdTreeParams params,
     return result;
 }
 
+template <typename Backend>
 YBI_GPU void CreateKdTreeReductionWorkItems(PathGuidingKdTreeParams &params)
 {
     uint32_t totalWorkItemCount = 0;
-    for (uint32_t activeIndex = 0; activeIndex < params.numActiveNodeItems; ++activeIndex)
+    for (uint32_t tileOffset = 0; tileOffset < params.numActiveNodeItems;
+         tileOffset += Backend::GetThreadStride())
     {
-        PathGuidingKdTreeNodeItem &nodeItem =
-            params.nodeItems[params.activeNodeItems[activeIndex]];
-        nodeItem.reductionInputOffset = nodeItem.workItemOffset;
-        nodeItem.reductionInputCount = nodeItem.workItemCount;
-        nodeItem.workItemOffset = totalWorkItemCount;
-        nodeItem.workItemCount = CeilDiv(nodeItem.reductionInputCount, VMM_BLOCK_SIZE);
-        totalWorkItemCount += nodeItem.workItemCount;
+        const uint32_t activeIndex = tileOffset + Backend::GetThreadIndex();
+        const bool valid = activeIndex < params.numActiveNodeItems;
+        uint32_t nodeItemIndex = 0;
+        uint32_t workItemCount = 0;
+        if (valid)
+        {
+            nodeItemIndex = params.activeNodeItems[activeIndex];
+            workItemCount = CeilDiv(params.nodeItems[nodeItemIndex].workItemCount, VMM_BLOCK_SIZE);
+        }
+
+        const auto scan = Backend::ExclusiveScanAdd(workItemCount);
+        if (valid)
+        {
+            PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeItemIndex];
+            nodeItem.reductionInputOffset = nodeItem.workItemOffset;
+            nodeItem.reductionInputCount = nodeItem.workItemCount;
+            nodeItem.workItemOffset = totalWorkItemCount + scan.prefix;
+            nodeItem.workItemCount = workItemCount;
+        }
+        totalWorkItemCount += scan.total;
     }
-    params.numWorkItems = totalWorkItemCount;
+    if (Backend::GetThreadIndex() == 0)
+        params.numWorkItems = totalWorkItemCount;
 }
 
 template <typename T>
