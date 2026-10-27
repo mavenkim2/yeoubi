@@ -13,7 +13,7 @@ struct Device;
 struct DeviceKernel;
 struct KernelParams;
 struct WavefrontParams;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 class PathGuidingSystem;
 #endif
 
@@ -46,7 +46,7 @@ private:
     DeviceBuffer<uint32_t> numSampleStatesBuffer;
     DeviceBuffer<uint32_t> sampleIndicesBuffer;
     DeviceBuffer<WavefrontParams> kernelParamsBuffer;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     std::unique_ptr<PathGuidingSystem> pathGuidingSystem;
 #endif
 };

@@ -3,7 +3,7 @@
 #include "core/affine_transform.h"
 #include "core/matrix4x4.h"
 #include "device/device_texture.h"
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 #include "kernel/guiding/radiance_recorder.h"
 #endif
 #include "kernel/guiding/types.h"
@@ -40,7 +40,7 @@ struct KernelParams
     Vec3f *accumulation;
     uint32_t accumulatedSamples;
 
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     RadianceRecorder radianceRecorder;
     const PathGuidingKdTreeParams *pathGuiding;
 #endif

@@ -1,7 +1,7 @@
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 
 #if !defined(YBI_GUIDING_DISPATCH_KERNEL_PATH)
-#error "YBI_USE_PATH_GUIDING requires YBI_GUIDING_DISPATCH_KERNEL_PATH"
+#error "YBI_ENABLE_PATH_GUIDING requires YBI_GUIDING_DISPATCH_KERNEL_PATH"
 #endif
 
 #include "render/path_guiding/path_guiding.h"

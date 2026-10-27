@@ -20,7 +20,10 @@ YBI_GPU bool SampleGuiding(BsdfSample &sample,
     {
         const bool success = sampleBsdf(sample);
         if (success)
+        {
+            sample.bsdfPdf = sample.pdf;
             sample.stochasticPdf = sample.pdf;
+        }
         return success;
     }
 
@@ -78,6 +81,7 @@ YBI_GPU bool SampleGuiding(BsdfSample &sample,
     {
         const Vec3f bsdfCos = bsdfSample.weight * bsdfSample.pdf;
         sample = bsdfSample;
+        sample.bsdfPdf = bsdfSample.pdf;
         sample.direction = bsdfSample.direction;
         sample.stochasticPdf = 2.f * bsdfRisSample.candidatePdf * bsdfResampleProb;
         sample.weight = bsdfCos / sample.stochasticPdf;
@@ -87,6 +91,7 @@ YBI_GPU bool SampleGuiding(BsdfSample &sample,
     {
         const Vec3f guidingBsdfCos = guidingSample.weight * guidingSample.pdf;
         sample = guidingSample;
+        sample.bsdfPdf = guidingSample.pdf;
         sample.direction = sampledGuidingDirection;
         sample.stochasticPdf = 2.f * guidingRisSample.candidatePdf * guidingResampleProb;
         sample.weight = guidingBsdfCos / sample.stochasticPdf;
@@ -94,6 +99,14 @@ YBI_GPU bool SampleGuiding(BsdfSample &sample,
     }
 
     return true;
+}
+
+YBI_GPU double UpdateRussianRouletteCorrectionFactor(double correctionFactor,
+                                                       const BsdfSample &sample)
+{
+    YBI_ASSERT(sample.bsdfPdf > 0.f && IsFinite(sample.bsdfPdf));
+    YBI_ASSERT(sample.stochasticPdf > 0.f && IsFinite(sample.stochasticPdf));
+    return correctionFactor * (double(sample.stochasticPdf) / double(sample.bsdfPdf));
 }
 
 // The same 50/50 proposal PDF is used by light MIS.

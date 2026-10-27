@@ -113,6 +113,7 @@ struct VMMUpdateRange
 {
     uint32_t sampleOffset;
     uint32_t numSamples;
+    uint32_t nonZeroSampleCount;
     // Lifetime count including this batch, before any decay of previous statistics.
     float overallNumSamples;
 };
@@ -311,6 +312,7 @@ struct PathGuidingKdTreeNodeItem
 
     uint32_t sampleOffset;
     uint32_t sampleCount;
+    uint32_t nonZeroSampleCount;
     uint32_t numLeft;
     // Reset with the batch, preserved when this node is revisited after promotion.
     bool positionStatisticsAccumulated = false;

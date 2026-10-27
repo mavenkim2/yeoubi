@@ -138,7 +138,7 @@ public:
     PathGuidingSystem(
         Device *device,
         PathGuidingSplitDecision splitDecision = PathGuidingSplitDecision::SampleCount,
-        size_t maxTrainingSampleBytes = size_t(2) * 1024 * 1024 * 1024);
+        size_t maxTrainingSampleBytes = size_t(3) * 1024 * 1024 * 1024);
     ~PathGuidingSystem();
     PathGuidingSystem(const PathGuidingSystem &) = delete;
     PathGuidingSystem &operator=(const PathGuidingSystem &) = delete;

@@ -3,7 +3,7 @@
 #include "core/math.h"
 #include "device/cuda_compat.h"
 #include "kernel/backend/dispatch.h"
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 #include "kernel/guiding/api.h"
 #endif
 #include "kernel/integrator/terminate_path.h"
@@ -35,7 +35,7 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
     RNG rng = sampleState->ReadRNG(sampleIndex);
     BsdfSample sample;
 
-#ifdef YBI_USE_PATH_GUIDING
+#ifdef YBI_ENABLE_PATH_GUIDING
     auto sampleBsdf = [&](BsdfSample &sample) {
         const bool success = DeviceDispatch<bool>(material.sampleCallableIndex,
                                                   &params,
@@ -89,8 +89,15 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
     const Vec3f nextDirection = sample.direction;
     Vec3f throughput = sampleState->ReadThroughput(sampleIndex) * sample.weight;
     const float etaScale = sampleState->ReadEtaScale(sampleIndex) * Sqr(sample.eta);
-#if 0
+#if defined(YBI_ENABLE_PATH_GUIDING)
+    const double russianRouletteCorrectionFactor = UpdateRussianRouletteCorrectionFactor(
+        sampleState->ReadRussianRouletteCorrectionFactor(sampleIndex), sample);
+    sampleState->WriteRussianRouletteCorrectionFactor(sampleIndex, russianRouletteCorrectionFactor);
+    const float survivalProbability = float(Min(
+        double(throughput.MaxComponent()) * etaScale * russianRouletteCorrectionFactor, 1.0));
+#else
     const float survivalProbability = (throughput * etaScale).MaxComponent();
+#endif
     if (survivalProbability < 1.f && depth > 1)
     {
         const float rouletteSample = rng.Uniform();
@@ -103,13 +110,12 @@ IndirectLighting(const KernelParams &params, const SampleState *sampleState, uin
         }
         throughput /= survivalProbability;
     }
-#endif
 
     Vec3f geometricNormal = sampleState->ReadGeometricNormal(sampleIndex);
     if (Dot(nextDirection, geometricNormal) < 0.f)
         geometricNormal = -geometricNormal;
 
-#ifdef YBI_USE_PATH_GUIDING
+#ifdef YBI_ENABLE_PATH_GUIDING
     const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
     const int childRecordIndex = params.radianceRecorder.RecordIndirectSample(
         position, sampleState->ReadShadingNormal(sampleIndex), sample, recordIndex, throughput);

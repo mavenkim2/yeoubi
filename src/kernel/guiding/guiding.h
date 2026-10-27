@@ -118,8 +118,6 @@ BeginVMMIteration(uint32_t numSamples, uint32_t numComponents, VMMUpdateWorkspac
     }
     if (Backend::GetThreadIndex() == 0)
     {
-        // TODO: Exclude zero-weight samples from directional EM, retain them for spatial/lookahead
-        // statistics, and preserve the previous distribution for batches with no positive weight.
         workspace.currentStats.numSamples = float(numSamples);
         workspace.currentStats.sumWeights = 0.f;
         workspace.logLikelihood = 0.f;
@@ -290,16 +288,20 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
     constexpr uint32_t laneWidth = Backend::SampleWidth;
 
     YBI_ASSERT(range.numSamples > 0);
-    YBI_ASSERT(range.overallNumSamples >= float(range.numSamples));
+    YBI_ASSERT(range.nonZeroSampleCount <= range.numSamples);
+    YBI_ASSERT(range.overallNumSamples >= float(range.nonZeroSampleCount));
     YBI_ASSERT(distribution.numComponents > 0 &&
                distribution.numComponents <= VMM_MAX_NUM_COMPONENTS);
     YBI_ASSERT(cfg.maxEMIterations > 0);
     YBI_ASSERT(cfg.convergenceThreshold >= 0.f);
 
+    if (range.nonZeroSampleCount == 0)
+        return;
+
     float previousLogLikelihood = 0.f;
     for (uint32_t iteration = 0; iteration < cfg.maxEMIterations; ++iteration)
     {
-        BeginVMMIteration<Backend>(range.numSamples, distribution.numComponents, workspace);
+        BeginVMMIteration<Backend>(range.nonZeroSampleCount, distribution.numComponents, workspace);
         VMMStatistics localStats{};
         Float localLogLikelihood(0.f);
         for (uint32_t sampleIndex = Backend::GetThreadIndex() * laneWidth;
@@ -313,6 +315,8 @@ YBI_GPU void UpdateVMM(const PathGuidingKdTreeParams &params,
             YBI_ASSERT(All(sample.pdf > Float(0.f)));
             YBI_ASSERT(All(sample.incidentRadianceEstimate >= Float(0.f)));
             const Float sampleWeight = sample.incidentRadianceEstimate / sample.pdf;
+            if (sampleWeight == Float(0.f))
+                continue;
             Float assignments[VMM_MAX_NUM_COMPONENTS];
             Float pdf;
             if (!SoftAssignment<Float>(distribution, sample.direction, assignments, pdf))
@@ -410,6 +414,8 @@ YBI_GPU void CalculateVMMSplitStatistics(const PathGuidingKdTreeParams &params,
         YBI_ASSERT(All(sample.incidentRadianceEstimate >= Float(0.f)));
         const Float Li = sample.incidentRadianceEstimate;
         const Float sampleWeight = Li / sample.pdf;
+        if (sampleWeight == Float(0.f))
+            continue;
         Float assignments[VMM_MAX_NUM_COMPONENTS];
         Float V;
         if (!SoftAssignment<Float>(distribution, sample.direction, assignments, V))
@@ -982,13 +988,35 @@ YBI_GPU void UpdateNodeVMM(const PathGuidingKdTreeParams &params,
 {
     const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
     const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
-    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    if constexpr (!Partial)
+    {
+        const uint32_t nonZeroSampleCount = Backend::template ReduceBlock<uint32_t>(
+            [&](uint32_t threadIndex) {
+                uint32_t count = 0;
+                for (uint32_t sampleOffset = threadIndex; sampleOffset < nodeItem.sampleCount;
+                     sampleOffset += VMM_BLOCK_SIZE)
+                {
+                    const PathGuidingTrainingSample &sample =
+                        LoadTrainingSample(params, nodeItem.sampleOffset + sampleOffset);
+                    YBI_ASSERT(sample.pdf > 0.f);
+                    YBI_ASSERT(sample.incidentRadiance >= 0.f);
+                    count += uint32_t(sample.incidentRadiance / sample.pdf > 0.f);
+                }
+                return count;
+            });
+        if (Backend::GetThreadIndex() == 0)
+            nodeItem.nonZeroSampleCount = nonZeroSampleCount;
+        Backend::Sync();
+    }
+    if (nodeItem.nonZeroSampleCount == 0)
+        return;
     uint32_t componentMask = ~0u;
     if constexpr (Partial)
     {
         if (!params.vmmFitConfiguration.useSplitAndMerge ||
             !params.vmmFitConfiguration.partialReFit ||
-            nodeItem.sampleCount < params.vmmFitConfiguration.minSamplesForPartialRefitting)
+            nodeItem.nonZeroSampleCount < params.vmmFitConfiguration.minSamplesForPartialRefitting)
             return;
         componentMask = params.vmmSplitComponentMasks[node.guidingCellIndex];
         if (componentMask == 0)
@@ -1008,14 +1036,15 @@ YBI_GPU void UpdateNodeVMM(const PathGuidingKdTreeParams &params,
         if (distribution.initialized && params.vmmFitConfiguration.useSplitAndMerge &&
             Backend::GetThreadIndex() == 0)
         {
-            previousStats.numSamplesAfterLastSplit += nodeItem.sampleCount;
-            previousStats.numSamplesAfterLastMerge += nodeItem.sampleCount;
+            previousStats.numSamplesAfterLastSplit += nodeItem.nonZeroSampleCount;
+            previousStats.numSamplesAfterLastMerge += nodeItem.nonZeroSampleCount;
         }
         Backend::Sync();
     }
     const float overallNumSamples =
-        previousStats.overallNumSamples + (Partial ? 0.f : float(nodeItem.sampleCount));
-    const VMMUpdateRange range{nodeItem.sampleOffset, nodeItem.sampleCount, overallNumSamples};
+        previousStats.overallNumSamples + (Partial ? 0.f : float(nodeItem.nonZeroSampleCount));
+    const VMMUpdateRange range{
+        nodeItem.sampleOffset, nodeItem.sampleCount, nodeItem.nonZeroSampleCount, overallNumSamples};
     UpdateVMM<Backend, Partial>(params,
                                 distribution,
                                 previousStats,
@@ -1036,7 +1065,7 @@ YBI_GPU void SplitNodeVMM(const PathGuidingKdTreeParams &params,
     const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
     const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
-    if (!params.vmmFitConfiguration.useSplitAndMerge)
+    if (!params.vmmFitConfiguration.useSplitAndMerge || nodeItem.nonZeroSampleCount == 0)
     {
         if (Backend::GetThreadIndex() == 0)
             params.vmmSplitComponentMasks[node.guidingCellIndex] = 0;
@@ -1047,8 +1076,9 @@ YBI_GPU void SplitNodeVMM(const PathGuidingKdTreeParams &params,
     LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
 
     const VMMUpdateRange range{
-        nodeItem.sampleOffset, nodeItem.sampleCount, previousStats.overallNumSamples};
-    const bool splitComponents = previousStats.overallNumSamples == float(nodeItem.sampleCount) ||
+        nodeItem.sampleOffset, nodeItem.sampleCount, nodeItem.nonZeroSampleCount,
+        previousStats.overallNumSamples};
+    const bool splitComponents = previousStats.overallNumSamples == float(nodeItem.nonZeroSampleCount) ||
                                  previousStats.numSamplesAfterLastSplit >=
                                      params.vmmFitConfiguration.minSamplesForSplitting;
     const float fluxEstimate = SafeDivide(previousStats.sumWeights, previousStats.numSamples);
@@ -1080,12 +1110,13 @@ YBI_GPU void MergeNodeVMM(const PathGuidingKdTreeParams &params,
 {
     const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
     const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
-    if (!params.vmmFitConfiguration.useSplitAndMerge)
+    const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    if (!params.vmmFitConfiguration.useSplitAndMerge || nodeItem.nonZeroSampleCount == 0)
         return;
     VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
     SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
     LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
-    if (previousStats.overallNumSamples != float(params.nodeItems[nodeIndex].sampleCount) &&
+    if (previousStats.overallNumSamples != float(nodeItem.nonZeroSampleCount) &&
         previousStats.numSamplesAfterLastMerge < params.vmmFitConfiguration.minSamplesForMerging)
         return;
     MergeVMM<Backend>(distribution,
@@ -1109,12 +1140,15 @@ YBI_GPU void UpdateNodeComponentDistances(const PathGuidingKdTreeParams &params,
     const uint32_t nodeIndex = params.vmmUpdateNodeIndices[updateIndex];
     const PathGuidingKdTreeNode &node = params.nodes[nodeIndex];
     const PathGuidingKdTreeNodeItem &nodeItem = params.nodeItems[nodeIndex];
+    if (nodeItem.nonZeroSampleCount == 0)
+        return;
     VMMDistribution &storedDistribution = params.vmmDistributions[node.guidingCellIndex];
     SufficientStatistics &storedStats = params.vmmStatistics[node.guidingCellIndex];
     LoadVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
 
     const VMMUpdateRange range{
-        nodeItem.sampleOffset, nodeItem.sampleCount, previousStats.overallNumSamples};
+        nodeItem.sampleOffset, nodeItem.sampleCount, nodeItem.nonZeroSampleCount,
+        previousStats.overallNumSamples};
     UpdateComponentDistances<Backend>(params, distribution, previousStats, range, workspace);
     StoreVMM<Backend>(storedDistribution, storedStats, distribution, previousStats);
 }

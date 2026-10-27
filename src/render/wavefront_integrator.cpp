@@ -1,7 +1,7 @@
 #include "render/wavefront_integrator.h"
 #include "core/math.h"
 #include "device/device.h"
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 #include "render/path_guiding/path_guiding.h"
 #endif
 #include "kernel/launch/wavefront_params.h"
@@ -43,7 +43,7 @@ WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
     numSampleStatesBuffer = device->Alloc<uint32_t>(1);
     sampleIndicesBuffer = device->Alloc<uint32_t>(batchSize);
     kernelParamsBuffer = device->Alloc<WavefrontParams>(1);
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     pathGuidingSystem =
         std::make_unique<PathGuidingSystem>(device, PathGuidingSplitDecision::Lookahead);
 #endif
@@ -81,8 +81,9 @@ void WavefrontIntegrator::AllocateSampleState(WavefrontSampleState &state)
     allocate(state.rng);
     allocate(state.rayCone);
     allocate(state.radiance);
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     allocate(state.radianceRecordIndex);
+    allocate(state.russianRouletteCorrectionFactor);
 #endif
     allocate(state.throughput);
     allocate(state.previousSurfacePosition);
@@ -142,7 +143,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
         // next frame reuses the pinned staging buffer.
         if (!success)
             device->SyncDeviceStream();
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
         else
             pathGuidingSystem->Update();
 #endif
@@ -152,7 +153,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
     WavefrontParams params{};
     static_cast<KernelParams &>(params) = kernelParams;
     params.outputSize = outputSize;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     params.radianceRecorder = pathGuidingSystem->BeginRecording(batchSize);
     params.pathGuiding = pathGuidingSystem->GetKernelParams();
 #endif
@@ -190,7 +191,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
     if (!device->DispatchKernel(
             KERNEL_INTERSECT, numSampleStates, launch.blockX, kernelParamsBuffer))
         return finish(false);
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     params.radianceRecorder = pathGuidingSystem->UpdateRadianceRecorder();
 #endif
 
@@ -272,7 +273,7 @@ bool WavefrontIntegrator::RenderSamples(const KernelParams &kernelParams, Vec2u 
         if (!device->DispatchKernel(
                 nextKernel, dispatchParams.numSampleIndices, launch.blockX, kernelParamsBuffer))
             return finish(false);
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
         if (nextKernel == KERNEL_INTERSECT || nextKernel == KERNEL_DIRECT_LIGHTING ||
             nextKernel == KERNEL_INDIRECT_LIGHTING)
             params.radianceRecorder = pathGuidingSystem->UpdateRadianceRecorder();

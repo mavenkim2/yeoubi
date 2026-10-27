@@ -27,10 +27,10 @@ check_cxx_source_compiles(
 cmake_pop_check_state()
 
 # Compile Options
-option(WITH_CUDA "Enable CUDA backend" OFF)
-option(WITH_VULKAN "Enable Vulkan presentation backend" OFF)
-option(WITH_PATH_GUIDING "Enable OpenPGL path guiding" OFF)
-option(YBI_USE_PATH_GUIDING "Enable Yeoubi path guiding" OFF)
+option(YBI_ENABLE_CUDA "Enable CUDA backend" OFF)
+option(YBI_ENABLE_VULKAN "Enable Vulkan presentation backend" OFF)
+option(YBI_ENABLE_OPENPGL "Enable OpenPGL path guiding" OFF)
+option(YBI_ENABLE_PATH_GUIDING "Enable Yeoubi path guiding" OFF)
 option(YBI_MATERIAL_DEBUG "Print MaterialX BSDF sampling decisions" OFF)
 
 set(YBI_COMPILE_DEFINITIONS)
@@ -70,7 +70,7 @@ set (YBI_MATERIALX_STUBS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/bsdf/materialx/stubs/value_impl.h)
 
 # CUDA
-if (WITH_CUDA)
+if (YBI_ENABLE_CUDA)
     set(YBI_USE_GPU ON)
     include(CheckLanguage)
     check_language(CUDA)
@@ -85,7 +85,7 @@ if (WITH_CUDA)
         enable_language(CUDA)
         message(STATUS "CUDA Found: ${CMAKE_CUDA_COMPILER} (${CUDA_VERSION})")
         list (APPEND YBI_DEPENDENCIES CUDA::cuda_driver CUDA::cudart CUDA::nvrtc)
-        list (APPEND YBI_COMPILE_DEFINITIONS WITH_CUDA)
+        list (APPEND YBI_COMPILE_DEFINITIONS YBI_ENABLE_CUDA)
 
         find_package(OptiX)
         if (OPTIX_FOUND)
@@ -107,24 +107,24 @@ if (WITH_CUDA)
     endif()
 endif()
 
-if (YBI_USE_PATH_GUIDING)
+if (YBI_ENABLE_PATH_GUIDING)
     set(YBI_GUIDING_DISPATCH_KERNEL_PATH "")
     if (YBI_HAS_CUDA AND OPTIX_FOUND)
         set(YBI_GUIDING_DISPATCH_KERNEL_PATH "${CMAKE_CURRENT_BINARY_DIR}/guiding_dispatch.ptx")
     endif()
     list(APPEND YBI_COMPILE_DEFINITIONS
-        YBI_USE_PATH_GUIDING
+        YBI_ENABLE_PATH_GUIDING
         YBI_GUIDING_DISPATCH_KERNEL_PATH=\"${YBI_GUIDING_DISPATCH_KERNEL_PATH}\")
 endif()
 
 # Vulkan
-if (WITH_VULKAN)
+if (YBI_ENABLE_VULKAN)
     find_package(Vulkan REQUIRED)
     if (Vulkan_FOUND)
         message(STATUS "Found Vulkan: ${Vulkan_INCLUDE_DIRS}")
     endif()
     list (APPEND YBI_DEPENDENCIES Vulkan::Vulkan)
-    list (APPEND YBI_COMPILE_DEFINITIONS WITH_VULKAN)
+    list (APPEND YBI_COMPILE_DEFINITIONS YBI_ENABLE_VULKAN)
     list (APPEND YBI_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/display_device/vulkan/vulkan.cpp)
     list(APPEND YBI_SOURCE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/imgui.cpp
@@ -139,7 +139,7 @@ if (WITH_VULKAN)
 endif()
 
 # GLFW
-if (WITH_VULKAN)
+if (YBI_ENABLE_VULKAN)
     set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -171,11 +171,11 @@ if (USD_ROOT)
 endif()
 
 # OpenPGL
-if (WITH_PATH_GUIDING)
+if (YBI_ENABLE_OPENPGL)
     find_package(openpgl CONFIG REQUIRED)
     if (openpgl_FOUND)
         list (APPEND YBI_DEPENDENCIES openpgl::openpgl)
-        list (APPEND YBI_COMPILE_DEFINITIONS WITH_PATH_GUIDING)
+        list (APPEND YBI_COMPILE_DEFINITIONS YBI_ENABLE_OPENPGL)
     endif()
 endif()
 
@@ -285,7 +285,7 @@ add_executable(yeoubi
                ${YBI_SOURCE}
 )
 
-if (YBI_USE_PATH_GUIDING)
+if (YBI_ENABLE_PATH_GUIDING)
     target_sources(yeoubi PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cpu/guiding/dispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/render/path_guiding/path_guiding.cpp)
@@ -313,8 +313,8 @@ function (compile_cuda src)
     )
 
     set(NVCC_OPTIONS ${arg_OPTIONS})
-    if (YBI_USE_PATH_GUIDING)
-        list(APPEND NVCC_OPTIONS -DYBI_USE_PATH_GUIDING)
+    if (YBI_ENABLE_PATH_GUIDING)
+        list(APPEND NVCC_OPTIONS -DYBI_ENABLE_PATH_GUIDING)
     endif()
     if (NOT arg_NO_FAST_MATH)
         list(APPEND NVCC_OPTIONS --use_fast_math)
@@ -439,7 +439,7 @@ if (YBI_HAS_CUDA AND OPTIX_FOUND)
     add_custom_target(yeoubi_select_sample_indices_kernel DEPENDS ${YBI_SELECT_SAMPLE_INDICES_KERNEL_PATH})
     add_dependencies(yeoubi yeoubi_select_sample_indices_kernel)
 
-    if (YBI_USE_PATH_GUIDING)
+    if (YBI_ENABLE_PATH_GUIDING)
         set(YBI_GUIDING_DISPATCH_KERNEL_DEPFILE "${YBI_GUIDING_DISPATCH_KERNEL_PATH}.d")
         compile_cuda("${CMAKE_CURRENT_SOURCE_DIR}/src/kernel/backend/cuda/guiding/dispatch.cu"
             NO_FAST_MATH

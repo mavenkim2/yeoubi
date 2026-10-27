@@ -4,12 +4,13 @@ YBI_GPU bool YBI_MATERIAL_SELF_SAMPLE(const KernelParams &params,
                                       BsdfSample &sample,
                                       Vec3f u)
 {
+    bool frontFacing;
     const OrthonormalBasis frame =
-        MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
+        MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection, &frontFacing);
     const Vec3f localViewDirection = frame.WorldToLocal(viewDirection);
     const Vec2f roughness = YBI_MATERIAL_ROUGHNESS(info);
     const float ior = YBI_MATERIAL_IOR(info);
-    const float eta = Dot(viewDirection, info.geometricNormal) > 0.f ? ior : 1.f / ior;
+    const float eta = frontFacing ? ior : 1.f / ior;
     if (IsSmoothMicrofacet(roughness))
     {
         if (!SampleSmoothDielectricBsdf(localViewDirection,
@@ -52,10 +53,11 @@ YBI_GPU Vec3f YBI_MATERIAL_SELF_EVALUATE(const KernelParams &params,
     if (IsSmoothMicrofacet(roughness) ||
         YBI_MATERIAL_SCATTER_FLAGS != BSDF_REFLECTION)
         return Vec3f(0.f);
+    bool frontFacing;
     const OrthonormalBasis frame =
-        MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
+        MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection, &frontFacing);
     const float ior = YBI_MATERIAL_IOR(info);
-    const float eta = Dot(viewDirection, info.geometricNormal) > 0.f ? ior : 1.f / ior;
+    const float eta = frontFacing ? ior : 1.f / ior;
     const Vec3f value = EvaluateDielectricBsdf(frame.WorldToLocal(viewDirection),
                                   frame.WorldToLocal(lightDirection),
                                   YBI_MATERIAL_WEIGHT(info),
@@ -90,10 +92,11 @@ YBI_GPU float YBI_MATERIAL_SELF_ALBEDO(const KernelParams &params,
                                        const ClosureEvaluationInfo &info,
                                        const Vec3f &viewDirection)
 {
+    bool frontFacing;
     const OrthonormalBasis frame =
-        MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection);
+        MaterialXBsdfFrame(info, YBI_MATERIAL_NORMAL(info), viewDirection, &frontFacing);
     const float ior = YBI_MATERIAL_IOR(info);
-    const float eta = Dot(viewDirection, info.geometricNormal) > 0.f ? ior : 1.f / ior;
+    const float eta = frontFacing ? ior : 1.f / ior;
     if (IsSmoothMicrofacet(YBI_MATERIAL_ROUGHNESS(info)))
     {
         const float fresnel = FresnelDielectric(frame.WorldToLocal(viewDirection).z, eta);

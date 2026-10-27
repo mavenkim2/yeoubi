@@ -47,7 +47,7 @@ static void PrintLog(const char *log, size_t logSize)
     }
 }
 
-#if defined(WITH_CUDA) && defined(WITH_OPTIX)
+#if defined(YBI_ENABLE_CUDA) && defined(WITH_OPTIX)
 static OptixResult
 CreateOptixModuleCompat(OptixDeviceContext context,
                         const OptixModuleCompileOptions *moduleCompileOptions,
@@ -132,7 +132,7 @@ void BuildMeshCLAS(CUDADevice *cudaDevice,
                    OptixTraversableHandle &outputHandleOut);
 
 // Platform functions
-#if defined(WITH_CUDA)
+#if defined(YBI_ENABLE_CUDA)
 
 CUDADeviceKernel::CUDADeviceKernel(CUcontext context, CUmodule module, CUfunction function)
     : context(context), module(module), function(function)
@@ -770,8 +770,8 @@ bool CUDADevice::CompileKernel(const std::string &source, DeviceModule &deviceMo
         "--use_fast_math",
         "--generate-line-info",
         "-DOPTIX_VERSION=" YBI_OPTIX_VERSION_STRING,
-#if defined(YBI_USE_PATH_GUIDING)
-        "-DYBI_USE_PATH_GUIDING",
+#if defined(YBI_ENABLE_PATH_GUIDING)
+        "-DYBI_ENABLE_PATH_GUIDING",
 #endif
         "-I" YBI_OPTIX_INCLUDE_PATH,
         "-I" YBI_OPTIX_SDK_INCLUDE_PATH,
@@ -1123,7 +1123,7 @@ void CUDADevice::DestroyTexture(DeviceTexture &texture)
 #endif
 
 // BVH
-#if defined(WITH_CUDA) && defined(WITH_OPTIX)
+#if defined(YBI_ENABLE_CUDA) && defined(WITH_OPTIX)
 
 void CUDADevice::InitializeOptix(bool createRendererPipeline)
 {

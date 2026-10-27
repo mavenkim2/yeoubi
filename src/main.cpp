@@ -26,7 +26,7 @@
 #include <vector>
 
 #include <GLFW/glfw3.h>
-#ifdef WITH_VULKAN
+#ifdef YBI_ENABLE_VULKAN
 #include <imgui.h>
 #endif
 

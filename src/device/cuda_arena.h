@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/assert.h"
-#ifdef WITH_CUDA
+#ifdef YBI_ENABLE_CUDA
 
 #define ARENA_RESERVE_SIZE (64ll * 1024ll * 1024ll)
 #define ARENA_COMMIT_SIZE (64ll * 1024ll)

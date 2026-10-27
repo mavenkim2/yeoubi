@@ -46,7 +46,7 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
         }
         const Vec3f contribution = throughput * environment;
         radiance += contribution;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
         const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
         params.radianceRecorder.RecordEmission(recordIndex, contribution);
 #endif
@@ -56,7 +56,7 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
     else
     {
         const Object &object = params.scene.objects[info.id];
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
         if (object.lightIndex < 0)
         {
             params.radianceRecorder.RecordDistance(
@@ -86,7 +86,7 @@ Intersect(const KernelParams &params, const SampleState *sampleState, uint32_t s
                 }
                 const Vec3f contribution = throughput * light.radiance * misWeight;
                 radiance += contribution;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
                 const int recordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
                 params.radianceRecorder.RecordDistance(recordIndex, lightHitPosition);
                 params.radianceRecorder.RecordEmission(recordIndex, contribution);

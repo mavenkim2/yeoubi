@@ -20,7 +20,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
-#ifdef WITH_VULKAN
+#ifdef YBI_ENABLE_VULKAN
 #include <imgui.h>
 #endif
 
@@ -385,7 +385,7 @@ void InteractiveApplication::Run()
 
         std::string pendingPath;
         size_t pendingCamera = ~size_t(0);
-#ifdef WITH_VULKAN
+#ifdef YBI_ENABLE_VULKAN
         if (ImGui::BeginMainMenuBar())
         {
             if (ImGui::BeginMenu("File"))

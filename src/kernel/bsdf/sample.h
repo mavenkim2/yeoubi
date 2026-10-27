@@ -27,6 +27,7 @@ struct BsdfSample
     Vec3f weight; // Cosine-weighted BSDF divided by the sampling probability.
     float pdf; // Solid-angle density, or the sampled delta branch's probability.
     float stochasticPdf;
+    float bsdfPdf;
     float eta; // Transmitted IOR / incident IOR; one for reflection.
     uint32_t flags;
     float sampledRoughness = -1.f; // Negative when roughness is unknown.

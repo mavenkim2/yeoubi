@@ -5,7 +5,7 @@
 namespace ybi
 {
 
-#ifdef WITH_CUDA
+#ifdef YBI_ENABLE_CUDA
 #ifdef YBI_DEBUG
 #define CUDA_ASSERT(statement) \
     { \

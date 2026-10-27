@@ -8,11 +8,6 @@ YBI_MATERIAL_CALLABLE_NAME(const KernelParams *params,
     if (!YBI_MATERIAL_CALLABLE_IMPL(*params, *info, viewDirection, *sample, u))
         return false;
 
-    const float side = Dot(viewDirection, info->geometricNormal) *
-                       Dot(sample->direction, info->geometricNormal);
-    if ((sample->flags & BSDF_TRANSMISSION) ? side >= 0.f : side <= 0.f)
-        return false;
-
     if (!(sample->flags & BSDF_DELTA))
     {
         // Evaluate the complete graph once for continuous samples.
@@ -24,5 +19,6 @@ YBI_MATERIAL_CALLABLE_NAME(const KernelParams *params,
             sample->pdf;
     }
     sample->stochasticPdf = sample->pdf;
+    sample->bsdfPdf = sample->pdf;
     return true;
 }

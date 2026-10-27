@@ -9,7 +9,6 @@ namespace ybi
 
 struct WavefrontParams : KernelParams
 {
-    // Wavefront
     WavefrontSampleState sampleState;
     uint32_t *numSampleStates;
     uint32_t maxNumSampleState;

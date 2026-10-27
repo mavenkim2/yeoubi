@@ -69,8 +69,9 @@ struct WavefrontSampleState
     RNG *rng;
     RayCone *rayCone;
     Vec3f *radiance;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     int *radianceRecordIndex;
+    double *russianRouletteCorrectionFactor;
 #endif
     Vec3f *throughput;
     Vec3f *previousSurfacePosition;
@@ -142,7 +143,7 @@ struct WavefrontSampleState
         radiance[sampleIndex] = value;
     }
 
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     YBI_GPU int ReadRadianceRecordIndex(uint32_t sampleIndex) const
     {
         return radianceRecordIndex[sampleIndex];
@@ -151,6 +152,16 @@ struct WavefrontSampleState
     YBI_GPU void WriteRadianceRecordIndex(uint32_t sampleIndex, int value) const
     {
         radianceRecordIndex[sampleIndex] = value;
+    }
+
+    YBI_GPU double ReadRussianRouletteCorrectionFactor(uint32_t sampleIndex) const
+    {
+        return russianRouletteCorrectionFactor[sampleIndex];
+    }
+
+    YBI_GPU void WriteRussianRouletteCorrectionFactor(uint32_t sampleIndex, double value) const
+    {
+        russianRouletteCorrectionFactor[sampleIndex] = value;
     }
 #endif
 

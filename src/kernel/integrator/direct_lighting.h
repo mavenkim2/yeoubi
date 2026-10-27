@@ -3,7 +3,7 @@
 #include "core/math.h"
 #include "device/cuda_compat.h"
 #include "kernel/backend/dispatch.h"
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 #include "kernel/guiding/api.h"
 #endif
 #include "kernel/integrator/mis.h"
@@ -44,7 +44,7 @@ DirectLighting(const KernelParams &params, const SampleState *sampleState, uint3
     if (SampleLight(scene, position, Vec3f(rng.Uniform(), rng.Uniform2D()), lightSample))
     {
         BsdfEvaluationProperties *evaluationProperties = nullptr;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
         BsdfEvaluationProperties properties;
         evaluationProperties = &properties;
 #endif
@@ -66,7 +66,7 @@ DirectLighting(const KernelParams &params, const SampleState *sampleState, uint3
             if (IsLightSampleVisible(params.bvhHandle, lightSample, position, geometricNormal))
             {
                 float continuationPdf = sampledLightBsdfPdf;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
                 continuationPdf = GuidingProposalPDF(
                     params.pathGuiding, position, lightSample.direction, sampledLightBsdfPdf);
 #endif
@@ -75,7 +75,7 @@ DirectLighting(const KernelParams &params, const SampleState *sampleState, uint3
                                misWeight / lightSample.pdf;
                 radiance += contribution;
             }
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
             const int parentRecordIndex = sampleState->ReadRadianceRecordIndex(sampleIndex);
             params.radianceRecorder.RecordDirectSample(position,
                                                        sampleState->ReadShadingNormal(sampleIndex),

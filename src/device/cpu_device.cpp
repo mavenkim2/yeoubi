@@ -1,6 +1,6 @@
 #include "device/cpu_device.h"
 #include "core/allocation.h"
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
 #include "kernel/backend/cpu/guiding/dispatch.h"
 #include "kernel/backend/cpu/kernel.h"
 #undef YBI_KERNEL
@@ -24,7 +24,7 @@ CPUDevice::~CPUDevice() = default;
 
 std::unique_ptr<DeviceKernel> CPUDevice::CreateDeviceKernel(const DeviceKernelDesc &desc)
 {
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     struct KernelEntry
     {
         const char *name;

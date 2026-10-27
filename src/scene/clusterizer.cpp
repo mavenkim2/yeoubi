@@ -21,7 +21,7 @@
 namespace ybi
 {
 
-#if defined(WITH_CUDA)
+#if defined(YBI_ENABLE_CUDA)
 void ValidateCompressedClusterCUDA(const Array<uint8_t> &compressedBytes,
                                    const DeviceCluster &cluster,
                                    const DataContainer &container,
@@ -1600,7 +1600,7 @@ static void CreateCompressedGeometry(const DataContainer *container,
     }
     YBI_ASSERT(firstUseCount == vertexIndices.size());
 
-#if 0//defined(WITH_CUDA)
+#if 0//defined(YBI_ENABLE_CUDA)
     ValidateCompressedClusterCUDA(outputBytes,
                                   cluster,
                                   *container,

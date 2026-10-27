@@ -8,9 +8,12 @@ namespace ybi
 
 YBI_GPU OrthonormalBasis MaterialXBsdfFrame(const ClosureEvaluationInfo &info,
                                             Vec3f normal,
-                                            const Vec3f &worldViewDirection)
+                                            const Vec3f &worldViewDirection,
+                                            bool *frontFacing = nullptr)
 {
     normal = LengthSquared(normal) > 1e-12f ? Normalize(normal) : info.shadingNormal;
+    if (Dot(normal, info.geometricNormal) < 0.f)
+        normal = -normal;
 
     Vec3f tangent;
     Vec3f bitangent = Cross(normal, info.dpdu);
@@ -24,7 +27,10 @@ YBI_GPU OrthonormalBasis MaterialXBsdfFrame(const ClosureEvaluationInfo &info,
         BuildOrthonormalBasis(normal, tangent, bitangent);
     }
 
-    if (Dot(worldViewDirection, normal) < 0.f)
+    const float nDotV = Dot(worldViewDirection, normal);
+    if (frontFacing)
+        *frontFacing = nDotV > 0.f;
+    if (nDotV < 0.f)
     {
         normal = -normal;
         bitangent = -bitangent;

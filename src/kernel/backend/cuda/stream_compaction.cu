@@ -57,8 +57,10 @@ extern "C" __global__ void StreamCompaction(WavefrontSampleState inputState,
         outputState.rng[laneOffset] = inputState.rng[sampleIndex];
         outputState.rayCone[laneOffset] = inputState.rayCone[sampleIndex];
         outputState.radiance[laneOffset] = inputState.radiance[sampleIndex];
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
         outputState.radianceRecordIndex[laneOffset] = inputState.radianceRecordIndex[sampleIndex];
+        outputState.russianRouletteCorrectionFactor[laneOffset] =
+            inputState.russianRouletteCorrectionFactor[sampleIndex];
 #endif
         outputState.throughput[laneOffset] = inputState.throughput[sampleIndex];
         outputState.previousSurfacePosition[laneOffset] =

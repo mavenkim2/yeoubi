@@ -15,7 +15,7 @@ YBI_GPU void TerminatePath(const KernelParams &params,
     // One sample per pixel owns this output, so no atomic accumulation is needed.
     const uint32_t pixelIndex = sampleState->ReadPixelIndex(sampleIndex);
     params.kernelOutput[pixelIndex] = radiance;
-#if defined(YBI_USE_PATH_GUIDING)
+#if defined(YBI_ENABLE_PATH_GUIDING)
     params.radianceRecorder.MarkDone(sampleState->ReadRadianceRecordIndex(sampleIndex));
 #endif
     sampleState->WriteKernelType(sampleIndex, KERNEL_FINISHED);
