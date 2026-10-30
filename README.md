@@ -23,6 +23,12 @@ Lighting comes entirely from the ALab environment map. [Asset and credits](https
 Mitsuba swimming pool rendered at 1920 × 1080, 256 samples per pixel, with path guiding enabled.
 [Scene source and credits](https://github.com/tizian/specular-manifold-sampling/tree/master/results/Figure_14_15_MainComparison).
 
+MaterialX Teapot and Lion Copyright 2026 NVIDIA Corporation. All rights reserved.
+[License](licenses/MaterialX-Teapot-and-Lion.txt).
+
+Netflix Animation Studios ALab Copyright 2025 Netflix, Inc. All rights reserved.
+[License](licenses/Netflix-Animation-Studios-ALab.txt).
+
 ## Features:
 
 ### MaterialX Graph Evaluation
