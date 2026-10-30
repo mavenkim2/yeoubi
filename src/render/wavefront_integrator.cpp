@@ -12,6 +12,24 @@
 namespace ybi
 {
 
+void WavefrontIntegrator::FinishGuidingTraining()
+{
+#if defined(YBI_ENABLE_PATH_GUIDING)
+    if (pathGuidingSystem)
+        pathGuidingSystem->FlushTrainingSamples();
+#endif
+}
+
+bool WavefrontIntegrator::ExportGuidingCells(const std::string &path, std::string *error) const
+{
+#if defined(YBI_ENABLE_PATH_GUIDING)
+    if (pathGuidingSystem)
+        return pathGuidingSystem->ExportGuidingCells(path, error);
+#endif
+    if (error) *error = "Path guiding is unavailable; build with YBI_ENABLE_PATH_GUIDING=ON.";
+    return false;
+}
+
 WavefrontIntegrator::WavefrontIntegrator(Device *device) : device(device)
 {
     if (!device)

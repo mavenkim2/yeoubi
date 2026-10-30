@@ -128,6 +128,7 @@ class OfflineApplication : Application
 private:
     std::string filePath;
     std::string outputPath;
+    std::string guidingExportPath;
     uint32_t sampleCount = 0;
     bool singlePixel = false;
     std::unique_ptr<SceneSession> session;
@@ -142,7 +143,8 @@ public:
     OfflineApplication(DeviceKind kind, const std::string &filePath, uint32_t sampleCount,
                        const std::string &outputPath,
                        std::optional<CameraJson> cameraOverride = {},
-                       std::optional<Vec2u> pixel = {});
+                       std::optional<Vec2u> pixel = {},
+                       const std::string &guidingExportPath = {});
     virtual ~OfflineApplication();
     void Run() override;
 };

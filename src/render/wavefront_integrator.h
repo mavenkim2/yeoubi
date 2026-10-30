@@ -4,6 +4,7 @@
 #include "device/device_memory.h"
 #include "kernel/state/types.h"
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace ybi
@@ -25,6 +26,8 @@ public:
 
     bool RenderSamples(const KernelParams &params);
     bool RenderSamples(const KernelParams &params, Vec2u outputSize);
+    bool ExportGuidingCells(const std::string &path, std::string *error = nullptr) const;
+    void FinishGuidingTraining();
 
 private:
     static constexpr uint32_t batchSize = 512u * 1024u;

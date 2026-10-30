@@ -153,6 +153,7 @@ int main(int argc, char **argv)
     std::string filename;
     std::string outputPath = "render.png";
     std::string cameraPath;
+    std::string guidingExportPath;
     std::optional<Vec2u> pixel;
     bool positionalOnly = false;
     const auto printUsage = []() {
@@ -164,6 +165,7 @@ int main(int argc, char **argv)
             "Interactive mode ignores --output.\n"
             "--camera overrides USD cameras in either mode. Export one from the interactive File menu.\n"
             "--pixel renders one offline pixel and writes a 1x1 PNG.\n"
+            "--export-guiding file.json exports the trained guiding cells after offline rendering.\n"
             "Esc: toggle camera controls; WASD/QE: move; mouse: look; R: reset accumulation.\n");
     };
     const auto parsePixelCoordinate = [](const char *text, uint32_t *coordinate) {
@@ -214,6 +216,15 @@ int main(int argc, char **argv)
             }
             outputPath = argv[++i];
         }
+        else if (!positionalOnly && std::strcmp(argv[i], "--export-guiding") == 0)
+        {
+            if (i + 1 >= argc || !argv[i + 1][0] || argv[i + 1][0] == '-')
+            {
+                std::fprintf(stderr, "--export-guiding requires a JSON filename.\n");
+                return 1;
+            }
+            guidingExportPath = argv[++i];
+        }
         else if (!positionalOnly && std::strcmp(argv[i], "--camera") == 0)
         {
             if (i + 1 >= argc || argv[i + 1][0] == '-')
@@ -258,6 +269,18 @@ int main(int argc, char **argv)
     }
 
     std::optional<CameraJson> cameraOverride;
+    if (!guidingExportPath.empty())
+    {
+        if (interactive || filename.empty())
+        {
+            std::fprintf(stderr, "--export-guiding requires offline rendering with a scene.\n");
+            return 1;
+        }
+#if !defined(YBI_ENABLE_PATH_GUIDING)
+        std::fprintf(stderr, "--export-guiding requires YBI_ENABLE_PATH_GUIDING=ON.\n");
+        return 1;
+#endif
+    }
     if (!cameraPath.empty())
     {
         CameraJson camera;
@@ -283,7 +306,7 @@ int main(int argc, char **argv)
     else
     {
         OfflineApplication app(DeviceKind::GPU, filename, samplesPerPixel, outputPath,
-                               cameraOverride, pixel);
+                               cameraOverride, pixel, guidingExportPath);
         app.Run();
     }
     return 0;

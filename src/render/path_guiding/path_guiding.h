@@ -4,6 +4,7 @@
 #include "kernel/guiding/radiance_recorder.h"
 #include "kernel/guiding/types.h"
 #include "render/path_guiding/lut.h"
+#include <string>
 
 namespace ybi
 {
@@ -133,6 +134,7 @@ class PathGuidingSystem
     void BeginUpdate(PathGuidingKdTreeParams &params);
     void AdvanceFrontier(PathGuidingKdTreeParams &params);
     void FinishUpdate(PathGuidingKdTreeParams &params);
+    void Train();
 
 public:
     PathGuidingSystem(
@@ -144,8 +146,16 @@ public:
     PathGuidingSystem &operator=(const PathGuidingSystem &) = delete;
 
     void Update();
+    // Train samples queued since the last scheduled update without adding a render sample.
+    void FlushTrainingSamples();
     void UpdateKDTree(PathGuidingKdTreeParams &params);
     void UpdateVMMs(PathGuidingKdTreeParams &params);
+
+    // Synchronous snapshot of the current trained field; does not consume pending samples.
+    // Viewer and schema docs live in the mavenkim2.github.io checkout's guiding-viewer/.
+    // Non-finite values are null.
+    // Call between updates/render dispatches on the owning thread.
+    bool ExportGuidingCells(const std::string &path, std::string *error = nullptr) const;
 
     RadianceRecorder BeginRecording(uint32_t recordCapacity);
     RadianceRecorder UpdateRadianceRecorder();

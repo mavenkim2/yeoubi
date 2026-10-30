@@ -34,9 +34,22 @@ struct PathGuidingTrainingSample
 {
     Vec3f position;
     uint32_t octahedralDirection;
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+    Vec3f incidentRadiance;
+#else
     float incidentRadiance;
+#endif
     float pdf;
     float distance;
+
+    YBI_CPU_GPU float GetIncidentRadiance() const
+    {
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+        return incidentRadiance.MaxComponent();
+#else
+        return incidentRadiance;
+#endif
+    }
 };
 
 template <typename Float>
@@ -172,6 +185,9 @@ struct LookaheadCell
     float radianceSecondMoment;
     uint32_t numSamples;
     Vec3f radianceWeightedDirectionSum;
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+    Vec3f rgbRadianceFirstMoment;
+#endif
 };
 
 struct PathGuidingKdTreePositionStatistics
@@ -205,6 +221,9 @@ struct PathGuidingKdTreeLookaheadStatistics
     float meanSquaredRadiance;
     Vec3f meanRadianceWeightedDirection;
     uint32_t numSamples;
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+    Vec3f meanRadianceRGB;
+#endif
 
     YBI_CPU_GPU PathGuidingKdTreeLookaheadStatistics
     operator+(const PathGuidingKdTreeLookaheadStatistics &other) const
@@ -222,6 +241,9 @@ struct PathGuidingKdTreeLookaheadStatistics
         result.meanRadianceWeightedDirection =
             meanRadianceWeightedDirection +
             (other.meanRadianceWeightedDirection - meanRadianceWeightedDirection) * weight;
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+        result.meanRadianceRGB = meanRadianceRGB + (other.meanRadianceRGB - meanRadianceRGB) * weight;
+#endif
         return result;
     }
 };

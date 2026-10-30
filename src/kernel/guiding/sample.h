@@ -59,7 +59,7 @@ YBI_GPU float LoadRadianceContribution<float>(const PathGuidingKdTreeParams &par
     YBI_ASSERT(numValidSamples == 1);
     const PathGuidingTrainingSample &sample = LoadTrainingSample(params, sampleIndex);
     YBI_ASSERT(sample.pdf > 0.f);
-    return sample.incidentRadiance / sample.pdf;
+    return sample.GetIncidentRadiance() / sample.pdf;
 }
 
 template <>
@@ -68,7 +68,7 @@ YBI_GPU float LoadRadiance<float>(const PathGuidingKdTreeParams &params,
                                   uint32_t numSamples)
 {
     YBI_ASSERT(numSamples == 1);
-    return LoadTrainingSample(params, sampleIndex).incidentRadiance;
+    return LoadTrainingSample(params, sampleIndex).GetIncidentRadiance();
 }
 
 template <typename Sample>
@@ -86,7 +86,7 @@ YBI_GPU SampleData LoadSampleData<SampleData>(const PathGuidingKdTreeParams &par
     SampleData result{};
     result.direction = DecodeOctahedral(sample.octahedralDirection);
     result.position = sample.position;
-    result.incidentRadianceEstimate = sample.incidentRadiance;
+    result.incidentRadianceEstimate = sample.GetIncidentRadiance();
     result.pdf = sample.pdf;
     result.distance = sample.distance;
     return result;

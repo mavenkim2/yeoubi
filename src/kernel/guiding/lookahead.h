@@ -68,6 +68,9 @@ YBI_GPU LookaheadCell CalculateDelta(const LookaheadCell &lhs, const LookaheadCe
                             lhs.radianceSecondMoment - rhs.radianceSecondMoment,
                             lhs.numSamples - rhs.numSamples,
                             lhs.radianceWeightedDirectionSum - rhs.radianceWeightedDirectionSum};
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+    result.rgbRadianceFirstMoment = lhs.rgbRadianceFirstMoment - rhs.rgbRadianceFirstMoment;
+#endif
 
     return result;
 }
@@ -84,9 +87,12 @@ UpdateLookaheadCell(const PathGuidingKdTreeParams &params,
         const uint32_t sampleIndex = params.sampleIndices[workItem.sampleOffset + sampleOffset];
         const PathGuidingTrainingSample &sample = params.sampleData[sampleIndex];
         YBI_ASSERT(sample.pdf > 0.f);
-        const float Li = sample.incidentRadiance / sample.pdf;
+        const float Li = sample.GetIncidentRadiance() / sample.pdf;
         const Vec3f direction = DecodeOctahedral(sample.octahedralDirection);
-        const PathGuidingKdTreeLookaheadStatistics value{Li, Sqr(Li), direction * Li, 1};
+        PathGuidingKdTreeLookaheadStatistics value{Li, Sqr(Li), direction * Li, 1};
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+        value.meanRadianceRGB = sample.incidentRadiance / sample.pdf;
+#endif
         result = result + value;
     }
     return result;
@@ -103,6 +109,9 @@ YBI_GPU void AccumulateLookaheadCell(const PathGuidingKdTreeParams &params,
     cell.radianceFirstMoment += statistics.meanRadiance * count;
     cell.radianceSecondMoment += statistics.meanSquaredRadiance * count;
     cell.radianceWeightedDirectionSum += statistics.meanRadianceWeightedDirection * count;
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+    cell.rgbRadianceFirstMoment += statistics.meanRadianceRGB * count;
+#endif
     cell.numSamples += statistics.numSamples;
 }
 

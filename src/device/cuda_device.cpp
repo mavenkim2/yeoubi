@@ -773,6 +773,9 @@ bool CUDADevice::CompileKernel(const std::string &source, DeviceModule &deviceMo
 #if defined(YBI_ENABLE_PATH_GUIDING)
         "-DYBI_ENABLE_PATH_GUIDING",
 #endif
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+        "-DYBI_ENABLE_GUIDING_RGB_STATS",
+#endif
         "-I" YBI_OPTIX_INCLUDE_PATH,
         "-I" YBI_OPTIX_SDK_INCLUDE_PATH,
         "-I" YBI_CUDA_INCLUDE_PATH,

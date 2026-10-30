@@ -176,7 +176,7 @@ struct RadianceRecorder
                 SafeDivide(record.accumulatedEmission.x, record.throughput.x),
                 SafeDivide(record.accumulatedEmission.y, record.throughput.y),
                 SafeDivide(record.accumulatedEmission.z, record.throughput.z));
-            WritePathGuidingTrainingSample(record, incidentRadiance.MaxComponent());
+            WritePathGuidingTrainingSample(record, incidentRadiance);
             const int parentIndex = record.parentIndex;
             RecordEmission(parentIndex, record.accumulatedEmission);
             if (parentIndex != YBI_PATH_GUIDING_CAMERA_VERTEX && record.distanceScale > 0.f)
@@ -261,7 +261,7 @@ struct RadianceRecorder
     }
 
     YBI_CPU_GPU bool WritePathGuidingTrainingSample(const RadianceRecord &record,
-                                                    float incidentRadiance) const
+                                                    const Vec3f &incidentRadiance) const
     {
         if (!record.trainingSampleEligible)
             return false;
@@ -273,7 +273,11 @@ struct RadianceRecorder
         PathGuidingTrainingSample &sample = trainingSamples[sampleIndex];
         sample.position = record.position;
         sample.octahedralDirection = record.octahedralDirection;
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
         sample.incidentRadiance = incidentRadiance;
+#else
+        sample.incidentRadiance = incidentRadiance.MaxComponent();
+#endif
         sample.pdf = record.pdf;
         sample.distance = record.distance;
         return true;

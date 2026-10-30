@@ -1000,8 +1000,8 @@ YBI_GPU void UpdateNodeVMM(const PathGuidingKdTreeParams &params,
                     const PathGuidingTrainingSample &sample =
                         LoadTrainingSample(params, nodeItem.sampleOffset + sampleOffset);
                     YBI_ASSERT(sample.pdf > 0.f);
-                    YBI_ASSERT(sample.incidentRadiance >= 0.f);
-                    count += uint32_t(sample.incidentRadiance / sample.pdf > 0.f);
+                    YBI_ASSERT(sample.GetIncidentRadiance() >= 0.f);
+                    count += uint32_t(sample.GetIncidentRadiance() / sample.pdf > 0.f);
                 }
                 return count;
             });

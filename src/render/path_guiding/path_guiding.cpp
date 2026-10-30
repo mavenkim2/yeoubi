@@ -11,16 +11,155 @@
 #include "kernel/guiding/kd_tree.h"
 #include "kernel/guiding/lookahead.h"
 #include "kernel/guiding/radiance_recorder.h"
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <limits>
+#include <locale>
 #include <map>
 #include <string>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace ybi
 {
+
+bool PathGuidingSystem::ExportGuidingCells(const std::string &path, std::string *error) const
+{
+    if (error)
+        error->clear();
+    try
+    {
+        std::ofstream out(std::filesystem::u8path(path), std::ios::binary);
+        if (!out)
+            throw std::runtime_error("Could not open guiding export: " + path);
+        out.imbue(std::locale::classic());
+        out << std::setprecision(std::numeric_limits<float>::max_digits10);
+        device->SyncDeviceStream();
+        std::vector<PathGuidingKdTreeNode> hostNodes(numNodes);
+        std::vector<VMMDistribution> distributions(numVMMs);
+        std::vector<SufficientStatistics> statistics(numVMMs);
+        device->CopyToHost(hostNodes.data(), nodes.Data(), hostNodes.size() * sizeof(hostNodes[0]));
+        device->CopyToHost(distributions.data(), vmmDistributions.Data(),
+                           distributions.size() * sizeof(distributions[0]));
+        device->CopyToHost(statistics.data(), vmmStatistics.Data(),
+                           statistics.size() * sizeof(statistics[0]));
+        const auto number = [&out](double value) {
+            if (std::isfinite(value)) out << value;
+            else out << "null";
+        };
+        const auto vector = [&out, &number](const Vec3f &v) {
+            out << '[';
+            number(v.x); out << ','; number(v.y); out << ','; number(v.z);
+            out << ']';
+        };
+        const auto bounds = [&out, &vector](const Vec3f &lo, const Vec3f &hi) {
+            out << "{\"min\":"; vector(lo); out << ",\"max\":"; vector(hi); out << '}';
+        };
+        Vec3f sceneMin(FLOAT_INFINITY), sceneMax(-FLOAT_INFINITY);
+        for (const auto &node : hostNodes)
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (std::isfinite(node.positionBoundsMin[axis]))
+                    sceneMin[axis] = Min(sceneMin[axis], node.positionBoundsMin[axis]);
+                if (std::isfinite(node.positionBoundsMax[axis]))
+                    sceneMax[axis] = Max(sceneMax[axis], node.positionBoundsMax[axis]);
+            }
+        out << "{\n\"schema\":\"yeoubi.guiding-cells\",\"version\":1,\"splitDecision\":\""
+            << (splitDecision == PathGuidingSplitDecision::Lookahead ? "lookahead" : "sampleCount")
+            << "\",\"generation\":" << generation << ",\"iteration\":" << iteration
+            << ",\"renderedSamples\":" << renderedSamples << ",\"trainedSamples\":" << lastUpdateSample
+            << ",\"nodeCount\":" << numNodes
+            << ",\"distributionCount\":" << numVMMs << ",\"sceneBounds\":";
+        bounds(sceneMin, sceneMax);
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+        out << ",\"rgbStatistics\":true";
+#endif
+        out << ",\n\"cells\":[\n";
+        bool first = true;
+        for (uint32_t index = 0; index < numNodes; ++index)
+        {
+            const auto &node = hostNodes[index];
+            if (!node.IsGuidingCell())
+                continue;
+            if (uint32_t(node.guidingCellIndex) >= numVMMs)
+                throw std::runtime_error("Invalid guiding distribution index");
+            const auto &vmm = distributions[node.guidingCellIndex];
+            const auto &stats = statistics[node.guidingCellIndex];
+            const auto &moments = node.lookaheadCell;
+            if (!first) out << ",\n";
+            first = false;
+            out << "{\"id\":" << node.guidingCellIndex << ",\"nodeIndex\":" << index
+                << ",\"parentIndex\":" << node.parentIndex << ",\"depth\":" << node.treeDepth
+                << ",\"bounds\":";
+            bounds(node.cellBoundsMin, node.cellBoundsMax);
+            out << ",\"observedBounds\":"; bounds(node.positionBoundsMin, node.positionBoundsMax);
+            out << ",\"position\":"; vector(vmm.pivotPosition);
+            out << ",\"positionMean\":"; vector(node.positionStatistics.mean);
+            out << ",\"positionVariance\":"; vector(node.positionStatistics.variance);
+            out << ",\"positionSampleCount\":" << node.positionStatistics.numSamples;
+            out << ",\"meanRadiance\":";
+            if (moments.numSamples)
+                number(double(moments.radianceFirstMoment) / moments.numSamples);
+            else if (stats.numSamples > 0.f)
+                number(double(stats.sumWeights) / stats.numSamples);
+            else out << "null";
+            out << ",\"meanRadianceRGB\":";
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+            if (moments.numSamples)
+                vector(moments.rgbRadianceFirstMoment / float(moments.numSamples));
+            else
+#endif
+                out << "null";
+            out << ",\"meanRadianceSource\":\""
+                << (moments.numSamples ? "lookahead" : "vmmNonZeroSamples") << '"';
+            out << ",\"radianceVariance\":";
+            if (moments.numSamples)
+            {
+                const double mean = double(moments.radianceFirstMoment) / moments.numSamples;
+                number(std::max(0.0, double(moments.radianceSecondMoment) / moments.numSamples - mean * mean));
+            }
+            else out << "null";
+            out << ",\"lookahead\":{\"sampleCount\":" << moments.numSamples
+                << ",\"radianceFirstMoment\":"; number(moments.radianceFirstMoment);
+            out << ",\"radianceSecondMoment\":"; number(moments.radianceSecondMoment);
+            out << ",\"radianceWeightedDirectionSum\":"; vector(moments.radianceWeightedDirectionSum);
+#if defined(YBI_ENABLE_GUIDING_RGB_STATS)
+            out << ",\"rgbRadianceFirstMoment\":"; vector(moments.rgbRadianceFirstMoment);
+#endif
+            out << "},\"vmm\":{\"initialized\":" << (vmm.initialized ? "true" : "false")
+                << ",\"sampleCount\":"; number(stats.numSamples);
+            out << ",\"overallSampleCount\":"; number(stats.overallNumSamples);
+            out << ",\"sumWeights\":"; number(stats.sumWeights);
+            out << ",\"components\":[";
+            for (uint32_t k = 0; k < Min(vmm.numComponents, uint32_t(VMM_MAX_NUM_COMPONENTS)); ++k)
+            {
+                if (k) out << ',';
+                out << "{\"direction\":"; vector(vmm.meanDirection[k]);
+                out << ",\"weight\":"; number(vmm.weights[k]);
+                out << ",\"kappa\":"; number(vmm.kappa[k]);
+                out << ",\"distance\":"; number(vmm.distance[k]);
+                out << '}';
+            }
+            out << "]}}";
+        }
+        out << "\n]}\n";
+        out.close();
+        if (!out)
+            throw std::runtime_error("Failed writing guiding export: " + path);
+        return true;
+    }
+    catch (const std::exception &exception)
+    {
+        if (error) *error = exception.what();
+        return false;
+    }
+}
 
 PathGuidingSystem::PathGuidingSystem(Device *device,
                                      PathGuidingSplitDecision splitDecision,
@@ -695,6 +834,18 @@ void PathGuidingSystem::Update()
     ++renderedSamples;
     if (renderedSamples < nextUpdateSample)
         return;
+
+    Train();
+}
+
+void PathGuidingSystem::FlushTrainingSamples()
+{
+    if (renderedSamples > lastUpdateSample)
+        Train();
+}
+
+void PathGuidingSystem::Train()
+{
 
     device->SyncDeviceStream();
     const auto updateStart = std::chrono::steady_clock::now();

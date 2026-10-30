@@ -102,7 +102,7 @@ YBI_GPU bool SampleGuiding(BsdfSample &sample,
 }
 
 YBI_GPU double UpdateRussianRouletteCorrectionFactor(double correctionFactor,
-                                                       const BsdfSample &sample)
+                                                     const BsdfSample &sample)
 {
     YBI_ASSERT(sample.bsdfPdf > 0.f && IsFinite(sample.bsdfPdf));
     YBI_ASSERT(sample.stochasticPdf > 0.f && IsFinite(sample.stochasticPdf));

@@ -495,8 +495,10 @@ OfflineApplication::OfflineApplication(DeviceKind kind,
                                        uint32_t sampleCount,
                                        const std::string &outputPath,
                                        std::optional<CameraJson> cameraOverride,
-                                       std::optional<Vec2u> pixel)
-    : Application(kind), filePath(filePath), outputPath(outputPath), sampleCount(sampleCount),
+                                       std::optional<Vec2u> pixel,
+                                       const std::string &guidingExportPath)
+    : Application(kind), filePath(filePath), outputPath(outputPath),
+      guidingExportPath(guidingExportPath), sampleCount(sampleCount),
       singlePixel(pixel.has_value())
 {
     session = std::make_unique<SceneSession>(device.get(), nullptr, filePath);
@@ -612,6 +614,17 @@ void OfflineApplication::Run()
         printf("\n");
     }
 
+    if (!guidingExportPath.empty())
+    {
+        std::string error;
+        integrator->FinishGuidingTraining();
+        if (!integrator->ExportGuidingCells(guidingExportPath, &error))
+        {
+            std::fprintf(stderr, "%s\n", error.c_str());
+            std::exit(EXIT_FAILURE);
+        }
+        std::fprintf(stdout, "Wrote guiding cells: %s\n", guidingExportPath.c_str());
+    }
     std::vector<unsigned char> pixels(outputImage.SizeInBytes());
     device->CopyToHost(pixels.data(), outputImage.Data(), pixels.size());
     if (!stbi_write_png(
