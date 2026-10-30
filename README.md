@@ -1,8 +1,46 @@
 A physically based CUDA and OptiX path tracer for USD.
 
+## Gallery
+
+### MaterialX Lion
+
+![MaterialX Lion lit with the ALab environment map](assets/images/lion_alab_256spp.png)
+
+MaterialX Lion rendered at 1920 × 1080, 256 samples per pixel, with path guiding disabled.
+Lighting comes entirely from the ALab environment map. [Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/).
+
+### MaterialX Teapot
+
+![MaterialX Teapot lit with the ALab environment map](assets/images/teapot_alab_256spp.png)
+
+MaterialX Teapot rendered at 1920 × 1080, 256 samples per pixel, with path guiding disabled.
+Lighting comes entirely from the ALab environment map. [Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/).
+
+### Swimming Pool
+
+![Swimming pool with water caustics](assets/images/mitsuba_pool_nonzero_count_256spp.png)
+
+Mitsuba swimming pool rendered at 1920 × 1080, 256 samples per pixel, with path guiding enabled.
+[Scene source and credits](https://github.com/tizian/specular-manifold-sampling/tree/master/results/Figure_14_15_MainComparison).
+
 ## Features:
 
-### 
+### MaterialX Graph Evaluation
+MaterialX is a standard for sharing materials across different 
+DCCs and renderers. It uses node graphs to represent BSDF closures, where each 
+node represents a particular operation, such as texturing, arithmetic, blending, or color 
+adjustment. MaterialX also supports creating layered BSDFs with node graphs and contains 
+base implementations for common BSDFs such as conductors, dielectrics, and sheen. 
+Artists can freely combine these nodes to create a wide range of materials.
+
+Yeoubi renders MaterialX graphs by compiling headers at runtime for each material. Each 
+header implements a single node and uses macros to access its inputs. Four kernels 
+are compiled per material: closure initialization, sampling, evaluation, and pdf calculation.
+Each material is compiled by traversing its node graph in topological order, 
+defining the input macros, and generating the final source. The kernels are executed at 
+runtime by using OptiX's direct callables feature.
+
+Currently only a subset of the MaterialX nodes are implemented.
 
 ### Path Guiding
 Path guiding is a variance reduction technique that improves the efficiency of Monte Carlo rendering.
@@ -23,12 +61,19 @@ Yeoubi's implementation of path guiding has the following components:
 
 **Results**
 
+PBRT pool scene rendered at 1920 × 1080, 64 samples per pixel.
+
+| No path guiding | Path guiding with lookahead |
+| --- | --- |
+| ![PBRT pool with path guiding at 64 spp](assets/images/pbrt_pool_guiding_64spp.png) | ![PBRT pool with lookahead path guiding at 64 spp](assets/images/pbrt_pool_lookahead_64spp.png) |
+
+This scene contains caustics on the pool floor, which arise from sunlight refracting through 
+the surface of the pool. The caustics are clearly visible once path guiding is enabled.
+
 Enable path guiding when configuring the build:
 ```bash
 cmake -S . -B build -DYBI_ENABLE_PATH_GUIDING=ON
 ```
-
-### Roadmap:
 
 [^openpgl]: Sebastian Herholz and Addis Dittebrandt. 2022.
     [Intel® Open Path Guiding Library](https://github.com/OpenPathGuidingLibrary/openpgl).
