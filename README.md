@@ -6,28 +6,19 @@ A physically based CUDA and OptiX path tracer for USD.
 
 ![MaterialX Lion lit with the ALab environment map](assets/images/lion_alab_256spp.png)
 
-MaterialX Lion rendered at 1920 × 1080, 256 samples per pixel, with path guiding disabled.
-Lighting comes entirely from the ALab environment map. [Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/).
+[Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/)[^materialx-alab].
 
 ### MaterialX Teapot
 
 ![MaterialX Teapot lit with the ALab environment map](assets/images/teapot_alab_256spp.png)
 
-MaterialX Teapot rendered at 1920 × 1080, 256 samples per pixel, with path guiding disabled.
-Lighting comes entirely from the ALab environment map. [Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/).
+[Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/)[^materialx-alab].
 
 ### Swimming Pool
 
 ![Swimming pool with water caustics](assets/images/mitsuba_pool_nonzero_count_256spp.png)
 
-Mitsuba swimming pool rendered at 1920 × 1080, 256 samples per pixel, with path guiding enabled.
 [Scene source and credits](https://github.com/tizian/specular-manifold-sampling/tree/master/results/Figure_14_15_MainComparison).
-
-MaterialX Teapot and Lion Copyright 2026 NVIDIA Corporation. All rights reserved.
-[License](licenses/MaterialX-Teapot-and-Lion.txt).
-
-Netflix Animation Studios ALab Copyright 2025 Netflix, Inc. All rights reserved.
-[License](licenses/Netflix-Animation-Studios-ALab.txt).
 
 ## Features:
 
@@ -80,6 +71,12 @@ Enable path guiding when configuring the build:
 ```bash
 cmake -S . -B build -DYBI_ENABLE_PATH_GUIDING=ON
 ```
+
+[^materialx-alab]: MaterialX Teapot and Lion Copyright 2026 NVIDIA Corporation. All rights reserved.
+    [License](licenses/MaterialX-Teapot-and-Lion.txt).
+    Lighting uses the Netflix Animation Studios ALab environment map.
+    Netflix Animation Studios ALab Copyright 2025 Netflix, Inc. All rights reserved.
+    [License](licenses/Netflix-Animation-Studios-ALab.txt).
 
 [^openpgl]: Sebastian Herholz and Addis Dittebrandt. 2022.
     [Intel® Open Path Guiding Library](https://github.com/OpenPathGuidingLibrary/openpgl).
