@@ -72,9 +72,9 @@ Enable path guiding when configuring the build:
 cmake -S . -B build -DYBI_ENABLE_PATH_GUIDING=ON
 ```
 
-[^materialx-alab]: [MaterialX Teapot and Lion license](licenses/MaterialX-Teapot-and-Lion.txt).
+[^materialx-alab]: [MaterialX Teapot and Lion license](https://github.com/mavenkim2/yeoubi/blob/main/licenses/MaterialX-Teapot-and-Lion.txt).
 Lighting uses the Netflix Animation Studios ALab environment map. 
-[Netflix Animation Studios ALab license](licenses/Netflix-Animation-Studios-ALab.txt).
+[Netflix Animation Studios ALab license](https://github.com/mavenkim2/yeoubi/blob/main/licenses/Netflix-Animation-Studios-ALab.txt).
 
 [^openpgl]: Sebastian Herholz and Addis Dittebrandt. 2022.
     [Intel® Open Path Guiding Library](https://github.com/OpenPathGuidingLibrary/openpgl).
