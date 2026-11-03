@@ -6,13 +6,13 @@ A physically based CUDA and OptiX path tracer for USD.
 
 ![MaterialX Lion lit with the ALab environment map](assets/images/lion_alab_256spp.png)
 
-[Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/)[^materialx-alab].
+[Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/) · [MaterialX Teapot and Lion license](licenses/MaterialX-Teapot-and-Lion.txt)[^materialx-alab].
 
 ### MaterialX Teapot
 
 ![MaterialX Teapot lit with the ALab environment map](assets/images/teapot_alab_256spp.png)
 
-[Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/)[^materialx-alab].
+[Asset and credits](https://dpel.aswf.io/materialx-teapot-lion/) · [MaterialX Teapot and Lion license](licenses/MaterialX-Teapot-and-Lion.txt)[^materialx-alab].
 
 ### Swimming Pool
 
@@ -72,11 +72,9 @@ Enable path guiding when configuring the build:
 cmake -S . -B build -DYBI_ENABLE_PATH_GUIDING=ON
 ```
 
-[^materialx-alab]: MaterialX Teapot and Lion Copyright 2026 NVIDIA Corporation. All rights reserved.
-    [License](licenses/MaterialX-Teapot-and-Lion.txt).
-    Lighting uses the Netflix Animation Studios ALab environment map.
-    Netflix Animation Studios ALab Copyright 2025 Netflix, Inc. All rights reserved.
-    [License](licenses/Netflix-Animation-Studios-ALab.txt).
+[^materialx-alab]: [MaterialX Teapot and Lion license](https://github.com/mavenkim2/yeoubi/blob/main/licenses/MaterialX-Teapot-and-Lion.txt).
+Lighting uses the Netflix Animation Studios ALab environment map. 
+[Netflix Animation Studios ALab license](https://github.com/mavenkim2/yeoubi/blob/main/licenses/Netflix-Animation-Studios-ALab.txt).
 
 [^openpgl]: Sebastian Herholz and Addis Dittebrandt. 2022.
     [Intel® Open Path Guiding Library](https://github.com/OpenPathGuidingLibrary/openpgl).
